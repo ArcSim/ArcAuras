@@ -1,0 +1,25 @@
+# Ships as ArcUI: the folder name picks the toc and the SavedVariables file.
+package-as: ArcUI
+
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
+
+ignore:
+  - .git
+  - .gitignore
+  - .gitattributes
+  - .pkgmeta
+  - CHANGELOG.md
+  - README.md
+  - "*.bak"
+  - Textures/ArcUI_Icon_400x400.tga
+  - Libs/LibCustomGlow-1.0/README.md
+  - Libs/LibCustomGlow-1.0/cspell.json
+  - Libs/LibCustomGlow-1.0/LibCustomGlow-1.0_old.xml
+  - Libs/LibDeflate/docs
+  - Libs/LibDeflate/examples
+  - Libs/LibDeflate/LibStub
+  - Libs/LibDeflate/README.md
+  - Libs/LibDeflate/changelog.md
+  - Libs/LibDeflate/libdeflate-1.0.2-1.rockspec

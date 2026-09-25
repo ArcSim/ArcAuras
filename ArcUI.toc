@@ -1,0 +1,38 @@
+## Interface: 16001
+## Title: |cff3fc9f2Arc|r UI Forever
+## Notes: Icons, icon groups and bars for your cooldowns, auras and resources, all set up from one panel. /arcui
+## Author: Arc
+## Version: 1.3.0.a
+## IconTexture: Interface\AddOns\ArcUI\Textures\ArcUI_Icon_Dial_256
+## SavedVariables: ArcUIv2DB
+## X-Curse-Project-ID: 1391614
+## X-Wago-ID: mNw7Q2No
+
+Libs\LibStub\LibStub.lua
+Libs\LibDeflate\LibDeflate.lua
+Libs\LibCustomGlow-1.0\LibCustomGlow-1.0.lua
+
+Core\AD_Forever.lua [ExcludeLoadGameType standard]
+Core\AD_Theme.lua
+Core\AD_Schema.lua
+Core\AD_Events.lua
+Core\AD_Sounds.lua
+Core\AD_Store.lua
+Core\AD_Anchor.lua
+Core\AD_Conditions.lua
+Core\AD_SpellCatalog.lua
+Core\AD_SpellNames.lua
+Core\AD_TooltipIDs.lua
+QOL\AD_AutoRank.lua
+Core\AD_Factory.lua
+Core\AD_PressHighlight.lua
+Drivers\AD_DriverCooldown.lua
+Drivers\AD_DriverAura.lua
+Drivers\AD_DriverAuraGroups.lua
+Bars\AD_Bars.lua
+Bars\AD_Castbar.lua
+Core\AD_LayoutEngine.lua
+UI\AD_Options.lua
+UI\AD_Minimap.lua
+UI\AD_Changelog.lua
+AD_Init.lua

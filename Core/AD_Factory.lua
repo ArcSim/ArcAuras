@@ -2135,8 +2135,9 @@ end
 -- before this local compiles a global lookup instead of the upvalue.
 local function GetLCG()
     if not LibStub then return nil end
-    -- The ArcGlow fork registers under its own name; accept either.
-    return LibStub("LibCustomGlow-1.0", true) or LibStub("ArcGlow-1.0", true)
+    -- Always the bundled copy: a standard copy another addon loads may be an
+    -- older one that errors on this client and can't key the button glow.
+    return LibStub("ArcGlow-1.0", true)
 end
 
 -- Glow parameter signature: a lane restarts only when it changes, as a restart

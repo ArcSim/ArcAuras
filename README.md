@@ -23,4 +23,6 @@ Arc UI Forever is now Arc Auras: install it and your setup moves over by itself.
 
 Bugs and ideas go to the [Discord](https://discord.gg/yMZmnFjUTd).
 
+Pull requests are welcome: fork the repo and open one against `main`.
+
 Copyright (c) 2026 Arc. All rights reserved.

@@ -1,8 +1,7 @@
 # Arc Auras
 
 Cooldowns, auras, resources, castbars and swing timers for WoW Forever: icons,
-icon groups and bars you set up without code, all working in combat. Type
-`/arcauras` in game to open it.
+icon groups and bars you set up without code. Type `/arcauras` in game to open it.
 
 - Cooldown icons, aura icons for buffs and debuffs, plus item, trinket, totem, weapon enchant and ammo icons
 - Bars for cooldowns, auras, resources, health, casts, swing timers and target range

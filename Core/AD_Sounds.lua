@@ -6,7 +6,7 @@ local ADDON, NS = ...
 local Sounds = {}
 NS.Sounds = Sounds
 
--- ADDON is the folder name: "ArcUI" on Forever, "ArcDisplay" on retail.
+-- ADDON is the folder name: "ArcAuras" on Forever, "ArcDisplay" on retail.
 local PATH = "Interface\\AddOns\\" .. ADDON .. "\\Sounds\\"
 
 -- { stored name, file } in dropdown order. The names match the retail ArcUI

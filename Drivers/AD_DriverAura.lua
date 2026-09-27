@@ -438,8 +438,19 @@ local function SyncEntryAlpha(entry)
     -- A secret alpha reads as 1: Detach zeroes the container, so skipping here
     -- would strand it invisible.
     if issecretvalue and issecretvalue(a) then a = 1 end
+    -- Play on screen draws a copy over this icon; the real button stays out.
+    local scr = NS.IconScreen
+    if scr and entry.rec and scr.On(entry.rec.id) then a = 0 end
     for _, sub in ipairs(entry.subs) do
         sub.container:SetAlpha(a)
+    end
+end
+
+-- Play on screen starting or stopping on this icon: its container follows.
+function Driver.SyncAlpha(id)
+    local entry = entries[id]
+    if entry and entry.holder and #entry.subs > 0 and not entry.off then
+        SyncEntryAlpha(entry)
     end
 end
 

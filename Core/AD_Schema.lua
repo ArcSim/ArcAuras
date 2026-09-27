@@ -37,6 +37,17 @@ local NA  = { spell = true, item = true, trinket = true, timer = true, totem = t
 -- Stack text: only kinds something writes a count for (spell charges, item and
 -- ammo bag counts, aura applications, timer stacks). Trinkets have none.
 local STK = { spell = true, item = true, timer = true, aura = true, ammo = true }
+-- "Minutes and seconds" cutoffs in seconds, for icons and bars alike.
+local ABBREV_VALUES = { 0, 120, 300, 600, 3600 }
+local ABBREV_LABELS = { [0] = "Off", [120] = "Under 2 minutes", [300] = "Under 5 minutes",
+    [600] = "Under 10 minutes", [3600] = "Under 1 hour" }
+-- How the GCD and the wand's lock draw on a spell icon. Neither ever counts as
+-- a real cooldown, so these are looks only.
+local GCD_LOOKS = { "hidden", "edge", "swipe", "both" }
+local GCD_LOOK_LABELS = { hidden = "Hidden", edge = "Edge only", swipe = "Swipe", both = "Swipe and edge" }
+local GCD_SWIPE_DRAWN = { swipe = true, both = true }
+-- The classes that shoot a wand; the wand rows show only there.
+local WAND_CLASSES = { PRIEST = true, MAGE = true, WARLOCK = true }
 
 local GK_CD = { cooldown = true }
 local GK_AU = { aura = true }
@@ -264,8 +275,11 @@ Schema.icon = {
             label = "Label anchor", dep = { field = "labelText", nonempty = true } },
         labelX = { d = 0, t = "int", min = -50, max = 50, label = "Label X", dep = { field = "labelText", nonempty = true } },
         labelY = { d = 0, t = "int", min = -50, max = 50, label = "Label Y", dep = { field = "labelText", nonempty = true } },
-        labelShowReady = { inherit = false, d = true, t = "bool", label = "Show label when ready", dep = { field = "labelText", nonempty = true } },
-        labelShowCooldown = { inherit = false, d = true, t = "bool", label = "Show label on cooldown", dep = { field = "labelText", nonempty = true } },
+        labelShowReady = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label when ready", dep = { field = "labelText", nonempty = true } },
+        labelShowCooldown = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label on cooldown", dep = { field = "labelText", nonempty = true } },
+        -- Aura icons: drawn on the engine button, which the game shows exactly
+        -- while the aura is up, so it holds in combat with no presence read.
+        labelActiveOnly = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label only while the aura is up", dep = { field = "labelText", nonempty = true } },
         labelText2 = { inherit = false, d = "", t = "text", label = "Label 2 text" },
         labelSize2 = { d = 12, t = "int", min = 6, max = 32, label = "Label 2 size", dep = { field = "labelText2", nonempty = true } },
         labelColor2 = { d = { 1, 1, 1, 1 }, t = "color", label = "Label 2 color", dep = { field = "labelText2", nonempty = true } },
@@ -274,8 +288,9 @@ Schema.icon = {
             label = "Label 2 anchor", dep = { field = "labelText2", nonempty = true } },
         labelX2 = { d = 0, t = "int", min = -50, max = 50, label = "Label 2 X", dep = { field = "labelText2", nonempty = true } },
         labelY2 = { d = 0, t = "int", min = -50, max = 50, label = "Label 2 Y", dep = { field = "labelText2", nonempty = true } },
-        labelShowReady2 = { inherit = false, d = true, t = "bool", label = "Show label 2 when ready", dep = { field = "labelText2", nonempty = true } },
-        labelShowCooldown2 = { inherit = false, d = true, t = "bool", label = "Show label 2 on cooldown", dep = { field = "labelText2", nonempty = true } },
+        labelShowReady2 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label 2 when ready", dep = { field = "labelText2", nonempty = true } },
+        labelShowCooldown2 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label 2 on cooldown", dep = { field = "labelText2", nonempty = true } },
+        labelActiveOnly2 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label 2 only while the aura is up", dep = { field = "labelText2", nonempty = true } },
         labelText3 = { inherit = false, d = "", t = "text", label = "Label 3 text" },
         labelSize3 = { d = 12, t = "int", min = 6, max = 32, label = "Label 3 size", dep = { field = "labelText3", nonempty = true } },
         labelColor3 = { d = { 1, 1, 1, 1 }, t = "color", label = "Label 3 color", dep = { field = "labelText3", nonempty = true } },
@@ -284,8 +299,9 @@ Schema.icon = {
             label = "Label 3 anchor", dep = { field = "labelText3", nonempty = true } },
         labelX3 = { d = 0, t = "int", min = -50, max = 50, label = "Label 3 X", dep = { field = "labelText3", nonempty = true } },
         labelY3 = { d = 0, t = "int", min = -50, max = 50, label = "Label 3 Y", dep = { field = "labelText3", nonempty = true } },
-        labelShowReady3 = { inherit = false, d = true, t = "bool", label = "Show label 3 when ready", dep = { field = "labelText3", nonempty = true } },
-        labelShowCooldown3 = { inherit = false, d = true, t = "bool", label = "Show label 3 on cooldown", dep = { field = "labelText3", nonempty = true } },
+        labelShowReady3 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label 3 when ready", dep = { field = "labelText3", nonempty = true } },
+        labelShowCooldown3 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label 3 on cooldown", dep = { field = "labelText3", nonempty = true } },
+        labelActiveOnly3 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label 3 only while the aura is up", dep = { field = "labelText3", nonempty = true } },
     } },
     -- Transition sounds. A sound cannot be unplayed, so the driver fires only
     -- on verified transitions. Each trigger is a toggle plus a t = "sound"
@@ -367,8 +383,15 @@ Schema.icon = {
     } },
     swipe = { push = true, inherit = true, kinds = CD, fields = {
         showSwipe = { d = true,  t = "bool", label = "Cooldown swipe" },
-        -- On hides the GCD spin entirely; off draws the GCD as an edge only.
-        noGCDSwipe = { d = true, t = "bool", label = "Hide GCD swipe", dep = { field = "showSwipe" } },
+        gcdSwipe = { d = "hidden", t = "enum", values = GCD_LOOKS, labels = GCD_LOOK_LABELS,
+            kinds = { spell = true }, label = "GCD" },
+        gcdSwipeColor = { d = { 0, 0, 0, 0.5 }, t = "color", kinds = { spell = true },
+            label = "GCD swipe color", dep = { field = "gcdSwipe", anyOf = GCD_SWIPE_DRAWN } },
+        wandSwipe = { d = "hidden", t = "enum", values = GCD_LOOKS, labels = GCD_LOOK_LABELS,
+            kinds = { spell = true }, classOnly = WAND_CLASSES, label = "Wand GCD" },
+        wandSwipeColor = { d = { 0, 0, 0, 0.5 }, t = "color", kinds = { spell = true },
+            classOnly = WAND_CLASSES, label = "Wand swipe color",
+            dep = { field = "wandSwipe", anyOf = GCD_SWIPE_DRAWN } },
         -- While a charge spell still has a charge (recharging), these two hold
         -- back the dark fill or the edge until every charge is spent.
         swipeWaitForNoCharges = { d = false, t = "bool", kinds = { spell = true }, label = "Swipe only when no charges", dep = { field = "showSwipe" } },
@@ -516,9 +539,9 @@ Schema.icon = {
         durationColor = { d = { 1, 1, 1, 1 }, t = "color", label = "Duration text color", dep = { field = "durationText" } },
         -- A baked NumericRuleFormatter renders the countdown from the real
         -- remaining time, so it works on secret durations with no ticker. M:SS
-        -- ("1:30") from 60 s up to this many seconds; 0 = "2 m" above a minute.
-        durationAbbrev = { d = 0, t = "int", min = 0, max = 3600, label = "M:SS until (seconds, 0 = off)",
-            dep = { field = "durationText" } },
+        -- ("1:30") from 60 s up to this many seconds, "12 m" above; 0 = off.
+        durationAbbrev = { d = 600, t = "enum", values = ABBREV_VALUES, labels = ABBREV_LABELS,
+            label = "Minutes and seconds (1:30)", dep = { field = "durationText" } },
         durationShadow = { d = false, t = "bool", label = "Duration text shadow", dep = { field = "durationText" } },
         durationDecimals = { d = false, t = "bool", label = "Decimal seconds", dep = { field = "durationText" } },
         durationDecimalThreshold = { d = 10, t = "int", min = 2, max = 60, label = "Decimals under (seconds)",
@@ -828,6 +851,15 @@ Schema.bar = {
         -- their own; stack bars show charges, so they are left out.
         idleEmpty   = { d = false, dk = { swing = true }, t = "bool", kinds = { cooldown = true, swing = true },
             kindModes = { cooldown = { duration = true } }, label = "Empty fill when idle" },
+        -- Main-hand swing bars: the off-hand's swing as a second track on the
+        -- same bar (Bars\AD_SwingOffhand.lua). Hidden: Tracking draws its switch.
+        swingOffhand      = { d = false, t = "bool", inherit = false, hidden = true, kinds = { swing = true },
+            label = "Show the off-hand on this bar" },
+        swingOffhandStyle = { d = "thin", t = "enum", values = { "thin", "thick", "half", "mark" },
+            labels = { thin = "Thin line", thick = "Thick line", half = "Half of the bar", mark = "Moving mark" },
+            kinds = { swing = true }, dep = { field = "swingOffhand" }, label = "Off-hand style" },
+        swingOffhandColor = { d = { 1, 0.75, 0.3, 1 }, t = "color", kinds = { swing = true },
+            dep = { field = "swingOffhand" }, label = "Off-hand color" },
         -- Stack bars use this for the slot recharge animation too.
         smoothing   = { d = true, t = "bool", kinds = BK_SMOOTH, label = "Smooth fill" },
         useGradient = { d = true, t = "bool", label = "Gradient fill" },
@@ -958,6 +990,10 @@ Schema.bar = {
             dep = { field = "durShow" } },
         durDecimalThreshold = { d = 10, t = "int", min = 2, max = 60, kinds = BK_DUR, label = "Decimals below (s)",
             dep = { { field = "durShow" }, { field = "durDecimalsEnabled" } } },
+        -- The icons' durationAbbrev for bars: cooldown and aura bars through
+        -- the shared formatter, timer and swing bars through FormatCountdown.
+        durAbbrev = { d = 600, t = "enum", values = ABBREV_VALUES, labels = ABBREV_LABELS, kinds = BK_DUR,
+            label = "Minutes and seconds (1:30)", dep = { field = "durShow" } },
         stkShow = { d = true, t = "bool", kinds = BK_CST, label = "Stack text" },
         stkSize = { d = 12, t = "int", min = 6, max = 32, kinds = BK_CST, label = "Stack text size" },
         stkAnchor = { d = "LEFT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS, kinds = BK_CST, label = "Stack anchor" },

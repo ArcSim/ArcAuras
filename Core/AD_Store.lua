@@ -2,7 +2,7 @@
 -- resolves rec.o -> its layout's inh -> newDefaults[familyKey] -> the schema
 -- default (no global tier); a record shows everywhere unless rec.c narrows it.
 --
--- ArcUIv2DB = {
+-- ArcAurasDB = {
 --   nextId      = counter, only ever incremented; ids are never reused
 --   records     = { [id] = rec }
 --   newDefaults = { [familyKey] = { [section] = { [field] = value } } }
@@ -30,7 +30,7 @@ local Events = NS.Events
 local Store = {}
 NS.Store = Store
 
-local DB   -- ArcUIv2DB, valid after Store.Init
+local DB   -- ArcAurasDB, valid after Store.Init
 
 -- The character identity behind "Only this character". Retail: "Name-Realm"
 -- (the home realm is stable). Forever: the bare name. Names are unique there,
@@ -105,8 +105,10 @@ Store.Specless = Specless
 -- Init and normalize
 
 function Store.Init()
-    ArcUIv2DB = ArcUIv2DB or {}
-    DB = ArcUIv2DB
+    ArcAurasDB = ArcAurasDB or {}
+    DB = ArcAurasDB
+    -- An Arc UI Forever setup moves in whole, before the defaults below fill gaps.
+    if NS.Migrate then NS.Migrate.FromArcUI(DB) end
     DB.nextId = DB.nextId or 0
     DB.records = DB.records or {}
     DB.newDefaults = DB.newDefaults or {}
@@ -123,7 +125,7 @@ end
 -- an orphaned table while the real data sits in the global: re-point and
 -- normalize again.
 function Store.AdoptLiveSV()
-    if ArcUIv2DB ~= DB then
+    if ArcAurasDB ~= DB then
         Store.Init()
         return true
     end
@@ -273,6 +275,68 @@ local function FoldResFormat(rec)
     if next(res) == nil then rec.o.resource = nil end
 end
 
+-- Folds an aura icon's old label switches into "only while the aura is up":
+-- "on cooldown" off meant exactly that on an aura icon. It acts only while the
+-- old keys exist, so it needs no version stamp.
+-- Snaps a stored "M:SS until" seconds value onto the dropdown's choices. 60
+-- or less never showed M:SS, so it takes the default; above that, the nearest
+-- choice. A value already on the list stays, so no version stamp.
+local function FoldAbbrevIn(text)
+    local v = text and text.durationAbbrev
+    if type(v) ~= "number" then return end
+    local def = Schema.icon.text.fields.durationAbbrev
+    local best, gap
+    for _, c in ipairs(def.values) do
+        if c == v then return end
+        if c > 60 and (not gap or math.abs(c - v) < gap) then best, gap = c, math.abs(c - v) end
+    end
+    if v <= 60 or best == def.d then best = nil end
+    text.durationAbbrev = best
+end
+
+local function FoldDurationAbbrev(rec)
+    if rec.type == "icon" and rec.o.text then
+        FoldAbbrevIn(rec.o.text)
+        if next(rec.o.text) == nil then rec.o.text = nil end
+    elseif rec.type == "layout" and rec.inh and rec.inh.icon and rec.inh.icon.text then
+        FoldAbbrevIn(rec.inh.icon.text)
+        if next(rec.inh.icon.text) == nil then rec.inh.icon.text = nil end
+    end
+end
+
+-- Folds the retired "Hide GCD swipe" switch into the GCD look: off drew the GCD
+-- as an edge, on is the new default. It acts only while the old key exists, so
+-- it needs no version stamp.
+local function FoldGCDSwipeIn(swipe)
+    if not (swipe and swipe.noGCDSwipe ~= nil) then return end
+    if swipe.noGCDSwipe == false and swipe.gcdSwipe == nil then swipe.gcdSwipe = "edge" end
+    swipe.noGCDSwipe = nil
+end
+
+local function FoldGCDSwipe(rec)
+    if rec.type == "icon" and rec.o.swipe then
+        FoldGCDSwipeIn(rec.o.swipe)
+        if next(rec.o.swipe) == nil then rec.o.swipe = nil end
+    elseif rec.type == "layout" and rec.inh and rec.inh.icon and rec.inh.icon.swipe then
+        FoldGCDSwipeIn(rec.inh.icon.swipe)
+        if next(rec.inh.icon.swipe) == nil then rec.inh.icon.swipe = nil end
+    end
+end
+
+local function FoldAuraLabels(rec)
+    if rec.type ~= "icon" or rec.kind ~= "aura" then return end
+    local lab = rec.o and rec.o.label
+    if not lab then return end
+    for _, suf in ipairs({ "", "2", "3" }) do
+        local rdy, cd = lab["labelShowReady" .. suf], lab["labelShowCooldown" .. suf]
+        if cd == false and rdy ~= false and lab["labelActiveOnly" .. suf] == nil then
+            lab["labelActiveOnly" .. suf] = true
+        end
+        lab["labelShowReady" .. suf], lab["labelShowCooldown" .. suf] = nil, nil
+    end
+    if next(lab) == nil then rec.o.label = nil end
+end
+
 -- the families a layout's inh can carry (Schema family keys)
 local LAYOUT_FAMILIES = { icon = true, iconGroup = true, bar = true }
 
@@ -336,6 +400,12 @@ function Store.Normalize()
     -- them: their one retired key is folded here.
     local nd = DB.newDefaults and DB.newDefaults["iconGroup:cooldown"]
     if nd and nd.arrangement then FoldDynamicCooldowns(nd.arrangement) end
+    for _, bucket in pairs(DB.newDefaults or {}) do
+        if type(bucket) == "table" then
+            FoldAbbrevIn(bucket.text)
+            FoldGCDSwipeIn(bucket.swipe)
+        end
+    end
     for id, rec in pairs(DB.records) do
         rec.id = id
         rec.o = rec.o or {}
@@ -441,6 +511,9 @@ function Store.Normalize()
         FoldHideWhen(rec)
         FoldBarMarks(rec)
         FoldResFormat(rec)
+        FoldAuraLabels(rec)
+        FoldDurationAbbrev(rec)
+        FoldGCDSwipe(rec)
         -- Per-record schema version that versioned folds key off; a new one
         -- bumps it and runs before this stamp.
         rec.v = 2
@@ -2083,7 +2156,7 @@ function Store.Import(text, targetLayoutId)
     elseif text:sub(1, 5) == "!AD1!" then
         body = text:sub(6)
     else
-        return nil, "not an Arc UI Forever export string"
+        return nil, "not an Arc Auras export string"
     end
     local LD = GetDeflate()
     if not LD then return nil, "LibDeflate did not load" end

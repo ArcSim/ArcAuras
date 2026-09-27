@@ -12,6 +12,38 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "1.4.0",
+        intro = "Arc UI Forever is now Arc Auras. Your setup moves over by itself, and this update brings an off-hand track for swing bars, labels that follow your auras, and a smoother options window.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Arc UI Forever is now Arc Auras",
+                    desc = "Same addon, new name and its own page. Your setup moves over by itself the first time Arc Auras loads. Type /arcauras to open it; the old commands still work." },
+                { title = "Off-hand on swing bars",
+                    desc = "A main-hand swing bar can show your off-hand's swing too: a thin line, a thick line, half of the bar or a moving mark, in its own color." },
+                { title = "Labels while an aura is up",
+                    desc = "An aura icon's labels can show only while the aura is up, in combat too." },
+                { title = "Play on screen for icons",
+                    desc = "Watch the icon preview play on the real icon, right where it sits on your screen." },
+                { title = "GCD and wand looks",
+                    desc = "Choose how the global cooldown shows on spell icons: hidden, an edge, a swipe or both, in your own color. Priests, mages and warlocks get the same choice for their wand." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Minutes and seconds",
+                    desc = "Longer timers read 1:30 instead of 90 on icons and bars. Pick when that starts, from under 2 minutes to under 1 hour, or turn it off." },
+                { title = "Smoother first open",
+                    desc = "The options window no longer freezes the game the first time you open it; a small loading bar shows while it gets ready." },
+                { title = "True-to-size icon preview",
+                    desc = "The icon preview now matches the real icon, borders and crop included." },
+                { title = "Preview background",
+                    desc = "Previews sit on a softer slate color by default, or any color you pick." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Wand shots",
+                    desc = "Shooting your wand no longer makes cooldown icons and bars look like they are on a short cooldown." },
+            } },
+        },
+    },
+    {
         version = "1.3.0",
         intro = "Castbars, layout looks, anchors for free icons and your mouse, a button press highlight, and aura glows that hold steady in combat.",
         sections = {
@@ -261,7 +293,7 @@ local function Build()
     if win then return win end
     win = AT.CreateWindow("ArcUIv2WhatsNew", {
         w = 580, h = 620, minW = 460, minH = 420, maxW = 1000, maxH = 1200,
-        title = "|cff3fc9f2What's New|r|cffd5e2f2 in Arc UI Forever|r",
+        title = "|cff3fc9f2What's New|r|cffd5e2f2 in Arc Auras|r",
         version = CL.CurrentVersion(),
         onResize = function() CL.Layout() end,
     })
@@ -335,7 +367,7 @@ local function Build()
             or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON)
     end)
     AT.Tooltip(sw, "Show after each update",
-        "The first time you log in after Arc UI Forever updates, this window opens once with what changed. Settings has the same switch.")
+        "The first time you log in after Arc Auras updates, this window opens once with what changed. Settings has the same switch.")
     switchBtn = sw
 
     local close = AT.MakeSmallButton(win, "Close", 90)

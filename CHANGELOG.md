@@ -1,4 +1,27 @@
-# Arc UI Forever
+# Arc Auras
+
+## 1.4.0
+
+Arc UI Forever is now Arc Auras. Your setup moves over by itself, and this update brings an off-hand track for swing bars, labels that follow your auras, and a smoother options window.
+
+### New Features
+
+- **Arc UI Forever is now Arc Auras** - Same addon, new name and its own page. Your setup moves over by itself the first time Arc Auras loads. Type /arcauras to open it; the old commands still work.
+- **Off-hand on swing bars** - A main-hand swing bar can show your off-hand's swing too: a thin line, a thick line, half of the bar or a moving mark, in its own color.
+- **Labels while an aura is up** - An aura icon's labels can show only while the aura is up, in combat too.
+- **Play on screen for icons** - Watch the icon preview play on the real icon, right where it sits on your screen.
+- **GCD and wand looks** - Choose how the global cooldown shows on spell icons: hidden, an edge, a swipe or both, in your own color. Priests, mages and warlocks get the same choice for their wand.
+
+### Improvements
+
+- **Minutes and seconds** - Longer timers read 1:30 instead of 90 on icons and bars. Pick when that starts, from under 2 minutes to under 1 hour, or turn it off.
+- **Smoother first open** - The options window no longer freezes the game the first time you open it; a small loading bar shows while it gets ready.
+- **True-to-size icon preview** - The icon preview now matches the real icon, borders and crop included.
+- **Preview background** - Previews sit on a softer slate color by default, or any color you pick.
+
+### Bug Fixes
+
+- **Wand shots** - Shooting your wand no longer makes cooldown icons and bars look like they are on a short cooldown.
 
 ## 1.3.0
 

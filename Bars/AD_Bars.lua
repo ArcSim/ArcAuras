@@ -701,7 +701,7 @@ local function ApplyTexts(entry)
             if NS.Factory and NS.Factory.TimerFormatter then
                 fmt = NS.Factory.TimerFormatter(
                     decOn and (R(rec, "text", "durDecimalThreshold") or 10) or 0, bands,
-                    nil, nil, BarRounding(rec))
+                    show and (R(rec, "text", "durAbbrev") or 0) or 0, nil, BarRounding(rec))
             end
             local sig = fmt or "stock"
             if entry.durCD._adFmtSig ~= sig then
@@ -980,6 +980,8 @@ local function ApplyStyle(entry)
     shell.fill:ClearAllPoints()
     shell.fill:SetPoint("TOPLEFT", shell, "TOPLEFT", inset, -inset)
     shell.fill:SetPoint("BOTTOMRIGHT", shell, "BOTTOMRIGHT", -inset, inset)
+    -- kept for a swing bar's off-hand track, which splits this rect
+    entry.fillInset = inset
     shell.fill:SetOrientation(R(rec, "fill", "orientation") or "HORIZONTAL")
     shell.fill:SetReverseFill(R(rec, "fill", "reverseFill") == true)
 
@@ -1024,6 +1026,8 @@ local function ApplyStyle(entry)
     -- showing something (a castbar's spell icon and colours, mid-cast)
     local KS = Bars.KINDS[entry.kind]
     if KS and KS.Styled then KS.Styled(entry) end
+    -- a main-hand swing bar's off-hand track (Bars\AD_SwingOffhand.lua)
+    if entry.kind == "swing" and Bars.SwingOH then Bars.SwingOH.Styled(entry) end
 end
 
 -- Visibility: opacity x state hides x conditions; edit mode always wins
@@ -1615,16 +1619,26 @@ local function CooldownRefresh(entry)
     local sid = SpellIDFor(rec)
     if not sid or not C_Spell.GetSpellCooldownDuration then return end
 
+    -- The wand's lock is ignored like the GCD (DriverCooldown.WandLocked). A
+    -- cooldown already running keeps its own timing: nothing to re-read.
+    -- cdLive marks one this refresh accepted: a new shadow shows before its
+    -- first feed. On the wand's own bar the lock is its real cooldown.
+    local dc = NS.DriverCooldown
+    local wandLock = dc ~= nil and dc.WandLocked() and not dc.IsWandShot(sid)
+    if wandLock and entry.cdLive and entry.sCD:IsShown() == true then return end
+
     -- shadows always read ignoreGCD=true: state must never see the GCD.
     -- entry.feeding brackets the feeds so OnCooldownDone (fired by Clear)
     -- can never re-enter this refresh synchronously.
     entry.feeding = true
     local mainDur = C_Spell.GetSpellCooldownDuration(sid, true)
+    if wandLock then mainDur = nil end
     if mainDur then
         entry.sCD:SetCooldownFromDurationObject(mainDur, true)
     else
         entry.sCD:Clear()
     end
+    entry.cdLive = entry.sCD:IsShown() == true
     local chargeDur
     if entry.isCharge and C_Spell.GetSpellChargeDuration then
         chargeDur = C_Spell.GetSpellChargeDuration(sid, true)
@@ -1856,6 +1870,7 @@ local function RunTimedFill(entry, duration, onDone)
     local decTo = R(rec, "text", "durDecimalThreshold") or 10
     -- whole seconds round the way Settings > Timers says (up by default)
     local roundDown = BarRounding(rec) == "down"
+    local abbrev = R(rec, "text", "durAbbrev") or 0
 
     shell.fill:SetScript("OnUpdate", function(bar, elapsed)
         local remaining = entry.endTime - GetTime()
@@ -1867,12 +1882,8 @@ local function RunTimedFill(entry, duration, onDone)
         entry.textAcc = (entry.textAcc or 0) + elapsed
         if entry.textAcc >= 0.05 then
             entry.textAcc = 0
-            if decOn and remaining < decTo then
-                SetRunText(shell, "dur", string.format("%.1f", remaining))
-            else
-                SetRunText(shell, "dur", string.format("%d",
-                    roundDown and math.floor(remaining) or math.ceil(remaining)))
-            end
+            SetRunText(shell, "dur", NS.Factory.FormatCountdown(remaining,
+                decOn and decTo or 0, abbrev, roundDown))
             local pt = entry.plainThresh
             if pt then
                 local x = pt.asSeconds and remaining
@@ -4126,7 +4137,7 @@ function Bars.MaxStacksFor(rec)
     return 5
 end
 
--- the countdown text recipe: decimals + colour bands, one shared formatter
+-- the countdown text recipe: decimals, M:SS and colour bands, one shared formatter
 -- (bindings are init-only, so the recipe is part of the composition sig)
 local function AuraDurFormatter(entry)
     if not (NS.Factory and NS.Factory.TimerFormatter) then return nil end
@@ -4136,7 +4147,8 @@ local function AuraDurFormatter(entry)
     local bands = (entry.mode == "duration") and TextBands(entry) or nil
     -- stock "down": the engine's own duration text drops the fraction, so
     -- the default "up" rounding needs a formatter here (Settings > Timers)
-    return NS.Factory.TimerFormatter(decTo, bands, nil, "down", BarRounding(rec))
+    return NS.Factory.TimerFormatter(decTo, bands, R(rec, "text", "durAbbrev") or 0, "down",
+        BarRounding(rec))
 end
 
 -- The stack count from 1: the engine's default hides 0 and 1; this one hides
@@ -4205,7 +4217,7 @@ local function AuraPlan(entry)
     -- the Settings > Timers rounding with it
     parts[#parts + 1] = "t" .. ((R(rec, "text", "durDecimalsEnabled") == true)
         and (R(rec, "text", "durDecimalThreshold") or 10) or 0)
-        .. BarRounding(rec)
+        .. BarRounding(rec) .. "a" .. (R(rec, "text", "durAbbrev") or 0)
     parts[#parts + 1] = (R(rec, "fill", "smoothing") ~= false) and "sm" or "im"
     parts[#parts + 1] = "d" .. (AuraTextWanted(entry, "dur") and 1 or 0)
         .. "k" .. (AuraTextWanted(entry, "stk") and 1 or 0)
@@ -4886,7 +4898,18 @@ local function EnsureSharedEvents()
         end)
     end
 
-    Events.On("SPELL_UPDATE_COOLDOWN", "adbars", function()
+    Events.On("SPELL_UPDATE_COOLDOWN", "adbars", function(_, spellID, baseSpellID)
+        -- a wand shot's own update carries only its lock: only the bars tracking
+        -- the wand itself re-read (it is their cooldown)
+        local dc = NS.DriverCooldown
+        if dc and (dc.IsWandShot(spellID) or dc.IsWandShot(baseSpellID)) then
+            Events.Coalesce("adbars_cdwand", function()
+                ForEach("cooldown", function(e)
+                    if dc.IsWandShot(SpellIDFor(e.rec)) then CooldownRefresh(e) end
+                end)
+            end)
+            return
+        end
         Events.Coalesce("adbars_cd", function() ForEach("cooldown", CooldownRefresh) end)
     end)
     Events.On("SPELL_UPDATE_CHARGES", "adbars", function()
@@ -4914,6 +4937,7 @@ local function EnsureSharedEvents()
     -- timer bars' trigger
     Events.On("UNIT_SPELLCAST_SUCCEEDED", "adbars", function(_, unit, _, spellID)
         if unit ~= "player" then return end
+        if NS.DriverCooldown then NS.DriverCooldown.NoteCast(spellID) end
         ForEach(nil, function(e)
             local d = e.rec.driver
             if e.rec.barKind == "cooldown" then
@@ -5030,6 +5054,7 @@ function Bars.Refresh(barId)
     elseif kind == "swing" then
         SwingRangeSync()
         SwingRefresh(e)
+        if Bars.SwingOH then Bars.SwingOH.Refresh(e) end
     elseif kind == "aura" then
         if e.auraSub then
             AuraPresenceSync(e)
@@ -5209,6 +5234,7 @@ function Bars.Release(barId)
     HB.Disarm()                -- the last health bar takes its events with it
     local KX = Bars.KINDS[e.kind]
     if KX and KX.Release then KX.Release(e) end
+    if e.kind == "swing" and Bars.SwingOH then Bars.SwingOH.Release(e) end
     ReleaseSharedEvents()
     ReleaseSwingEvents()
     ReleasePredictEvents()
@@ -5339,18 +5365,20 @@ function PV.Length(e)
 end
 
 -- the countdown as the live text would read it (plain math: the preview's
--- own clock). The aura engine's stock text adds " s"; decimals or colour
--- bands switch it to the shared formatter's bare number.
+-- own clock). The aura engine's stock text adds " s"; decimals, M:SS or
+-- colour bands switch it to the shared formatter's bare numbers.
 function PV.DurText(e, remaining)
     if remaining <= 0 then return "" end
     local rec = e.rec
     local decOn = R(rec, "text", "durDecimalsEnabled") == true
     local decTo = R(rec, "text", "durDecimalThreshold") or 10
-    if decOn and remaining < decTo then return string.format("%.1f", remaining) end
+    local abbrev = R(rec, "text", "durAbbrev") or 0
     local down = BarRounding(rec) == "down"
+    if decOn or abbrev > 60 or TextBands(e) ~= nil then
+        return NS.Factory.FormatCountdown(remaining, decOn and decTo or 0, abbrev, down)
+    end
     local s = down and math.floor(remaining) or math.ceil(remaining)
-    local bare = decOn or (TextBands(e) ~= nil)
-    return bare and tostring(s) or (tostring(s) .. " s")
+    return tostring(s) .. " s"
 end
 
 -- the duration band colour a plain remaining fraction falls in (the timer
@@ -5665,6 +5693,7 @@ function PV.Apply(e, fresh)
         elseif fresh or not (e.running or e.pvRestartAt) then
             PV.RunTimed(e)
         end
+        if kind == "swing" and Bars.SwingOH then Bars.SwingOH.Preview(e, loop, fresh) end
     elseif Bars.KINDS[kind] and Bars.KINDS[kind].PreviewApply then
         Bars.KINDS[kind].PreviewApply(e, loop, t, fresh)
     end
@@ -5817,6 +5846,8 @@ function PV.TickOne(e, paint)
     if not e then return end
     if e.kind == "swing" or e.kind == "timer" then
         if not e.running and e.pvRestartAt and GetTime() >= e.pvRestartAt then PV.RunTimed(e) end
+        -- the off-hand track keeps its own clock, half a swing behind
+        if e.kind == "swing" and Bars.SwingOH then Bars.SwingOH.Preview(e, true, false) end
     elseif paint then
         PV.Apply(e, false)
     end
@@ -5880,7 +5911,7 @@ Bars._PV = PV
 SLASH_ADBARS1 = "/adbars"
 SlashCmdList.ADBARS = function(msg)
     if msg ~= "diag" then
-        print("|cff3fc9f2Arc UI Forever bars:|r /adbars diag - print the timer-path diagnosis")
+        print("|cff3fc9f2Arc Auras bars:|r /adbars diag - print the timer-path diagnosis")
         return
     end
     local count, fill = 0, nil
@@ -5888,7 +5919,7 @@ SlashCmdList.ADBARS = function(msg)
         count = count + 1
         if e.kind == "cooldown" and not fill then fill = e.shell.fill end
     end
-    print("|cff3fc9f2Arc UI Forever bars diag|r")
+    print("|cff3fc9f2Arc Auras bars diag|r")
     print("  live bars: " .. count)
     print("  HAS_TIMER_API: " .. tostring(HAS_TIMER_API))
     print("  interp smooth/none: " .. tostring(INTERP_SMOOTH) .. " / " .. tostring(INTERP_NONE))
@@ -5964,4 +5995,5 @@ Bars.Kit = {
     LayoutTicks = LayoutTicks, BarColorOf = BarColorOf, BarRounding = BarRounding,
     FeedStatusBarTimer = FeedStatusBarTimer, SafeOn = SafeOn,
     ResolveBarTexture = ResolveBarTexture, WHITE = WHITE,
+    SwingHandExists = SwingHandExists,
 }

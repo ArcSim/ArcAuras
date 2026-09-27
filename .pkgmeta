@@ -1,5 +1,10 @@
-# Ships as ArcUI: the folder name picks the toc and the SavedVariables file.
-package-as: ArcUI
+# Ships as ArcAuras: the folder name picks the toc and the SavedVariables file.
+package-as: ArcAuras
+
+# The ArcUI stand-in ships beside it, so installing Arc Auras always loads the
+# old Arc UI Forever save (ArcUI.lua) for the move, and replaces the old addon.
+move-folders:
+  ArcAuras/Bridge/ArcUI: ArcUI
 
 manual-changelog:
   filename: CHANGELOG.md
@@ -14,6 +19,8 @@ ignore:
   - README.md
   - "*.bak"
   - Textures/ArcUI_Icon_400x400.tga
+  - Textures/ArcUI_Icon_Dial_256.tga
+  - Textures/ArcUI_Minimap_64.tga
   - Libs/LibCustomGlow-1.0/README.md
   - Libs/LibCustomGlow-1.0/cspell.json
   - Libs/LibCustomGlow-1.0/LibCustomGlow-1.0_old.xml

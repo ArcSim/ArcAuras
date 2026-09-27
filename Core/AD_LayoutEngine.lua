@@ -133,6 +133,33 @@ local function MemberSize(rec, baseW, baseH)
     return w, h
 end
 
+-- The size the engine gives an icon, from the records alone (a group's slot
+-- with the same Snap math as PlaceGroup, a free icon's own): the options
+-- preview draws the icon at it.
+function Engine.IconSize(rec)
+    local bw, bh = 36, 36
+    local g = rec and rec.groupId and Store.Get(rec.groupId)
+    if g then
+        local R = function(field) return Store.Resolve(g, "arrangement", field) end
+        local scale = math.floor((R("iconSize") or 36) + 0.5) / 36
+        bw = Snap(math.floor((R("iconWidth") or 36) * scale + 0.5))
+        bh = Snap(math.floor((R("iconHeight") or 36) * scale + 0.5))
+    end
+    local w, h = MemberSize(rec, bw, bh)
+    return Snap(w), Snap(h)
+end
+
+-- Play on screen draws a copy over the icon (UI\AD_IconScreen), so the live
+-- frame stays hidden under it through every rebuild.
+local function ShowIcon(f, rec)
+    local scr = NS.IconScreen
+    if scr and scr.Follow(rec, f) then
+        f:Hide()
+    else
+        f:Show()
+    end
+end
+
 local function ApplyIconPosition(f, rec, parent, cx, cy, baseW, baseH)
     local Rp = function(k) return Store.Resolve(rec, "position", k) end
     local w, h = MemberSize(rec, baseW, baseH)
@@ -1403,7 +1430,7 @@ local function PlaceGroup(group, container, flowMode)
         Factory.ApplyMouse(f, editMode, rec)
         Factory.SetEditMode(f, rec, editMode)
         GhostTag(f, rec)
-        f:Show()
+        ShowIcon(f, rec)
     end
     end
 
@@ -1556,7 +1583,7 @@ function Engine.Rebuild()
                     Factory.ApplyMouse(f, editMode, rec)
                     Factory.SetEditMode(f, rec, editMode)
                     GhostTag(f, rec)
-                    f:Show()
+                    ShowIcon(f, rec)
                 else
                     if NS.Anchor then NS.Anchor.Unregister(rec.id) end
                     Factory.Release(rec.id)

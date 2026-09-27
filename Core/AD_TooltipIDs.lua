@@ -7,7 +7,7 @@ local ADDON, NS = ...
 NS.TooltipIDs = {}
 local T = NS.TooltipIDs
 
-local HEADER = "|cff3fc9f2Arc UI Forever IDs|r"
+local HEADER = "|cff3fc9f2Arc Auras IDs|r"
 local KEY_COLOR = "|cffffd100"
 
 local function Enabled()

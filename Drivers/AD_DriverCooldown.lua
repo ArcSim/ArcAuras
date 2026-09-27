@@ -28,6 +28,35 @@ local function MakeShadow()
     return w
 end
 
+-- A wand shot locks every spell for about a second and the game does not flag
+-- it as the GCD: isOnGCD stays false and the ignoreGCD read is live. Casting
+-- anything else stops the wand, so while a wand shot is the latest cast, a new
+-- cooldown can only be that lock.
+local WAND_SHOTS = { [5019] = true }
+local WAND_LOCK_MAX = 3      -- seconds; longer than any wand's lock
+local WAND_CAST_GAP = 0.25   -- a cast this close before the shot may still be landing its cooldown
+local wandShotAt, otherCastAt = 0, 0
+
+function Driver.IsWandShot(spellID)
+    if issecretvalue and issecretvalue(spellID) then return false end
+    return WAND_SHOTS[spellID] == true
+end
+
+-- Every player cast is noted here; the cooldown bars call it too. A secret
+-- spell ID counts as another cast, so a real cooldown is never ignored.
+function Driver.NoteCast(spellID)
+    if Driver.IsWandShot(spellID) then
+        wandShotAt = GetTime()
+    else
+        otherCastAt = GetTime()
+    end
+end
+
+function Driver.WandLocked()
+    return wandShotAt - otherCastAt > WAND_CAST_GAP
+        and GetTime() - wandShotAt < WAND_LOCK_MAX
+end
+
 -- Forward declarations, above every user: a closure compiled before its local
 -- is declared reads the (nil) global of that name instead.
 local Feed
@@ -284,7 +313,7 @@ SLASH_ADKEYS1 = "/adkeys"
 SlashCmdList.ADKEYS = function(msg)
     msg = (msg or ""):gsub("^%s+", ""):gsub("%s+$", "")
     if msg == "" then
-        print("|cff3fc9f2Arc UI Forever keys:|r /adkeys <spell id or name> - list the bar buttons that hold it")
+        print("|cff3fc9f2Arc Auras keys:|r /adkeys <spell id or name> - list the bar buttons that hold it")
         return
     end
     local wantID = tonumber(msg)
@@ -293,7 +322,7 @@ SlashCmdList.ADKEYS = function(msg)
         local nm = C_Spell.GetSpellName(wantID)
         if nm and nm ~= "" then wantName = nm:lower() end
     end
-    print(("|cff3fc9f2Arc UI Forever keys|r for %s (cache %s, by-name index %s)"):format(
+    print(("|cff3fc9f2Arc Auras keys|r for %s (cache %s, by-name index %s)"):format(
         msg, kbDirty and "stale" or "built", NS.IsForever and "on" or "off"))
     local n = 0
     for _, bar in ipairs(KB_BARS) do
@@ -442,12 +471,23 @@ Feed = function(a)
     if issecretvalue and issecretvalue(en) then en = nil end
     local disabled = (en == false)
 
+    -- The wand's lock is ignored like the GCD. A cooldown already running keeps
+    -- its own timing (the lock could only stretch its tail): nothing is re-pushed.
+    -- Running means the last pushed state says so: a new shadow shows before
+    -- its first feed. On the wand's own icon the lock is its real cooldown.
+    local wandLock = Driver.WandLocked() and not Driver.IsWandShot(sid)
+    local hold = wandLock and a.lastM == true and a.sCD:IsShown() == true
+    local wandGCD = wandLock and not hold
+    if wandGCD then onGcd = true end
+
     -- Shadows always ignore the GCD: state must not see it.
-    local mainDur = C_Spell.GetSpellCooldownDuration(sid, true)
-    if mainDur and not onGcd and not disabled then
-        a.sCD:SetCooldownFromDurationObject(mainDur, true)
-    else
-        a.sCD:Clear()
+    if not hold then
+        local mainDur = C_Spell.GetSpellCooldownDuration(sid, true)
+        if mainDur and not onGcd and not disabled then
+            a.sCD:SetCooldownFromDurationObject(mainDur, true)
+        else
+            a.sCD:Clear()
+        end
     end
     if a.isCharge and C_Spell.GetSpellChargeDuration then
         local chargeDur = C_Spell.GetSpellChargeDuration(sid, true)
@@ -460,14 +500,18 @@ Feed = function(a)
 
     local m = a.sCD:IsShown() == true
     local c = a.isCharge and a.sCharge:IsShown() == true or false
-    local noGCD = Store.Resolve(a.rec, "swipe", "noGCDSwipe") == true
+    -- How this GCD spin draws; the wand's lock has its own look.
+    local look = Store.Resolve(a.rec, "swipe", wandGCD and "wandSwipe" or "gcdSwipe")
+    local noGCD = (look or "hidden") == "hidden"
 
     -- Visible swipe. The shadows ignore the GCD, so a duration that lands while
     -- both are clear is the GCD (or a GCD-length blip): pureGCD draws it as an
     -- edge only, not the dark fill.
     local cooldown = a.frame.cooldown
     local pureGCD = false
-    if a.isCharge then
+    if hold then
+        -- the running cooldown keeps the swipe it was given
+    elseif a.isCharge then
         if c and not m then
             local dur = C_Spell.GetSpellChargeDuration(sid, true)
             if dur then cooldown:SetCooldownFromDurationObject(dur, true)
@@ -491,11 +535,11 @@ Feed = function(a)
         else cooldown:Clear() end
     end
     -- hidden GCD: one settled re-feed at its end picks up whatever real
-    -- cooldown started underneath it
-    if noGCD and onGcd then SchedulePostGCDRepush(a) end
+    -- cooldown started underneath it (none can start under the wand's lock)
+    if noGCD and onGcd and not wandGCD then SchedulePostGCDRepush(a) end
     -- Recharging (a charge left, another on its way): the wait-for-no-charges
     -- options can suppress the dark fill and edge there.
-    Factory.SetGCDPresentation(a.frame, a.rec, pureGCD, a.isCharge and c and not m)
+    Factory.SetGCDPresentation(a.frame, a.rec, pureGCD, a.isCharge and c and not m, wandGCD)
 
     Factory.SetChargeText(a.frame, a.rec, sid, a.isCharge)
     -- charges-available flag for hide-duration-with-charges (shadow-derived)
@@ -513,6 +557,18 @@ end
 local function FeedCharges()
     for _, a in pairs(attached) do
         if a.isCharge then Feed(a) end
+    end
+end
+
+-- A wand shot's own update: only the icons tracking the wand itself (the update
+-- carries their cooldown) or drawing its lock re-read.
+local function FeedWandLooks()
+    for _, a in pairs(attached) do
+        local sid = a.effSid or (a.rec.driver and a.rec.driver.spellID)
+        if Driver.IsWandShot(sid)
+            or (Store.Resolve(a.rec, "swipe", "wandSwipe") or "hidden") ~= "hidden" then
+            Feed(a)
+        end
     end
 end
 
@@ -706,7 +762,12 @@ local registered = false
 local function EnsureEvents()
     if registered then return end
     registered = true
-    Events.On("SPELL_UPDATE_COOLDOWN", "adcd", function()
+    Events.On("SPELL_UPDATE_COOLDOWN", "adcd", function(_, spellID, baseSpellID)
+        -- a wand shot's own update carries only its lock
+        if Driver.IsWandShot(spellID) or Driver.IsWandShot(baseSpellID) then
+            Events.Coalesce("adcd_feedwand", FeedWandLooks)
+            return
+        end
         Events.Coalesce("adcd_feedall", FeedAll)
     end)
     Events.On("SPELL_UPDATE_CHARGES", "adcd", function()
@@ -714,6 +775,7 @@ local function EnsureEvents()
     end)
     Events.On("UNIT_SPELLCAST_SUCCEEDED", "adcd", function(_, unit, _, spellID)
         if unit ~= "player" then return end
+        Driver.NoteCast(spellID)
         for _, a in pairs(attached) do
             -- the cast carries the rank / override id (Auto rank)
             if a.rec.driver and (a.rec.driver.spellID == spellID

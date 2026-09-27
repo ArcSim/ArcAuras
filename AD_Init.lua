@@ -34,6 +34,8 @@ loader:SetScript("OnEvent", function(self, event, arg1)
         if NS.Store.AdoptLiveSV() then
             NS.LayoutEngine.QueueRebuild()
         end
+        -- Entering the world closes every Escape-closable window, so open it after.
+        if NS.Migrate and NS.Migrate.OldEngineLoaded() then C_Timer.After(1, NS.Migrate.ShowNotice) end
     end
 end)
 
@@ -54,12 +56,15 @@ local function SeedDemo()
     return layout
 end
 
-SLASH_ARCUIVTWO1 = "/arcui2"
-SLASH_ARCUIVTWO2 = "/aui2"
+-- The old Arc UI Forever commands keep working. The numbers stay gapless: the
+-- chat frame stops reading at the first missing one.
+SLASH_ARCUIVTWO1 = "/arcauras"
+SLASH_ARCUIVTWO2 = "/arcui2"
+SLASH_ARCUIVTWO3 = "/aui2"
 -- Forever has no retail ArcUI, so /arcui and /aui open this addon there too.
 if NS.IsForever then
-    SLASH_ARCUIVTWO3 = "/arcui"
-    SLASH_ARCUIVTWO4 = "/aui"
+    SLASH_ARCUIVTWO4 = "/arcui"
+    SLASH_ARCUIVTWO5 = "/aui"
 end
 SlashCmdList["ARCUIVTWO"] = function(msg)
     msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
@@ -73,7 +78,7 @@ SlashCmdList["ARCUIVTWO"] = function(msg)
     -- Chat output only ever answers a command the player typed.
     if msg == "plate" and NS.Anchor and NS.Anchor.PlateReport then
         for _, line in ipairs(NS.Anchor.PlateReport()) do
-            print("|cff3fc9f2Arc UI Forever:|r " .. line)
+            print("|cff3fc9f2Arc Auras:|r " .. line)
         end
         return
     end

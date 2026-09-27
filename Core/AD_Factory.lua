@@ -414,6 +414,7 @@ function Factory.GetCountdownFormatter(decTo, bands, abbrev, roundMode)
         Round = Enum.NumericRuleFormatRounding and Enum.NumericRuleFormatRounding.Down
     end
     local f = C_StringUtil.CreateNumericRuleFormatter()
+    if not f then return nil end
     for _, lo in ipairs(edges) do
         -- band color for [lo, next): the first band whose edge is above lo
         local esc
@@ -506,6 +507,23 @@ function Factory.TimerFormatter(decTo, bands, abbrev, stock, roundMode)
     stock = stock or "up"
     if mode == stock then return nil end
     return PlainTimerFormatter(mode, stock == "down")
+end
+
+-- The same rules in plain Lua, for countdowns our own GetTime math drives
+-- (timer and swing bars): seconds, tenths under decTo, M:SS under abbrev,
+-- then minutes and hours; whole units round the way roundDown says.
+function Factory.FormatCountdown(t, decTo, abbrev, roundDown)
+    local Rn = roundDown and math.floor or math.ceil
+    if t >= 3600 then return string.format("%d h", Rn(t / 3600)) end
+    if t >= 60 then
+        if (abbrev or 0) > 60 and t < abbrev then
+            local s = math.floor(t)
+            return string.format("%d:%02d", math.floor(s / 60), s % 60)
+        end
+        return string.format("%d m", Rn(t / 60))
+    end
+    if (decTo or 0) > 0 and t < decTo then return string.format("%.1f", t) end
+    return string.format("%d", Rn(t))
 end
 
 -- The icon's countdown formatter and signature (holder and aura button alike).
@@ -610,9 +628,12 @@ end
 function Factory.Release(id)
     local f = frames[id]
     if f then
+        -- an icon leaving the screen takes its Play on screen copy with it
+        if NS.IconScreen and NS.IconScreen.On(id) then NS.IconScreen.Stop() end
         Factory.StopGlow(f)   -- ready + proc + aura lanes
         Factory.StopUsableGlow(f)
         f._adPureGCD = nil   -- pooled frames must not carry GCD presentation
+        f._adPureWand = nil
         f._adRecharging = nil
         f._adTipsOn = nil
         f:Hide()
@@ -628,6 +649,8 @@ local function ApplySwipeAlpha(f)
     -- The shown alpha (with the editing floor), not the raw state value.
     local a = f._adShownAlpha or f._adStateAlpha or 1
     local sc = f._adSwipeColor
+    -- a GCD or wand spin draws in its own colour
+    if f._adPureGCD then sc = (f._adPureWand and f._adWandSwipeColor or f._adGcdSwipeColor) or sc end
     if sc then f.cooldown:SetSwipeColor(sc[1], sc[2], sc[3], (sc[4] or 0.8) * a) end
     local ec = f._adEdgeColor
     if ec and f.cooldown.SetEdgeColor then
@@ -672,19 +695,25 @@ end
 -- holder and the live aura button so an aura icon's two borders match. They
 -- grow inward from the offset line (negative = outside); thickness snaps to
 -- whole pixels with a 1px floor, the offset with none. A secret scale would
--- throw inside PixelUtil, so UIParent's stands in.
+-- throw inside PixelUtil, so UIParent's stands in. A scaled preview snaps on
+-- its _adPxRef's grid, as the live icon does, floored at one own pixel.
 local function PaintBorderEdges(edges, anchor, rec, alpha, geometryOnly)
     local R = function(section, field) return Store.Resolve(rec, section, field) end
     local c = R("appearance", "borderColor") or { 0, 0, 0, 1 }
     local th = R("appearance", "borderThickness") or 2
     local off = R("appearance", "borderInset") or -3
     if PixelUtil and PixelUtil.GetNearestPixelSize then
-        local es = anchor:GetEffectiveScale()
+        local ref = anchor._adPxRef
+        local es = (ref or anchor):GetEffectiveScale()
         if es == nil or (issecretvalue and issecretvalue(es)) then
             es = UIParent:GetEffectiveScale()
         end
         th = PixelUtil.GetNearestPixelSize(th, es, 1)
         off = PixelUtil.GetNearestPixelSize(off, es, 0)
+        if ref then
+            local own = PixelUtil.GetNearestPixelSize(0, anchor:GetEffectiveScale(), 1)
+            if th < own then th = own end
+        end
     end
     edges.top:ClearAllPoints()
     edges.top:SetPoint("TOPLEFT", anchor, "TOPLEFT", off, -off)
@@ -818,8 +847,9 @@ local function ApplyShadow(host, key, art, rec, w, h, alpha, show)
     local size = Store.Resolve(rec, "appearance", "shadowSize") or 1
     local ox, oy = (w or 36) * 0.18 * size, (h or 36) * 0.16 * size
     if PixelUtil and PixelUtil.GetNearestPixelSize then
-        -- A secret scale falls back to UIParent's.
-        local es = host:GetEffectiveScale()
+        -- A secret scale falls back to UIParent's; a preview snaps like the
+        -- live icon (PaintBorderEdges).
+        local es = (host._adPxRef or host):GetEffectiveScale()
         if es == nil or (issecretvalue and issecretvalue(es)) then
             es = UIParent:GetEffectiveScale()
         end
@@ -903,13 +933,17 @@ function Factory.ApplyBorder(f, rec, bump, forceHide)
 end
 
 -- The one writer of the cooldown draw flags (style and per-feed passes). Pure
--- GCD: the edge line only. Recharging: the wait-for-no-charges options may
--- drop the fill and the edge. Otherwise the player's swipe settings.
+-- GCD: the GCD's look, or the wand's for its lock (the driver clears a hidden
+-- one). Recharging: the wait-for-no-charges options may drop the fill and the
+-- edge. Otherwise the player's swipe settings.
 local function ApplyCdPresentation(f, rec)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
     local ds, de, db
     if f._adPureGCD then
-        ds, de, db = false, true, false
+        local look = R("swipe", f._adPureWand and "wandSwipe" or "gcdSwipe")
+        ds = look == "swipe" or look == "both"
+        de = look == "edge" or look == "both"
+        db = false
     else
         ds = R("swipe", "showSwipe") ~= false
         de = R("swipe", "showEdge") ~= false
@@ -922,6 +956,8 @@ local function ApplyCdPresentation(f, rec)
     f.cooldown:SetDrawSwipe(ds)
     f.cooldown:SetDrawEdge(de)
     f.cooldown:SetDrawBling(db)
+    -- the swipe colour follows the presentation
+    ApplySwipeAlpha(f)
 end
 
 -- Texcoords: aspect crop first, then zoom, centered.
@@ -1081,6 +1117,8 @@ function Factory.ApplyStyle(f, rec)
         -- Cached for the state dim; ApplySwipeAlpha writes them scaled.
         local sc = R("swipe", "swipeColor") or { 0, 0, 0, 0.8 }
         f._adSwipeColor = sc
+        f._adGcdSwipeColor = R("swipe", "gcdSwipeColor") or { 0, 0, 0, 0.5 }
+        f._adWandSwipeColor = R("swipe", "wandSwipeColor") or { 0, 0, 0, 0.5 }
         if f.cooldown.SetEdgeScale then
             -- 1.8 = the Cooldown Manager's edge length; the template's is 1.0.
             f.cooldown:SetEdgeScale(R("swipe", "edgeScale") or 1.8)
@@ -1162,6 +1200,7 @@ function Factory.ApplyStyle(f, rec)
         st.fs = fs
         st.ready = R("label", "labelShowReady" .. suf) ~= false
         st.cd = R("label", "labelShowCooldown" .. suf) ~= false
+        st.activeOnly = rec.kind == "aura" and R("label", "labelActiveOnly" .. suf) == true
         local ltext = R("label", "labelText" .. suf)
         if fs and ltext and ltext ~= "" then
             fs:SetFont(IconFont(R("label", "labelFont")),
@@ -1345,6 +1384,35 @@ function Factory.StyleAuraButton(b, rec, px, opts)
         rec.kind == "aura" and not forceHide and R("appearance", "dispelBorder") == true, aA)
     -- The live icon's own border; the holder carries the ghost copy.
     ApplyAuraButtonBorder(b, rec, R("appearance", "borderEnabled") and not forceHide and not dispelOn, aA)
+    -- Labels kept to the aura's time ride the button, which the game shows
+    -- exactly while the aura is up; the holder's copies stand down (SetState).
+    b._adLabelFS = b._adLabelFS or {}
+    local lhost = b.TextOverlay or b
+    for i, suf in ipairs({ "", "2", "3" }) do
+        local fs = b._adLabelFS[i]
+        local ltext = R("label", "labelText" .. suf)
+        if rec.kind == "aura" and R("label", "labelActiveOnly" .. suf) == true
+            and ltext and ltext ~= "" then
+            if not fs then
+                fs = lhost:CreateFontString(nil, "OVERLAY")
+                fs:SetDrawLayer("OVERLAY", 7)
+                b._adLabelFS[i] = fs
+            end
+            fs:SetFont(IconFont(R("label", "labelFont")),
+                math.max(6, math.floor((R("label", "labelSize" .. suf) or 12) * kS + 0.5)), "OUTLINE")
+            local lc = R("label", "labelColor" .. suf) or { 1, 1, 1, 1 }
+            fs:SetTextColor(lc[1], lc[2], lc[3], (lc[4] or 1) * textA)
+            local an = R("label", "labelAnchor" .. suf) or "CENTER"
+            fs:ClearAllPoints()
+            fs:SetPoint(an, b, an, (R("label", "labelX" .. suf) or 0) * kS,
+                (R("label", "labelY" .. suf) or 0) * kS)
+            fs:SetText(ltext)
+            fs:Show()
+        elseif fs then
+            fs:SetText("")
+            fs:Hide()
+        end
+    end
     Factory.SetAuraButtonGlow(b, rec, (not forceHide) and R("auraActive", "activeGlow") == true,
         opts.w or px, opts.h or px, aA)
 end
@@ -1998,8 +2066,15 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     if f._adLabels then
         for _, st in ipairs(f._adLabels) do
             if st.has and st.fs then
-                st.fs:SetShown((onCooldown and st.cd)
-                    or ((not onCooldown) and st.ready))
+                if rec.kind == "aura" then
+                    -- The live holder always wears the missing look, so a label
+                    -- kept to the aura's time shows here only in the editor
+                    -- preview's active phase; live, its copy rides the button.
+                    st.fs:SetShown(not (st.activeOnly and onCooldown))
+                else
+                    st.fs:SetShown((onCooldown and st.cd)
+                        or ((not onCooldown) and st.ready))
+                end
             end
         end
     end
@@ -2561,17 +2636,21 @@ function Factory.SetKeybindText(f, txt)
 end
 
 -- GCD presentation, set by the cooldown driver per feed. pure = a GCD-only spin
--- (the shadows see no real cooldown): the edge line only, no fill or bling, as
--- the Cooldown Manager draws it. A real cooldown restores the swipe settings.
-function Factory.SetGCDPresentation(f, rec, pure, recharging)
+-- (the shadows see no real cooldown), drawn in the GCD look; wand = that spin
+-- is the wand's lock, drawn in the wand look. A real cooldown restores the
+-- swipe settings.
+function Factory.SetGCDPresentation(f, rec, pure, recharging, wand)
     pure = pure and true or false
     recharging = recharging and true or false
+    wand = (pure and wand) and true or false
     if (f._adPureGCD or false) == pure
-        and (f._adRecharging or false) == recharging then
+        and (f._adRecharging or false) == recharging
+        and (f._adPureWand or false) == wand then
         return
     end
     f._adPureGCD = pure
     f._adRecharging = recharging
+    f._adPureWand = wand
     ApplyCdPresentation(f, rec)
 end
 
@@ -2600,7 +2679,7 @@ function Factory.ShowTooltip(f, rec)
     elseif kind == "totem" and GameTooltip.SetTotem then
         GameTooltip:SetTotem(d.slot or 1)
     else
-        GameTooltip:SetText(rec.name or "Arc UI Forever")
+        GameTooltip:SetText(rec.name or "Arc Auras")
     end
     GameTooltip:Show()
 end
@@ -2669,7 +2748,7 @@ SLASH_ADSTATE1 = "/adstate"
 SlashCmdList.ADSTATE = function(msg)
     msg = (msg or ""):gsub("^%s+", ""):gsub("%s+$", ""):lower()
     if msg == "" then
-        print("|cff3fc9f2Arc UI Forever state:|r /adstate <icon name> - print that icon's live alpha ladder")
+        print("|cff3fc9f2Arc Auras state:|r /adstate <icon name> - print that icon's live alpha ladder")
         return
     end
     local n = 0

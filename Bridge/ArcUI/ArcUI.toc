@@ -1,0 +1,10 @@
+## Interface: 16001
+## Title: |cff3fc9f2Arc|r UI Forever (now Arc Auras)
+## Notes: Carries your Arc UI Forever setup over to Arc Auras. Keep it installed next to Arc Auras.
+## Author: Arc
+## Version: @project-version@
+## IconTexture: Interface\AddOns\ArcUI\ArcAuras_Icon
+## SavedVariables: ArcUIv2DB
+## X-Bridge: 1
+
+ArcUI_Bridge.lua

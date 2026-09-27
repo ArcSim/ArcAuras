@@ -824,6 +824,8 @@ local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
         return v == want
     end
     for _, field in ipairs(keys) do
+        -- a slice boundary while the loader runs the first build
+        Options.BuildYield()
         local def = sec.fields[field]
         -- Every gate but the dep: the settings search reads this, so it still
         -- finds a row a dep hides.
@@ -837,7 +839,10 @@ local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
             elseif not Schema.Applies(def, sec, Store.KindOf(rec), rec.barMode) then
                 return false
             end
-            if def.classOnly and def.classOnly ~= Store.ClassTag() then return false end
+            -- classOnly: one class tag, or a set of them
+            local co = def.classOnly
+            if co and co ~= Store.ClassTag()
+                and not (type(co) == "table" and co[Store.ClassTag() or ""]) then return false end
             if def.foreverOnly and NS.IsForever ~= true then return false end
             if def.groupOnly and not rec.groupId and not tier then return false end
             return true
@@ -1367,6 +1372,7 @@ local COND_RESTART = "Type /reload once to turn these on."
 local function CondGrid(pg, ctx, visible, list)
     local C = NS.Conditions
     for _, cat in ipairs(C.CATEGORIES) do
+        Options.BuildYield()
         local defs = {}
         for _, d in ipairs(C.VOCAB) do
             if d.cat == cat.id then defs[#defs + 1] = d end
@@ -4128,9 +4134,11 @@ local function IconTabVisible(tabName)
 end
 
 -- Live icon preview: a real factory frame restyled on every refresh (the row's
--- _sync), so drags and colour picks show at once. Aura icons get a stand-in
--- engine button over the holder's missing look, as live. The OnUpdate runs only
--- in a loop mode. Text drops write X / Y in units of a 36px icon.
+-- _sync), so drags and colour picks show at once. It is the icon at its real
+-- size on a scaled host (PreviewFit), so borders keep the live proportions.
+-- Aura icons get a stand-in engine button over the holder's missing look, as
+-- live. The OnUpdate runs only in a loop mode. Text drops write X / Y in units
+-- of a 36px icon. Play on screen paints a copy over the live icon too.
 local PREV_SIZE, PREV_CD, PREV_READY = 96, 6, 2.6
 local prevIcon, prevBand, prevChips, prevHandles
 local prevPhase, prevT, prevStyleT = "ready", 0, 0
@@ -4195,18 +4203,43 @@ end
 
 -- The stand-in engine button for aura previews, built and styled by the live
 -- recipe (DriverAura.WireButton and AnchorButton, Factory.StyleAuraButton; the
--- two widget setters are no-ops). Parented to the pane, as live, so the missing
--- look's alpha never dims it.
-function Options.PreviewAuraButton()
-    local b = prevIcon._adAuraBtn
-    if b then return b end
-    b = CreateFrame("Frame", nil, prevBand)
-    b.SetIcon = function() end
-    b.SetDurationCooldown = function() end
-    NS.DriverAura.WireButton(b)
-    b:Hide()
-    prevIcon._adAuraBtn = b
+-- two widget setters are no-ops). One per preview frame (the pane's, or the
+-- on-screen copy's), parented beside it as live, so the missing look's alpha
+-- never dims it; it snaps on the same pixel grid as its holder.
+function Options.PreviewAuraButton(f)
+    f = f or prevIcon
+    local b = f._adAuraBtn
+    if not b then
+        b = CreateFrame("Frame", nil, f:GetParent())
+        b.SetIcon = function() end
+        b.SetDurationCooldown = function() end
+        NS.DriverAura.WireButton(b)
+        b:Hide()
+        f._adAuraBtn = b
+    end
+    if b:GetParent() ~= f:GetParent() then b:SetParent(f:GetParent()) end
+    b._adPxRef = f._adPxRef
     return b
+end
+
+-- The Play on screen copy while it plays this icon, else nil.
+function Options.PreviewCopy(rec)
+    local S = NS.IconScreen
+    if S and rec and S.On(rec.id) then return S.copy end
+    return nil
+end
+
+-- A new mode starts clean: no cooldown, and an aura loop's fake duration
+-- afresh (a frozen Aura up swipe thaws).
+function Options.PreviewReset(f)
+    if not f then return end
+    f.cooldown:Clear()
+    local ab = f._adAuraBtn
+    if ab then
+        if ab._adSwipe.Resume then ab._adSwipe:Resume() end
+        ab._adSwipe:Clear()
+        ab._adLoopUntil = nil
+    end
 end
 
 local function PreviewFS(d)
@@ -4243,57 +4276,62 @@ local function PreviewSyncHandles()
     end
 end
 
-local function PreviewRestyle(rec)
+-- f: the pane's preview (default) or the on-screen copy; both take the same
+-- look, at their own size.
+local function PreviewRestyle(rec, f)
+    f = f or prevIcon
     -- an aura icon's holder has no cooldown glow lanes (its glow is the
     -- live button's)
-    prevIcon._adGlowLaneOnly = (rec.kind == "aura") and "none" or PreviewGlowLane(rec)
-    Factory.ApplyStyle(prevIcon, rec)
-    if prevIcon.stackText:IsShown() then prevIcon.stackText:SetText("2") end
+    f._adGlowLaneOnly = (rec.kind == "aura") and "none" or PreviewGlowLane(rec)
+    Factory.ApplyStyle(f, rec)
+    if f.stackText:IsShown() then f.stackText:SetText("2") end
     -- the preview shows a real ammo count so the styling reads true
-    if prevIcon.ammoText and prevIcon.ammoText:IsShown() then
-        prevIcon.ammoText:SetText(GetInventoryItemCount("player", NS.AMMO_SLOT or 0) or 0)
+    if f.ammoText and f.ammoText:IsShown() then
+        f.ammoText:SetText(GetInventoryItemCount("player", NS.AMMO_SLOT or 0) or 0)
     end
     -- The key on your bars, else a stand-in so the text can still be placed.
     local kb = NS.DriverCooldown and NS.DriverCooldown.KeybindTextFor
         and NS.DriverCooldown.KeybindTextFor(rec)
     if not kb and Factory.KeybindEnabled(rec) then kb = "s-1" end
-    Factory.SetKeybindText(prevIcon, kb)
+    Factory.SetKeybindText(f, kb)
     -- Aura icon: the count belongs to the engine button, and the stand-in takes
     -- the whole live look (the kind's art, any Active / Custom icon over it).
-    local ab = prevIcon._adAuraBtn
+    local ab = f._adAuraBtn
+    local w, h = f:GetSize()
     if rec.kind == "aura" then
-        prevIcon.stackText:SetText("")
-        ab = Options.PreviewAuraButton()
-        NS.DriverAura.AnchorButton(ab, prevIcon)
+        f.stackText:SetText("")
+        ab = Options.PreviewAuraButton(f)
+        NS.DriverAura.AnchorButton(ab, f)
         ab._adIcon:SetTexture(Factory.KindTexture(rec))
-        Factory.StyleAuraButton(ab, rec, PREV_SIZE,
-            { w = PREV_SIZE, h = PREV_SIZE, ghost = NS.DriverAura.GhostShown(rec) })
+        Factory.StyleAuraButton(ab, rec, h,
+            { w = w, h = h, ghost = NS.DriverAura.GhostShown(rec) })
         if ab._adStacks:IsShown() then ab._adStacks:SetText("2") end
     elseif Options.PreviewMode(rec) == "ovup" then
         -- a spell icon's aura overlay: the same stand-in, one level up the
         -- ladder like the live overlay, "the engine wrote" the aura's own
         -- art (its first ID); the cooldown plane under it is the holder
-        ab = Options.PreviewAuraButton()
-        NS.DriverAura.AnchorButton(ab, prevIcon, 1)
+        ab = Options.PreviewAuraButton(f)
+        NS.DriverAura.AnchorButton(ab, f, 1)
         local ov = rec.driver and rec.driver.overlay
         local aid = ov and ov.spellID
         ab._adIcon:SetTexture((aid and C_Spell.GetSpellTexture(aid)) or Factory.KindTexture(rec))
-        Factory.StyleAuraButton(ab, rec, PREV_SIZE, { w = PREV_SIZE, h = PREV_SIZE, ghost = true })
+        Factory.StyleAuraButton(ab, rec, h, { w = w, h = h, ghost = true })
         if ab._adStacks:IsShown() then ab._adStacks:SetText("2") end
     elseif ab then
         ab:Hide()
     end
 end
 
-local function PreviewApplyMode(rec)
+local function PreviewApplyMode(rec, f)
+    f = f or prevIcon
     local mode = Options.PreviewMode(rec)
     if rec.kind == "aura" then
         -- The holder always shows the missing look, as live; the stand-in
         -- covers it while the aura is up (phase "ready" in the loop).
-        prevIcon.cooldown:Clear()
-        Factory.StopGlow(prevIcon)
-        Factory.SetState(prevIcon, rec, true, true)
-        local ab = Options.PreviewAuraButton()
+        f.cooldown:Clear()
+        Factory.StopGlow(f)
+        Factory.SetState(f, rec, true, true)
+        local ab = Options.PreviewAuraButton(f)
         local up = (mode == "aup") or (mode == "aloop" and prevPhase == "ready")
         ab:SetShown(up)
         -- a spell icon's Aura up froze the shared stand-in's swipe: free it
@@ -4310,17 +4348,17 @@ local function PreviewApplyMode(rec)
             ab._adSwipe:Clear()
             ab._adLoopUntil = nil
         end
-        PreviewSyncHandles()
+        if f == prevIcon then PreviewSyncHandles() end
         return
     end
     if mode == "ovup" then
         -- A spell icon's aura while up: the cooldown underneath with the stand-in
         -- aura button over it, as live.
-        prevIcon._adGlowLaneOnly = "none"
-        Factory.SetProcGlow(prevIcon, rec, false)
-        Factory.StopGlow(prevIcon)
-        Factory.SetState(prevIcon, rec, true, true)
-        local ab = Options.PreviewAuraButton()
+        f._adGlowLaneOnly = "none"
+        Factory.SetProcGlow(f, rec, false)
+        Factory.StopGlow(f)
+        Factory.SetState(f, rec, true, true)
+        local ab = Options.PreviewAuraButton(f)
         -- A frozen moment of the aura (60% left), so its swipe colour, direction,
         -- edge and time text show while nothing ticks. Plain numbers on our own
         -- Cooldown; every other use of the stand-in resumes it first.
@@ -4329,56 +4367,61 @@ local function PreviewApplyMode(rec)
         sw:SetCooldown(GetTime() - PREV_CD * 0.4, PREV_CD)
         if sw.Pause then sw:Pause() end
         ab:Show()
-        PreviewSyncHandles()
+        if f == prevIcon then PreviewSyncHandles() end
         return
     end
     if mode == "loop" then
         if prevPhase == "cd" then
-            Factory.SetProcGlow(prevIcon, rec, false)
-            Factory.UpdateGlow(prevIcon, rec, false)
-            Factory.SetState(prevIcon, rec, true, true)
+            Factory.SetProcGlow(f, rec, false)
+            Factory.UpdateGlow(f, rec, false)
+            Factory.SetState(f, rec, true, true)
         else
-            Factory.SetState(prevIcon, rec, false, false)
-            Factory.UpdateGlow(prevIcon, rec, true)
-            Factory.SetProcGlow(prevIcon, rec, true)
+            Factory.SetState(f, rec, false, false)
+            Factory.UpdateGlow(f, rec, true)
+            Factory.SetProcGlow(f, rec, true)
         end
     elseif mode == "proc" then
-        prevIcon._adGlowLaneOnly = "proc"
-        prevIcon.cooldown:Clear()
-        Factory.SetState(prevIcon, rec, false, false)
-        Factory.SetProcGlow(prevIcon, rec, true)
+        f._adGlowLaneOnly = "proc"
+        f.cooldown:Clear()
+        Factory.SetState(f, rec, false, false)
+        Factory.SetProcGlow(f, rec, true)
     elseif mode == "ready" then
-        prevIcon._adGlowLaneOnly = "ready"
-        prevIcon.cooldown:Clear()
-        Factory.SetProcGlow(prevIcon, rec, false)
-        Factory.SetState(prevIcon, rec, false, false)
-        Factory.UpdateGlow(prevIcon, rec, true)
+        f._adGlowLaneOnly = "ready"
+        f.cooldown:Clear()
+        Factory.SetProcGlow(f, rec, false)
+        Factory.SetState(f, rec, false, false)
+        Factory.UpdateGlow(f, rec, true)
     else
-        prevIcon._adGlowLaneOnly = "none"
-        prevIcon.cooldown:Clear()
-        Factory.SetProcGlow(prevIcon, rec, false)
-        Factory.SetState(prevIcon, rec, false, false)
-        Factory.StopGlow(prevIcon)
+        f._adGlowLaneOnly = "none"
+        f.cooldown:Clear()
+        Factory.SetProcGlow(f, rec, false)
+        Factory.SetState(f, rec, false, false)
+        Factory.StopGlow(f)
     end
-    PreviewSyncHandles()
+    if f == prevIcon then PreviewSyncHandles() end
 end
 
 -- The loop: ready for PREV_READY, a fake cooldown for PREV_CD, repeat. An
 -- aura's loop is the reverse: up for its fake duration (PREV_CD), then missing
--- for PREV_READY.
+-- for PREV_READY. The Play on screen copy runs on the same clock.
 local function PreviewTick(_, dt)
     local rec = SelIcon()
     if not rec or prevIcon._adDragging then return end
     local aura = rec.kind == "aura"
+    local copy = Options.PreviewCopy(rec)
     prevT = prevT + dt
     prevStyleT = prevStyleT + dt
     if prevStyleT >= 0.25 then
         prevStyleT = 0
         PreviewRestyle(rec)
+        if copy then PreviewRestyle(rec, copy) end
         -- ApplyStyle re-runs the ready and usable lanes on its own; the proc
         -- lane is event-driven, so it is re-asserted here (idempotent). An
         -- aura icon's holder has no proc lane.
-        if not aura then Factory.SetProcGlow(prevIcon, rec, prevPhase == "ready") end
+        if not aura then
+            Factory.SetProcGlow(prevIcon, rec, prevPhase == "ready")
+            if copy then Factory.SetProcGlow(copy, rec, prevPhase == "ready") end
+        end
         PreviewSyncHandles()
     end
     local firstT = aura and PREV_CD or PREV_READY
@@ -4387,13 +4430,21 @@ local function PreviewTick(_, dt)
         if prevT >= firstT then
             prevPhase, prevT = "cd", 0
             -- plain numbers are legal on a preview push (nothing secret)
-            if not aura then prevIcon.cooldown:SetCooldown(GetTime(), PREV_CD) end
+            if not aura then
+                prevIcon.cooldown:SetCooldown(GetTime(), PREV_CD)
+                if copy then copy.cooldown:SetCooldown(GetTime(), PREV_CD) end
+            end
             PreviewApplyMode(rec)
+            if copy then PreviewApplyMode(rec, copy) end
         end
     elseif prevT >= secondT then
         prevPhase, prevT = "ready", 0
         prevIcon.cooldown:Clear()
         PreviewApplyMode(rec)
+        if copy then
+            copy.cooldown:Clear()
+            PreviewApplyMode(rec, copy)
+        end
     end
 end
 
@@ -4434,9 +4485,10 @@ local function PreviewWireHandles()
                 local st = s2._start
                 if not st then return end
                 local nx, ny = GetCursorPosition()
+                -- es carries the host's scale; kS is the live icon's own
                 local es = prevIcon:GetEffectiveScale()
                 if not es or es <= 0 then return end
-                local kS = PREV_SIZE / 36
+                local kS = (prevIcon:GetHeight() or 36) / 36
                 local X = math.floor(st.x + (nx - st.cx) / es / kS + 0.5)
                 local Y = math.floor(st.y + (ny - st.cy) / es / kS + 0.5)
                 X = math.max(-50, math.min(50, X))
@@ -4461,16 +4513,166 @@ local function PreviewWireHandles()
     end
 end
 
+-- The icon and bar previews sit on a stage in one shared colour (saved with the
+-- panel's own state): dark borders vanish on the window's navy, so the stage
+-- is slate (#6F9797) unless dark, light or any colour is picked.
+Options.PREVIEW_BG = {
+    { key = "dark", name = "Dark", col = COL.well },
+    { key = "slate", name = "Slate", col = { 111 / 255, 151 / 255, 151 / 255 } },
+    { key = "light", name = "Light", col = { 0.80, 0.81, 0.83 } },
+}
+Options.previewStages = {}
+
+-- The picked swatch: nothing picked, or a preset no longer offered, is slate.
+function Options.PreviewBgKey()
+    local key = Store.UI().previewBg
+    if key == "custom" then return key end
+    for _, p in ipairs(Options.PREVIEW_BG) do
+        if p.key == key then return key end
+    end
+    return "slate"
+end
+
+function Options.PreviewBgColor()
+    local u = Store.UI()
+    local key = Options.PreviewBgKey()
+    if key == "custom" and type(u.previewBgColor) == "table" then return u.previewBgColor end
+    for _, p in ipairs(Options.PREVIEW_BG) do
+        if p.key == key then return p.col end
+    end
+    return Options.PREVIEW_BG[2].col
+end
+
+function Options.PaintPreviewBg()
+    local u = Store.UI()
+    local key = Options.PreviewBgKey()
+    local c = Options.PreviewBgColor()
+    for _, stage in ipairs(Options.previewStages) do
+        stage:SetBackdropColor(c[1], c[2], c[3], 1)
+        for _, sw in ipairs(stage._adBgSwatches) do
+            if sw._adKey == "custom" then sw:SetColor(u.previewBgColor or Options.PREVIEW_BG[2].col) end
+            sw._adOn = (sw._adKey == key)
+            local b = sw._adOn and COL.arc or COL.line
+            sw:SetBackdropBorderColor(b[1], b[2], b[3], 1)
+        end
+    end
+end
+
+-- The swatches in a stage's top-right corner: the presets, then a custom colour
+-- that opens the colour picker.
+function Options.PreviewBgSwatches(stage)
+    local items = {}
+    for _, p in ipairs(Options.PREVIEW_BG) do items[#items + 1] = p end
+    items[#items + 1] = { key = "custom", name = "custom color" }
+    stage._adBgSwatches = {}
+    local x = -6
+    for i = #items, 1, -1 do
+        local p = items[i]
+        local sw = AT.MakeSwatch(stage, 12, 12)
+        sw:SetPoint("TOPRIGHT", x, -6)
+        sw:SetFrameLevel(stage:GetFrameLevel() + 20)
+        x = x - 16
+        sw._adKey = p.key
+        sw:SetColor(p.col or Options.PREVIEW_BG[2].col)
+        if p.key == "custom" then
+            local plus = sw:CreateFontString(nil, "OVERLAY")
+            plus:SetFont(STANDARD_TEXT_FONT, 10, "OUTLINE")
+            plus:SetPoint("CENTER", 0, 0)
+            plus:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+            plus:SetText("+")
+        end
+        -- the picked swatch keeps its cyan border through hover
+        sw:SetScript("OnEnter", function(s)
+            if not s._adOn then s:SetBackdropBorderColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 1) end
+        end)
+        sw:SetScript("OnLeave", function(s)
+            local b = s._adOn and COL.arc or COL.line
+            s:SetBackdropBorderColor(b[1], b[2], b[3], 1)
+        end)
+        sw:SetScript("OnClick", function()
+            AT.CloseDropdown()
+            local u = Store.UI()
+            if p.key ~= "custom" then
+                u.previewBg = p.key
+                Options.PaintPreviewBg()
+                return
+            end
+            local was, wasCol = u.previewBg, u.previewBgColor
+            local c = Options.PreviewBgColor()
+            if not ColorPickerFrame.SetupColorPickerAndShow then return end
+            ColorPickerFrame:SetupColorPickerAndShow({
+                r = c[1], g = c[2], b = c[3], hasOpacity = false,
+                swatchFunc = function()
+                    local r, g, b = ColorPickerFrame:GetColorRGB()
+                    u.previewBg, u.previewBgColor = "custom", { r, g, b }
+                    Options.PaintPreviewBg()
+                end,
+                cancelFunc = function()
+                    u.previewBg, u.previewBgColor = was, wasCol
+                    Options.PaintPreviewBg()
+                end,
+            })
+        end)
+        AT.Tooltip(sw, "Preview background: " .. p.name, p.key == "custom"
+            and "Pick any color for the icon and bar previews to sit on."
+            or "The icon and bar previews sit on this color.")
+        stage._adBgSwatches[#stage._adBgSwatches + 1] = sw
+    end
+    Options.previewStages[#Options.previewStages + 1] = stage
+    Options.PaintPreviewBg()
+end
+
+-- The icon at the size the engine gives it, on a host scaled so its longer
+-- side fills the stage (PREV_SIZE): a magnified live icon, never a 96px
+-- restyle. The host's offsets are in its own, scaled units.
+function Options.PreviewFit(rec)
+    local w, h = 36, 36
+    if rec and Engine and Engine.IconSize then w, h = Engine.IconSize(rec) end
+    if not (w and h and w > 0 and h > 0) then w, h = 36, 36 end
+    local host, s = prevBand.host, PREV_SIZE / math.max(w, h)
+    prevIcon:SetSize(w, h)
+    host:SetSize(w, h)
+    host:SetScale(s)
+    host:ClearAllPoints()
+    host:SetPoint("CENTER", prevBand, "TOP", 0, -(10 + PREV_SIZE / 2) / s)
+end
+
+-- Play on screen is offered while the icon shows on screen, and reads Stop in
+-- the accent while it plays.
+function Options.PaintScreenButton()
+    local b = prevBand and prevBand.screen
+    if not b then return end
+    local rec, S = SelIcon(), NS.IconScreen
+    local on = S ~= nil and rec ~= nil and S.On(rec.id)
+    b.fs:SetText(on and "Stop on screen" or "Play on screen")
+    local c = on and COL.arc or COL.dim
+    b.fs:SetTextColor(c[1], c[2], c[3])
+    b:SetShown(S ~= nil and rec ~= nil and S.OK(rec))
+end
+
 -- The preview pane sits above the scrolling editor page so it stays in view.
 -- AttachPreview returns its height, which the page's top anchor moves down by.
-local PREV_PANE_H = PREV_SIZE + 4 + 8 + 22 + 8
+-- Stage: the icon plus 10 px all round; then the mode chips.
+local PREV_PANE_H = PREV_SIZE + 20 + 6 + 22 + 8
 local function BuildPreviewPane()
     prevBand = CreateFrame("Frame", nil, UIParent)
     prevBand:SetHeight(PREV_PANE_H)
     prevBand:Hide()
-    prevIcon = Factory.CreatePreview(prevBand)
-    prevIcon:SetSize(PREV_SIZE, PREV_SIZE)
-    prevIcon:SetPoint("TOP", 0, -4)
+    -- made first and kept at the band's own level, so the icon draws above it
+    local stage = CreateFrame("Frame", nil, prevBand, "BackdropTemplate")
+    stage:SetPoint("TOPLEFT", 8, 0)
+    stage:SetPoint("TOPRIGHT", -12, 0)
+    stage:SetHeight(PREV_SIZE + 20)
+    stage:SetFrameLevel(prevBand:GetFrameLevel())
+    AT.Skin(stage, COL.well, COL.line)
+    Options.PreviewBgSwatches(stage)
+    -- The icon's host, scaled by PreviewFit; the aura stand-in shares it.
+    -- Borders snap on the live icons' pixel grid, then scale with the rest.
+    prevBand.host = CreateFrame("Frame", nil, prevBand)
+    prevIcon = Factory.CreatePreview(prevBand.host)
+    prevIcon:SetPoint("CENTER")
+    prevIcon._adPxRef = UIParent
+    Options.PreviewFit(nil)
     PreviewWireHandles()
     -- The mode chips: a cooldown set, an aura set, and the overlay's Aura up,
     -- which joins the cooldown set; AttachPreview centres the chips shown.
@@ -4483,21 +4685,42 @@ local function BuildPreviewPane()
             AT.CloseDropdown()
             ui.prevMode = m.key
             prevPhase, prevT, prevStyleT = "ready", 0, 0
-            if prevIcon then
-                prevIcon.cooldown:Clear()
-                -- an aura loop starts its fake duration afresh (and a frozen
-                -- Aura up swipe thaws)
-                local ab = prevIcon._adAuraBtn
-                if ab then
-                    if ab._adSwipe.Resume then ab._adSwipe:Resume() end
-                    ab._adSwipe:Clear()
-                    ab._adLoopUntil = nil
-                end
-            end
+            Options.PreviewReset(prevIcon)
+            Options.PreviewReset(Options.PreviewCopy(SelIcon()))
             if RefreshAll then RefreshAll() end
         end)
         AT.Tooltip(b, m.text, m.tip)
         prevChips[m.key] = b
+    end
+    -- Play on screen, in the stage's top-left corner: this preview drawn over
+    -- the icon itself (UI\AD_IconScreen), painted by the same two steps.
+    local scr = AT.MakeSmallButton(stage, "Play on screen", 118)
+    scr:SetPoint("TOPLEFT", 6, -6)
+    scr:SetFrameLevel(stage:GetFrameLevel() + 20)
+    scr:SetScript("OnClick", function()
+        AT.CloseDropdown()
+        local rec, S = SelIcon(), NS.IconScreen
+        if not (rec and S) then return end
+        if S.On(rec.id) then
+            S.Stop()
+        elseif S.OK(rec) then
+            -- the pane and the copy start the loop together
+            prevPhase, prevT, prevStyleT = "ready", 0, 0
+            Options.PreviewReset(prevIcon)
+            S.Start(rec)
+        end
+        if RefreshAll then RefreshAll() end
+    end)
+    AT.Tooltip(scr, function() return scr.fs:GetText() end,
+        "Plays this preview on the icon itself, in its real place and size. Press again, pick something else, or close this window to stop.")
+    prevBand.screen = scr
+    local S = NS.IconScreen
+    if S then
+        S.painter = function(rec, f)
+            PreviewRestyle(rec, f)
+            PreviewApplyMode(rec, f)
+        end
+        S.onStop = Options.PaintScreenButton
     end
 end
 
@@ -4512,6 +4735,9 @@ local function AttachPreview(parent, y, shown)
     prevBand:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, y)
     prevBand:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -4, y)
     prevBand:SetShown(shown)
+    -- Play on screen belongs to the icon on show here
+    local S = NS.IconScreen
+    if S and S.On() and not (shown and S.On(rec.id)) then S.Stop() end
     if not shown then
         prevBand:SetScript("OnUpdate", nil)
         return 0
@@ -4535,15 +4761,23 @@ local function AttachPreview(parent, y, shown)
     local x = -total / 2
     for _, b in ipairs(shownChips) do
         b:ClearAllPoints()
-        b:SetPoint("LEFT", prevBand, "TOP", x, -(PREV_SIZE + 4 + 8 + 11))
+        b:SetPoint("LEFT", prevBand, "TOP", x, -(PREV_SIZE + 20 + 6 + 11))
         x = x + b._adW + 6
     end
     if not prevIcon._adDragging then
+        Options.PreviewFit(rec)
         PreviewRestyle(rec)
         PreviewApplyMode(rec)
     end
+    -- the copy on screen takes every settings change too
+    if S and S.On(rec.id) then
+        if S.OK(rec) then S.Start(rec) else S.Stop() end
+    end
+    Options.PaintScreenButton()
     return PREV_PANE_H
 end
+-- offline harness access
+function Options._iconPrev() return prevIcon, prevBand end
 
 local function BuildIconEditor(parent)
     local pg = AT.NewPage(parent)
@@ -5172,7 +5406,7 @@ local function BuildIconEditor(parent)
     IconPushSec("States", "states", "Range")
 
     local swipeVis = IconBlock("Swipe", "swipe", "Swipe", {
-        "showSwipe", "swipeColor", "reverse", "noGCDSwipe", "swipeWaitForNoCharges",
+        "showSwipe", "swipeColor", "reverse", "swipeWaitForNoCharges",
     })
     IconSub(swipeVis, "Swipe", "Swipe", "Inset", "swipe", {
         "swipeInset", "separateInsets", "swipeInsetX", "swipeInsetY",
@@ -5180,8 +5414,12 @@ local function BuildIconEditor(parent)
     IconBlock("Edge & Finish", "swipe", "Swipe", {
         "showEdge", "edgeColor", "edgeScale", "edgeWaitForNoCharges", "showBling",
     })
+    IconBlock("GCD & Wand", "swipe", "Swipe", {
+        "gcdSwipe", "gcdSwipeColor", "wandSwipe", "wandSwipeColor",
+    })
     IconPushSec("Swipe", "swipe", "Swipe")
     IconPushSec("Swipe", "swipe", "Edge & Finish")
+    IconPushSec("Swipe", "swipe", "GCD & Wand")
 
     IconBlock("Out of Stock", "outOfStock", "Out of Stock", {
         "outDesaturate", "outAlphaEnabled", "outAlpha", "hideWhenMissing",
@@ -5272,15 +5510,15 @@ local function BuildIconEditor(parent)
 
     IconBlock("Label 1", "label", "Label", {
         "labelText", "labelFont", "labelSize", "labelColor", "labelAnchor",
-        "labelX", "labelY", "labelShowReady", "labelShowCooldown",
+        "labelX", "labelY", "labelShowReady", "labelShowCooldown", "labelActiveOnly",
     })
     IconBlock("Label 2", "label", "Label", {
         "labelText2", "labelSize2", "labelColor2", "labelAnchor2",
-        "labelX2", "labelY2", "labelShowReady2", "labelShowCooldown2",
+        "labelX2", "labelY2", "labelShowReady2", "labelShowCooldown2", "labelActiveOnly2",
     })
     IconBlock("Label 3", "label", "Label", {
         "labelText3", "labelSize3", "labelColor3", "labelAnchor3",
-        "labelX3", "labelY3", "labelShowReady3", "labelShowCooldown3",
+        "labelX3", "labelY3", "labelShowReady3", "labelShowCooldown3", "labelActiveOnly3",
     })
     IconPushSec("Label", "label", "Label 1")
     IconPushSec("Label", "label", "Label 2")
@@ -5775,6 +6013,7 @@ function barPrev.Build(parent)
     stage:SetHeight(barPrev.STAGE_H)
     AT.Skin(stage, COL.well, COL.line)
     stage:SetClipsChildren(true)
+    Options.PreviewBgSwatches(stage)
     local holder = CreateFrame("Frame", nil, stage)
     holder:SetPoint("CENTER")
     holder:SetSize(8, 8)
@@ -6541,6 +6780,21 @@ local function BuildBarPane()
             local r = SelBar()
             return trackVis() and r ~= nil and r.barKind == "swing"
         end)
+    AT.RowToggle(pg, "Show the off-hand on this bar",
+        function()
+            local r = SelBar()
+            return r ~= nil and Store.Resolve(r, "fill", "swingOffhand") == true
+        end,
+        function(v)
+            local r = SelBar()
+            if r then Store.SetOverride(r, "fill", "swingOffhand", v and true or false) end
+        end,
+        function()
+            local r = SelBar()
+            return trackVis() and r ~= nil and r.barKind == "swing"
+                and ((r.driver and r.driver.swingType) or 0) == 0
+        end,
+        "Adds your off-hand's swing to this main-hand bar. Pick its look on the Appearance tab.")
     AT.RowDesc(pg, "Swing timers need WoW Forever: this bar stays hidden here.", 20,
         function()
             local r = SelBar()
@@ -6874,6 +7128,14 @@ local function BuildBarPane()
     BarSub(fillVis, "Gradient", "fill", { "useGradient", "gradientDir", "gradientColor" })
     AT.Section(pg, nil, { visibleFn = fillVis })   -- push bar below the subs (BarSub)
     PushBar(pg, SelBar, "fill", fillVis, WithHidden(fillVis, "texture"))
+    -- A main-hand swing bar's off-hand track, while its Tracking switch is on.
+    local offVis = BarBlock("Off-hand", "fill", "Appearance", {
+        "swingOffhandStyle", "swingOffhandColor",
+    }, function(r)
+        return r.barKind == "swing" and ((r.driver and r.driver.swingType) or 0) == 0
+            and Store.Resolve(r, "fill", "swingOffhand") == true
+    end)
+    PushBar(pg, SelBar, "fill", offVis)
     -- Background and Border: two blocks over the one `look` section.
     local bgVis = BarBlock("Background", "look", "Appearance", {
         "bgShow", "bgColor", "bgAlpha",
@@ -7020,7 +7282,7 @@ local function BuildBarPane()
         "durShow", "durRounding", "durSize", "durOutline", "durShadow", "durColor", "durAnchor",
         "durOffsetX", "durOffsetY",
     })
-    BarSub(durVis, "Decimals", "text", { "durDecimalsEnabled", "durDecimalThreshold" })
+    BarSub(durVis, "Format", "text", { "durAbbrev", "durDecimalsEnabled", "durDecimalThreshold" })
     AT.Section(pg, nil, { visibleFn = durVis })   -- push bar below the subs (BarSub)
     PushBar(pg, SelBar, "text", durVis)
     -- A cooldown bar writes its stack text only for a charge spell
@@ -7957,6 +8219,11 @@ end
 
 -- after creating an icon, land where it lives
 function Options.SelectIconHome(rec)
+    local L = Options.Loader
+    if L and L.Busy() and not L.InBuild() then
+        L.Then(function() Options.SelectIconHome(rec) end)
+        return
+    end
     ui.selIconId = rec.id
     if rec.groupId then
         ui.grpMode = "ico"
@@ -8144,7 +8411,7 @@ local function BuildSettingsPane()
             }
         end)
     AT.Tooltip(roundRow, "Round timer numbers",
-        "How every Arc UI Forever countdown shows part of a second: icons, aura bars, timer bars and swing bars. Up: 13.2 seconds reads 14, the way action bar cooldowns count, so a running timer never reads 0. Down: 13.2 seconds reads 13, the way buff timers and most nameplates count. Decimals, where you turned them on, show the tenths either way.")
+        "How every Arc Auras countdown shows part of a second: icons, aura bars, timer bars and swing bars. Up: 13.2 seconds reads 14, the way action bar cooldowns count, so a running timer never reads 0. Down: 13.2 seconds reads 13, the way buff timers and most nameplates count. Decimals, where you turned them on, show the tenths either way.")
     AT.Section(pg, "Tooltips")
     AT.RowToggle(pg, "IDs in tooltips",
         function() return Store.GetSetting("tooltipIDs") ~= false end,   -- on by default
@@ -8152,7 +8419,7 @@ local function BuildSettingsPane()
             Store.SetSetting("tooltipIDs", v and true or false)
             if v and NS.TooltipIDs then NS.TooltipIDs.Install() end
         end,
-        nil, "Appends an Arc ID block to game tooltips everywhere - spell, aura, item, toy, mount, currency, achievement and quest IDs, each with its icon ID (and the icon the button actually shows when that differs), the Cooldown Manager's cooldown ID for spells, auras and equipped trinkets, plus talent node / entry IDs on the talent tree. Works on action bars, buffs, bags and the spellbook, not just Arc UI Forever icons.")
+        nil, "Appends an Arc ID block to game tooltips everywhere - spell, aura, item, toy, mount, currency, achievement and quest IDs, each with its icon ID (and the icon the button actually shows when that differs), the Cooldown Manager's cooldown ID for spells, auras and equipped trinkets, plus talent node / entry IDs on the talent tree. Works on action bars, buffs, bags and the spellbook, not just Arc Auras icons.")
     AT.Section(pg, "Minimap")
     AT.RowToggle(pg, "Hide minimap button",
         function() return Store.GetSetting("minimapHide") == true end,
@@ -8160,7 +8427,7 @@ local function BuildSettingsPane()
             Store.SetSetting("minimapHide", v and true or false)
             if NS.MinimapButtonRefresh then NS.MinimapButtonRefresh() end
         end,
-        nil, "Hides the Arc UI Forever minimap button. "
+        nil, "Hides the Arc Auras minimap button. "
             .. (NS.IsForever and "/arcui" or "/arcui2")
             .. " always opens this window. Drag the button around the minimap rim to move it; right-click it to toggle move mode.")
     -- What's New (UI\AD_Changelog.lua): the auto-open switch writes the same UI
@@ -8175,7 +8442,7 @@ local function BuildSettingsPane()
             local u = Store.UI()
             if u then u.changelogOff = (not v) or nil end
         end,
-        nil, "The first time you log in after Arc UI Forever updates, a window opens once with what changed in the new version.")
+        nil, "The first time you log in after Arc Auras updates, a window opens once with what changed in the new version.")
     AT.RowButton(pg, "Open", function()
         if NS.Changelog then NS.Changelog.Show() end
     end, nil, 110, "What changed in each version")
@@ -8604,12 +8871,20 @@ function Options.OpenExport(id)
 end
 
 function Options.Select(selType, id)
+    -- An open-then-select from outside waits for the first build to finish.
+    local L = Options.Loader
+    if L and L.Busy() and not L.InBuild() then
+        L.Then(function() Options.Select(selType, id) end)
+        return
+    end
     -- Play on screen belongs to the bar being edited
     local B = NS.Bars
     if B and B.PreviewScreenOn and B.PreviewScreenOn()
         and not (selType == "bar" and B.PreviewScreenOn(id)) then
         B.PreviewScreenStop()
     end
+    -- an icon's copy too: only an icon pane can keep it (its preview decides)
+    if NS.IconScreen and selType ~= "group" and selType ~= "free" then NS.IconScreen.Stop() end
     ui.selType, ui.selId = selType, id
     -- the import target follows the rail: the layout last opened here
     if selType == "layout" or selType == "free" then
@@ -9513,17 +9788,26 @@ end
 
 -- Build and toggle
 
+-- Set before the first window is created so it opens at the saved scale, and
+-- only when one is saved: a fallback here would override AT.uiScale's default.
+function Options.ApplySavedScale()
+    local savedScale = Store.GetSetting("uiScale")
+    if savedScale then AT.SetUIScale(savedScale) end
+end
+
+-- The loader (UI\AD_OptionsLoader.lua) replaces these to run the first build in
+-- slices; without it the build runs straight through.
+function Options.BuildYield() end
+function Options.BuildStep() end
+
 local built
 local function Build()
     if built then return end
     built = true
-    -- Set before the first window is created so it opens at the saved scale, and
-    -- only when one is saved: a fallback here would override AT.uiScale's default.
-    local savedScale = Store.GetSetting("uiScale")
-    if savedScale then AT.SetUIScale(savedScale) end
+    Options.ApplySavedScale()
     win = AT.CreateWindow("ArcUIv2Options", {
         w = 1020, h = 760, minW = 820, minH = 620, maxW = 1500, maxH = 1200,
-        title = "|cff3fc9f2Arc|r|cffd5e2f2 UI Forever|r",
+        title = "|cff3fc9f2Arc|r|cffd5e2f2 Auras|r",
         -- The toc's Version, so the title matches the release.
         version = C_AddOns and C_AddOns.GetAddOnMetadata
             and C_AddOns.GetAddOnMetadata(ADDON, "Version") or nil,
@@ -9532,8 +9816,9 @@ local function Build()
     -- Window open = edit mode (drag and Edit chips); closed = click-through again.
     win:HookScript("OnShow", function() Engine.SetEditMode(true) end)
     win:HookScript("OnHide", function()
-        -- before edit mode ends: its rebuild must show the real bar again
+        -- before edit mode ends: its rebuild must show the real bar and icon again
         if NS.Bars and NS.Bars.PreviewScreenStop then NS.Bars.PreviewScreenStop() end
+        if NS.IconScreen then NS.IconScreen.Stop() end
         Engine.SetEditMode(false)
         CloseTalentPicker()
     end)
@@ -9711,16 +9996,18 @@ local function Build()
     AddonRow("QOL", "qol", 32)
     AddonRow("Settings", "settings", 6)
 
-    BuildEmptyPane()
-    BuildLayoutPane()
-    BuildGroupPane()
-    BuildFreePane()
-    BuildBarPane()
-    -- Built last: the layout's look tabs mirror the item editors' blocks.
-    Options.BuildLayoutLooks()
-    BuildSettingsPane()
-    BuildQOLPane()
-    BuildIEPane()
+    -- The panes in build order; each is one step of the loading bar.
+    local steps = {
+        BuildEmptyPane, BuildLayoutPane, BuildGroupPane, BuildFreePane, BuildBarPane,
+        -- after the editors: the layout's look tabs mirror their blocks
+        Options.BuildLayoutLooks,
+        BuildSettingsPane, BuildQOLPane, BuildIEPane,
+    }
+    Options.BuildStep(0, #steps)
+    for i, buildPane in ipairs(steps) do
+        buildPane()
+        Options.BuildStep(i, #steps)
+    end
     AT.AddDiscordFooter(win, "ArcUIv2DiscordCopy")
 
     Events.OnMessage("AD_DIRTY", "options", function(_, what)
@@ -9744,18 +10031,41 @@ local function Build()
     end
 end
 
-function Options.Toggle()
-    Build()
-    if win:IsShown() then
-        win:Hide()
+-- Runs fn once the window exists. With the loader the first build runs in
+-- slices and fn waits for its end; without it the build runs now.
+function Options.WhenBuilt(fn)
+    local L = Options.Loader
+    if L and L.Busy() then
+        L.Then(fn)
+    elseif L and not built then
+        L.Start(Build)
+        L.Then(fn)
     else
-        win:Show()
-        RefreshAll()
+        Build()
+        fn()
     end
 end
 
+function Options.Toggle()
+    local L = Options.Loader
+    -- A second press while it loads closes it; the build finishes quietly.
+    if L and L.Busy() then
+        L.Cancel()
+        return
+    end
+    Options.WhenBuilt(function()
+        if win:IsShown() then
+            win:Hide()
+        else
+            win:Show()
+            RefreshAll()
+        end
+    end)
+end
+
 function Options.Open()
-    Build()
-    if not win:IsShown() then win:Show() end
-    RefreshAll()
+    Options.WhenBuilt(function()
+        if not win:IsShown() then win:Show() end
+        RefreshAll()
+    end)
 end

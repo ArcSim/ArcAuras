@@ -35,8 +35,8 @@ local function Build()
     local icon = btn:CreateTexture(nil, "BACKGROUND")
     icon:SetSize(19, 19)
     icon:SetPoint("TOPLEFT", 7, -6)
-    -- ADDON is the folder name: ArcUI on Forever, ArcDisplay on retail.
-    icon:SetTexture("Interface\\AddOns\\" .. ADDON .. "\\Textures\\ArcUI_Minimap_64")
+    -- ADDON is the folder name: ArcAuras on Forever, ArcDisplay on retail.
+    icon:SetTexture("Interface\\AddOns\\" .. ADDON .. "\\Textures\\ArcAuras_Minimap_64")
     icon:SetTexCoord(0, 1, 0, 1)
     if icon.SetMask then
         icon:SetMask("Interface\\CharacterFrame\\TempPortraitAlphaMask")
@@ -50,7 +50,7 @@ local function Build()
 
     btn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
-        GameTooltip:AddLine("|cff3fc9f2Arc|r UI Forever")
+        GameTooltip:AddLine("|cff3fc9f2Arc|r Auras")
         GameTooltip:AddLine("Left-click: options", 0.8, 0.86, 0.94)
         GameTooltip:AddLine("Right-click: move layouts", 0.8, 0.86, 0.94)
         GameTooltip:AddLine("Drag: move this button", 0.55, 0.6, 0.68)

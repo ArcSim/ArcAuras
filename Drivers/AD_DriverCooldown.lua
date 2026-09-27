@@ -27,6 +27,7 @@ local function MakeShadow()
     w:Show()
     return w
 end
+Driver.MakeShadow = MakeShadow
 
 -- A wand shot locks every spell for about a second and the game does not flag
 -- it as the GCD: isOnGCD stays false and the ignoreGCD read is live. Casting
@@ -73,6 +74,7 @@ local function PlayAlert(rec, enKey, soundKey)
         NS.Sounds.Play(name, Store.Resolve(rec, "alerts", "soundChannel"))
     end
 end
+Driver.PlayAlert = PlayAlert
 
 -- Keybinds (spells and custom timers)
 -- The bars are walked in a fixed order instead of FindSpellActionButtons: its
@@ -579,6 +581,21 @@ end
 
 local attachedItems = {}   -- [iconId] = { rec, frame }
 
+-- A trinket with no use spell. Item data not loaded yet reads as on-use, so a
+-- real one is never hidden: the game is asked for it, and its arrival
+-- re-feeds the trinket icons (GET_ITEM_INFO_RECEIVED in EnsureEvents).
+Driver.itemDataWanted = false
+function Driver.IsPassiveItem(itemID)
+    if not (C_Item and C_Item.GetItemSpell) then return false end
+    if C_Item.GetItemSpell(itemID) ~= nil then return false end
+    if C_Item.IsItemDataCachedByID and not C_Item.IsItemDataCachedByID(itemID) then
+        if C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(itemID) end
+        Driver.itemDataWanted = true
+        return false
+    end
+    return true
+end
+
 -- onCd is always plain here: from plain numbers or the widget's IsShown.
 local function FinishItemState(a, onCd)
     local rec = a.rec
@@ -615,7 +632,10 @@ local function FeedItem(a)
     if rec.kind == "trinket" then
         -- The item id is plain, and a secret compared with nil still gives a
         -- plain false, so this is legal either way.
-        a.frame._adItemEmpty = (GetInventoryItemID("player", d.slotID or 13) == nil) or nil
+        local iid = GetInventoryItemID("player", d.slotID or 13)
+        a.frame._adItemEmpty = (iid == nil) or nil
+        a.frame._adPassive = (iid ~= nil and Store.Resolve(rec, "trinket", "onlyOnUse") == true
+            and Driver.IsPassiveItem(iid)) or nil
     end
     -- Ammo: the equipped stack. GetInventoryItemCount has no secrecy annotation
     -- and Blizzard's item buttons compare it; it still goes to SetText raw.
@@ -712,14 +732,17 @@ end
 -- Totems
 -- GetTotemDuration(slot) gives a duration object while the slot is live and
 -- nothing when empty, so a shadow's IsShown() is the state. GetTotemInfo's
--- haveTotem is a secret boolean. A live totem shows as ready.
+-- haveTotem is a secret boolean. A live totem shows as ready. An icon that
+-- follows one totem by spell asks NS.DriverTotem which slot holds it.
 
 local attachedTotems = {}     -- [iconId] = { rec, frame, shadow }
 local totemShadowCache = {}   -- [iconId] = shadow, kept across detach
 
 local function FeedTotem(a)
-    local slot = (a.rec.driver and a.rec.driver.slot) or 1
-    local dur = GetTotemDuration and GetTotemDuration(slot)
+    local DT = NS.DriverTotem
+    local slot
+    if DT then slot = DT.SlotFor(a.rec) else slot = (a.rec.driver and a.rec.driver.slot) or 1 end
+    local dur = slot and GetTotemDuration and GetTotemDuration(slot)
     if dur and a.shadow.SetCooldownFromDurationObject then
         a.shadow:SetCooldownFromDurationObject(dur, true)
         a.frame.cooldown:SetCooldownFromDurationObject(dur, true)
@@ -731,11 +754,13 @@ local function FeedTotem(a)
     a.frame.icon:SetTexture(Factory.GetTexture(a.rec))
     local active = a.shadow:IsShown() == true
     Factory.SetState(a.frame, a.rec, not active, not active)
+    if DT then DT.Pulse(a.frame, a.rec, slot, active) end
 end
 
 local function FeedAllTotems()
     for _, a in pairs(attachedTotems) do FeedTotem(a) end
 end
+Driver.FeedTotems = FeedAllTotems
 
 local function FeedAllItems()
     for _, a in pairs(attachedItems) do FeedItem(a) end
@@ -811,6 +836,12 @@ local function EnsureEvents()
     end
     Events.On("PLAYER_EQUIPMENT_CHANGED", "adcd_items", function()
         Events.Coalesce("adcd_feedammo", FeedAmmoAll)
+    end)
+    -- a trinket read as on-use while its data loaded: settle it now
+    Events.On("GET_ITEM_INFO_RECEIVED", "adcd_items", function()
+        if not Driver.itemDataWanted then return end
+        Driver.itemDataWanted = false
+        Events.Coalesce("adcd_feeditems", FeedAllItems)
     end)
     Events.On("PLAYER_ENTERING_WORLD", "adcd", function()
         -- addon bars build at their own login step: re-discover them and
@@ -894,6 +925,7 @@ local function MaybeReleaseEvents()
         rangeTicker = nil
     end
     Events.Off("PLAYER_EQUIPMENT_CHANGED", "adcd_items")
+    Events.Off("GET_ITEM_INFO_RECEIVED", "adcd_items")
     Events.Off("PLAYER_ENTERING_WORLD", "adcd")
     Events.Off("SPELLS_CHANGED", "adcd")
     Events.Off("UPDATE_BINDINGS", "adcd_kb")
@@ -931,7 +963,11 @@ function Driver.Attach(rec, f)
             end
             at.rec, at.frame = rec, f
             EnsureEvents()
+            -- the slot pairing reads every slot first
+            if NS.DriverTotem then NS.DriverTotem.Attach(rec) end
             FeedTotem(at)
+        elseif rec.kind == "enchant" and NS.DriverEnchant then
+            NS.DriverEnchant.Attach(rec, f)
         else
             -- Timer icons have no feed here: they show as ready.
             Factory.SetState(f, rec, false)
@@ -980,7 +1016,10 @@ function Driver.Detach(id)
     -- slots cannot be destroyed.
     if NS.DriverAura then NS.DriverAura.Detach(id) end
     attachedItems[id] = nil
+    local at = attachedTotems[id]
+    if at and NS.DriverTotem then NS.DriverTotem.Detach(id, at.frame) end
     attachedTotems[id] = nil
+    if NS.DriverEnchant then NS.DriverEnchant.Detach(id) end
     local a = attached[id]
     if a then
         if a.frame then a.frame._adEffSid = nil end
@@ -1002,4 +1041,5 @@ function Driver.Refeed(id)
     if ai then FeedItem(ai) end
     local at = attachedTotems[id]
     if at then FeedTotem(at) end
+    if NS.DriverEnchant then NS.DriverEnchant.Refeed(id) end
 end

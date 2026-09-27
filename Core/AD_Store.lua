@@ -168,6 +168,26 @@ function Store.ResetUnloadedShown()
     Store.Dirty("style")
 end
 
+-- A loaded element hidden on screen while the panel is open, so what sits
+-- under it can be edited (its eye). Never saved: closing the panel clears it.
+local editHidden = {}
+
+function Store.EditHidden(rec)
+    return rec ~= nil and editHidden[rec.id] == true
+end
+
+function Store.SetEditHidden(rec, on)
+    if not rec then return end
+    editHidden[rec.id] = on and true or nil
+    Store.Dirty("style", rec.id)
+end
+
+function Store.ClearEditHidden()
+    if next(editHidden) == nil then return end
+    wipe(editHidden)
+    Store.Dirty("style")
+end
+
 -- Folds dynamicCooldowns into dynamicCollapse on a group arrangement table (a
 -- record's overrides or a saved default bucket): true ("show only icons on
 -- cooldown") becomes "ready". An explicit dynamicCollapse wins.
@@ -422,7 +442,8 @@ function Store.Normalize()
             if rec.barKind ~= "timer" and rec.barKind ~= "stack"
                 and rec.barKind ~= "swing" and rec.barKind ~= "aura"
                 and rec.barKind ~= "resource" and rec.barKind ~= "health"
-                and rec.barKind ~= "cast" then
+                and rec.barKind ~= "cast" and rec.barKind ~= "enchant"
+                and rec.barKind ~= "range" then
                 rec.barKind = "cooldown"
             end
             if rec.barKind == "cooldown" or rec.barKind == "aura" then
@@ -434,6 +455,26 @@ function Store.Normalize()
             rec.pos.x = tonumber(rec.pos.x) or 0
             rec.pos.y = tonumber(rec.pos.y) or 0
             rec.driver = rec.driver or {}
+            -- A range bar: an unknown preset falls to the class default at
+            -- runtime, its spell is a positive ID or nothing, and a custom
+            -- preset keeps its own bands only while one is left.
+            if rec.barKind == "range" then
+                local d = rec.driver
+                local p = d.preset
+                if p ~= "hunter" and p ~= "melee" and p ~= "caster" and p ~= "custom" then d.preset = nil end
+                local sid = tonumber(d.spellID)
+                d.spellID = (sid and sid > 0) and math.floor(sid) or nil
+                d.bands = Store.CleanRangeBands(d.bands)
+                if d.preset == "custom" and not d.bands then d.preset = nil end
+            end
+            -- A swing bar's ability colours: every rule kept, its fields made
+            -- usable (Bars\AD_SwingColors.lua reads them as they are).
+            if rec.barKind == "swing" then
+                rec.driver.swingColors = Store.CleanSwingColors(rec.driver.swingColors)
+                -- the out-of-range check's own spell: a whole positive ID or none
+                local rs = tonumber(rec.driver.rangeSpell)
+                rec.driver.rangeSpell = (rs and rs > 0) and math.floor(rs) or nil
+            end
             -- A health bar's unit token is handed to every health call, so
             -- an unknown one (hand-edited or damaged) falls back to the
             -- player rather than reaching the API.
@@ -1408,6 +1449,33 @@ function Store.NewLayout(name)
     return DB.records[id]
 end
 
+-- The starter layout: three empty groups in a column under the character,
+-- where cooldown rows usually sit. Offsets and icon sizes are for a screen
+-- 1080 units tall and scale with this one, so the column lands in the same
+-- place at any UI scale.
+local STARTER_ROWS = {
+    { name = "Cooldowns", kind = "cooldown", y = -275, size = 42 },
+    { name = "Utility", kind = "cooldown", y = -320, size = 36 },
+    { name = "Buffs", kind = "aura", y = -365, size = 32 },
+}
+
+function Store.NewStarterLayout(name)
+    local rec = Store.NewLayout(name or "Starter Layout")
+    -- the screen centre exactly: the placement is the point of the template
+    rec.pos = { x = 0, y = 0 }
+    local h = UIParent and UIParent.GetHeight and UIParent:GetHeight()
+    if type(h) ~= "number" or h <= 0 then h = 768 end
+    local k = h / 1080
+    for _, row in ipairs(STARTER_ROWS) do
+        local g = Store.NewGroup(rec.id, row.name, row.kind)
+        g.pos = { x = 0, y = math.floor(row.y * k + 0.5) }
+        local px = math.floor(row.size * k + 0.5)
+        Store.SetOverride(g, "arrangement", "iconWidth", px)
+        Store.SetOverride(g, "arrangement", "iconHeight", px)
+    end
+    return rec
+end
+
 -- Creation default for NewIcon and NewBar: the new record loads only for its
 -- creator's spec (class on spec-less realms, where a spec set could never
 -- pass); the user widens it from Load Conditions. Groups and layouts stay
@@ -1477,23 +1545,101 @@ function Store.NewIcon(kind, driver, destGroupId, layoutId, name)
         rec.pos = { x = sx, y = sy }
         layout.members[#layout.members + 1] = id
     end
+    -- a duration runs out towards 0, so its swipe fills as it goes; a spell
+    -- or item cooldown keeps the normal one (it clears when usable)
+    if kind == "totem" or kind == "enchant" or kind == "timer" then
+        TemplateSet(rec, "swipe", "reverse", true)
+    end
     DB.records[id] = rec
     Store.Dirty("tree")
     return rec
 end
 
+-- A range bar's own bands, cleaned: each { text, color, off, checks }, a check
+-- { kind = "spell", id, want } or { kind = "yd", yd, want } with yd one of
+-- Schema.RANGE_YARDS; at most RANGE_MAX_BANDS bands of RANGE_MAX_CHECKS checks.
+-- A spell check with no ID yet is dropped. nil when no band is left.
+function Store.CleanRangeBands(list)
+    if type(list) ~= "table" then return nil end
+    local yards = {}
+    for _, y in ipairs(Schema.RANGE_YARDS or {}) do yards[y] = true end
+    local maxB, maxC = Schema.RANGE_MAX_BANDS or 8, Schema.RANGE_MAX_CHECKS or 4
+    local function Unit(v, dflt)
+        v = tonumber(v)
+        if not v then return dflt end
+        return math.max(0, math.min(1, v))
+    end
+    local out = {}
+    for _, b in ipairs(list) do
+        if type(b) == "table" and #out < maxB then
+            local c = type(b.color) == "table" and b.color or {}
+            local nb = {
+                text = (type(b.text) == "string") and b.text:sub(1, 40) or "",
+                color = { Unit(c[1], 0.5), Unit(c[2], 0.5), Unit(c[3], 0.5), Unit(c[4], 1) },
+                off = (b.off == true) or nil,
+                checks = {},
+            }
+            for _, k in ipairs(type(b.checks) == "table" and b.checks or {}) do
+                if type(k) == "table" and #nb.checks < maxC then
+                    local want = k.want == true
+                    if k.kind == "spell" then
+                        local id = tonumber(k.id)
+                        if id and id > 0 then
+                            nb.checks[#nb.checks + 1] = { kind = "spell", id = math.floor(id), want = want }
+                        end
+                    elseif k.kind == "yd" and yards[tonumber(k.yd) or 0] then
+                        nb.checks[#nb.checks + 1] = { kind = "yd", yd = tonumber(k.yd), want = want }
+                    end
+                end
+            end
+            out[#out + 1] = nb
+        end
+    end
+    if #out == 0 then return nil end
+    return out
+end
+
+-- A swing bar's ability colours (rec.driver.swingColors), in priority order:
+-- at most Schema.SWING_COLOR_MAX rules, each a positive spell ID or none yet
+-- (kept, so a rule being set up survives), when it applies ("queued" or
+-- "cast") and a colour. nil when there are none.
+function Store.CleanSwingColors(list)
+    if type(list) ~= "table" then return nil end
+    local max = Schema.SWING_COLOR_MAX or 8
+    local d = Schema.SWING_COLOR_DEFAULT or { 1, 0.55, 0.15, 1 }
+    local function Unit(v, dflt)
+        v = tonumber(v)
+        if not v then return dflt end
+        return math.max(0, math.min(1, v))
+    end
+    local out = {}
+    for _, r in ipairs(list) do
+        if type(r) == "table" and #out < max then
+            local id = tonumber(r.id)
+            local c = type(r.color) == "table" and r.color or {}
+            out[#out + 1] = {
+                id = (id and id > 0) and math.floor(id) or nil,
+                when = (r.when == "cast") and "cast" or "queued",
+                color = { Unit(c[1], d[1]), Unit(c[2], d[2]), Unit(c[3], d[3]), Unit(c[4], 1) },
+            }
+        end
+    end
+    if #out == 0 then return nil end
+    return out
+end
+
 -- Bars are always free layout children, never group members: group attachment
--- is the anchor section. driver by kind: cooldown {spellID}, aura {spellID,
--- auraType, unit, caster, maxStacks}, swing {swingType}, resource {powerType},
--- health and cast {unit}, legacy timer {spellID, duration, triggerType},
--- legacy stack {powerType}; the bars runtime validates it. barMode
--- ("duration"|"stack") is the cooldown/aura sub-type, fixed at creation.
+-- is the anchor section. driver by kind: cooldown {spellID}, aura {spellID, auraType,
+-- unit, caster, maxStacks}, swing {swingType, swingAbilIDs, swingColors, rangeSpell},
+-- resource {powerType}, health and cast {unit}, range {preset, spellID, bands}, legacy
+-- timer {spellID, duration, triggerType}, legacy stack {powerType}; the bars runtime
+-- validates it. barMode ("duration"|"stack") is the cooldown/aura sub-type, fixed at creation.
 function Store.NewBar(layoutId, barKind, driver, name, barMode)
     local layout = Store.Get(layoutId)
     if not layout or layout.type ~= "layout" then return nil end
     if barKind ~= "timer" and barKind ~= "stack" and barKind ~= "swing"
         and barKind ~= "aura" and barKind ~= "resource" and barKind ~= "health"
-        and barKind ~= "cast" then
+        and barKind ~= "cast" and barKind ~= "enchant" and barKind ~= "range" then
         barKind = "cooldown"
     end
     local id = NewId()
@@ -1509,7 +1655,7 @@ function Store.NewBar(layoutId, barKind, driver, name, barMode)
     ScopeToCreator(rec)
     -- Creation template, written on the record only: the schema defaults
     -- stay off and a saved default wins.
-    if barKind == "cooldown" or barKind == "aura" then
+    if barKind == "cooldown" or barKind == "aura" or barKind == "enchant" then
         TemplateSet(rec, "icon", "iconShow", true)
     end
     -- Name text shows on spell bars. A resource or swing bar's name is just its
@@ -1550,6 +1696,15 @@ function Store.NewBar(layoutId, barKind, driver, name, barMode)
             TemplateSet(rec, "fill", "castLockOn", true)
             TemplateSet(rec, "icon", "iconShield", true)
         end
+    end
+    -- A range bar reads its band's name, white and centred on the plate.
+    if barKind == "range" then
+        TemplateSet(rec, "look", "borderThickness", 3)
+        TemplateSet(rec, "text", "nameAnchor", "CENTER")
+        TemplateSet(rec, "text", "nameOffsetX", 0)
+        TemplateSet(rec, "text", "nameOffsetY", 0)
+        TemplateSet(rec, "text", "nameSize", 12)
+        TemplateSet(rec, "text", "nameColor", { 1, 1, 1, 1 })
     end
     if rec.barMode == "stack" then TemplateSet(rec, "text", "stkAnchor", "CENTER") end
     -- A counted bar (combo points, aura stacks) is born with one tick mark per
@@ -2097,13 +2252,16 @@ end
 -- children come along is the caller's pick, so its member list is trimmed to
 -- the set. Whole records go (o, c, gpos, driver), so an import is a faithful
 -- clone. Returns the string and the record count, or nil and a reason.
-function Store.Export(ids)
+-- keep (optional): a record test; one that fails it stays out of the string,
+-- and so does a left-out icon of a group that goes in.
+function Store.Export(ids, keep)
     if type(ids) ~= "table" then ids = { ids } end
     local LD = GetDeflate()
     if not LD then return nil, "LibDeflate did not load" end
     local seen, recs = {}, {}
     local function add(rec)
         if not rec or seen[rec.id] then return end
+        if keep and not keep(rec) then return end
         seen[rec.id] = true
         recs[#recs + 1] = CopyDeep(rec)
         if rec.type == "group" then
@@ -2113,13 +2271,15 @@ function Store.Export(ids)
     for _, id in ipairs(ids) do add(DB.records[id]) end
     if #recs == 0 then return nil, "nothing ticked to export" end
     for _, rec in ipairs(recs) do
-        if rec.type == "layout" then
+        -- a layout or group lists only the members that travel with it
+        if rec.type == "layout" or rec.type == "group" then
             local m = {}
             for _, mid in ipairs(rec.members or {}) do
                 if seen[mid] then m[#m + 1] = mid end
             end
             rec.members = m
-        else
+        end
+        if rec.type ~= "layout" then
             -- its layout is not in the string: its looks travel baked in
             local orig = DB.records[rec.id]
             local lay = orig and Store.LayoutOf(orig)
@@ -2146,8 +2306,9 @@ end
 -- so a tampered string degrades to defaults. Each layout in the string becomes
 -- a new one; anything whose parent is not in it lands in the target:
 -- `targetLayoutId`, else the first imported layout, else a new "Imported" one.
--- Returns { layouts = {..}, items = {..}, target = rec }, or nil and a reason.
-function Store.Import(text, targetLayoutId)
+-- `opts.emptyGroups` brings each group in without its icons.
+-- Returns { layouts, items, target, dropped = icons left out }, or nil and a reason.
+function Store.Import(text, targetLayoutId, opts)
     text = tostring(text or ""):gsub("%s+", "")
     if text == "" then return nil, "paste an export string first" end
     local body
@@ -2171,14 +2332,26 @@ function Store.Import(text, targetLayoutId)
     end
 
     local VALID = { layout = true, group = true, icon = true, bar = true }
-    local map, newRecs, layouts = {}, {}, {}
+    -- opts.emptyGroups: a group in the string arrives without its icons (an
+    -- icon exported alone, its group left home, still comes in)
+    local dropIn = {}
+    if opts and opts.emptyGroups then
+        for _, rec in ipairs(payload.records) do
+            if type(rec) == "table" and rec.type == "group" and rec.id ~= nil then dropIn[rec.id] = true end
+        end
+    end
+    local map, newRecs, layouts, dropped = {}, {}, {}, 0
     for _, rec in ipairs(payload.records) do
         if type(rec) == "table" and rec.id ~= nil and VALID[rec.type] then
-            local nid = NewId()
-            map[rec.id] = nid
-            rec.id = nid
-            newRecs[#newRecs + 1] = rec
-            if rec.type == "layout" then layouts[#layouts + 1] = rec end
+            if rec.type == "icon" and rec.groupId ~= nil and dropIn[rec.groupId] then
+                dropped = dropped + 1
+            else
+                local nid = NewId()
+                map[rec.id] = nid
+                rec.id = nid
+                newRecs[#newRecs + 1] = rec
+                if rec.type == "layout" then layouts[#layouts + 1] = rec end
+            end
         end
     end
     if #newRecs == 0 then return nil, "string holds nothing to import" end
@@ -2225,7 +2398,7 @@ function Store.Import(text, targetLayoutId)
     end
     Store.Normalize()
     Store.Dirty("tree")
-    return { layouts = layouts, items = items, target = target }
+    return { layouts = layouts, items = items, target = target, dropped = dropped }
 end
 
 -- One-layout form of Import: the first imported layout, or where the loose

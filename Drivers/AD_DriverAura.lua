@@ -1,7 +1,8 @@
 -- Aura icons on the engine-owned AuraContainer, and the aura overlay on spell
 -- icons. The icon frame is a holder wearing the "missing" look; the engine
 -- button anchored over it shows while the aura is up and carries every Aura
--- Active option. Presence can be secret, so it is never read.
+-- Active option (a gated glow rides a glow-only button, see Glow gates).
+-- Presence can be secret, so it is never read.
 
 local ADDON, NS = ...
 local Store = NS.Store
@@ -16,11 +17,14 @@ NS.DriverAura = Driver
 local IS_121 = ((select(4, GetBuildInfo()) or 0) >= 120100)
     or (C_Secrets and C_Secrets.ShouldAurasBeSecret ~= nil)
 
-local entries = {}        -- [iconId] = { rec, holder, subs={ {unit,key,container,harmful,frame} }, parked, gen }
+local entries = {}        -- [iconId] = { rec, holder, subs={ {unit,key,container,harmful,frame} }, glows={ same }, parked, gen }
 local allContainers = {}  -- { {unit=, frame=} } for target-swap refresh
 local pendingCreate = {}  -- [iconId] = true, deferred while auras are secret
 local combatQueue = {}    -- [entry] = parked flag, filter edits queued in combat
 local loadWindowOver = false
+-- For the combat-only glows. InCombatLockdown is still false while
+-- PLAYER_REGEN_DISABLED runs, so the combat events carry it.
+local inCombat = InCombatLockdown() and true or false
 
 local function AurasSecretNow()
     if not (C_Secrets and C_Secrets.ShouldAurasBeSecret) then return false end
@@ -154,6 +158,108 @@ local function FilterSig(ids)
     return table.concat(t, ",")
 end
 Driver.FilterSig = FilterSig
+
+-- Glow lanes: in combat the icon's button can't be restyled and never says
+-- which id it shows, so a gated glow 1 ("Glow for", "Glow only in combat") and
+-- every glow 2-4 ride their own engine button whose filter holds just that
+-- glow's ids, in a container we own. Its alpha is the combat switch; a
+-- container Show / Hide rebuilds it.
+
+-- "Glow for" choices: one per spell name (its ranks together), in the icon's
+-- order, each keyed by its first id.
+local function GlowSpellGroups(d)
+    local out, byName = {}, {}
+    for _, id in ipairs(SpellIDList(d)) do
+        local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+        local key = name or ("#" .. id)
+        local g = byName[key]
+        if g then
+            g.n = g.n + 1
+        else
+            g = { id = id, name = name or ("Spell " .. id), n = 1 }
+            byName[key] = g
+            out[#out + 1] = g
+        end
+    end
+    return out
+end
+Driver.GlowSpellGroups = GlowSpellGroups
+
+-- A gate needs the icon's own button: an aura icon, and not a member of a
+-- Dynamic aura group, whose rows draw it in play.
+function Driver.GlowLaneOK(rec)
+    if not (IS_121 and rec and rec.kind == "aura") then return false end
+    local g = rec.groupId and Store.Get(rec.groupId)
+    if g and g.groupKind == "aura"
+        and Store.Resolve(g, "arrangement", "dynamicLayout") == true then
+        return false
+    end
+    return true
+end
+
+-- How many glows an aura icon has (glow 1 plus the numbered ones).
+local function GlowSlots()
+    return (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1
+end
+
+-- The ids glow `slot` (default 1) follows on its own button, or nil: the glow
+-- is off, or it is glow 1 with no gate (a pick of every id counts as none),
+-- which stays on the icon's button.
+local function GlowIDs(rec, slot)
+    slot = slot or 1
+    if not Driver.GlowLaneOK(rec) then return nil end
+    local suf = (slot > 1) and tostring(slot) or ""
+    local R = function(k) return Store.Resolve(rec, "auraActive", k .. suf) end
+    if R("activeGlow") ~= true then return nil end
+    local ids = SpellIDList(rec.driver)
+    local m, n = {}, 0
+    local pick = tonumber(R("activeGlowFor")) or 0
+    if pick > 0 then
+        local want = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(pick)
+        for _, id in ipairs(ids) do
+            if id == pick or (want ~= nil and C_Spell.GetSpellName(id) == want) then
+                m[id] = true
+                n = n + 1
+            end
+        end
+    end
+    if n == 0 or n == #ids then
+        -- no pick, one the icon no longer tracks, or all of them
+        if slot == 1 and R("activeGlowCombatOnly") ~= true then return nil end
+        m = IncludeMap(rec.driver)
+    end
+    return m
+end
+Driver.GlowIDs = GlowIDs
+
+-- True when any glow wants a lane.
+local function AnyGlowWanted(rec)
+    for k = 1, GlowSlots() do
+        if GlowIDs(rec, k) then return true end
+    end
+    return false
+end
+
+local function HasGlowLane(entry, slot)
+    for _, g in ipairs(entry.glows or {}) do
+        if g.slot == slot then return true end
+    end
+    return false
+end
+
+-- True when glow 1's lane carries it, so the icon's button drops it.
+local function GlowMoved(entry)
+    return HasGlowLane(entry, 1) and GlowIDs(entry.rec, 1) ~= nil
+end
+
+-- The glow button's style options for one lane.
+local function GlowOpts(entry, base, g)
+    local o = {}
+    for k, v in pairs(base) do o[k] = v end
+    o.glowSlot = g.slot
+    o.glowOn = GlowIDs(entry.rec, g.slot) ~= nil
+    return o
+end
 
 -- Aura on a spell icon
 -- With rec.driver.overlay.on, a spell icon gets an entry like an aura icon's:
@@ -338,6 +444,59 @@ Driver.AnchorButton = AnchorButton
 -- any context. Re-slotting a used container fails. While auras are secret,
 -- creation after the load window is blocked, so it waits for a settle edge.
 
+-- The glow lanes, made the same way, one per glow that wants one and has none
+-- yet (a lane is kept once made: a glow switched off parks it). Their buttons
+-- are never wired: the game draws nothing on them, and the glow is all we add.
+-- They start at alpha 0; SyncEntryAlpha lets them in. True when every wanted
+-- glow has its lanes.
+local function EnsureGlowSlots(iconId, entry, startParked)
+    if not IS_121 then return false end
+    local rec = entry.rec
+    local want = {}
+    for k = 1, GlowSlots() do
+        if GlowIDs(rec, k) and not HasGlowLane(entry, k) then want[#want + 1] = k end
+    end
+    if #want == 0 then return true end
+    if loadWindowOver and AurasSecretNow() then
+        entry.glowPending = true
+        return false
+    end
+    entry.glowPending = nil
+    entry.glows = entry.glows or {}
+    local d = ShapeFor(rec) or {}
+    for _, slot in ipairs(want) do
+        local gids = GlowIDs(rec, slot)
+        for _, lane in ipairs(LanesFor(d)) do
+            local c = CreateIconContainer(lane.unit)
+            if c then
+                c:SetAlpha(0)
+                local key = "adglow" .. slot .. "_" .. tostring(iconId) .. "_" .. lane.unit
+                    .. (lane.harmful and "_h" or "_b") .. "_g" .. (entry.gen or 0)
+                local ids = (startParked or not gids) and { [0] = true } or gids
+                local g = { slot = slot, unit = lane.unit, key = key, container = c,
+                    harmful = lane.harmful, filterSig = FilterSig(ids) }
+                entry.glows[#entry.glows + 1] = g
+                c:AddAuraSlot(key, FilterForLane(d, lane), {
+                    maxFrameCount = 1,
+                    initializeFrame = function(b)
+                        b:EnableMouse(false)
+                        local e = entries[iconId]
+                        if not e then return end
+                        g.frame = b
+                        if e.holder then AnchorButton(b, e.holder, e.lift) end
+                        if e.rec then
+                            Factory.StyleAuraGlowButton(b, e.rec, HolderPx(e),
+                                GlowOpts(e, AuraButtonOpts(e), g))
+                        end
+                    end,
+                    candidateFilters = { includeSpellIDs = ids },
+                })
+            end
+        end
+    end
+    return true
+end
+
 local function EnsureSlots(iconId, rec, startParked)
     local entry = entries[iconId]
     if entry and #entry.subs > 0 then return true end
@@ -352,6 +511,9 @@ local function EnsureSlots(iconId, rec, startParked)
     entry.gen = entry.gen or 0
     entry.parked = startParked and true or false
     entries[iconId] = entry
+
+    -- Glow lanes first, so the icon's button is born knowing its glow moved.
+    if AnyGlowWanted(rec) then EnsureGlowSlots(iconId, entry, startParked) end
 
     local d = ShapeFor(rec) or {}
     for _, lane in ipairs(LanesFor(d)) do
@@ -378,7 +540,9 @@ local function EnsureSlots(iconId, rec, startParked)
                     -- driver) draws every option on it.
                     local r = e.rec
                     if r then
-                        Factory.StyleAuraButton(b, r, HolderPx(e), AuraButtonOpts(e))
+                        local opts = AuraButtonOpts(e)
+                        opts.glowElsewhere = GlowMoved(e)
+                        Factory.StyleAuraButton(b, r, HolderPx(e), opts)
                     end
                     b:EnableMouse(false)
                 end,
@@ -407,6 +571,20 @@ local function ApplySlotFilters(entry, parked)
         if sub.filterSig ~= sig then
             sub.filterSig = sig
             c:SetAuraSlotCandidateFilters(sub.key, { includeSpellIDs = ids })
+        end
+    end
+    -- glow lanes: each glow's ids while it wants its lane, else parked
+    for _, g in ipairs(entry.glows or {}) do
+        local c = g.container
+        local gids = (not parked) and GlowIDs(entry.rec, g.slot) or nil
+        if gids and c.SetAuraSlotFilterString then
+            c:SetAuraSlotFilterString(g.key, FilterForLane(d, g))
+        end
+        local ids = gids or { [0] = true }
+        local sig = FilterSig(ids)
+        if g.filterSig ~= sig then
+            g.filterSig = sig
+            c:SetAuraSlotCandidateFilters(g.key, { includeSpellIDs = ids })
         end
     end
     entry.parked = parked and true or false
@@ -444,6 +622,20 @@ local function SyncEntryAlpha(entry)
     for _, sub in ipairs(entry.subs) do
         sub.container:SetAlpha(a)
     end
+    -- the glow lanes: the icon's alpha while their glow wants them, and a
+    -- combat-only glow also waits for combat
+    for _, g in ipairs(entry.glows or {}) do
+        local rec = entry.rec
+        local suf = (g.slot > 1) and tostring(g.slot) or ""
+        local ga = a
+        if not GlowIDs(rec, g.slot) then
+            ga = 0
+        elseif not inCombat
+            and Store.Resolve(rec, "auraActive", "activeGlowCombatOnly" .. suf) == true then
+            ga = 0
+        end
+        g.container:SetAlpha(ga)
+    end
 end
 
 -- Play on screen starting or stopping on this icon: its container follows.
@@ -458,12 +650,24 @@ end
 local function RestyleEntry(entry)
     local px = HolderPx(entry)
     local opts = AuraButtonOpts(entry)
+    opts.glowElsewhere = GlowMoved(entry)
     for _, sub in ipairs(entry.subs) do
         local b = sub.frame
         if b then
             if IsAccessible(b) then
                 AnchorButton(b, entry.holder, entry.lift)
                 Factory.StyleAuraButton(b, entry.rec, px, opts)
+            else
+                entry.stylePending = true
+            end
+        end
+    end
+    for _, g in ipairs(entry.glows or {}) do
+        local b = g.frame
+        if b then
+            if IsAccessible(b) then
+                AnchorButton(b, entry.holder, entry.lift)
+                Factory.StyleAuraGlowButton(b, entry.rec, px, GlowOpts(entry, opts, g))
             else
                 entry.stylePending = true
             end
@@ -501,7 +705,13 @@ local function AttachEntry(rec, f, d)
                 sub.container:Hide()
                 entry.retired[#entry.retired + 1] = sub
             end
+            for _, g in ipairs(entry.glows or {}) do
+                g.container:SetAlpha(0)
+                g.container:Hide()
+                entry.retired[#entry.retired + 1] = g
+            end
             entry.subs = {}
+            entry.glows = {}
             entry.gen = (entry.gen or 0) + 1
         end
     end
@@ -509,6 +719,8 @@ local function AttachEntry(rec, f, d)
     if #entry.subs == 0 then
         EnsureSlots(rec.id, rec, false)
     else
+        -- a glow set after the slots were made gets its lane now
+        if AnyGlowWanted(rec) then EnsureGlowSlots(rec.id, entry, false) end
         -- retarget/reuse: re-push filters (spell ID and caster edits are pure
         -- data) and re-assert anchor + ladder + style on accessible buttons
         SetParked(entry, false)
@@ -542,6 +754,7 @@ function Driver.AttachOverlay(rec, f)
         entry.rec, entry.holder, entry.off = rec, f, true
         SetParked(entry, true)
         for _, sub in ipairs(entry.subs) do sub.container:SetAlpha(0) end
+        for _, g in ipairs(entry.glows or {}) do g.container:SetAlpha(0) end
     end
 end
 
@@ -554,6 +767,7 @@ function Driver.Detach(id)
         -- child, not the holder's: zero the container (legal in combat).
         -- SyncEntryAlpha restores it on attach.
         for _, sub in ipairs(entry.subs) do sub.container:SetAlpha(0) end
+        for _, g in ipairs(entry.glows or {}) do g.container:SetAlpha(0) end
     end
     if entry.holder then Factory.StopAuraGlow(entry.holder) end
 end
@@ -613,6 +827,17 @@ local function OnSettleEdge()
                 local rec = Store.Get(id)
                 if rec then Reattach(rec, entry.holder) end
             elseif #entry.subs > 0 and not AurasSecretNow() then
+                -- glow lanes a gate asked for while auras were secret
+                if entry.glowPending then
+                    local rec = Store.Get(id)
+                    if not (rec and AnyGlowWanted(rec)) then
+                        entry.glowPending = nil
+                    elseif EnsureGlowSlots(id, entry, entry.parked) then
+                        ApplySlotFilters(entry, entry.parked)
+                        entry.stylePending = true
+                        SyncEntryAlpha(entry)
+                    end
+                end
                 if entry.stylePending then
                     entry.stylePending = nil
                     RestyleEntry(entry)
@@ -622,6 +847,19 @@ local function OnSettleEdge()
     end
 end
 
+-- Combat edges: combat-only glows follow on their containers' alpha.
+local function OnCombatEdge(state)
+    inCombat = state
+    for _, entry in pairs(entries) do
+        if entry.glows and #entry.glows > 0 and entry.holder and not entry.off
+            and entry.holder:IsShown() then
+            SyncEntryAlpha(entry)
+        end
+    end
+end
+
+Events.On("PLAYER_REGEN_DISABLED", "adaura_glow", function() OnCombatEdge(true) end)
+Events.On("PLAYER_REGEN_ENABLED", "adaura_glow", function() OnCombatEdge(false) end)
 Events.On("PLAYER_REGEN_ENABLED", "adaura", OnSettleEdge)
 Events.On("PLAYER_ENTERING_WORLD", "adaura", OnSettleEdge)
 Events.On("PLAYER_LOGIN", "adaura_lw", function()

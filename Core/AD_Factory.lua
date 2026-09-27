@@ -16,8 +16,8 @@ local AMMO_SLOT = INVSLOT_AMMO or 0
 NS.AMMO_SLOT = AMMO_SLOT
 
 -- Glow frame level above the icon. The glow library's default +1 is under the
--- border host (+6), whose strips then paint over the glow whatever the draw
--- layer. Passed to every Start; unlike strata, it can't leak via the pool.
+-- swipe (+2), which then paints over the glow whatever the draw layer.
+-- Passed to every Start; unlike strata, it can't leak via the pool.
 local GLOW_LEVEL = 7
 NS.GLOW_LEVEL = GLOW_LEVEL
 
@@ -208,12 +208,22 @@ local function KindTexture(rec)
         return GetInventoryItemTexture("player", AMMO_SLOT) or Factory.AmmoEmptyTexture()
     elseif kind == "totem" then
         -- haveTotem is a secret boolean, so it is never tested. The icon is
-        -- only painted, and SetTexture takes a secret.
-        if GetTotemInfo then
-            local _, _, _, _, icon = GetTotemInfo(d.slot or 1)
+        -- only painted, and SetTexture takes a secret. A totem followed by
+        -- spell shows its spell's art while it is not down.
+        local slot = d.slot or 1
+        if NS.DriverTotem then slot = NS.DriverTotem.SlotFor(rec) end
+        if slot and GetTotemInfo then
+            local _, _, _, _, icon = GetTotemInfo(slot)
             if icon then return icon end
         end
-        return QUESTION_MARK
+        local tex = d.spellID and C_Spell.GetSpellTexture(d.spellID)
+        return tex or QUESTION_MARK
+    elseif kind == "enchant" then
+        -- the enchant's own art while it is on, else the weapon's
+        local E = NS.DriverEnchant
+        local e = E and E.Read(rec)
+        if e and e.icon then return e.icon end
+        return GetInventoryItemTexture("player", E and E.InvSlot(rec) or 16) or QUESTION_MARK
     end
     return QUESTION_MARK
 end
@@ -732,12 +742,13 @@ local function PaintBorderEdges(edges, anchor, rec, alpha, geometryOnly)
     edges.right:SetPoint("BOTTOMRIGHT", anchor, "BOTTOMRIGHT", -off, off)
     edges.right:SetWidth(th)
     -- geometryOnly: the engine owns colour and visibility (dispel border).
-    if geometryOnly then return end
+    if geometryOnly then return off + th end
     local a = (c[4] or 1) * (alpha or 1)
     for _, k in ipairs(BORDER_KEYS) do
         edges[k]:SetVertexColor(c[1], c[2], c[3], a)
         edges[k]:Show()
     end
+    return off + th   -- the strips' inside edge, where a swipe stops
 end
 
 -- The live aura button's own border, on the engine button so it shows and
@@ -891,6 +902,8 @@ Factory.IconFont = IconFont
 function Factory.ApplyBorder(f, rec, bump, forceHide)
     local R = function(section, field) return Store.Resolve(rec, section, field) end
     local edges = f.borderEdges
+    -- how far in the swipe must stop (0: no border over the art)
+    f._adBorderInner = 0
     if R("appearance", "borderEnabled") and not forceHide then
         if not edges then
             edges = {}
@@ -918,15 +931,17 @@ function Factory.ApplyBorder(f, rec, bump, forceHide)
             end
             f.borderEdges = edges
         end
-        -- bump: 6, or 2 to sit under an anchored aura engine button. Set each
+        -- bump: 1, under the swipe (+2) so its countdown number draws on
+        -- top; 2 on an aura icon, under its engine button (+3). Set each
         -- pass (children don't follow a parent's SetFrameLevel); a secret
         -- level would throw on the addition, so it waits for a plain pass.
         local lvl = f:GetFrameLevel()
         if issecretvalue and issecretvalue(lvl) then lvl = nil end
         if type(lvl) == "number" then
-            f._adBorderHost:SetFrameLevel(lvl + (bump or 6))
+            f._adBorderHost:SetFrameLevel(lvl + (bump or 1))
         end
-        PaintBorderEdges(edges, f, rec, 1)
+        local inner = PaintBorderEdges(edges, f, rec, 1)
+        if inner > 0 then f._adBorderInner = inner end
     elseif edges then
         for _, t in pairs(edges) do t:Hide() end
     end
@@ -1032,9 +1047,10 @@ end
 -- except in edit mode so it stays grabbable.
 function Factory.ApplyFrameAlpha(f, rec)
     local a = Store.Resolve(rec, "appearance", "alpha") or 1
+    -- _adPassive: a passive trinket in a slot set to on-use trinkets only
     if (rec.kind == "item" or rec.kind == "trinket" or rec.kind == "ammo")
-        and f._adItemEmpty
-        and Store.Resolve(rec, "outOfStock", "hideWhenMissing") == true
+        and ((f._adItemEmpty and Store.Resolve(rec, "outOfStock", "hideWhenMissing") == true)
+            or (rec.kind == "trinket" and f._adPassive))
         and not (NS.LayoutEngine and NS.LayoutEngine.IsEditMode
             and NS.LayoutEngine.IsEditMode()) then
         a = 0
@@ -1057,20 +1073,23 @@ function Factory.ApplyStyle(f, rec)
     -- An aura icon's holder border is the missing look's: at +2 it sits under
     -- the engine button (+3), which covers it while the aura is up and draws
     -- its own. Above the button it would show at the missing alpha over the
-    -- live icon. Same for a spell icon's aura overlay (the button at +4).
+    -- live icon. Any other icon's border sits at +1, under the swipe (+2), so
+    -- the swipe's own countdown number draws above it; a spell icon's aura
+    -- overlay (the button at +4) covers both.
     local overlay = NS.DriverAura ~= nil and NS.DriverAura.OverlayOn ~= nil
         and NS.DriverAura.OverlayOn(rec) == true
-    Factory.ApplyBorder(f, rec, (rec.kind == "aura" or overlay) and 2 or 6, forceHide)
-    -- The text host sits above the border host (+6) and any anchored engine
-    -- button, which would otherwise hide the labels. Set each pass (children
-    -- don't follow SetFrameLevel), skipped when the level reads secret.
+    Factory.ApplyBorder(f, rec, rec.kind == "aura" and 2 or 1, forceHide)
+    -- The text host sits above the border and any anchored engine button,
+    -- which would otherwise hide the labels. Set each pass (children don't
+    -- follow SetFrameLevel), skipped when the level reads secret.
     local hostLvl = f:GetFrameLevel()
     local plainLvl = not (issecretvalue and issecretvalue(hostLvl)) and type(hostLvl) == "number"
     if plainLvl then
         f.textHost:SetFrameLevel(hostLvl + 7)
+        if rec.kind ~= "aura" then f.cooldown:SetFrameLevel(hostLvl + 2) end
     end
     -- With an aura overlay the button shows the aura's count in that corner,
-    -- so the charges move to a low host at +3, between the border (+2) and the
+    -- so the charges move to a low host at +3, between the swipe (+2) and the
     -- button (+4), and show while the aura is down.
     if overlay then
         local low = f._adLowText
@@ -1138,6 +1157,11 @@ function Factory.ApplyStyle(f, rec)
             iy = ix
         end
         ix, iy = (ix + padBase) * kS, (iy + padBase) * kS
+        -- the swipe draws over the border now, so it stops at the border's
+        -- inside edge; a deeper inset of its own still wins
+        local bi = f._adBorderInner or 0
+        if ix < bi then ix = bi end
+        if iy < bi then iy = bi end
         f.cooldown:ClearAllPoints()
         f.cooldown:SetPoint("TOPLEFT", f, "TOPLEFT", ix, -iy)
         f.cooldown:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -ix, iy)
@@ -1413,8 +1437,16 @@ function Factory.StyleAuraButton(b, rec, px, opts)
             fs:Hide()
         end
     end
-    Factory.SetAuraButtonGlow(b, rec, (not forceHide) and R("auraActive", "activeGlow") == true,
-        opts.w or px, opts.h or px, aA)
+    -- opts.glowElsewhere: a glow gate moved the glow onto its own button
+    Factory.SetAuraButtonGlow(b, rec, (not forceHide) and not opts.glowElsewhere
+        and R("auraActive", "activeGlow") == true, opts.w or px, opts.h or px, aA)
+    -- Glows 2-4 ride their own buttons in play; the editor preview's one
+    -- stand-in draws them all (opts.previewGlows) and drops them otherwise,
+    -- as it also serves spell icons.
+    for k = 2, (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1 do
+        Factory.SetAuraButtonGlow(b, rec, opts.previewGlows == true and (not forceHide)
+            and R("auraActive", "activeGlow" .. k) == true, opts.w or px, opts.h or px, aA, k)
+    end
 end
 
 -- Aura button glow: drawn on the live engine button, so it shows exactly while
@@ -1940,20 +1972,24 @@ local function ApplyTimeGate(b, host, frac, W, H, mx, my)
 end
 
 -- On/off plus the recipe from the Aura Active glow fields. w, h = the plain
--- button size; alphaMul = Active alpha. Accessible passes only.
-function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul)
+-- button size; alphaMul = Active alpha; slot 2+ = a numbered glow (its own
+-- fields and host). Accessible passes only.
+function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot)
     if not b then return end
-    local host = b._adGlowHost
+    local suf = (slot and slot > 1) and tostring(slot) or ""
+    local hostKey, sigKey = "_adGlowHost" .. suf, "_adGlowSig" .. suf
+    local host = b[hostKey]
     if not on then
         if host and host._adOn then
             HideGlowParts(host, nil)
             host:Hide()
             host._adOn = false
         end
-        b._adGlowSig = nil
+        b[sigKey] = nil
         return
     end
-    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    -- every field read here is a glow field, so the slot's suffix applies
+    local R = function(s, k) return Store.Resolve(rec, s, k .. suf) end
     w = (w and w > 0) and w or 36
     h = (h and h > 0) and h or w
     local gtype = DrawnGlowStyle(R("auraActive", "activeGlowType") or "button")
@@ -1998,10 +2034,10 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul)
     if not host then
         host = CreateFrame("Frame", nil, b)
         host:EnableMouse(false)
-        b._adGlowHost = host
+        b[hostKey] = host
     end
-    if host._adOn and b._adGlowSig == sig then return end
-    b._adGlowSig = sig
+    if host._adOn and b[sigKey] == sig then return end
+    b[sigKey] = sig
     host:ClearAllPoints()
     local W, H
     if gtype == "pixel" or gtype == "autocast" then
@@ -2053,6 +2089,23 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul)
     ApplyTimeGate(b, host, frac, W, H, mx, my)
     host:Show()
     host._adOn = true
+end
+
+-- A glow lane's button (DriverAura's glow lanes): it carries one glow alone,
+-- opts.glowSlot (1-4), and only while opts.glowOn says its lane is live.
+-- Accessible passes only, like SetAuraButtonGlow.
+function Factory.StyleAuraGlowButton(b, rec, px, opts)
+    if not (b and rec) then return end
+    opts = opts or {}
+    local slot = opts.glowSlot or 1
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    local aA = R("auraActive", "activeAlpha") or 1
+    if aA < 0 then aA = 0 elseif aA > 1 then aA = 1 end
+    b:SetAlpha(1)
+    Factory.SetAuraButtonGlow(b, rec, opts.glowOn == true
+        and R("appearance", "forceHideIcon") ~= true
+        and R("auraActive", "activeGlow" .. ((slot > 1) and slot or "")) == true,
+        opts.w or px, opts.h or px, aA, slot)
 end
 
 -- State writer: drivers report, this paints. onCooldown picks the alpha bucket
@@ -2190,6 +2243,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         local sig = (f._adOnCooldown and 1 or 0)
             + (((f._adStateAlpha or 1) <= 0) and 2 or 0)
             + ((f._adItemEmpty and R("outOfStock", "hideWhenMissing") == true) and 4 or 0)
+            + (f._adPassive and 8 or 0)
         if f._adDynSig ~= sig then
             f._adDynSig = sig
             NS.Events.Fire("AD_DYNEDGE")
@@ -2676,8 +2730,19 @@ function Factory.ShowTooltip(f, rec)
         GameTooltip:SetInventoryItem("player", d.slotID)
     elseif kind == "ammo" then
         GameTooltip:SetInventoryItem("player", AMMO_SLOT)
-    elseif kind == "totem" and GameTooltip.SetTotem then
-        GameTooltip:SetTotem(d.slot or 1)
+    elseif kind == "totem" then
+        local slot = d.slot or 1
+        if NS.DriverTotem then slot = NS.DriverTotem.SlotFor(rec) end
+        if slot and GameTooltip.SetTotem then
+            GameTooltip:SetTotem(slot)
+        elseif d.spellID then
+            GameTooltip:SetSpellByID(d.spellID)
+        else
+            GameTooltip:SetText(rec.name or "Arc Auras")
+        end
+    elseif kind == "enchant" then
+        -- the weapon's tooltip carries its enchant line and time
+        GameTooltip:SetInventoryItem("player", NS.DriverEnchant and NS.DriverEnchant.InvSlot(rec) or 16)
     else
         GameTooltip:SetText(rec.name or "Arc Auras")
     end

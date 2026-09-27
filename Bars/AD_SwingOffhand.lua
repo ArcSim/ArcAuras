@@ -39,6 +39,15 @@ local function Ensure(shell)
     o.bar:SetAllPoints(o.track)
     o.bar:SetMinMaxValues(0, 1)
     o.mark = o.bar:CreateTexture(nil, "OVERLAY")
+    -- An invisible copy of the off-hand fill across the whole bar: the label
+    -- rides its moving edge at the bar's own height, whatever the style.
+    o.follow = CreateFrame("StatusBar", nil, o.track)
+    o.follow:EnableMouse(false)
+    o.follow:SetMinMaxValues(0, 1)
+    o.follow:SetStatusBarTexture(K.WHITE)
+    o.follow:SetStatusBarColor(1, 1, 1, 0)
+    o.label = o.follow:CreateFontString(nil, "OVERLAY")
+    o.label:Hide()
     shell._adOH = o
     return o
 end
@@ -48,6 +57,7 @@ local function Stop(o)
     o.active = false
     o.bar:SetScript("OnUpdate", nil)
     o.mark:Hide()
+    o.label:Hide()
     o.track:Hide()
 end
 
@@ -62,7 +72,10 @@ local function Idle(e)
     local empty = drain or K.R(e.rec, "fill", "idleEmpty") == true
     o.bar:SetMinMaxValues(0, 1)
     o.bar:SetValue(empty and 0 or 1)
+    o.follow:SetMinMaxValues(0, 1)
+    o.follow:SetValue(empty and 0 or 1)
     o.mark:Hide()
+    o.label:Hide()
     if e.isPreview then o.pvAt = GetTime() + 0.35 end
 end
 
@@ -78,14 +91,19 @@ local function Run(e, duration)
     o.endTime = GetTime() + duration
     o.bar:SetMinMaxValues(0, duration)
     o.bar:SetValue(drain and duration or 0)
+    o.follow:SetMinMaxValues(0, duration)
+    o.follow:SetValue(drain and duration or 0)
     o.mark:SetShown(o.style == "mark")
+    o.label:SetShown(o.labelOn == true)
     o.bar:SetScript("OnUpdate", function(bar)
         local remaining = o.endTime - GetTime()
         if remaining <= 0 then
             Idle(e)
             return
         end
-        bar:SetValue(drain and remaining or (o.duration - remaining))
+        local v = drain and remaining or (o.duration - remaining)
+        bar:SetValue(v)
+        o.follow:SetValue(v)
     end)
 end
 
@@ -110,6 +128,16 @@ local function Paint(e, o)
         o.fillTex = t
     end
     o.bar:SetRotatesTexture(K.R(rec, "fill", "rotateTexture") == true)
+    o.follow:SetFrameLevel(lvl + 3)
+    o.follow:SetOrientation(o.vertical and "VERTICAL" or "HORIZONTAL")
+    o.follow:SetReverseFill(o.reverse)
+    o.labelOn = K.R(rec, "fill", "swingOffhandLabel") == true
+    if o.labelOn then
+        K.StyleFont(o.label, e, "ohlabel", K.R(rec, "fill", "swingOffhandLabelSize") or 10, "OUTLINE", false)
+        local lc = K.R(rec, "fill", "swingOffhandLabelColor") or { 1, 1, 1, 1 }
+        o.label:SetTextColor(lc[1], lc[2], lc[3], lc[4] or 1)
+        o.label:SetText(K.R(rec, "fill", "swingOffhandLabelText") or "OH")
+    end
     local c = K.R(rec, "fill", "swingOffhandColor") or { 1, 0.75, 0.3, 1 }
     if o.style == "mark" then
         -- the bar only supplies a moving edge for the mark to ride
@@ -133,6 +161,39 @@ local function PlaceMark(o, px)
         local edge = o.reverse and "LEFT" or "RIGHT"
         mk:SetPoint("TOPLEFT", ft, "TOP" .. edge, -px, 0)
         mk:SetPoint("BOTTOMRIGHT", ft, "BOTTOM" .. edge, px, 0)
+    end
+end
+
+-- The label rides the follower's moving edge: centred on it, or just outside
+-- the bar (a standing bar: its left or right side). Anchors only, so the edge
+-- carries it with no work per frame.
+local function PlaceLabel(e, o, px)
+    local shell, inset = e.shell, e.fillInset or 0
+    o.follow:ClearAllPoints()
+    o.follow:SetPoint("TOPLEFT", shell, "TOPLEFT", inset, -inset)
+    o.follow:SetPoint("BOTTOMRIGHT", shell, "BOTTOMRIGHT", -inset, inset)
+    local ft, lb = o.follow:GetStatusBarTexture(), o.label
+    local pos = K.R(e.rec, "fill", "swingOffhandLabelPos") or "on"
+    local gap = 2 * px
+    lb:ClearAllPoints()
+    if o.vertical then
+        local edge = o.reverse and "BOTTOM" or "TOP"
+        if pos == "above" then
+            lb:SetPoint("RIGHT", ft, edge .. "LEFT", -gap, 0)
+        elseif pos == "below" then
+            lb:SetPoint("LEFT", ft, edge .. "RIGHT", gap, 0)
+        else
+            lb:SetPoint("CENTER", ft, edge, 0, 0)
+        end
+    else
+        local edge = o.reverse and "LEFT" or "RIGHT"
+        if pos == "above" then
+            lb:SetPoint("BOTTOM", ft, "TOP" .. edge, 0, gap)
+        elseif pos == "below" then
+            lb:SetPoint("TOP", ft, "BOTTOM" .. edge, 0, -gap)
+        else
+            lb:SetPoint("CENTER", ft, edge, 0, 0)
+        end
     end
 end
 
@@ -235,7 +296,8 @@ function OH.Styled(e)
     end
     o.active = true
     o.track:Show()
-    if not o.running then Idle(e) end
+    PlaceLabel(e, o, K.Px(shell))
+    if o.running then o.label:SetShown(o.labelOn == true) else Idle(e) end
     OH.SyncEvents()
     -- Tick marks size themselves from the fill's height, which moves only on
     -- the next layout: lay them out again then.

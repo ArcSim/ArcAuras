@@ -1,7 +1,8 @@
 -- Anchoring: bars, groups and free icons pin to a group, bar, layout, named
 -- frame or the cursor, and bars to the target's nameplate. An `anchor` section must use
 -- these fields: anchorEnabled, anchorTargetKind/Id/Frame, anchorSrcPoint,
--- anchorDstPoint, anchorOffsetX/Y, anchorMatchWidth, anchorMatchWidthAdjust.
+-- anchorDstPoint, anchorOffsetX/Y, anchorMatchWidth, anchorMatchWidthAdjust
+-- (bars also anchorMatchHeight, anchorMatchHeightAdjust).
 
 local ADDON, NS = ...
 local Store = NS.Store
@@ -336,6 +337,62 @@ local function ApplyPlate(rec, frame)
     return true
 end
 
+-- A matched size on this frame's physical pixel grid, so its border stays sharp.
+local function SnapSize(frame, v)
+    local _, sh = GetPhysicalScreenSize()
+    local es = frame:GetEffectiveScale()
+    if type(sh) ~= "number" or type(es) ~= "number" or sh <= 0 or es <= 0 then return v end
+    local ppu = sh / 768 * es
+    return math.floor(v * ppu + 0.5) / ppu
+end
+
+-- Match width / height take the target's size in this frame's own units, as
+-- the two may sit in layouts of different scales. A standing bar swaps them:
+-- its width runs along its long side.
+local function MatchSize(rec, frame, target)
+    local ts, fs = target:GetEffectiveScale(), frame:GetEffectiveScale()
+    local k = (type(ts) == "number" and type(fs) == "number" and fs > 0) and ts / fs or 1
+    local standing = rec.type == "bar" and Store.BarStanding ~= nil and Store.BarStanding(rec)
+    if R(rec, "anchorMatchWidth") == true then
+        local adj = R(rec, "anchorMatchWidthAdjust") or 0
+        local v = standing and target:GetHeight() or target:GetWidth()
+        if v and v > 0 then
+            v = SnapSize(frame, math.max(8, v * k + adj))
+            if standing then frame:SetHeight(v) else frame:SetWidth(v) end
+        end
+    end
+    if R(rec, "anchorMatchHeight") == true then
+        local adj = R(rec, "anchorMatchHeightAdjust") or 0
+        local v = standing and target:GetWidth() or target:GetHeight()
+        if v and v > 0 then
+            v = SnapSize(frame, math.max(4, v * k + adj))
+            if standing then frame:SetWidth(v) else frame:SetHeight(v) end
+        end
+    end
+end
+
+-- A match follows its target live (a group grows with its auras, a pips bar
+-- with its maximum), not only at the next rebuild. Our own frames only: a
+-- named frame is Blizzard's, and nothing of ours hooks it.
+local matchers = {}   -- target frame -> { [source recId] = true }
+local function FollowSize(rec, target)
+    local set = matchers[target]
+    if not set then
+        set = {}
+        matchers[target] = set
+        target:HookScript("OnSizeChanged", function(t)
+            for id in pairs(matchers[t]) do
+                local r, f = Store.Get(id), sources[id]
+                -- a source that moved to another target left a stale entry
+                if r and f and f:IsShown() and Anchor.ResolveTarget(r) == t then
+                    MatchSize(r, f, t)
+                end
+            end
+        end)
+    end
+    set[rec.id] = true
+end
+
 -- Places one source. Returns true when it anchored, false when the caller
 -- should fall back to its own free placement.
 function Anchor.Apply(rec, frame)
@@ -368,35 +425,30 @@ function Anchor.Apply(rec, frame)
         R(rec, "anchorDstPoint") or DEFAULT_DST,
         R(rec, "anchorOffsetX") or 0,
         R(rec, "anchorOffsetY") or 0)
-    if R(rec, "anchorMatchWidth") == true then
-        -- A standing bar (taller than wide) matches the target's height, along
-        -- its long side; matching the width would lay it flat again.
-        local adj = R(rec, "anchorMatchWidthAdjust") or 0
-        if rec.type == "bar" and Store.BarStanding and Store.BarStanding(rec) then
-            local h = target.GetHeight and target:GetHeight()
-            if h and h > 0 then
-                frame:SetHeight(math.max(8, h + adj))
-            end
-        else
-            local w = target.GetWidth and target:GetWidth()
-            if w and w > 0 then
-                frame:SetWidth(math.max(8, w + adj))
-            end
-        end
+    if R(rec, "anchorMatchWidth") == true or R(rec, "anchorMatchHeight") == true then
+        MatchSize(rec, frame, target)
+        if (R(rec, "anchorTargetKind") or "group") ~= "frame" then FollowSize(rec, target) end
     end
     return true
 end
 
 -- Post-pass, run once the engine has built every frame and registered each
 -- source: a target may not exist yet while its source is built (a later
--- layout, or later in the same rebuild).
+-- layout, or later in the same rebuild). A target that is itself anchored is
+-- placed first, so a match reads its final size, not the one its own match
+-- is about to change.
 function Anchor.ApplyAll()
-    for id, frame in pairs(sources) do
+    local done = {}
+    local function Place(id, frame)
+        if done[id] then return end
+        done[id] = true
         local rec = Store.Get(id)
-        if rec and frame.IsShown and frame:IsShown() then
-            Anchor.Apply(rec, frame)
-        end
+        if not (rec and frame.IsShown and frame:IsShown()) then return end
+        local tid = Anchor.IsEnabled(rec) and R(rec, "anchorTargetId")
+        if tid and sources[tid] then Place(tid, sources[tid]) end
+        Anchor.Apply(rec, frame)
     end
+    for id, frame in pairs(sources) do Place(id, frame) end
 end
 
 -- Drag support: dragging an anchored thing edits its offsets, never its free

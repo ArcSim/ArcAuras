@@ -9,13 +9,13 @@ NS.Schema = Schema
 
 Schema.VERSION = 1
 
-Schema.ICON_KINDS = { "spell", "item", "trinket", "timer", "totem", "aura", "ammo" }
+Schema.ICON_KINDS = { "spell", "item", "trinket", "timer", "totem", "aura", "ammo", "enchant" }
 Schema.GROUP_KINDS = { "cooldown", "aura" }
 -- Creatable bar kinds; cooldown and aura bars carry rec.barMode ("duration" or
 -- "stack"). The create UI hides swing where C_SwingTimer is missing, but the
 -- kind stays valid everywhere, so sync never rewrites a record. Legacy "timer"
 -- and "stack" (power) bars stay legal but cannot be created.
-Schema.BAR_KINDS = { "cooldown", "aura", "swing", "resource", "health", "cast" }
+Schema.BAR_KINDS = { "cooldown", "aura", "swing", "resource", "health", "cast", "enchant", "range" }
 -- Units a castbar can follow (rec.driver.unit): the three that fire cast events
 -- and a change event of their own.
 Schema.CAST_UNITS = { "player", "target", "focus" }
@@ -25,18 +25,32 @@ Schema.CAST_UNITS = { "player", "target", "focus" }
 -- health events, so a bar for one would have to poll.
 Schema.HEALTH_UNITS = { "player", "target", "focus", "pet",
     "party1", "party2", "party3", "party4" }
+-- A range bar's own bands (rec.driver.bands): the distances a check may use,
+-- each read plain in combat on hostile targets (Bars\AD_RangeBar.lua maps them to
+-- an item or an interact index), and how many bands and checks a bar keeps.
+Schema.RANGE_YARDS = { 5, 10, 20, 28, 35, 40 }
+Schema.RANGE_MAX_BANDS = 8
+Schema.RANGE_MAX_CHECKS = 4
+-- A swing bar's ability colours (rec.driver.swingColors): how many rules a bar
+-- keeps, and the colour a new rule starts with.
+Schema.SWING_COLOR_MAX = 8
+Schema.SWING_COLOR_DEFAULT = { 1, 0.55, 0.15, 1 }
 
-local CD  = { spell = true, item = true, trinket = true, timer = true, totem = true }
-local USE = { spell = true, item = true, trinket = true, timer = true }
+-- enchant: a weapon enchant, timed on the swipe; its sounds say applied and
+-- fell off (NS.DriverEnchant).
+local CD  = { spell = true, item = true, trinket = true, timer = true, totem = true, enchant = true }
+local USE = { spell = true, item = true, trinket = true, timer = true, enchant = true }
 local SP  = { spell = true }
 local AU  = { aura = true }
 local AA  = { spell = true, aura = true }
 -- Every kind but aura: holder-only options (keep bright) mean nothing on an
 -- engine-drawn aura button.
-local NA  = { spell = true, item = true, trinket = true, timer = true, totem = true, ammo = true }
+local NA  = { spell = true, item = true, trinket = true, timer = true, totem = true, ammo = true,
+    enchant = true }
 -- Stack text: only kinds something writes a count for (spell charges, item and
--- ammo bag counts, aura applications, timer stacks). Trinkets have none.
-local STK = { spell = true, item = true, timer = true, aura = true, ammo = true }
+-- ammo bag counts, aura applications, timer stacks, enchant charges). Trinkets
+-- have none.
+local STK = { spell = true, item = true, timer = true, aura = true, ammo = true, enchant = true }
 -- "Minutes and seconds" cutoffs in seconds, for icons and bars alike.
 local ABBREV_VALUES = { 0, 120, 300, 600, 3600 }
 local ABBREV_LABELS = { [0] = "Off", [120] = "Under 2 minutes", [300] = "Under 5 minutes",
@@ -349,6 +363,23 @@ Schema.icon = {
         -- count is empty, a trinket when nothing is equipped in its slot.
         hideWhenMissing = { d = false, t = "bool", label = "Hide when missing" },
     } },
+    -- A trinket slot that shows only on-use trinkets: a passive one (no use
+    -- spell) hides and gives up its cell in a dynamic group, as a missing one.
+    trinket = { push = true, kinds = { trinket = true }, fields = {
+        onlyOnUse = { d = false, t = "bool", label = "Only on-use trinkets (hide passive ones)" },
+    } },
+    -- A totem's pulse: a bar under the art that refills at every pulse,
+    -- counted from when the totem went down (NS.DriverTotem).
+    pulse = { push = true, inherit = true, kinds = { totem = true }, fields = {
+        pulseShow = { d = false, t = "bool", label = "Show the pulse timer" },
+        -- 0 takes the totem's own pulse, for the totems that pulse.
+        pulseInterval = { d = 0, t = "num", min = 0, max = 10, step = 0.5, fmt = "%.1f",
+            label = "Seconds between pulses (0 = the totem's own)", dep = { field = "pulseShow" } },
+        pulseColor = { d = { 1, 0.82, 0.2, 1 }, t = "color", label = "Pulse bar color",
+            dep = { field = "pulseShow" } },
+        pulseHeight = { d = 3, t = "int", min = 2, max = 10, label = "Pulse bar height",
+            dep = { field = "pulseShow" } },
+    } },
     -- Mouse tiers: icon, group, layout, then the two addon settings. "inherit"
     -- defers to the tier above; "on" and "off" override it.
     mouse = { push = true, fields = {
@@ -428,9 +459,9 @@ Schema.icon = {
     } },
     -- The look while the aura is up, drawn on the engine button the game shows
     -- exactly then, so it works in combat with no presence read. That button is
-    -- locked in combat (and in instances), so the glow is textures and engine
-    -- animations and there is no "only in combat" option. A spell icon with
-    -- "Aura on this icon" on draws this section on its own engine button.
+    -- locked in combat (and in instances): the glow is textures and engine
+    -- animations, and a glow gate moves it onto a button of its own (DriverAura).
+    -- A spell icon with "Aura on this icon" on draws this on its own button.
     auraActive = { push = true, inherit = true, kinds = AA, fields = {
         -- On a spell icon the button wears the spell's art by default, reading
         -- as one icon changing phase, as in the Cooldown Manager; Active icon
@@ -453,6 +484,25 @@ Schema.icon = {
         activeTintEnabled = { d = false, t = "bool", label = "Active tint" },
         activeTintColor = { d = { 1, 1, 1, 1 }, t = "color", label = "Active tint color", dep = { field = "activeTintEnabled" } },
         activeGlow = { d = false, t = "bool", label = "Glow while active" },
+        -- The gates need the icon's own button (DriverAura.GlowLaneOK), never a
+        -- Dynamic aura group's rows. The pick is one of the icon's spells, its
+        -- ranks by name; 0 = any of them.
+        activeGlowFor = { inherit = false, d = 0, t = "id", auraSpellPick = true,
+            kinds = AU, label = "Glow for",
+            showIf = function(rec)
+                local DA = NS.DriverAura
+                return DA ~= nil and DA.GlowLaneOK(rec) and #DA.GlowSpellGroups(rec.driver) > 1
+            end,
+            desc = "Any of the icon's spells, or only one of them (its ranks together). Works in combat.",
+            dep = { field = "activeGlow" } },
+        activeGlowCombatOnly = { d = false, t = "bool", kinds = AU,
+            label = "Glow only in combat",
+            showIf = function(rec)
+                local DA = NS.DriverAura
+                return DA ~= nil and DA.GlowLaneOK(rec)
+            end,
+            desc = "The glow waits for combat; out of combat the icon shows without it.",
+            dep = { field = "activeGlow" } },
         -- Engine-driven, no reads: always while the aura is up, or under a
         -- time-left threshold, gated by a hidden duration bar the engine fills.
         -- Forever keeps no leftover time on a refresh, so the game opens no
@@ -624,6 +674,65 @@ Schema.icon = {
     -- conditions (rec.c, Core\AD_Conditions.lua). Neither is pushable.
 }
 
+-- Glows 2 to 4 on an aura icon: glow 1's fields again, numbered and per icon
+-- (a layout's looks carry glow 1 only). Each rides its own glow lane
+-- (DriverAura), so each needs the icon's own button.
+Schema.AURA_GLOW_SLOTS = 4
+Schema.AURA_GLOW_FIELDS = {
+    "activeGlow", "activeGlowFor", "activeGlowCombatOnly",
+    "activeGlowWhen", "activeGlowTimeUnit", "activeGlowTimePct",
+    "activeGlowTimeSec", "activeGlowAuraLength",
+    "activeGlowType", "activeGlowColor", "activeGlowSpeed",
+    "activeGlowLines", "activeGlowThickness", "activeGlowLength", "activeGlowParticles",
+    "activeGlowIntensity", "activeGlowScale",
+    "activeGlowXOffset", "activeGlowYOffset", "activeGlowMoveX", "activeGlowMoveY",
+    "activeGlowStrata", "activeGlowLevel",
+}
+do
+    local fields = Schema.icon.auraActive.fields
+    local isGlow = {}
+    for _, name in ipairs(Schema.AURA_GLOW_FIELDS) do isGlow[name] = true end
+    local function laneOK(rec)
+        local DA = NS.DriverAura
+        return DA ~= nil and DA.GlowLaneOK(rec)
+    end
+    local function copy(v)
+        if type(v) ~= "table" then return v end
+        local t = {}
+        for k, x in pairs(v) do t[k] = copy(x) end
+        return t
+    end
+    for k = 2, Schema.AURA_GLOW_SLOTS do
+        local suf = tostring(k)
+        -- a dep names this glow's own field
+        local function own(d)
+            local t = copy(d)
+            if isGlow[t.field] then t.field = t.field .. suf end
+            return t
+        end
+        for _, name in ipairs(Schema.AURA_GLOW_FIELDS) do
+            local src = fields[name]
+            local def = {}
+            for key, v in pairs(src) do def[key] = v end
+            def.d = copy(src.d)
+            def.inherit = false
+            def.kinds = AU
+            local lbl = src.label or name
+            local numbered = lbl:gsub("^Active glow", "Glow " .. suf, 1)
+            if numbered == lbl then numbered = lbl:gsub("^Glow ", "Glow " .. suf .. " ", 1) end
+            def.label = numbered
+            if src.dep and src.dep.field then
+                def.dep = own(src.dep)
+            elseif src.dep then
+                def.dep = {}
+                for i, d in ipairs(src.dep) do def.dep[i] = own(d) end
+            end
+            def.showIf = src.showIf or laneOK
+            fields[name .. suf] = def
+        end
+    end
+end
+
 Schema.iconGroup = {
     arrangement = { push = true, inherit = true, fields = {
         -- Rows is cooldown-only: the aura flow wraps by itself. Columns and the
@@ -738,28 +847,34 @@ local BK_CDTMA = { cooldown = true, timer = true, aura = true }
 -- writers in Bars\AD_Bars.lua). Duration: cooldown (its Cooldown widget), aura
 -- (engine SetDurationText), timer and swing (RunTimedFill). Stack: cooldown
 -- (charges), aura (engine SetApplicationCount), stack (the power).
-local BK_DUR  = { cooldown = true, aura = true, timer = true, swing = true }
+-- Enchant bars (Bars\AD_EnchantBar.lua) draw the countdown C-side like a
+-- cooldown bar and write their charges as the stack text.
+local BK_DUR  = { cooldown = true, aura = true, timer = true, swing = true, enchant = true }
 -- Cast bars share the duration text's look (the castbar runtime writes the time
 -- left with SetFormattedText; it is secret for a target in combat) but not the
 -- rounding or the decimals threshold: both would compare that time.
 local BK_CAST = { cast = true }
-local BK_DURC = { cooldown = true, aura = true, timer = true, swing = true, cast = true }
+local BK_DURC = { cooldown = true, aura = true, timer = true, swing = true, cast = true, enchant = true }
 local BK_RES  = { resource = true }
 local BK_HP   = { health = true }
-local BK_CST  = { cooldown = true, stack = true, aura = true }
+local BK_CST  = { cooldown = true, stack = true, aura = true, enchant = true }
 -- Hide-at-zero needs our own writer to pass the count through the secret-safe
 -- truncator; the engine writes an aura bar's stack text.
 local BK_STKZ = { cooldown = true, stack = true }
-local BK_TMSW = { timer = true, swing = true, aura = true }
+local BK_TMSW = { timer = true, swing = true, aura = true, enchant = true }
 -- Aura bars too: SetDurationBar takes direction and interpolation from the
 -- caller, so fillMode and smoothing work on aura duration bars.
-local BK_FILL = { cooldown = true, timer = true, swing = true, aura = true }
+local BK_FILL = { cooldown = true, timer = true, swing = true, aura = true, enchant = true }
 -- Smoothing also reaches resource and health bars (StatusBar:SetValue takes an
 -- interpolation on 12.x). Timer and swing fills are per-frame GetTime math with
 -- nothing to interpolate, so they are left out.
 local BK_SMOOTH = { cooldown = true, aura = true, resource = true, health = true }
+-- Every kind but range bars, whose plate is always full in its band's colour: no
+-- fill colour, fill direction or tick marks there.
+local BK_NOTRANGE = { cooldown = true, aura = true, timer = true, stack = true, swing = true,
+    resource = true, health = true, cast = true, enchant = true }
 
-local BAR_ANCHORS = { "LEFT", "CENTER", "RIGHT", "TOPLEFT", "TOP", "TOPRIGHT",
+local BAR_ANCHORS ={ "LEFT", "CENTER", "RIGHT", "TOPLEFT", "TOP", "TOPRIGHT",
     "BOTTOMLEFT", "BOTTOM", "BOTTOMRIGHT" }
 Schema.BAR_ANCHORS = BAR_ANCHORS
 -- Bar text anchors: the frame points plus OUTER* positions outside the bar.
@@ -812,7 +927,7 @@ Schema.bar = {
         -- Only used while colorMode is "fill"; every other bar kind resolves
         -- colorMode to that default.
         color       = { inherit = false, d = { 0.247, 0.788, 0.949, 1 }, t = "color", label = "Fill color",
-            dep = { field = "colorMode", value = "fill" } },
+            kinds = BK_NOTRANGE, dep = { field = "colorMode", value = "fill" } },
         gradLowColor = { d = { 1, 0.15, 0.15, 1 }, t = "color", kinds = BK_HP, label = "Empty health color",
             dep = { field = "colorMode", value = "gradient" } },
         gradMidColor = { d = { 1, 0.82, 0.1, 1 }, t = "color", kinds = BK_HP, label = "Half health color",
@@ -840,7 +955,7 @@ Schema.bar = {
                     NS.Store.SetBarStanding(rec, false)
                 end
             end },
-        reverseFill = { d = false, t = "bool", label = "Reverse fill",
+        reverseFill = { d = false, t = "bool", label = "Reverse fill", kinds = BK_NOTRANGE,
             kindModes = { cooldown = { duration = true } } },
         -- Cooldowns drain toward ready; swing bars fill (dk: per-kind
         -- defaults). Duration mode only: a stack fill is a count, not a timer.
@@ -860,6 +975,72 @@ Schema.bar = {
             kinds = { swing = true }, dep = { field = "swingOffhand" }, label = "Off-hand style" },
         swingOffhandColor = { d = { 1, 0.75, 0.3, 1 }, t = "color", kinds = { swing = true },
             dep = { field = "swingOffhand" }, label = "Off-hand color" },
+        -- A label riding the off-hand's moving edge while it swings, so the
+        -- off-hand reads at a glance on a shared bar.
+        swingOffhandLabel = { d = false, t = "bool", kinds = { swing = true },
+            dep = { field = "swingOffhand" }, label = "Label on the off-hand's edge" },
+        swingOffhandLabelText = { d = "OH", t = "text", kinds = { swing = true },
+            dep = { { field = "swingOffhand" }, { field = "swingOffhandLabel" } }, label = "Off-hand label text" },
+        -- On a standing bar, above is its left side and below its right.
+        swingOffhandLabelPos = { d = "on", t = "enum", values = { "on", "above", "below" },
+            labels = { on = "On the bar", above = "Above the bar", below = "Below the bar" },
+            kinds = { swing = true }, dep = { { field = "swingOffhand" }, { field = "swingOffhandLabel" } },
+            label = "Off-hand label position" },
+        swingOffhandLabelSize = { d = 10, t = "int", min = 6, max = 24, kinds = { swing = true },
+            dep = { { field = "swingOffhand" }, { field = "swingOffhandLabel" } }, label = "Off-hand label size" },
+        swingOffhandLabelColor = { d = { 1, 1, 1, 1 }, t = "color", kinds = { swing = true },
+            dep = { { field = "swingOffhand" }, { field = "swingOffhandLabel" } }, label = "Off-hand label color" },
+        -- Swing bars: two halves that close in and meet as the swing lands, and
+        -- ticks where a set time is left (Bars\AD_SwingClosing.lua). The
+        -- off-hand track splits the fill its own way, so the two never show together.
+        swingClosing = { d = false, t = "bool", kinds = { swing = true },
+            dep = { field = "swingOffhand", value = false }, label = "Fill closes in from both ends" },
+        swingTicks = { d = false, t = "bool", kinds = { swing = true }, label = "Tick before the swing lands" },
+        swingTickTime = { d = 0.5, t = "num", min = 0.1, max = 1.5, step = 0.05, fmt = "%g",
+            kinds = { swing = true }, dep = { field = "swingTicks" }, label = "Time before it lands (s)" },
+        swingTickColor = { d = { 1, 1, 1, 0.9 }, t = "color", kinds = { swing = true },
+            dep = { field = "swingTicks" }, label = "Tick color" },
+        -- Up to three ticks: tick 1 is the pair above, so saved bars read the
+        -- same; ticks 2 and 3 default to a GCD line and a seal-twist line.
+        swingTickCount = { d = 1, t = "enum", values = { 1, 2, 3 }, labels = { "1 tick", "2 ticks", "3 ticks" },
+            kinds = { swing = true }, dep = { field = "swingTicks" }, label = "Number of ticks" },
+        swingTick2Time = { d = 1.5, t = "num", min = 0.1, max = 1.5, step = 0.05, fmt = "%g", kinds = { swing = true },
+            dep = { { field = "swingTicks" }, { field = "swingTickCount", min = 2 } },
+            label = "Tick 2 time before it lands (s)" },
+        swingTick2Color = { d = { 0.4, 1, 0.4, 0.9 }, t = "color", kinds = { swing = true },
+            dep = { { field = "swingTicks" }, { field = "swingTickCount", min = 2 } }, label = "Tick 2 color" },
+        swingTick3Time = { d = 0.4, t = "num", min = 0.1, max = 1.5, step = 0.05, fmt = "%g", kinds = { swing = true },
+            dep = { { field = "swingTicks" }, { field = "swingTickCount", min = 3 } },
+            label = "Tick 3 time before it lands (s)" },
+        swingTick3Color = { d = { 1, 0.45, 0.9, 0.9 }, t = "color", kinds = { swing = true },
+            dep = { { field = "swingTicks" }, { field = "swingTickCount", min = 3 } }, label = "Tick 3 color" },
+        -- Swing and timer bars: a bright line on the fill's moving edge while
+        -- it runs (Bars\AD_BarSpark.lua), on each half with the closing fill.
+        edgeSpark = { d = false, t = "bool", kinds = { swing = true, timer = true }, label = "Spark" },
+        edgeSparkColor = { d = { 1, 1, 1, 0.9 }, t = "color", kinds = { swing = true, timer = true },
+            dep = { field = "edgeSpark" }, label = "Spark color" },
+        edgeSparkWidth = { d = 3, t = "int", min = 2, max = 16, kinds = { swing = true, timer = true },
+            dep = { field = "edgeSpark" }, label = "Spark width" },
+        -- Main-hand swing bars: each next-swing ability marked where it comes off
+        -- cooldown (Bars\AD_SwingAbilities.lua). The spell IDs live on the driver
+        -- (rec.driver.swingAbilIDs), so the editor draws that row itself.
+        swingAbilities = { d = false, t = "bool", kinds = { swing = true }, label = "Show next-swing abilities" },
+        swingAbilPlace = { d = "stay", t = "enum", values = { "stay", "jump", "follow" },
+            labels = { stay = "Stays where it came back", jump = "Jumps to where the swing lands",
+                follow = "Queued rides the swing" },
+            kinds = { swing = true }, dep = { field = "swingAbilities" }, label = "Ready or queued marker" },
+        -- The swing a queued marker rides; asked only with the off-hand track on.
+        swingAbilFollow = { d = "mh", t = "enum", values = { "mh", "oh", "first" },
+            labels = { mh = "Main hand", oh = "Off hand", first = "Whichever lands first" },
+            kinds = { swing = true },
+            dep = { { field = "swingAbilities" }, { field = "swingAbilPlace", value = "follow" },
+                { field = "swingOffhand" } },
+            label = "Queued rides" },
+        swingAbilAhead = { d = 4, t = "enum", values = { 1, 2, 3, 4, 5, 6 },
+            labels = { "1 swing", "2 swings", "3 swings", "4 swings", "5 swings", "6 swings" },
+            kinds = { swing = true }, dep = { field = "swingAbilities" }, label = "Swings to look ahead" },
+        swingAbilIconSize = { d = 25, t = "int", min = 8, max = 48, kinds = { swing = true },
+            dep = { field = "swingAbilities" }, label = "Ability icon size" },
         -- Stack bars use this for the slot recharge animation too.
         smoothing   = { d = true, t = "bool", kinds = BK_SMOOTH, label = "Smooth fill" },
         useGradient = { d = true, t = "bool", label = "Gradient fill" },
@@ -882,8 +1063,10 @@ Schema.bar = {
         bgTexture       = { d = "", t = "text", hidden = true, media = "statusbar", label = "Background texture" },
         -- Light, so the black ticks and dividers stay visible against it.
         bgColor         = { d = { 0.40, 0.42, 0.46, 0.90 }, t = "color", label = "Background color", dep = { field = "bgShow" } },
-        -- The colour picker has no alpha, so this multiplies into the colour.
-        bgAlpha         = { d = 1, t = "num", min = 0, max = 1, label = "Background opacity", dep = { field = "bgShow" } },
+        -- The background's only opacity; the colour's alpha is ignored (the
+        -- picker cannot show it). 0.9 keeps the look bars had when the colour
+        -- above carried it.
+        bgAlpha         = { d = 0.9, t = "num", min = 0, max = 1, label = "Background opacity", dep = { field = "bgShow" } },
         borderEnabled   = { d = true, t = "bool", label = "Border" },
         -- "" = flat pixel strips, else a Blizzard or LSM backdrop edge at the
         -- thickness. Hidden: the editor draws its own dropdown.
@@ -943,7 +1126,7 @@ Schema.bar = {
             dep = { field = "style", value = "pips" } },
     } },
     -- Side icon. On a cast bar it shows the spell being cast.
-    icon = { push = true, inherit = true, kinds = { cooldown = true, aura = true, cast = true }, fields = {
+    icon = { push = true, inherit = true, kinds = { cooldown = true, aura = true, cast = true, enchant = true }, fields = {
         iconShow = { d = false, t = "bool", label = "Icon" },
         -- Off: the icon keeps its own size; on: it follows the bar's thickness.
         iconFollowBar = { d = false, t = "bool", label = "Match the bar's size", dep = { field = "iconShow" } },
@@ -1088,6 +1271,7 @@ Schema.bar = {
                     return "the unit's name"
                 end
                 if rec.barKind == "cast" then return "the spell's name" end
+                if rec.barKind == "range" then return "the band's name" end
                 return rec.name or ""
             end },
         nameSize = { d = 11, t = "int", min = 6, max = 32, label = "Name text size" },
@@ -1146,6 +1330,13 @@ Schema.bar = {
         -- The countdown text takes the same bands (C-side formatter on cooldown
         -- and aura bars, plain math on timer bars).
         threshText = { d = false, t = "bool", label = "Color duration text too", dep = { field = "threshEnabled" } },
+    } },
+    -- Swing bars: the fill wears an ability's colour while it is queued on the
+    -- next swing, or from its cast until that swing lands, over the threshold
+    -- and fill colours (Bars\AD_SwingColors.lua). The rules are the bar's own
+    -- (rec.driver.swingColors), so the editor draws them; per bar, no push.
+    abilcolors = { kinds = { swing = true }, fields = {
+        abilColorsOn = { d = false, t = "bool", label = "Color the bar by ability" },
     } },
     -- Colour by stack count on aura stack bars, by position on pips resource
     -- bars (the editor shows it for pips only). A continuous bar flips the
@@ -1226,7 +1417,7 @@ Schema.bar = {
     -- typed list in the bar's unit or in percent, plus cost ticks on resource
     -- bars. "pertick": one per tick, player castbars only. Cooldown stack bars
     -- have none: their slot gaps are the marks.
-    ticks = { push = true, inherit = true, kindModes = { cooldown = { duration = true } }, fields = {
+    ticks = { push = true, inherit = true, kinds = BK_NOTRANGE, kindModes = { cooldown = { duration = true } }, fields = {
         ticksShow = { inherit = false, d = false, t = "bool", label = "Tick marks" },
         tickMode = { inherit = false, d = "percent", t = "enum", values = { "all", "percent", "custom", "pertick" }, label = "Tick mode", dep = { field = "ticksShow" },
             labels = { all = "Every point", percent = "Every X percent", custom = "Custom values", pertick = "One per tick" },
@@ -1320,16 +1511,34 @@ Schema.bar = {
         hideBlizzard = { inherit = false, d = false, t = "bool", label = "Hide Blizzard's castbar",
             desc = "Hides the game's own castbar under your character while this castbar is loaded. Turning it off brings the game's castbar back on your next cast." },
     } },
+    -- Range bars (Bars\AD_RangeBar.lua): how the bands draw. The bands themselves
+    -- (a preset's, or the bar's own list of text, colour, switch and checks) are
+    -- the bar's own (rec.driver), edited on the Range tab.
+    range = { push = true, kinds = { range = true }, fields = {
+        style = { d = "plate", t = "enum", values = { "plate", "segmented" },
+            labels = { plate = "Plate", segmented = "Segmented" }, label = "Style" },
+        plateShow = { d = true, t = "bool", label = "Show plate", dep = { field = "style", value = "plate" } },
+        textBandColor = { d = false, t = "bool", label = "Text in the band's color",
+            dep = { field = "style", value = "plate" } },
+        cellGap = { d = 2, t = "int", min = 0, max = 10, label = "Gap between cells",
+            dep = { field = "style", value = "segmented" } },
+        cellDim = { d = 0.25, t = "num", min = 0, max = 1, label = "Unlit cell opacity",
+            dep = { field = "style", value = "segmented" } },
+    } },
     -- Not pushable, like conditions. hiddenAlpha is the opacity for the state
     -- hides below; every kind it lists must honor it.
     behavior = { fields = {
         hideWhenReady = { d = false, t = "bool", kinds = BK_CD, label = "Hide when ready" },
         hideWhenFullCharges = { d = false, t = "bool", kinds = BK_CD, label = "Hide at full charges" },
         hideWhenInactive = { d = false, t = "bool", kinds = BK_TMSW, label = "Hide when inactive" },
+        -- Swing bars: dim while the target is out of range of the bar's own
+        -- spell, else its hand's usual one (Bars\AD_SwingRange.lua; the typed
+        -- spell is rec.driver.rangeSpell).
+        rangeDim = { d = false, t = "bool", kinds = { swing = true }, label = "Dim when out of range" },
         -- Only kinds with a state hide (ready, full charges, inactive); aura
         -- bars have none, as the engine hides the whole bar with the aura. On a
         -- cast bar, above 0 leaves the empty bar faintly visible between casts.
-        hiddenAlpha = { d = 0, t = "num", min = 0, max = 1, kinds = { cooldown = true, timer = true, swing = true, cast = true }, label = "Hidden opacity" },
+        hiddenAlpha = { d = 0, t = "num", min = 0, max = 1, kinds = { cooldown = true, timer = true, swing = true, cast = true, enchant = true }, label = "Hidden opacity" },
         -- Spell 61304 (the GCD), inverted readiness, exempt from the debounce.
         gcdMode = { d = false, t = "bool", kinds = BK_CD, label = "GCD tracker mode" },
     } },
@@ -1369,6 +1578,14 @@ Schema.bar = {
             label = "Match width adjust",
             dep = { { field = "anchorEnabled" }, { field = "anchorTargetKind", notValue = "nameplate" },
                 { field = "anchorTargetKind", notValue = "mouse" }, { field = "anchorMatchWidth" } } },
+        -- The short side, as width is the long one; same rules as above.
+        anchorMatchHeight = { d = false, t = "bool", label = "Match target height (width if standing)",
+            dep = { { field = "anchorEnabled" }, { field = "anchorTargetKind", notValue = "nameplate" },
+                { field = "anchorTargetKind", notValue = "mouse" } } },
+        anchorMatchHeightAdjust = { d = 0, t = "int", min = -200, max = 200,
+            label = "Match height adjust",
+            dep = { { field = "anchorEnabled" }, { field = "anchorTargetKind", notValue = "nameplate" },
+                { field = "anchorTargetKind", notValue = "mouse" }, { field = "anchorMatchHeight" } } },
     } },
 }
 

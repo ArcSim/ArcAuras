@@ -66,16 +66,19 @@ local editMode = false   -- true while the options panel is open
 
 -- With the panel open, a record failing its load conditions is still drawn,
 -- tagged, when its eye in the panel is on or, for an eye never clicked, when
--- "Show unloaded items while editing" is on (Store.UnloadedShown). Every load
--- check that decides what the engine draws goes through here.
+-- "Show unloaded items while editing" is on (Store.UnloadedShown). A loaded
+-- one whose eye hid it (Store.EditHidden) is not drawn while the panel is
+-- open. Every load check that decides what the engine draws goes through here.
 local function ShowsRec(rec)
-    return Store.IsLoaded(rec)
-        or (editMode and Store.UnloadedShown(rec))
+    if Store.IsLoaded(rec) then
+        return not (editMode and Store.EditHidden(rec))
+    end
+    return editMode and Store.UnloadedShown(rec)
 end
 
 -- The "unloaded" tag on a previewed record's frame, edit mode only. It sits
 -- above the top-left corner (the Edit chip owns the bottom edge); dy lifts it
--- over a group's drag strip. Re-anchored every call: frames are pooled.
+-- clear of a group's border. Re-anchored every call: frames are pooled.
 local function GhostTag(f, rec, dy)
     local on = editMode and not Store.IsLoaded(rec)
     local tag = f._adGhostTag
@@ -103,7 +106,7 @@ local function GhostTag(f, rec, dy)
 end
 
 -- While the panel is open, chrome goes to HIGH and no display sits above
--- MEDIUM: a bar anchored to a group's top covers its drag strip, and one set
+-- MEDIUM: a bar anchored to a group's top covers its name tab, and one set
 -- to DIALOG would out-strata the chrome. Displays are only clamped down, and
 -- their own strata come back when the panel closes.
 local STRATA_RANK = { BACKGROUND = 1, LOW = 2, MEDIUM = 3, HIGH = 4, DIALOG = 5 }
@@ -299,11 +302,13 @@ local function DynBusy(rec, f)
 end
 
 local function DynDropsOut(rec, f, collapse)
-    -- Empty "Hide when missing" items, trinkets and ammo always close their cell.
+    -- Empty "Hide when missing" items, trinkets and ammo always close their
+    -- cell, and so does a passive trinket in an on-use-only slot.
     if f._adItemEmpty
         and Store.Resolve(rec, "outOfStock", "hideWhenMissing") == true then
         return true
     end
+    if rec.kind == "trinket" and f._adPassive then return true end
     -- An inert icon gives up its cell under any drop-out rule, aura icons too
     -- (conditions are plain reads). A faded icon keeps its cell.
     if NS.Conditions and NS.Conditions.IsOwnInert(rec) then return true end
@@ -624,20 +629,37 @@ local function EnsureGroupChrome(gf)
     o:EnableMouse(false)
     ch.border = o
 
-    local bar = CreateFrame("Button", nil, gf, "BackdropTemplate")
-    bar:SetHeight(14)
-    bar:SetPoint("BOTTOMLEFT", o, "TOPLEFT", 0, 0)
-    bar:SetPoint("BOTTOMRIGHT", o, "TOPRIGHT", 0, 0)
-    bar:SetBackdrop({ bgFile = WHITE, edgeFile = WHITE, edgeSize = 1 })
-    bar:SetBackdropColor(0.04, 0.09, 0.04, 0.92)
-    bar:SetBackdropBorderColor(GROUP_GREEN[1], GROUP_GREEN[2], GROUP_GREEN[3], 0.9)
+    -- The group's name as bare text on its own top edge, no box, only as wide
+    -- as the name (WireGroupEdit sizes it), so whatever is placed just above
+    -- the group stays in view. It is the drag handle; with names off a small
+    -- green grip (bar.grip) marks where to grab.
+    local bar = CreateFrame("Button", nil, gf)
+    bar:SetHeight(12)
+    bar:SetPoint("CENTER", o, "TOP", 0, -3)
+    bar.grip = bar:CreateTexture(nil, "ARTWORK")
+    bar.grip:SetPoint("LEFT", 0, 0)
+    bar.grip:SetPoint("RIGHT", 0, 0)
+    bar.grip:SetHeight(4)
+    bar.grip:SetColorTexture(GROUP_GREEN[1], GROUP_GREEN[2], GROUP_GREEN[3], 0.9)
+    bar.grip:Hide()
     bar:RegisterForDrag("LeftButton")
     bar.fs = bar:CreateFontString(nil, "OVERLAY")
-    bar.fs:SetFont(STANDARD_TEXT_FONT, 9, "OUTLINE")
+    bar.fs:SetFont(STANDARD_TEXT_FONT, 8, "OUTLINE")
     bar.fs:SetPoint("CENTER", 0, 0)
     bar.fs:SetTextColor(0.85, 1, 0.85)
-    bar:SetScript("OnEnter", function() bar.fs:SetTextColor(1, 1, 0.5) end)
-    bar:SetScript("OnLeave", function() bar.fs:SetTextColor(0.85, 1, 0.85) end)
+    -- with names off the tab is a blank grip: its tooltip names the group
+    bar:SetScript("OnEnter", function()
+        bar.fs:SetTextColor(1, 1, 0.5)
+        if bar.fs:GetText() == "" and bar._adName then
+            GameTooltip:SetOwner(bar, "ANCHOR_TOP")
+            GameTooltip:SetText(bar._adName, 1, 1, 1)
+            GameTooltip:Show()
+        end
+    end)
+    bar:SetScript("OnLeave", function()
+        bar.fs:SetTextColor(0.85, 1, 0.85)
+        if GameTooltip:IsOwned(bar) then GameTooltip:Hide() end
+    end)
     bar:SetScript("OnDragStart", function()
         if gf:IsMovable() then gf:StartMoving() end
     end)
@@ -1256,7 +1278,20 @@ end
 local function WireGroupEdit(gf, rec)
     gf._adRecId = rec.id
     local ch = EnsureGroupChrome(gf)
-    ch.bar.fs:SetText(rec.name)
+    -- Settings "Show group names" (on until switched off); off leaves a small
+    -- green grip, which still drags the group.
+    local named = Store.GetSetting("groupNames") ~= false
+    ch.bar._adName = rec.name
+    ch.bar.fs:SetText(named and rec.name or "")
+    ch.bar.grip:SetShown(not named)
+    if named then
+        -- a width read of 0 (a first frame) falls back to a width from the name
+        local tw = ch.bar.fs:GetStringWidth() or 0
+        if tw <= 0 then tw = #(rec.name or "") * 4 end
+        ch.bar:SetSize(math.max(36, math.ceil(tw) + 10), 12)
+    else
+        ch.bar:SetSize(24, 8)
+    end
     ch.border:SetFrameLevel(gf:GetFrameLevel())
     ch.border:SetShown(editMode)
     ch.bar:SetShown(editMode)
@@ -1551,7 +1586,7 @@ function Engine.Rebuild()
                         and Store.Resolve(group, "arrangement", "dynamicLayout") == true
                     PlaceGroup(group, gf, flowMode)
                     WireGroupEdit(gf, group)
-                    GhostTag(gf, group, 17)
+                    GhostTag(gf, group, 4)
                 else
                     gf:Hide()
                     for _, rec in ipairs(Store.IconsOf(group)) do
@@ -1662,6 +1697,8 @@ function Engine.GetBarFrame(id) return barFrames[id] end
 
 function Engine.SetEditMode(on)
     editMode = on and true or false
+    -- what an eye hid shows again on the next open
+    if not editMode then Store.ClearEditHidden() end
     -- First-come order resets on every panel open and close, so a closed panel
     -- builds the dynamic layout from the grid, not the last fight's arrivals.
     wipe(fcfsOrders)

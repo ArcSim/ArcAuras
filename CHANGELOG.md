@@ -1,5 +1,40 @@
 # Arc Auras
 
+## 1.5.0
+
+Weapon enchants, totems by spell, a range bar, smarter swing bars, more aura glows and fewer tabs.
+
+### New Features
+
+- **Weapon enchants** - Icons and bars for imbues, poisons, oils and stones, with time left and charges.
+- **Totems by spell** - Track a totem by its spell, at any rank and in any slot, in combat too. Totem icons can also show a pulse timer.
+- **Range Bar** - Shows how far away your target is, using hunter, melee or caster presets or your own bands. Melee range works on every class.
+- **Show by range** - Any icon, group or bar can show only while your target is in or out of range of a spell.
+- **Next-swing abilities** - Swing bars show when Heroic Strike, Raptor Strike or Maul come off cooldown, and which one is queued.
+- **Ability colors** - A swing bar can change color while an ability is queued or after you cast it.
+- **More aura glows** - Up to four glows on one aura icon, each for its own buff or debuff, and optionally only in combat.
+- **On-use trinkets only** - Trinket icons can hide passive trinkets.
+- **Starter Layout** - One click makes a layout with Cooldowns, Utility and Buffs groups placed under your character.
+
+### Improvements
+
+- **Fewer tabs** - Options are grouped into fewer tabs, and Thresholds is now called Color Changes.
+- **Swing bars** - A fill that closes in from both ends, up to three ticks, a spark and an off-hand label.
+- **Out of range on swing bars** - Dim when out of range now works on WoW Forever, for every class.
+- **Reverse swipe** - New totem and weapon enchant icons start with a reverse swipe.
+- **Spell picker** - The Add window shows your spellbook as a grid of icons.
+- **Sidebar** - Icon groups open to show their icons, and anything that doesn't load on this character folds away under NOT LOADED.
+- **Editing on screen** - The eye button hides an item while the options are open, and group names no longer cover what sits above them.
+- **Import and export** - Export only what loads on this character, or import groups without their icons.
+- **Match size** - A bar anchored to another bar or group can now match its height as well as its width.
+
+### Bug Fixes
+
+- **Background opacity** - 100 now gives a fully solid bar background.
+- **Long countdowns** - Timers like 25 m no longer slip under the icon border.
+- **Resource bar text** - Percent and value text no longer causes an error in combat.
+- **Eye buttons** - The eye buttons no longer go blank after a click.
+
 ## 1.4.0
 
 Arc UI Forever is now Arc Auras. Your setup moves over by itself, and this update brings an off-hand track for swing bars, labels that follow your auras, and a smoother options window.

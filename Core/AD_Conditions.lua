@@ -339,6 +339,30 @@ end
 
 local EMPTY = {}
 
+-- Target range, a Visibility rule of its own: full opacity only while the target
+-- is in (or out of) range of one spell, besides Full Opacity When. With no target,
+-- or a spell that cannot check it, it holds neither way. NS.DriverRange answers.
+local function RuleOf(c)
+    local mode = c.rangeMode
+    local id = tonumber(c.rangeSpell)
+    if (mode ~= "in" and mode ~= "out") or not id or id <= 0 then return nil end
+    return id, mode
+end
+
+function Conditions.RangeRule(rec)
+    return RuleOf((rec and rec.c) or EMPTY)
+end
+
+-- Without the range engine loaded the rule is left out.
+local function RangeHolds(rec)
+    local id, mode = Conditions.RangeRule(rec)
+    local DR = NS.DriverRange
+    if not (id and DR) then return true end
+    local v = DR.Spell(id)
+    if v == nil then return false end
+    return v == (mode == "in")
+end
+
 -- The "when" half of the load layer ("who" is Store.IsLoaded). Failing it only
 -- makes a record inert, keeping its frames so it can return in combat: aura
 -- engine slots can't be created while auras are secret.
@@ -363,6 +387,7 @@ local function FadeTarget(rec)
     local c = rec.c or EMPTY
     local full = true
     if SetHas(c.showWhen) then full = SetMatch(c.showWhen, c.showWhenAll == true) end
+    if full and not RangeHolds(rec) then full = false end
     if full and SetAny(c.fadeWhen) then full = false end
     if full then return 1 end
     return FadeValue(c, "fadeAlpha")
@@ -482,6 +507,8 @@ end
 local armed, invalid = {}, {}
 local inUse, polled, pollLast = {}, {}, {}
 local pollTicker
+-- The spells live records' target range rules read.
+local rangeUse = {}
 
 local function EventValid(e)
     if invalid[e] then return false end
@@ -555,6 +582,17 @@ local function Arm()
         pollTicker = nil
         wipe(pollLast)
     end
+    -- The range engine watches the rules' spells by event: no timer.
+    local DR = NS.DriverRange
+    if DR then
+        local list = {}
+        for id in pairs(rangeUse) do list[#list + 1] = id end
+        if #list > 0 then
+            DR.Use("adcond", { spells = list }, Conditions.Queue)
+        else
+            DR.Drop("adcond")
+        end
+    end
 end
 
 -- Subjects. A record type joins by registering once, from the module that owns
@@ -575,6 +613,8 @@ local function CollectKeys(c)
             end
         end
     end
+    local id = RuleOf(c)
+    if id then rangeUse[id] = true end
 end
 
 -- Evaluate every live record, then paint, since a painter reads its parents'
@@ -585,6 +625,7 @@ function Conditions.Pass()
     local edit = EditMode()
     local now = GetTime()
     wipe(inUse)
+    wipe(rangeUse)
     local flipped = false
     for _, recType in ipairs(subjectOrder) do
         subjects[recType].each(function(id)
@@ -760,6 +801,24 @@ function Conditions.ToggleFaction(rec, fac)
     Store.Dirty("load", rec.id)
 end
 
+-- "in", "out", or nil for no target range rule.
+function Conditions.SetRangeMode(rec, mode)
+    if not rec then return end
+    if mode ~= "in" and mode ~= "out" then mode = nil end
+    if rec.c.rangeMode == mode then return end
+    rec.c.rangeMode = mode
+    Store.Dirty("load", rec.id)
+end
+
+function Conditions.SetRangeSpell(rec, id)
+    if not rec then return end
+    id = tonumber(id)
+    id = (id and id > 0) and math.floor(id) or nil
+    if rec.c.rangeSpell == id then return end
+    rec.c.rangeSpell = id
+    Store.Dirty("load", rec.id)
+end
+
 -- Old "hide when" keys are folded into Fade when by Store.Normalize itself
 -- (FoldHideWhen), so that migration never depends on this file having loaded.
 
@@ -792,6 +851,11 @@ function Conditions.Normalize(rec)
                 c[k] = (v ~= dflt) and v or nil
             end
         end
+    end
+    if c.rangeMode ~= nil and c.rangeMode ~= "in" and c.rangeMode ~= "out" then c.rangeMode = nil end
+    if c.rangeSpell ~= nil then
+        local id = tonumber(c.rangeSpell)
+        c.rangeSpell = (id and id > 0) and math.floor(id) or nil
     end
     -- An empty faction set is legal: it means "nowhere", like classes.
     if c.factions ~= nil then

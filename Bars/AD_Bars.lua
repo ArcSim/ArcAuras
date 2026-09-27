@@ -926,7 +926,9 @@ local function ApplyStyle(entry)
     local bgC = R(rec, "look", "bgColor") or { 0.039, 0.067, 0.125, 1 }
     local bgKey = R(rec, "look", "bgTexture")
     shell.bg:SetTexture(ResolveBarTexture((bgKey == nil or bgKey == "") and R(rec, "fill", "texture") or bgKey))
-    local bgA = (bgC[4] or 1) * (R(rec, "look", "bgAlpha") or 1)
+    -- The opacity slider is the only alpha: the colour picker cannot show the
+    -- colour's own, so a hidden one would cap the slider below 100.
+    local bgA = R(rec, "look", "bgAlpha") or 1
     shell.bg:SetVertexColor(bgC[1], bgC[2], bgC[3], bgShow and bgA or 0)
 
     local borderOn = R(rec, "look", "borderEnabled") ~= false and not pipsOn
@@ -1028,6 +1030,20 @@ local function ApplyStyle(entry)
     if KS and KS.Styled then KS.Styled(entry) end
     -- a main-hand swing bar's off-hand track (Bars\AD_SwingOffhand.lua)
     if entry.kind == "swing" and Bars.SwingOH then Bars.SwingOH.Styled(entry) end
+    -- a swing bar's closing halves and ticks (Bars\AD_SwingClosing.lua), after
+    -- the off-hand pass, which may have split the fill
+    if entry.kind == "swing" and Bars.SwingClose then Bars.SwingClose.Styled(entry) end
+    -- the spark on a swing or timer bar's moving edge (Bars\AD_BarSpark.lua),
+    -- after the closing pass: its mirror half gets one too
+    if (entry.kind == "swing" or entry.kind == "timer") and Bars.Spark then Bars.Spark.Styled(entry) end
+    -- a swing bar's out-of-range dim (Bars\AD_SwingRange.lua)
+    if entry.kind == "swing" and Bars.SwingRange then Bars.SwingRange.Styled(entry) end
+    -- a main-hand swing bar's next-swing ability markers (Bars\AD_SwingAbilities.lua),
+    -- they ride the main fill as the two passes above left it
+    if entry.kind == "swing" and Bars.SwingAbil then Bars.SwingAbil.Styled(entry) end
+    -- a swing bar's ability colours (Bars\AD_SwingColors.lua), last: its hook
+    -- takes over the fill colour this pass wrote, and the closing mirror too
+    if entry.kind == "swing" and Bars.SwingColor then Bars.SwingColor.Styled(entry) end
 end
 
 -- Visibility: opacity x state hides x conditions; edit mode always wins
@@ -1042,7 +1058,8 @@ local function ApplyVisibility(entry)
         alpha = R(rec, "behavior", "hiddenAlpha") or 0
     else
         alpha = R(rec, "size", "opacity") or 1
-        -- Swing out-of-range dim (Blizzard's own 0.4), not in edit sessions.
+        -- A swing bar's out-of-range dim (Bars\AD_SwingRange.lua), Blizzard's
+        -- own 0.4; never in edit sessions.
         if entry.rangeDimmed and not IsEditMode() then alpha = alpha * 0.4 end
     end
     -- Conditions: 0 while the bar is inert, else its Visibility fade; 1 in edit
@@ -1374,7 +1391,7 @@ local function LayoutSlots(entry)
     local bgKey = R(rec, "look", "bgTexture")
     local bgTex = ResolveBarTexture((bgKey == nil or bgKey == "") and R(rec, "fill", "texture") or bgKey)
     local bgC = R(rec, "look", "bgColor") or { 0.039, 0.067, 0.125, 1 }
-    local bgA = (R(rec, "look", "bgShow") ~= false) and (bgC[4] or 1) or 0
+    local bgA = (R(rec, "look", "bgShow") ~= false) and (R(rec, "look", "bgAlpha") or 1) or 0
     local rot = R(rec, "fill", "rotateTexture") == true
     local gradientOn = R(rec, "fill", "useGradient") ~= false
     for i = 1, n do
@@ -1809,6 +1826,7 @@ local function TimerStop(entry)
     entry.running = false
     entry.shell.fill:SetScript("OnUpdate", nil)
     entry.shell.fill:SetValue(0)
+    if Bars.Spark then Bars.Spark.Sync(entry) end
     SetRunText(entry.shell, "dur", "")
     entry.shell.fill:SetStatusBarColor(BarColorOf(entry.rec))
     -- the text bands may have recoloured the countdown: restore its colour
@@ -1864,6 +1882,8 @@ local function RunTimedFill(entry, duration, onDone)
     shell.fill:SetMinMaxValues(0, duration)
     shell.fill:SetValue(drain and duration or 0)
     shell.fill:SetStatusBarColor(BarColorOf(rec))
+    -- the spark rides the fill's edge while it runs (Bars\AD_BarSpark.lua)
+    if Bars.Spark then Bars.Spark.Sync(entry) end
     -- decimals below the threshold only (mirrors the shared formatter's
     -- band recipe; this text is our own GetTime math, so plain formatting)
     local decOn = R(rec, "text", "durDecimalsEnabled") == true
@@ -2405,39 +2425,32 @@ local function ResourceColor(entry)
     return r, g, b, a, curve ~= nil
 end
 
--- "47%" from the secret value: the client scales it through a 0..100 curve
--- and a rule formatter renders it C-side, so the number never reaches Lua
-local pctCurve, pctFmt
-local function PercentText(pt)
-    if pctFmt == nil then
-        if C_CurveUtil and C_CurveUtil.CreateCurve and C_StringUtil
-            and C_StringUtil.CreateNumericRuleFormatter and UnitPowerPercent then
-            local c = C_CurveUtil.CreateCurve()
-            c:AddPoint(0, 0)
-            c:AddPoint(1, 100)
-            local f = C_StringUtil.CreateNumericRuleFormatter()
-            f:AddBreakpoint({ threshold = 0, format = "%.0f%%" })
-            pctCurve, pctFmt = c, f
-        else
-            pctFmt = false
-        end
-    end
-    if not pctFmt then return nil end
-    local v = UnitPowerPercent("player", pt, false, pctCurve)
-    if v == nil then return nil end
-    return pctFmt:FormatNumber(v)
+-- Power can read secret, and a rule formatter's FormatNumber takes a secret
+-- only from untainted code (it threw on mana in combat). These two C_StringUtil
+-- calls take secrets from addon code, so the text is rounded and joined C-side.
+local function SecretSafeText(v, suffix)
+    local SU = C_StringUtil
+    if not (SU and SU.RoundToNearestString and SU.WrapString) then return nil end
+    return SU.WrapString(SU.RoundToNearestString(v), nil, suffix)
 end
 
--- "1234 / 5000": the range is plain (the cached max), so one formatter per
--- range renders the secret value into the pair C-side
-local function ValueMaxText(entry, cur, range)
-    if not (C_StringUtil and C_StringUtil.CreateNumericRuleFormatter) then return nil end
-    if entry.vmRange ~= range or not entry.vmFmt then
-        local f = C_StringUtil.CreateNumericRuleFormatter()
-        f:AddBreakpoint({ threshold = 0, format = "%d / " .. tostring(range) })
-        entry.vmFmt, entry.vmRange = f, range
+-- "47%": the client scales the value through a 0..100 curve first
+local pctCurve
+local function PercentText(pt)
+    if not (UnitPowerPercent and C_CurveUtil and C_CurveUtil.CreateCurve) then return nil end
+    if not pctCurve then
+        pctCurve = C_CurveUtil.CreateCurve()
+        pctCurve:AddPoint(0, 0)
+        pctCurve:AddPoint(1, 100)
     end
-    return entry.vmFmt:FormatNumber(cur)
+    local v = UnitPowerPercent("player", pt, false, pctCurve)
+    if v == nil then return nil end
+    return SecretSafeText(v, "%")
+end
+
+-- "1234 / 5000": the range is plain (the cached max)
+local function ValueMaxText(cur, range)
+    return SecretSafeText(cur, " / " .. tostring(range))
 end
 
 -- The resource readouts: text 1 ("res"), then 2 and 3 as the count allows,
@@ -2461,7 +2474,7 @@ local function ResourceRunText(entry, key, fmt, cur, range)
         local s = PercentText(entry.powerType)
         if s ~= nil then SetRunText(shell, key, s) return end
     elseif fmt == "valuemax" then
-        local s = ValueMaxText(entry, cur, range)
+        local s = ValueMaxText(cur, range)
         if s ~= nil then SetRunText(shell, key, s) return end
     end
     SetRunText(shell, key, cur)   -- the raw value is always a legal SetText
@@ -2653,7 +2666,7 @@ local function LayoutPips(entry)
     end
     local bgShow = R(rec, "look", "bgShow") ~= false
     local bgC = R(rec, "look", "bgColor") or { 0.039, 0.067, 0.125, 1 }
-    local bgA = bgShow and (bgC[4] or 1) * (R(rec, "look", "bgAlpha") or 1) or 0
+    local bgA = bgShow and (R(rec, "look", "bgAlpha") or 1) or 0
     local bgKey = R(rec, "look", "bgTexture")
     local fillPath = ResolveBarTexture(R(rec, "fill", "texture"))
     local bgPath = ResolveBarTexture((bgKey == nil or bgKey == "") and R(rec, "fill", "texture") or bgKey)
@@ -3737,11 +3750,11 @@ end
 
 -- Swing runtime: C_SwingTimer (Forever), capability-probed; see
 -- Blizzard_SwingTimer.lua. PLAYER_SWING's duration is plain, so the fill is
--- the shared GetTime loop. Range events are opt-in per swing type. Without the
--- API the bar keeps its settings and stays hidden outside edit sessions.
+-- the shared GetTime loop. Its range check never answers on Forever, so the
+-- out-of-range dim reads spell range instead (Bars\AD_SwingRange.lua). Without
+-- the API the bar keeps its settings and stays hidden outside edit sessions.
 
 local swingArmed = false
-local swingRangeOn = {}   -- [swingType] = true while we hold the opt-in
 
 -- does the configured hand exist right now? (Blizzard's gate: main hand
 -- always, off hand via UnitAttackSpeed's second return, ranged via speed)
@@ -3770,6 +3783,7 @@ local function SwingIdle(entry)
     entry.shell.fill:SetMinMaxValues(0, 1)
     entry.shell.fill:SetValue(empty and 0 or 1)
     entry.shell.fill:SetStatusBarColor(BarColorOf(entry.rec))
+    if Bars.Spark then Bars.Spark.Sync(entry) end
     SetRunText(entry.shell, "dur", "")
     local st = (entry.rec.driver and entry.rec.driver.swingType) or 0
     if not HAS_SWING or not SwingHandExists(st) then
@@ -3778,25 +3792,6 @@ local function SwingIdle(entry)
         entry.stateHidden = R(entry.rec, "behavior", "hideWhenInactive") and true or false
     end
     ApplyVisibility(entry)
-end
-
--- Keep the range-check opt-ins matched to the swing types we show; only turn
--- off a type we turned on, never another addon's opt-in.
-local function SwingRangeSync()
-    if not (HAS_SWING and C_SwingTimer.EnableRangeCheck) then return end
-    local want = {}
-    for _, e in pairs(live) do
-        if e.rec.barKind == "swing" then
-            want[(e.rec.driver and e.rec.driver.swingType) or 0] = true
-        end
-    end
-    for st = 0, 2 do
-        local w = want[st] == true
-        if w ~= (swingRangeOn[st] == true) then
-            C_SwingTimer.EnableRangeCheck(st, w)
-            swingRangeOn[st] = w or nil
-        end
-    end
 end
 
 local function EnsureSwingEvents()
@@ -3815,16 +3810,6 @@ local function EnsureSwingEvents()
                     e.swingLen = swingDuration
                     LayoutTicks(e)
                 end
-            end
-        end)
-    end)
-    Events.On("PLAYER_SWING_RANGE_UPDATE", "adbarsswing", function(_, swingType, isInRange, checksRange)
-        ForEach("swing", function(e)
-            local st = (e.rec.driver and e.rec.driver.swingType) or 0
-            if st == swingType then
-                -- isInRange can be nil (not checked), which never dims
-                e.rangeDimmed = (checksRange == true and isInRange == false) or nil
-                ApplyVisibility(e)
             end
         end)
     end)
@@ -3849,8 +3834,7 @@ local function ReleaseSwingEvents()
     end
     swingArmed = false
     for _, ev in ipairs({
-        "PLAYER_SWING", "PLAYER_SWING_RANGE_UPDATE",
-        "WEAPON_SLOT_CHANGED", "UNIT_ATTACK_SPEED",
+        "PLAYER_SWING", "WEAPON_SLOT_CHANGED", "UNIT_ATTACK_SPEED",
     }) do
         Events.Off(ev, "adbarsswing")
     end
@@ -5052,7 +5036,6 @@ function Bars.Refresh(barId)
         -- Same reason: without it a health bar would fall to the timer path.
         HB.Ensure(e)
     elseif kind == "swing" then
-        SwingRangeSync()
         SwingRefresh(e)
         if Bars.SwingOH then Bars.SwingOH.Refresh(e) end
     elseif kind == "aura" then
@@ -5156,7 +5139,6 @@ function Bars.EnsureBar(rec, holder)
         -- every tick, so a settings change shows on the next one.
         e.plainThresh = BuildPlainBands(rec)
         EnsureSwingEvents()
-        SwingRangeSync()
         if e.running then
             ApplyVisibility(e)
         else
@@ -5235,10 +5217,14 @@ function Bars.Release(barId)
     local KX = Bars.KINDS[e.kind]
     if KX and KX.Release then KX.Release(e) end
     if e.kind == "swing" and Bars.SwingOH then Bars.SwingOH.Release(e) end
+    if e.kind == "swing" and Bars.SwingClose then Bars.SwingClose.Release(e) end
+    if (e.kind == "swing" or e.kind == "timer") and Bars.Spark then Bars.Spark.Release(e) end
+    if e.kind == "swing" and Bars.SwingRange then Bars.SwingRange.Release(e) end
+    if e.kind == "swing" and Bars.SwingAbil then Bars.SwingAbil.Release(e) end
+    if e.kind == "swing" and Bars.SwingColor then Bars.SwingColor.Release(e) end
     ReleaseSharedEvents()
     ReleaseSwingEvents()
     ReleasePredictEvents()
-    SwingRangeSync()
 end
 
 -- test hook: start a timer bar by hand
@@ -5980,6 +5966,8 @@ SlashCmdList.ADBARS = function(msg)
                 tostring(e.hpCalc and true or false), tostring(o and o.healOn or false),
                 tostring(o and o.absOn or false), tostring(o and o.haOn or false),
                 tostring(o and o.glowOn or false), e.hpBandN or 0, tostring(e.hpPreview or false)))
+        elseif e.kind == "swing" and e.srange and Bars.SwingRange then
+            print("  " .. Bars.SwingRange.Diag(e))
         elseif Bars.KINDS[e.kind] and Bars.KINDS[e.kind].Diag then
             print("  " .. Bars.KINDS[e.kind].Diag(e))
         end
@@ -5995,5 +5983,12 @@ Bars.Kit = {
     LayoutTicks = LayoutTicks, BarColorOf = BarColorOf, BarRounding = BarRounding,
     FeedStatusBarTimer = FeedStatusBarTimer, SafeOn = SafeOn,
     ResolveBarTexture = ResolveBarTexture, WHITE = WHITE,
-    SwingHandExists = SwingHandExists,
+    SwingHandExists = SwingHandExists, ApplySheen = ApplySheen, MakeShadow = MakeShadow,
+    -- a running swing's start, length and end (GetTime plus PLAYER_SWING's
+    -- plain duration), or nil between swings
+    SwingClock = function(e)
+        local endT, dur = e.endTime, e.duration
+        if not (e.running and endT and dur) or GetTime() >= endT then return nil end
+        return endT - dur, dur, endT
+    end,
 }

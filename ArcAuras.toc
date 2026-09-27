@@ -2,7 +2,7 @@
 ## Title: |cff3fc9f2Arc|r Auras
 ## Notes: Icons, icon groups and bars for your cooldowns, auras and resources, all set up from one panel. /arcauras
 ## Author: Arc
-## Version: 1.4.0.a
+## Version: 1.5.0
 ## IconTexture: Interface\AddOns\ArcAuras\Textures\ArcAuras_Icon_256
 ## SavedVariables: ArcAurasDB
 ## OptionalDeps: ArcUI
@@ -29,13 +29,25 @@ QOL\AD_AutoRank.lua
 Core\AD_Factory.lua
 Core\AD_PressHighlight.lua
 Drivers\AD_DriverCooldown.lua
+Drivers\AD_DriverTotem.lua
+Drivers\AD_DriverEnchant.lua
+Drivers\AD_DriverRange.lua
 Drivers\AD_DriverAura.lua
 Drivers\AD_DriverAuraGroups.lua
 Bars\AD_Bars.lua
 Bars\AD_SwingOffhand.lua
+Bars\AD_SwingClosing.lua
+Bars\AD_SwingAbilities.lua
+Bars\AD_SwingColors.lua
+Bars\AD_SwingRange.lua
+Bars\AD_BarSpark.lua
 Bars\AD_Castbar.lua
+Bars\AD_EnchantBar.lua
+Bars\AD_RangeBar.lua
 Core\AD_LayoutEngine.lua
 UI\AD_Options.lua
+UI\AD_RangeOptions.lua
+UI\AD_SwingColorOptions.lua
 UI\AD_OptionsLoader.lua
 UI\AD_IconScreen.lua
 UI\AD_Minimap.lua

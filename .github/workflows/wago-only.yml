@@ -1,0 +1,41 @@
+name: Wago upload only
+
+# Re-sends an EXISTING release tag to Wago alone. Use it when the tag-push run
+# (release.yml) reached CurseForge but Wago failed - 1.0.0's first run got
+# "Error! (302)" from Wago, the packager's sign for a rejected WAGO_API_TOKEN.
+# Only WAGO_API_TOKEN is passed: without CF_API_KEY and GITHUB_OAUTH the
+# packager skips CurseForge and the GitHub release (release.sh v2.6.1
+# upload_curseforge / upload_github return early on an empty token), so
+# nothing is uploaded twice. The changelog comes from main, so a notes fix
+# made after the tag (blank lines under the headers for the stores' markdown)
+# reaches Wago. Run it from the Actions tab or:
+#   gh workflow run wago-only.yml -R ArcSim/ArcAuras -f tag=1.5.1
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to send to Wago (e.g. 1.0.0)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  wago:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0   # full history + tags: the version comes from the tag
+
+      - name: Use main's changelog
+        run: git show origin/main:CHANGELOG.md > CHANGELOG.md
+
+      - name: Package and upload to Wago
+        uses: BigWigsMods/packager@v2.6.1
+        with:
+          args: '-n ":{package-name}-{project-version}{classic}"'
+        env:
+          WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}   # Wago only, see above

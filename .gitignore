@@ -2,3 +2,6 @@
 *.zip
 .DS_Store
 Thumbs.db
+# Local only: private notes and the retail dev copy's toc
+.claude/
+ArcDisplay.toc

@@ -12,11 +12,14 @@ manual-changelog:
 
 ignore:
   - .git
+  - .github
   - .gitignore
   - .gitattributes
+  - .claude
   - .pkgmeta
   - CHANGELOG.md
   - README.md
+  - ArcDisplay.toc
   - "*.bak"
   - Textures/ArcUI_Icon_400x400.tga
   - Textures/ArcUI_Icon_Dial_256.tga

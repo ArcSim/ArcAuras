@@ -76,6 +76,38 @@ local function PlayAlert(rec, enKey, soundKey)
 end
 Driver.PlayAlert = PlayAlert
 
+-- Can it be pressed now: usable (IsSpellUsable is plain on Forever) and off
+-- its real cooldown (the GCD is ignored). nil when the read is secret.
+local function UsableNow(a)
+    local sid = a.effSid or (a.rec.driver and a.rec.driver.spellID)
+    if not (sid and C_Spell.IsSpellUsable) then return nil end
+    local usable = C_Spell.IsSpellUsable(sid)
+    if issecretvalue and issecretvalue(usable) then return nil end
+    return usable == true and not a.frame._adOnCooldown
+end
+
+-- "Play a sound when usable" on the edge into pressable, from either side (a
+-- dodge lighting Mongoose Bite, its cooldown ending after one). Never on the
+-- first read; re-checked after 0.15s, as the GCD filter can fake an edge.
+local function UsableEdge(a)
+    if Store.Resolve(a.rec, "alerts", "usableSoundEnabled") ~= true then
+        a.usableLast = nil
+        return
+    end
+    local now = UsableNow(a)
+    if now == nil then return end
+    if a.usableLast == false and now then
+        local id = a.rec.id
+        C_Timer.After(0.15, function()
+            local live = attached[id]
+            if live and UsableNow(live) == true then
+                PlayAlert(live.rec, "usableSoundEnabled", "usableSound")
+            end
+        end)
+    end
+    a.usableLast = now
+end
+
 -- Keybinds (spells and custom timers)
 -- The bars are walked in a fixed order instead of FindSpellActionButtons: its
 -- order is undefined (a spell on two bars can report the side bar's key), and
@@ -403,6 +435,7 @@ local function PushState(a)
     end
     a.lastM, a.lastC = m, c
     Factory.SetState(a.frame, a.rec, dim, m)
+    UsableEdge(a)
 end
 
 local function QueueState(a)
@@ -643,6 +676,7 @@ local function FeedItem(a)
         local cnt = GetInventoryItemCount("player", AMMO_SLOT)
         if Store.Resolve(rec, "text", "stackText") ~= false then
             a.frame.stackText:SetText(cnt or "")
+            Factory.AmmoCountColor(a.frame.stackText, rec, "stackColor")
         end
         a.frame._adItemEmpty = (GetInventoryItemID("player", AMMO_SLOT) == nil) or nil
     end
@@ -719,6 +753,7 @@ local function FeedUsability(a)
         end
     end
     Factory.SetUsability(a.frame, a.rec, code)
+    UsableEdge(a)
 end
 
 local function FeedUsabilityAll()
@@ -776,6 +811,7 @@ local function ApplyAmmoText(a)
         return
     end
     f.ammoText:SetText(GetInventoryItemCount("player", AMMO_SLOT) or "")
+    Factory.AmmoCountColor(f.ammoText, rec, "ammoColor")
 end
 
 local function FeedAmmoAll()

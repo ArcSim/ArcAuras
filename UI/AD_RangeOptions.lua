@@ -124,7 +124,7 @@ function Options.RangeBandRows(pg, ctx, vis, owner)
                 return (b and b.color) or { 1, 1, 1, 1 }
             end,
             function(c) Edit(function(RB, r) RB.SetBandColor(r, i, c) end) end,
-            bandVis)
+            bandVis, { alpha = true })
         AT.RowToggle(pg, "Show this band",
             function()
                 local b = Band(i)

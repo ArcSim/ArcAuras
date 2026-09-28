@@ -9,14 +9,16 @@
 --   settings    = addon-wide settings
 --   ui          = panel state (expanded nodes, selection)
 -- }
--- rec = { id, type = "layout"|"group"|"icon"|"bar", name, v = schema version,
+-- rec = { id, type = "layout"|"group"|"icon"|"bar"|"reminder", name, v = schema version,
 --   layout: pos={x,y}, members={childId,...},
 --           inh = { [family] = { [section] = { [field] = value } } }
 --           (the layout tier: looks its icons, groups and bars follow)
---   group:  layoutId, groupKind="cooldown"|"aura", pos={x,y},
---           members={iconId,...}
+--   group:  layoutId, groupKind="cooldown"|"aura"|"reminder", pos={x,y},
+--           members={iconId,...} (a reminder group's are reminder ids)
 --   icon:   kind, driver={...}, and groupId + gpos={row,col} in a group,
 --           or layoutId + pos={x,y} when free
+--   reminder: groupId (a reminder group), kind="spell"|"item"|"enchant",
+--           driver={spellID|itemID|hand}, triggers={...} (Store.CleanTriggers)
 --   bar:    layoutId, barKind, barMode, driver={...}, pos={x,y}
 --   o = { [section] = { [field] = value } }  sparse overrides
 --   c = { specs, classes, chars, talents, factions = set|nil, talentMode,
@@ -426,11 +428,55 @@ function Store.Normalize()
             FoldGCDSwipeIn(bucket.swipe)
         end
     end
+    -- A reminder lives only in a reminder group, and a reminder group holds
+    -- reminders only: an orphaned reminder goes, and an icon found in one (an
+    -- early build filled them with icons) becomes a free icon of its layout.
+    for id, rec in pairs(DB.records) do
+        if rec.type == "reminder" then
+            local g = DB.records[rec.groupId]
+            if not (g and g.type == "group" and g.groupKind == "reminder") then DB.records[id] = nil end
+        end
+    end
+    for _, g in pairs(DB.records) do
+        if g.type == "group" and g.groupKind == "reminder" and type(g.members) == "table" then
+            local lay = DB.records[g.layoutId]
+            for i = #g.members, 1, -1 do
+                local mid = g.members[i]
+                local m = DB.records[mid]
+                if m and m.type == "icon" then
+                    table.remove(g.members, i)
+                    if lay and type(lay.members) == "table" then
+                        m.groupId, m.gpos, m.layoutId = nil, nil, lay.id
+                        m.pos = { x = 0, y = -60 }
+                        lay.members[#lay.members + 1] = mid
+                    else
+                        DB.records[mid] = nil
+                    end
+                end
+            end
+        end
+    end
     for id, rec in pairs(DB.records) do
         rec.id = id
         rec.o = rec.o or {}
         rec.c = rec.c or {}
         if NS.IsForever == true and rec.c.chars then FoldCharKeys(rec.c.chars) end
+        -- A reminder: a spell or an item with a whole positive ID, or a weapon
+        -- enchant on a hand, its triggers kept usable for its kind. It has no
+        -- cell and no position of its own.
+        if rec.type == "reminder" then
+            rec.gpos, rec.pos, rec.layoutId = nil, nil, nil
+            if rec.kind ~= "item" and rec.kind ~= "enchant" then rec.kind = "spell" end
+            local d = type(rec.driver) == "table" and rec.driver or {}
+            if rec.kind == "enchant" then
+                rec.driver = { hand = (d.hand == "off") and "off" or "main" }
+            else
+                local key = (rec.kind == "item") and "itemID" or "spellID"
+                local n = tonumber(d[key])
+                rec.driver = { [key] = (n and n > 0) and math.floor(n) or nil }
+            end
+            rec.triggers = Store.CleanTriggers(rec.triggers, rec.kind)
+        end
         -- Bars are always free layout children: no grid cell, and pos must be
         -- plain numbers. A malformed kind falls back to cooldown.
         if rec.type == "bar" then
@@ -598,10 +644,11 @@ function Store.FamilyOf(rec)
     if rec.type == "group" then return "iconGroup" end
     if rec.type == "layout" then return "layout" end
     if rec.type == "bar" then return "bar" end
+    if rec.type == "reminder" then return "reminder" end
 end
 
 function Store.KindOf(rec)
-    if rec.type == "icon" then return rec.kind end
+    if rec.type == "icon" or rec.type == "reminder" then return rec.kind end
     if rec.type == "group" then return rec.groupKind end
     if rec.type == "bar" then return rec.barKind end
 end
@@ -652,6 +699,13 @@ end
 function Store.Resolve(rec, section, field)
     local o = rec.o[section]
     if o and o[field] ~= nil then return o[field] end
+    -- A reminder follows its group field by field: what it leaves unset reads
+    -- the group's value, live, so SetOverride keeps it sparse against that.
+    if rec.type == "reminder" then
+        local g = DB.records[rec.groupId]
+        local gs = g and g.type == "group" and Schema.iconGroup[section]
+        if gs and gs.fields[field] then return Store.Resolve(g, section, field) end
+    end
     local li = InhOf(rec)
     li = li and li[section]
     if li and li[field] ~= nil then return li[field] end
@@ -1458,6 +1512,8 @@ local STARTER_ROWS = {
     { name = "Utility", kind = "cooldown", y = -320, size = 36 },
     { name = "Buffs", kind = "aura", y = -365, size = 32 },
 }
+-- the New Layout page draws the template's preview from these
+Store.STARTER_ROWS = STARTER_ROWS
 
 function Store.NewStarterLayout(name)
     local rec = Store.NewLayout(name or "Starter Layout")
@@ -1501,22 +1557,181 @@ local function TemplateSet(rec, section, field, value)
     rec.o[section][field] = value
 end
 
+-- ArcUI v1's pulse spot, 120 above the screen centre, measured from the
+-- layout's centre as CenterSpot does (no step-down: it is the one spot).
+local function PulseSpot(layoutId)
+    local x, y = 0, 0
+    local LE = NS.LayoutEngine
+    local lf = LE and LE.GetLayoutFrame and LE.GetLayoutFrame(layoutId)
+    if lf and lf.GetCenter then
+        local ux, uy = UIParent:GetCenter()
+        local lx, ly = lf:GetCenter()
+        if ux and lx then
+            x = math.floor(ux - lx + 0.5)
+            y = math.floor(uy - ly + 0.5)
+        end
+    end
+    return x, y + 120
+end
+
 function Store.NewGroup(layoutId, name, groupKind)
     local layout = Store.Get(layoutId)
     if not layout or layout.type ~= "layout" then return nil end
     local id = NewId()
-    local sx, sy = CenterSpot(layoutId, 40)
-    DB.records[id] = {
+    local kind = (groupKind == "aura" or groupKind == "reminder") and groupKind or "cooldown"
+    local sx, sy
+    if kind == "reminder" then
+        sx, sy = PulseSpot(layoutId)
+    else
+        sx, sy = CenterSpot(layoutId, 40)
+    end
+    local rec = {
         id = id, type = "group",
         name = name or ("Group " .. id),
-        groupKind = groupKind == "aura" and "aura" or "cooldown",
+        groupKind = kind,
         layoutId = layoutId,
         pos = { x = sx, y = sy },
         members = {}, o = {}, c = {},
     }
+    DB.records[id] = rec
+    -- v1's pulse window sat over the rest of the UI
+    if kind == "reminder" then TemplateSet(rec, "frame", "strata", "HIGH") end
     layout.members[#layout.members + 1] = id
     Store.Dirty("tree")
-    return DB.records[id]
+    return rec
+end
+
+-- Which icons a group takes: an aura group aura icons, a cooldown group any
+-- (aura icons sit in it as solid slots), a reminder group none (its members
+-- are reminders, made for it by Store.NewReminder).
+function Store.GroupTakes(group, kind)
+    if not group then return false end
+    if group.groupKind == "aura" then return kind == "aura" end
+    if group.groupKind == "reminder" then return false end
+    return true
+end
+
+-- A reminder group's reminders, in its member order.
+function Store.RemindersOf(group)
+    local out = {}
+    for _, mid in ipairs(group.members or {}) do
+        local rec = DB.records[mid]
+        if rec and rec.type == "reminder" then out[#out + 1] = rec end
+    end
+    return out
+end
+
+-- A new trigger: ArcUI v1's (when ready, 3 seconds for the timed types) with
+-- its sound off until picked, as every new option starts off. A weapon
+-- enchant's starts on "when it's missing".
+function Store.NewTrigger(kind)
+    if kind == "enchant" then return { type = "enchant_missing", soundDisabled = true } end
+    return { type = "when_ready", seconds = 3, soundDisabled = true }
+end
+
+-- A reminder made for a reminder group: kind "spell" or "item" and its ID, or
+-- "enchant" and its hand ("main" or "off"). It loads for its creator's class
+-- or spec, like a new icon, and starts with one trigger. Returns the record,
+-- or nil (not a reminder group, no ID).
+function Store.NewReminder(groupId, kind, id, name)
+    local g = Store.Get(groupId)
+    if not (g and g.type == "group" and g.groupKind == "reminder") then return nil end
+    local driver
+    if kind == "enchant" then
+        local hand = (id == "off") and "off" or "main"
+        driver = { hand = hand }
+        name = name or ((hand == "off") and "Off Hand Enchant" or "Main Hand Enchant")
+    else
+        kind = (kind == "item") and "item" or "spell"
+        id = tonumber(id)
+        if not (id and id > 0) then return nil end
+        id = math.floor(id)
+        driver = { [(kind == "item") and "itemID" or "spellID"] = id }
+        name = name or (((kind == "item") and "Item " or "Spell ") .. id)
+    end
+    local rid = NewId()
+    local rec = {
+        id = rid, type = "reminder", kind = kind, groupId = groupId,
+        name = name, driver = driver,
+        triggers = { Store.NewTrigger(kind) },
+        o = {}, c = {},
+    }
+    ScopeToCreator(rec)
+    g.members[#g.members + 1] = rid
+    DB.records[rid] = rec
+    Store.Dirty("tree")
+    return rec
+end
+
+-- A reminder's triggers, cleaned: at most Schema.REMINDER_MAX_TRIGGERS, each
+-- with a type its kind has and its outputs in range. A list left empty gets
+-- one new trigger, so a reminder always has something to fire.
+function Store.CleanTriggers(list, kind)
+    local ench = kind == "enchant"
+    local function Num(v, lo, hi)
+        v = tonumber(v)
+        if not v then return nil end
+        if v < lo then v = lo elseif v > hi then v = hi end
+        return v
+    end
+    local function Str(v, max)
+        if type(v) ~= "string" or v == "" then return nil end
+        return v:sub(1, max)
+    end
+    local types, anims, glows, curves = {}, {}, {}, { NONE = true, OUT = true, IN = true, IN_OUT = true }
+    for _, v in ipairs(ench and Schema.REMINDER_ENCHANT_TRIGGERS or Schema.REMINDER_TRIGGERS) do types[v] = true end
+    -- an item's use has no usable state to read
+    if kind == "item" then
+        for v in pairs(Schema.REMINDER_SPELL_ONLY) do types[v] = nil end
+    end
+    for _, v in ipairs(Schema.REMINDER_ANIMS) do anims[v] = true end
+    for _, v in ipairs(Schema.REMINDER_GLOWS) do glows[v] = true end
+    local out = {}
+    for _, t in ipairs(type(list) == "table" and list or {}) do
+        if #out >= Schema.REMINDER_MAX_TRIGGERS then break end
+        if type(t) == "table" then
+            local ty = types[t.type] and t.type or (ench and "enchant_missing" or "when_ready")
+            -- an enchant can run for half an hour, so its warning can be that early
+            local long = ty == "enchant_expiring"
+            local c = {
+                type = ty,
+                seconds = Num(t.seconds, 0.1, long and 3600 or 600) or (long and 60 or 3),
+                soundDisabled = (t.soundDisabled == true) and true or nil,
+                -- a weapon enchant has no proc glow to wait for
+                requireProc = (not ench and t.requireProc == true) and true or nil,
+                sound = Str(t.sound, 120),
+                tts = Str(t.tts, 200),
+                animStyle = (anims[t.animStyle] and t.animStyle ~= "default") and t.animStyle or nil,
+                glowType = (glows[t.glowType] and t.glowType ~= "none") and t.glowType or nil,
+            }
+            -- nil = shown (v1's own reading); only an explicit false hides it
+            if t.showIcon == false then c.showIcon = false end
+            if ty == "enchant_charges" then c.count = math.floor(Num(t.count, 1, 999) or 5) end
+            -- "Fire even while on cooldown" is When usable's alone; "Clear when
+            -- it ends" belongs to the two types whose moment can end
+            if ty == "when_usable" and t.ignoreCooldown == true then c.ignoreCooldown = true end
+            if (ty == "when_usable" or ty == "on_proc") and t.clearOnEnd == true then c.clearOnEnd = true end
+            local p = Num(t.priority, 0, 5)
+            c.priority = (p and p >= 1) and math.floor(p + 0.5) or nil
+            if type(t.glowColor) == "table" then
+                c.glowColor = { Num(t.glowColor[1], 0, 1) or 0, Num(t.glowColor[2], 0, 1) or 0,
+                    Num(t.glowColor[3], 0, 1) or 0, Num(t.glowColor[4], 0, 1) or 1 }
+            end
+            if t.overrideAnim == true then
+                c.overrideAnim = true
+                c.pulseDuration = Num(t.pulseDuration, 0.1, 600)
+                c.animFadeSmoothing = curves[t.animFadeSmoothing] and t.animFadeSmoothing or nil
+                c.animFlashSpeed = Num(t.animFlashSpeed, 0.03, 0.30)
+                c.animZoomStart = Num(t.animZoomStart, 0.30, 1)
+                c.animZoomPeak = Num(t.animZoomPeak, 1, 1.50)
+                c.animZoomPopTime = Num(t.animZoomPopTime, 0.04, 0.40)
+                c.animZoomSettleTime = Num(t.animZoomSettleTime, 0.02, 0.30)
+            end
+            out[#out + 1] = c
+        end
+    end
+    if #out == 0 then out[1] = Store.NewTrigger(kind) end
+    return out
 end
 
 -- destGroupId places the icon in a group; destGroupId == nil makes it a
@@ -1532,9 +1747,7 @@ function Store.NewIcon(kind, driver, destGroupId, layoutId, name)
     if destGroupId then
         local group = Store.Get(destGroupId)
         if not group or group.type ~= "group" then return nil end
-        -- Aura groups are aura-only; cooldown groups accept everything (aura
-        -- icons sit in them as solid slots).
-        if group.groupKind == "aura" and kind ~= "aura" then return nil end
+        if not Store.GroupTakes(group, kind) then return nil end
         rec.groupId = destGroupId
         group.members[#group.members + 1] = id
     else
@@ -1752,7 +1965,7 @@ function Store.Delete(id)
         end
         local layout = Store.Get(rec.layoutId)
         if layout then removeFrom(layout.members, id) end
-    elseif rec.type == "icon" then
+    elseif rec.type == "icon" or rec.type == "reminder" then
         if rec.groupId then
             local group = Store.Get(rec.groupId)
             if group then removeFrom(group.members, id) end
@@ -1770,8 +1983,8 @@ function Store.Delete(id)
 end
 
 -- Moves an icon into a group (destGroupId, optional cell {row, col}) or to a
--- free spot on a layout (layoutId + pos); aura groups take aura icons only.
--- With no cell, the icon takes the first free cell on the next render.
+-- free spot on a layout (layoutId + pos); a group takes what Store.GroupTakes
+-- allows. With no cell, the icon takes the first free cell on the next render.
 function Store.MoveIcon(iconId, destGroupId, layoutId, pos, cell)
     local rec = Store.Get(iconId)
     if not rec or rec.type ~= "icon" then return false end
@@ -1779,7 +1992,7 @@ function Store.MoveIcon(iconId, destGroupId, layoutId, pos, cell)
     if destGroupId then
         dest = Store.Get(destGroupId)
         if not dest or dest.type ~= "group" then return false end
-        if dest.groupKind == "aura" and rec.kind ~= "aura" then return false end
+        if not Store.GroupTakes(dest, rec.kind) then return false end
     else
         local layout = Store.Get(layoutId)
         if not layout or layout.type ~= "layout" then return false end
@@ -1891,12 +2104,13 @@ local function Nudge(pos, dx, dy)
     return { x = (tonumber(pos and pos.x) or 0) + dx, y = (tonumber(pos and pos.y) or 0) + dy }
 end
 
--- clone every icon of `group` under its clone `gc`
+-- clone every icon (a reminder group: every reminder) of `group` under its
+-- clone `gc`
 local function CloneIcons(group, gc, map, made)
     gc.members = {}
     for _, iid in ipairs(group.members or {}) do
         local icon = DB.records[iid]
-        if icon and icon.type == "icon" then
+        if icon and (icon.type == "icon" or icon.type == "reminder") then
             local ic = CloneRecord(icon, map, made)
             ic.groupId = gc.id
             gc.members[#gc.members + 1] = ic.id
@@ -1951,6 +2165,10 @@ function Store.Duplicate(id)
         if not l then return nil end
         copy.pos = Nudge(rec.pos, 0, -22)
         l.members[#l.members + 1] = copy.id
+    elseif rec.type == "reminder" then
+        local g = Store.Get(rec.groupId)
+        if not g then return nil end
+        g.members[#g.members + 1] = copy.id
     else
         return nil
     end
@@ -2306,8 +2524,12 @@ end
 -- so a tampered string degrades to defaults. Each layout in the string becomes
 -- a new one; anything whose parent is not in it lands in the target:
 -- `targetLayoutId`, else the first imported layout, else a new "Imported" one.
--- `opts.emptyGroups` brings each group in without its icons.
--- Returns { layouts, items, target, dropped = icons left out }, or nil and a reason.
+-- `opts.emptyGroups` brings each group in without its icons. A reminder that
+-- comes without its group joins `opts.reminderGroupId` (a Reminder group),
+-- else a new one in the target.
+-- Returns { layouts, items, target, dropped = icons and reminders left out,
+-- reminders, reminderGroup, refused = names of reminders the group had }, or
+-- nil and a reason.
 function Store.Import(text, targetLayoutId, opts)
     text = tostring(text or ""):gsub("%s+", "")
     if text == "" then return nil, "paste an export string first" end
@@ -2331,20 +2553,24 @@ function Store.Import(text, targetLayoutId, opts)
         return nil, err or "corrupt string (bad payload)"
     end
 
-    local VALID = { layout = true, group = true, icon = true, bar = true }
+    local VALID = { layout = true, group = true, icon = true, bar = true, reminder = true }
     -- opts.emptyGroups: a group in the string arrives without its icons (an
-    -- icon exported alone, its group left home, still comes in)
-    local dropIn = {}
-    if opts and opts.emptyGroups then
-        for _, rec in ipairs(payload.records) do
-            if type(rec) == "table" and rec.type == "group" and rec.id ~= nil then dropIn[rec.id] = true end
+    -- icon exported alone, its group left home, still comes in). A reminder
+    -- exported alone is set aside for a Reminder group here (`lone`).
+    local dropIn, groupsIn, lone = {}, {}, {}
+    for _, rec in ipairs(payload.records) do
+        if type(rec) == "table" and rec.type == "group" and rec.id ~= nil then
+            groupsIn[rec.id] = true
+            if opts and opts.emptyGroups then dropIn[rec.id] = true end
         end
     end
     local map, newRecs, layouts, dropped = {}, {}, {}, 0
     for _, rec in ipairs(payload.records) do
         if type(rec) == "table" and rec.id ~= nil and VALID[rec.type] then
-            if rec.type == "icon" and rec.groupId ~= nil and dropIn[rec.groupId] then
+            if (rec.type == "icon" or rec.type == "reminder") and rec.groupId ~= nil and dropIn[rec.groupId] then
                 dropped = dropped + 1
+            elseif rec.type == "reminder" and not groupsIn[rec.groupId] then
+                lone[#lone + 1] = rec
             else
                 local nid = NewId()
                 map[rec.id] = nid
@@ -2354,7 +2580,7 @@ function Store.Import(text, targetLayoutId, opts)
             end
         end
     end
-    if #newRecs == 0 then return nil, "string holds nothing to import" end
+    if #newRecs == 0 and #lone == 0 then return nil, "string holds nothing to import" end
 
     -- layouts first, so loose records have somewhere to land
     for _, rec in ipairs(layouts) do
@@ -2396,9 +2622,51 @@ function Store.Import(text, targetLayoutId, opts)
         end
         if rec.type ~= "layout" then DB.records[rec.id] = rec end
     end
+    -- A lone reminder joins the picked Reminder group, else a new one placed
+    -- like any. A group keeps one reminder per spell, item or hand (the Add
+    -- window's rule): one it has already stays out, named in `refused`.
+    local reminders, refused, rgroup = {}, {}, nil
+    if #lone > 0 then
+        rgroup = Store.Get(opts and opts.reminderGroupId)
+        if not (rgroup and rgroup.type == "group" and rgroup.groupKind == "reminder") then rgroup = nil end
+        local function Key(r)
+            local d = type(r.driver) == "table" and r.driver or {}
+            if r.kind == "enchant" then return "enchant:" .. ((d.hand == "off") and "off" or "main") end
+            local item = r.kind == "item"
+            local n = tonumber(d[item and "itemID" or "spellID"])
+            return (item and "item:" or "spell:") .. tostring(n and math.floor(n) or "?")
+        end
+        for _, rec in ipairs(lone) do
+            local have = false
+            for _, r in ipairs(rgroup and Store.RemindersOf(rgroup) or {}) do
+                if Key(r) == Key(rec) then have = true end
+            end
+            if have then
+                refused[#refused + 1] = tostring(rec.name or "?")
+            else
+                if not rgroup then
+                    if not target then
+                        target = layouts[1] or Store.NewLayout("Imported")
+                        if type(target.members) ~= "table" then target.members = {} end
+                    end
+                    rgroup = Store.NewGroup(target.id, "Reminders", "reminder")
+                end
+                rec.id = NewId()
+                rec.groupId = rgroup.id
+                rgroup.members[#rgroup.members + 1] = rec.id
+                DB.records[rec.id] = rec
+                reminders[#reminders + 1] = rec
+            end
+        end
+        if #newRecs == 0 and #reminders == 0 then
+            return nil, ("\"%s\" already has a reminder for %s: pick another Reminder group, or a new one.")
+                :format(tostring(rgroup and rgroup.name or "?"), table.concat(refused, ", "))
+        end
+    end
     Store.Normalize()
     Store.Dirty("tree")
-    return { layouts = layouts, items = items, target = target, dropped = dropped }
+    return { layouts = layouts, items = items, target = target, dropped = dropped,
+        reminders = reminders, reminderGroup = rgroup, refused = refused }
 end
 
 -- One-layout form of Import: the first imported layout, or where the loose

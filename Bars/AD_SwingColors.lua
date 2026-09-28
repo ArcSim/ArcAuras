@@ -385,7 +385,8 @@ function SW.MoveRule(rec, i, delta)
 end
 
 -- key "id": a spell ID (nil clears it); "when": "queued" or "cast"; "color":
--- { r, g, b } from the picker, which has no alpha, so the rule keeps its own.
+-- { r, g, b, a } from the picker's opacity slider; one without an a keeps the
+-- rule's own, and an opacity-only change is an edit.
 function SW.SetRule(rec, i, key, v)
     local r = SW.List(rec)[i]
     if not r then return false end
@@ -400,8 +401,9 @@ function SW.SetRule(rec, i, key, v)
     elseif key == "color" then
         if type(v) ~= "table" then return false end
         local old = type(r.color) == "table" and r.color or {}
-        local c = { tonumber(v[1]) or 1, tonumber(v[2]) or 1, tonumber(v[3]) or 1, tonumber(old[4]) or 1 }
-        if old[1] == c[1] and old[2] == c[2] and old[3] == c[3] then return false end
+        local oa = tonumber(old[4]) or 1
+        local c = { tonumber(v[1]) or 1, tonumber(v[2]) or 1, tonumber(v[3]) or 1, tonumber(v[4]) or oa }
+        if old[1] == c[1] and old[2] == c[2] and old[3] == c[3] and oa == c[4] then return false end
         r.color = c
     else
         return false

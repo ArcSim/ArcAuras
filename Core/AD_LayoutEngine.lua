@@ -616,6 +616,10 @@ end
 -- Click the bar to open the group's options, drag it to move the group. The
 -- container stays click-through so gaps between icons never eat clicks.
 local GROUP_GREEN = { 0.2, 0.9, 0.2 }
+local GROUP_TEXT = { 0.85, 1, 0.85 }
+-- The item the editor has open: its Edit chip reads Editing in this yellow,
+-- and a group, which has no chip, turns its name this yellow.
+local EDIT_YELLOW = { 1, 0.82, 0 }
 
 local function EnsureGroupChrome(gf)
     if gf._adChrome then return gf._adChrome end
@@ -646,7 +650,7 @@ local function EnsureGroupChrome(gf)
     bar.fs = bar:CreateFontString(nil, "OVERLAY")
     bar.fs:SetFont(STANDARD_TEXT_FONT, 8, "OUTLINE")
     bar.fs:SetPoint("CENTER", 0, 0)
-    bar.fs:SetTextColor(0.85, 1, 0.85)
+    bar.fs:SetTextColor(GROUP_TEXT[1], GROUP_TEXT[2], GROUP_TEXT[3])
     -- with names off the tab is a blank grip: its tooltip names the group
     bar:SetScript("OnEnter", function()
         bar.fs:SetTextColor(1, 1, 0.5)
@@ -657,7 +661,8 @@ local function EnsureGroupChrome(gf)
         end
     end)
     bar:SetScript("OnLeave", function()
-        bar.fs:SetTextColor(0.85, 1, 0.85)
+        local c = bar._adEditing and EDIT_YELLOW or GROUP_TEXT
+        bar.fs:SetTextColor(c[1], c[2], c[3])
         if GameTooltip:IsOwned(bar) then GameTooltip:Hide() end
     end)
     bar:SetScript("OnDragStart", function()
@@ -705,13 +710,15 @@ local function EnsureBarChrome(f)
     if f._adBarChrome then return f._adBarChrome end
     local ch = {}
     local chip = CreateFrame("Button", nil, f, "BackdropTemplate")
-    chip:SetSize(32, 13)
-    chip:SetPoint("BOTTOMRIGHT", f, "TOPRIGHT", 2, 4)
+    -- Inside the bar's top-right corner: above the bar it covered whatever
+    -- was placed there.
+    chip:SetSize(Snap(24), Snap(10))
+    chip:SetPoint("TOPRIGHT", f, "TOPRIGHT", -Snap(2), -Snap(2))
     chip:SetBackdrop({ bgFile = WHITE, edgeFile = WHITE, edgeSize = 1 })
     chip:SetBackdropColor(0.05, 0.10, 0.13, 0.95)
     chip:SetBackdropBorderColor(BAR_CYAN[1], BAR_CYAN[2], BAR_CYAN[3], 0.9)
     chip.fs = chip:CreateFontString(nil, "OVERLAY")
-    chip.fs:SetFont(STANDARD_TEXT_FONT, 8, "OUTLINE")
+    chip.fs:SetFont(STANDARD_TEXT_FONT, 7, "OUTLINE")
     chip.fs:SetPoint("CENTER", 0, 0)
     chip.fs:SetText("EDIT")
     chip.fs:SetTextColor(BAR_CYAN[1], BAR_CYAN[2], BAR_CYAN[3])
@@ -724,6 +731,17 @@ local function EnsureBarChrome(f)
     ch.chip = chip
     f._adBarChrome = ch
     return ch
+end
+
+-- Widened for the longer word; it grows left from the corner it is pinned to.
+local function PaintBarChip(chip, on)
+    if (chip._adEditing or false) == on then return end
+    chip._adEditing = on
+    local c = on and EDIT_YELLOW or BAR_CYAN
+    chip:SetSize(Snap(on and 36 or 24), Snap(10))
+    chip:SetBackdropBorderColor(c[1], c[2], c[3], 0.9)
+    chip.fs:SetText(on and "EDITING" or "EDIT")
+    chip.fs:SetTextColor(c[1], c[2], c[3])
 end
 
 local function WireBarDrag(f)
@@ -795,13 +813,14 @@ end
 
 -- Icon drag and drop: into, out of and between groups
 
--- The group under the dragged icon's center; aura groups ignore non-aura icons.
+-- The group under the dragged icon's center; a group ignores icons it does not
+-- take (Store.GroupTakes).
 local function FindDropGroup(cx, cy, iconId)
     local rec = Store.Get(iconId)
     for gid, gf in pairs(groupFrames) do
         local grec = Store.Get(gid)
         if grec and gf:IsShown()
-            and not (grec.groupKind == "aura" and rec and rec.kind ~= "aura") then
+            and not (rec and not Store.GroupTakes(grec, rec.kind)) then
             local l, r, t, b = gf:GetLeft(), gf:GetRight(), gf:GetTop(), gf:GetBottom()
             if l and cx >= l - 16 and cx <= r + 16 and cy >= b - 16 and cy <= t + 16 then
                 return grec, gf
@@ -1244,9 +1263,11 @@ local function EnsureGroupArrows(gf)
 end
 
 local function UpdateGroupArrows(gf, rec)
+    -- a group kind that places itself (Engine.GROUP_KINDS) has no grid to grow
     local want = editMode and Store.GetSetting("showLayoutArrows") ~= false
         and NS.Options ~= nil and NS.Options.SelectedGroupId ~= nil
         and NS.Options.SelectedGroupId() == rec.id
+        and not Engine.GROUP_KINDS[rec.groupKind]
     if not (want or gf._adArrows) then return end
     for _, b in ipairs(EnsureGroupArrows(gf)) do
         local s = b._adSpec
@@ -1275,6 +1296,36 @@ function Engine.RefreshArrows()
     end
 end
 
+-- A group has no Edit chip, so its name (with names off, its grip) turns
+-- yellow while the editor has it open.
+local function PaintGroupTab(bar, on)
+    if (bar._adEditing or false) == on then return end
+    bar._adEditing = on
+    local c = on and EDIT_YELLOW or GROUP_TEXT
+    bar.fs:SetTextColor(c[1], c[2], c[3])
+    local g = on and EDIT_YELLOW or GROUP_GREEN
+    bar.grip:SetColorTexture(g[1], g[2], g[3], 0.9)
+end
+
+-- The editor's pane refresh calls this on every selection change. Every
+-- rebuild does too: it builds the chips of new items, and closing the window
+-- ends edit mode through one.
+function Engine.RefreshEditing()
+    local O = NS.Options
+    local id = editMode and O and O.EditingId and O.EditingId() or nil
+    for bid, bf in pairs(barFrames) do
+        local ch = bf._adBarChrome
+        if ch then PaintBarChip(ch.chip, bid == id) end
+    end
+    for gid, gf in pairs(groupFrames) do
+        local ch = gf._adChrome
+        if ch then PaintGroupTab(ch.bar, gid == id) end
+    end
+    if Factory.SetEditing then
+        for iid, f in pairs(Factory.frames) do Factory.SetEditing(f, iid == id) end
+    end
+end
+
 local function WireGroupEdit(gf, rec)
     gf._adRecId = rec.id
     local ch = EnsureGroupChrome(gf)
@@ -1293,6 +1344,11 @@ local function WireGroupEdit(gf, rec)
         ch.bar:SetSize(24, 8)
     end
     ch.border:SetFrameLevel(gf:GetFrameLevel())
+    -- "Background while editing" (look.editFill): the fill inside the outline
+    local fill = Store.Resolve(rec, "look", "editFill")
+    if type(fill) == "table" then
+        ch.border:SetBackdropColor(fill[1] or 0, fill[2] or 0, fill[3] or 0, fill[4] or 1)
+    end
     ch.border:SetShown(editMode)
     ch.bar:SetShown(editMode)
     -- While the panel is open the handle outranks every display, so a bar
@@ -1308,6 +1364,40 @@ local function WireGroupEdit(gf, rec)
     gf:SetMovable(editMode)
     gf:EnableMouse(false)
     UpdateGroupArrows(gf, rec)
+end
+
+-- Group kinds that are not grids place themselves: the Reminder group
+-- (Drivers\AD_DriverReminders.lua) is its pulse window. The engine keeps the
+-- group's frame, spot, anchor, chrome and load; the handler owns what is
+-- inside: place(group, gf, editMode) sizes the frame and fills it on every
+-- rebuild, release(group) stops it while the group is not drawn.
+Engine.GROUP_KINDS = {}
+function Engine.RegisterGroupKind(kind, handler)
+    Engine.GROUP_KINDS[kind] = handler
+end
+
+-- The container's own look (Arrangement > Container), off by default; the
+-- kinds that place themselves have it too.
+local function ContainerLook(group, container)
+    local showBorder = Store.Resolve(group, "look", "showBorder")
+    local showBg = Store.Resolve(group, "look", "showBackground")
+    if showBorder or showBg then
+        container:SetBackdrop({
+            bgFile = showBg and WHITE or nil,
+            edgeFile = showBorder and WHITE or nil,
+            edgeSize = 1,
+        })
+        if showBg then
+            local c = Store.Resolve(group, "look", "bgColor") or { 0, 0, 0, 0.6 }
+            container:SetBackdropColor(c[1], c[2], c[3], c[4] or 0.6)
+        end
+        if showBorder then
+            local c = Store.Resolve(group, "look", "borderColor") or { 0.11, 0.16, 0.25, 1 }
+            container:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 1)
+        end
+    else
+        container:SetBackdrop(nil)
+    end
 end
 
 -- Grid placement: cols x rows of snapped slots, centered on the container.
@@ -1381,26 +1471,7 @@ local function PlaceGroup(group, container, flowMode)
     local contentH = needRows * slotH + (needRows - 1) * spacingY + pad * 2
         + cas.totalExtraH + cas.topOver + cas.bottomOver
     container:SetSize(math.max(contentW, 4), math.max(contentH, 4))
-
-    local showBorder = Store.Resolve(group, "look", "showBorder")
-    local showBg = Store.Resolve(group, "look", "showBackground")
-    if showBorder or showBg then
-        container:SetBackdrop({
-            bgFile = showBg and WHITE or nil,
-            edgeFile = showBorder and WHITE or nil,
-            edgeSize = 1,
-        })
-        if showBg then
-            local c = Store.Resolve(group, "look", "bgColor") or { 0, 0, 0, 0.6 }
-            container:SetBackdropColor(c[1], c[2], c[3], c[4] or 0.6)
-        end
-        if showBorder then
-            local c = Store.Resolve(group, "look", "borderColor") or { 0.11, 0.16, 0.25, 1 }
-            container:SetBackdropBorderColor(c[1], c[2], c[3], c[4] or 1)
-        end
-    else
-        container:SetBackdrop(nil)
-    end
+    ContainerLook(group, container)
 
     if dynamic then
         -- Every member, dropped-out ones too, is sized at its static cell,
@@ -1576,19 +1647,28 @@ function Engine.Rebuild()
                     -- The post-pass re-places it if it is anchored.
                     if NS.Anchor then NS.Anchor.Register(group, gf) end
                     gf:Show()
-                    -- Panel closed and a dynamic aura group: engine-flow mode.
-                    -- Holders release and the AuraContainer rows show only the
-                    -- auras that are up. With Dynamic off the static grid stays
-                    -- in play too, each member keeping its cell and missing look.
-                    local flowMode = group.groupKind == "aura" and not editMode
-                        and NS.DriverAuraGroups ~= nil
-                        and NS.DriverAuraGroups.IsAvailable()
-                        and Store.Resolve(group, "arrangement", "dynamicLayout") == true
-                    PlaceGroup(group, gf, flowMode)
+                    local gk = Engine.GROUP_KINDS[group.groupKind]
+                    if gk then
+                        gk.place(group, gf, editMode)
+                        ContainerLook(group, gf)
+                    else
+                        -- Panel closed and a dynamic aura group: engine-flow
+                        -- mode. Holders release and the AuraContainer rows
+                        -- show only the auras that are up. With Dynamic off
+                        -- the static grid stays in play too, each member
+                        -- keeping its cell and missing look.
+                        local flowMode = group.groupKind == "aura" and not editMode
+                            and NS.DriverAuraGroups ~= nil
+                            and NS.DriverAuraGroups.IsAvailable()
+                            and Store.Resolve(group, "arrangement", "dynamicLayout") == true
+                        PlaceGroup(group, gf, flowMode)
+                    end
                     WireGroupEdit(gf, group)
                     GhostTag(gf, group, 4)
                 else
                     gf:Hide()
+                    local gk = Engine.GROUP_KINDS[group.groupKind]
+                    if gk and gk.release then gk.release(group) end
                     for _, rec in ipairs(Store.IconsOf(group)) do
                         Factory.Release(rec.id)
                         NS.DriverCooldown.Detach(rec.id)
@@ -1640,6 +1720,8 @@ function Engine.Rebuild()
             container:Hide()
             local groups, freeIcons, bars = Store.ChildrenOf(layout)
             for _, group in ipairs(groups) do
+                local gk = Engine.GROUP_KINDS[group.groupKind]
+                if gk and gk.release then gk.release(group) end
                 for _, rec in ipairs(Store.IconsOf(group)) do
                     Factory.Release(rec.id)
                     NS.DriverCooldown.Detach(rec.id)
@@ -1677,6 +1759,7 @@ function Engine.Rebuild()
     -- conditions pass paints alphas this same frame, so none render stale.
     ApplyAnchors()
     if NS.Conditions then NS.Conditions.Pass() end
+    Engine.RefreshEditing()
 end
 
 function Engine.QueueRebuild()

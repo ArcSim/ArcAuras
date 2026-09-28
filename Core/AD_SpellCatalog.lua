@@ -239,7 +239,7 @@ end
 local Talents = {}
 NS.TalentCatalog = Talents
 
-local tEntries = {}      -- sorted { {nodeID, name, nameLower, icon, rank, maxRanks, treeID, groupID, posX, posY, edges} }
+local tEntries = {}      -- sorted { {nodeID, name, nameLower, icon, rank, maxRanks, entryID, spellID, treeID, groupID, posX, posY, edges} }
 local tDirty = true
 local taken = {}         -- [nodeID] = true, rebuilt with tEntries
 local tSubscribed = false
@@ -265,7 +265,8 @@ local function ActiveTrees()
 end
 
 -- Name and icon come from the node's active entry (a choice node shows your
--- pick), else its first entry, so untaken talents still list.
+-- pick), else its first entry, so untaken talents still list. The entry and
+-- its spell come back too: the picker's tooltip shows the game's talent text.
 local function NodeDisplay(configID, nodeInfo)
     local entryID = (nodeInfo.activeEntry and nodeInfo.activeEntry.entryID)
         or (nodeInfo.entryIDs and nodeInfo.entryIDs[1])
@@ -280,7 +281,7 @@ local function NodeDisplay(configID, nodeInfo)
         name = name or C_Spell.GetSpellName(defInfo.spellID)
         icon = icon or C_Spell.GetSpellTexture(defInfo.spellID)
     end
-    return name, icon
+    return name, icon, entryID, defInfo.spellID
 end
 
 -- Some nodes sit an order of magnitude off the tree (Hunter tree 1091, node
@@ -369,7 +370,7 @@ local function ScanTalents()
                 if nodeInfo then
                     local rank = nodeInfo.activeRank or 0
                     if rank > 0 then taken[nodeID] = true end
-                    local name, icon = NodeDisplay(configID, nodeInfo)
+                    local name, icon, entryID, spellID = NodeDisplay(configID, nodeInfo)
                     if name then
                         local groupID
                         for _, g in ipairs(nodeInfo.groupIDs or {}) do
@@ -389,6 +390,8 @@ local function ScanTalents()
                             icon = icon or 134400,
                             rank = rank,
                             maxRanks = nodeInfo.maxRanks,
+                            entryID = entryID,
+                            spellID = spellID,
                             treeID = treeID,
                             groupID = groupID,
                             posX = nodeInfo.posX or 0,

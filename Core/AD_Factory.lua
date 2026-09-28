@@ -642,6 +642,7 @@ function Factory.Release(id)
         if NS.IconScreen and NS.IconScreen.On(id) then NS.IconScreen.Stop() end
         Factory.StopGlow(f)   -- ready + proc + aura lanes
         Factory.StopUsableGlow(f)
+        if NS.DriverWarn then NS.DriverWarn.Drop(f) end
         f._adPureGCD = nil   -- pooled frames must not carry GCD presentation
         f._adPureWand = nil
         f._adRecharging = nil
@@ -669,6 +670,20 @@ local function ApplySwipeAlpha(f)
 end
 Factory.ApplySwipeAlpha = ApplySwipeAlpha
 
+-- The duration and stack texts' one colour writer. A fontstring's text colour
+-- and its alpha are one channel, so a SetAlpha after SetTextColor wiped the
+-- colour's own alpha: the colour (_adTextRGBA) and the dim (_adTextA) are kept
+-- and always written together. ta: a new dim, nil keeps the last.
+local function PaintText(fs, ta)
+    if ta ~= nil then fs._adTextA = ta end
+    local c = fs._adTextRGBA
+    if c then
+        fs:SetTextColor(c[1], c[2], c[3], (c[4] or 1) * (fs._adTextA or 1))
+    else
+        fs:SetAlpha(fs._adTextA or 1)
+    end
+end
+
 -- The one writer for every dim (cooldown, aura missing, out of stock). Each
 -- caller resolves preserveText from its own option.
 local function ApplyStateAlpha(f, a, preserveText)
@@ -692,12 +707,14 @@ local function ApplyStateAlpha(f, a, preserveText)
     -- A fully hidden icon hides its texts too, whatever preserveText says.
     local ta = (a > 0 and preserveText) and 1 or a
     if f.textHost then f.textHost:SetAlpha(ta) end
+    -- Labels kept to the aura's absence live under the button, not on the host.
+    if f._adMissClip then f._adMissClip:SetAlpha(ta) end
     -- The charge count's low host (aura overlay) dims like the text host.
     if f._adLowText then f._adLowText:SetAlpha(ta) end
-    if f.stackText then f.stackText:SetAlpha(ta) end
+    if f.stackText then PaintText(f.stackText, ta) end
     if f.cooldown.GetCountdownFontString then
         local cfs = f.cooldown:GetCountdownFontString()
-        if cfs then cfs:SetAlpha(ta) end
+        if cfs then PaintText(cfs, ta) end
     end
 end
 
@@ -1006,8 +1023,8 @@ local function StyleCountdownText(cfs, rec, kS, anchorTo, fontPath)
     if outline == "NONE" then outline = "" end
     cfs:SetFont(IconFont(R("text", "durationFont"), fontPath),
         math.max(6, math.floor((R("text", "durationSize") or 14) * kS + 0.5)), outline)
-    local dc = R("text", "durationColor") or { 1, 1, 1, 1 }
-    cfs:SetTextColor(dc[1], dc[2], dc[3], dc[4] or 1)
+    cfs._adTextRGBA = R("text", "durationColor") or { 1, 1, 1, 1 }
+    PaintText(cfs)
     local dan = R("text", "durationAnchor") or "CENTER"
     cfs:ClearAllPoints()
     cfs:SetPoint(dan, anchorTo, dan,
@@ -1022,14 +1039,45 @@ local function StyleStackText(fs, rec, kS, anchorTo)
     if outline == "NONE" then outline = "" end
     fs:SetFont(IconFont(R("text", "stackFont")),
         math.max(6, math.floor((R("text", "stackSize") or 14) * kS + 0.5)), outline)
-    local scol = R("text", "stackColor") or { 1, 1, 1, 1 }
-    fs:SetTextColor(scol[1], scol[2], scol[3], scol[4] or 1)
+    fs._adTextRGBA = R("text", "stackColor") or { 1, 1, 1, 1 }
+    PaintText(fs)
     local anch = R("text", "stackAnchor") or "BOTTOMRIGHT"
     fs:ClearAllPoints()
     fs:SetPoint(anch, anchorTo, anch,
         (R("text", "stackX") or -2) * kS, (R("text", "stackY") or 2) * kS)
     fs:SetShadowColor(0, 0, 0, R("text", "stackShadow") == true and 1 or 0)
     fs:SetShadowOffset(1, -1)
+end
+
+-- The equipped ammo count, or nil with the slot empty. It has no secrecy
+-- annotation and Blizzard's item buttons compare it; a secret one reads nil.
+function Factory.AmmoCount()
+    if GetInventoryItemID("player", AMMO_SLOT) == nil then return nil end
+    local n = GetInventoryItemCount("player", AMMO_SLOT)
+    if issecretvalue and issecretvalue(n) then return nil end
+    return type(n) == "number" and n or nil
+end
+
+-- An ammo count's colour: the lowest threshold it is at or below, else the
+-- text's own (baseKey).
+function Factory.AmmoCountColor(fs, rec, baseKey)
+    local R = function(k) return Store.Resolve(rec, "text", k) end
+    local c = R(baseKey) or { 1, 1, 1, 1 }
+    local n = R("ammoCountColors") == true and Factory.AmmoCount() or nil
+    if n then
+        local best
+        for k = 1, math.min(3, R("ammoCountSteps") or 1) do
+            local v = R("ammoCount" .. k)
+            if type(v) == "number" and n <= v and (best == nil or v < best) then
+                best = v
+                c = R("ammoCount" .. k .. "Color") or c
+            end
+        end
+    end
+    -- through the texts' writer, so an ammo icon's stack text keeps its dim
+    -- when a count lands
+    fs._adTextRGBA = c
+    PaintText(fs)
 end
 
 -- Keybind on/off for the style pass and the cooldown driver: the icon's own
@@ -1187,6 +1235,7 @@ function Factory.ApplyStyle(f, rec)
         and R("text", "stackText") ~= false
     if stacks then
         StyleStackText(f.stackText, rec, kS, f)
+        if rec.kind == "ammo" then Factory.AmmoCountColor(f.stackText, rec, "stackColor") end
         f.stackText:Show()
     else
         f.stackText:Hide()
@@ -1200,8 +1249,7 @@ function Factory.ApplyStyle(f, rec)
         if aout == "NONE" then aout = "" end
         f.ammoText:SetFont(IconFont(R("text", "ammoFont")),
             math.max(6, math.floor((R("text", "ammoSize") or 14) * kS + 0.5)), aout)
-        local acol = R("text", "ammoColor") or { 1, 1, 1, 1 }
-        f.ammoText:SetTextColor(acol[1], acol[2], acol[3], acol[4] or 1)
+        Factory.AmmoCountColor(f.ammoText, rec, "ammoColor")
         local aanch = R("text", "ammoAnchor") or "BOTTOMLEFT"
         f.ammoText:ClearAllPoints()
         f.ammoText:SetPoint(aanch, f, aanch,
@@ -1225,6 +1273,7 @@ function Factory.ApplyStyle(f, rec)
         st.ready = R("label", "labelShowReady" .. suf) ~= false
         st.cd = R("label", "labelShowCooldown" .. suf) ~= false
         st.activeOnly = rec.kind == "aura" and R("label", "labelActiveOnly" .. suf) == true
+        st.missingOnly = rec.kind == "aura" and R("label", "labelMissingOnly" .. suf) == true
         local ltext = R("label", "labelText" .. suf)
         if fs and ltext and ltext ~= "" then
             fs:SetFont(IconFont(R("label", "labelFont")),
@@ -1245,6 +1294,7 @@ function Factory.ApplyStyle(f, rec)
         end
     end
     f._adHasLabel = f._adLabels[1].has
+    Factory.ApplyMissingLabels(f, rec, kS)
 
     -- Keybind text style; the cooldown driver sets the text.
     local kbOn = Factory.KeybindEnabled(rec)
@@ -1264,6 +1314,74 @@ function Factory.ApplyStyle(f, rec)
 
     -- Glows restart only when their signature changes: a restart is visible.
     Factory.SetState(f, rec, f._adOnCooldown, f._adDesatState)
+    -- the warning glow follows the ammo and the pet, not the icon's state
+    if NS.DriverWarn then NS.DriverWarn.Sync(f, rec) end
+end
+
+-- A label "only while the aura is missing" can only work where the live
+-- button's opaque plate covers it: never with the art hidden, as then nothing
+-- would hide the label while the aura is up.
+function Factory.MissingLabelsOK(rec)
+    return rec ~= nil and rec.kind == "aura"
+        and Store.Resolve(rec, "appearance", "forceHideIcon") ~= true
+        and (Store.Resolve(rec, "auraActive", "activeAlpha") or 1) > 0
+end
+
+-- Those labels sit on the holder UNDER the engine button (+1: over the ghost
+-- art, under its border and the button), clipped to the plate's rect (the
+-- holder inset by the padding). The game shows the button exactly while the
+-- aura is up, so it hides them then, in combat too, with no presence read.
+-- Their alpha follows the other texts' (ApplyStateAlpha).
+function Factory.ApplyMissingLabels(f, rec, kS)
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    local ok = Factory.MissingLabelsOK(rec)
+    local clip = f._adMissClip
+    local any = false
+    for i, suf in ipairs({ "", "2", "3" }) do
+        local ltext = R("label", "labelText" .. suf)
+        local want = ok and R("label", "labelMissingOnly" .. suf) == true
+            and ltext ~= nil and ltext ~= ""
+        if want and not clip then
+            clip = CreateFrame("Frame", nil, f)
+            clip:SetClipsChildren(true)
+            clip._fs = {}
+            f._adMissClip = clip
+        end
+        local fs = clip and clip._fs[i]
+        if want then
+            if not fs then
+                fs = clip:CreateFontString(nil, "OVERLAY")
+                fs:SetDrawLayer("OVERLAY", 7)
+                clip._fs[i] = fs
+            end
+            fs:SetFont(IconFont(R("label", "labelFont")),
+                math.max(6, math.floor((R("label", "labelSize" .. suf) or 12) * kS + 0.5)), "OUTLINE")
+            local lc = R("label", "labelColor" .. suf) or { 1, 1, 1, 1 }
+            fs:SetTextColor(lc[1], lc[2], lc[3], lc[4] or 1)
+            local an = R("label", "labelAnchor" .. suf) or "CENTER"
+            fs:ClearAllPoints()
+            fs:SetPoint(an, f, an, (R("label", "labelX" .. suf) or 0) * kS,
+                (R("label", "labelY" .. suf) or 0) * kS)
+            fs:SetText(ltext)
+            fs:Show()
+            any = true
+        elseif fs then
+            fs:SetText("")
+            fs:Hide()
+        end
+    end
+    if not clip then return end
+    if any then
+        local padPx = (R("appearance", "padding") or 0) * kS
+        clip:ClearAllPoints()
+        clip:SetPoint("TOPLEFT", f, "TOPLEFT", padPx, -padPx)
+        clip:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -padPx, padPx)
+        clip:SetFrameStrata(f:GetFrameStrata())
+        clip:SetFrameLevel(f:GetFrameLevel() + 1)
+        clip:Show()
+    else
+        clip:Hide()
+    end
 end
 
 -- Styles an aura engine button, the live icon (single aura icons and aura-group
@@ -1379,7 +1497,7 @@ function Factory.StyleAuraButton(b, rec, px, opts)
         local cfs = sw.GetCountdownFontString and sw:GetCountdownFontString()
         if cfs then
             StyleCountdownText(cfs, rec, kS, b, STANDARD_TEXT_FONT)
-            cfs:SetAlpha(textA)
+            PaintText(cfs, textA)
         end
     end
     local st = b._adStacks
@@ -1388,7 +1506,7 @@ function Factory.StyleAuraButton(b, rec, px, opts)
             and R("text", "stackText") ~= false
         StyleStackText(st, rec, kS, b)
         st:SetShown(on)
-        st:SetAlpha(textA)
+        PaintText(st, textA)
         -- The engine writes the count; it gets the fontstring and a formatter
         -- with the show-at-1 and color-band rules, empty when the text is off
         -- (the engine owns Shown). Re-handed only when the rules change.
@@ -2123,7 +2241,8 @@ function Factory.SetState(f, rec, onCooldown, desatState)
                     -- The live holder always wears the missing look, so a label
                     -- kept to the aura's time shows here only in the editor
                     -- preview's active phase; live, its copy rides the button.
-                    st.fs:SetShown(not (st.activeOnly and onCooldown))
+                    -- A label kept to its absence has its copy under the button.
+                    st.fs:SetShown(not st.missingOnly and not (st.activeOnly and onCooldown))
                 else
                     st.fs:SetShown((onCooldown and st.cd)
                         or ((not onCooldown) and st.ready))
@@ -2348,6 +2467,7 @@ local function LaneAllowed(f, lane)
     local only = f._adGlowLaneOnly
     return only == nil or only == lane
 end
+Factory.LaneAllowed = LaneAllowed
 
 -- Move X / Y on a library glow: the library re-anchors its frame on every
 -- Start, so each point shifts once right after it. A secret read, unexpected
@@ -2439,6 +2559,10 @@ local function StartLane(f, key, gtype, p)
     ApplyStrata(f, key, p.strata)
     ShiftGlow(f[LCG_FIELD[gtype] .. key], p.mx, p.my)
 end
+-- Any frame of ours can wear a lane under its own key (the Reminder group's
+-- pulses: Drivers\AD_DriverReminders.lua), every style included.
+Factory.StartGlowLane = StartLane
+Factory.StopGlowLane = StopLane
 
 -- Proc glow (SPELL_ACTIVATION_OVERLAY), with the other lanes' options.
 function Factory.SetProcGlow(f, rec, on)
@@ -2535,6 +2659,15 @@ local function EnsureEditChip(f)
     b:Hide()
     f._adEditBtn = b
     return b
+end
+
+-- The chip of the icon the editor has open reads Editing, widened to fit.
+function Factory.SetEditing(f, on)
+    local b = f._adEditBtn
+    if not b or (b._adEditing or false) == on then return end
+    b._adEditing = on
+    b:SetSize(on and 32 or 24, 12)
+    b.fs:SetText(on and "Editing" or "Edit")
 end
 
 -- Lane stops and the ready glow

@@ -2,6 +2,8 @@
 -- Normalize, the serializer and the options panel derive from it.
 -- A value resolves from the record, its layout, newDefaults, dk[kind], then d.
 -- Sections with push = true get Push to All and Save as Default.
+-- adv = "<word>": a fine-tuning field; the editor draws it last in its block,
+-- behind a "More <word> options" fold (UI\AD_EditorTabs.lua).
 
 local ADDON, NS = ...
 local Schema = {}
@@ -10,7 +12,9 @@ NS.Schema = Schema
 Schema.VERSION = 1
 
 Schema.ICON_KINDS = { "spell", "item", "trinket", "timer", "totem", "aura", "ammo", "enchant" }
-Schema.GROUP_KINDS = { "cooldown", "aura" }
+-- A reminder group (Drivers\AD_DriverReminders.lua) is a pulse window: its
+-- members are reminder records, never icons.
+Schema.GROUP_KINDS = { "cooldown", "aura", "reminder" }
 -- Creatable bar kinds; cooldown and aura bars carry rec.barMode ("duration" or
 -- "stack"). The create UI hides swing where C_SwingTimer is missing, but the
 -- kind stays valid everywhere, so sync never rewrites a record. Legacy "timer"
@@ -35,6 +39,36 @@ Schema.RANGE_MAX_CHECKS = 4
 -- keeps, and the colour a new rule starts with.
 Schema.SWING_COLOR_MAX = 8
 Schema.SWING_COLOR_DEFAULT = { 1, 0.55, 0.15, 1 }
+-- A reminder's triggers (rec.triggers on a reminder record, Store.CleanTriggers),
+-- ArcUI v1's Cooldown Reminder list: when each fires, and the looks it can pick.
+-- Every trigger reads a value that stays plain in combat (a cooldown shadow's
+-- IsShown, your own cast's spell ID, a proc overlay's spell ID, a weapon
+-- enchant's time left and charges, C_Spell.IsSpellUsable).
+Schema.REMINDER_MAX_TRIGGERS = 5
+Schema.REMINDER_TRIGGERS = { "on_use", "when_ready", "on_proc", "after_ready", "into_cooldown", "when_usable" }
+-- Types only a spell reminder has: an item's use has no usable state to read.
+Schema.REMINDER_SPELL_ONLY = { when_usable = true }
+-- A weapon enchant reminder's own list (kind "enchant").
+Schema.REMINDER_ENCHANT_TRIGGERS = { "enchant_missing", "enchant_expiring", "enchant_charges" }
+Schema.REMINDER_TRIGGER_LABELS = { on_use = "On use (when cast)", when_ready = "When ready (cooldown done)",
+    on_proc = "On proc (proc glow turns on)", after_ready = "N seconds after ready",
+    into_cooldown = "N seconds after cast", enchant_missing = "When it's missing (falls off, or none is on)",
+    enchant_expiring = "N seconds before it runs out", enchant_charges = "When N charges are left",
+    when_usable = "When usable (can be cast now)" }
+Schema.REMINDER_ANIMS = { "default", "fade", "no_fade", "flash", "zoom" }
+Schema.REMINDER_ANIM_LABELS = { default = "Default (the reminder's)", fade = "Fade",
+    no_fade = "No Fade (snap off)", flash = "Flash (urgent)", zoom = "Zoom (pop in + fade)" }
+Schema.REMINDER_GLOWS = { "none", "pixel", "autocast", "button", "proc", "ants" }
+Schema.REMINDER_GLOW_LABELS = { none = "None", pixel = "Pixel (marching dots)",
+    autocast = "Autocast (sparkles)", button = "Button (action bar)", proc = "Proc (Blizzard)",
+    ants = "Ants (border crawl)" }
+Schema.REMINDER_GLOW_COLOR = { 0, 0.8, 1, 1 }
+-- A reminder's own look (its Appearance tab): the per-pulse fields of the
+-- group's `pulse` section. The overlap, the icon switch and the marker stay the
+-- group's: they are about the whole window.
+Schema.REMINDER_LOOK = { "cancelOnCast", "holdUntilCast", "pulseDuration", "size", "iconOpacity", "animStyle",
+    "animFadeSmoothing", "animFlashSpeed", "animZoomStart", "animZoomPeak", "animZoomPopTime",
+    "animZoomSettleTime" }
 
 -- enchant: a weapon enchant, timed on the swipe; its sounds say applied and
 -- fell off (NS.DriverEnchant).
@@ -51,6 +85,8 @@ local NA  = { spell = true, item = true, trinket = true, timer = true, totem = t
 -- ammo bag counts, aura applications, timer stacks, enchant charges). Trinkets
 -- have none.
 local STK = { spell = true, item = true, timer = true, aura = true, ammo = true, enchant = true }
+-- An ammo count: the ammo icon's stack text, a spell icon's ammo text.
+local AMMO_CT = { ammo = true, spell = true }
 -- "Minutes and seconds" cutoffs in seconds, for icons and bars alike.
 local ABBREV_VALUES = { 0, 120, 300, 600, 3600 }
 local ABBREV_LABELS = { [0] = "Off", [120] = "Under 2 minutes", [300] = "Under 5 minutes",
@@ -65,6 +101,7 @@ local WAND_CLASSES = { PRIEST = true, MAGE = true, WARLOCK = true }
 
 local GK_CD = { cooldown = true }
 local GK_AU = { aura = true }
+local GK_RM = { reminder = true }
 
 local POINTS = { "TOPLEFT", "TOP", "TOPRIGHT", "LEFT", "CENTER", "RIGHT",
     "BOTTOMLEFT", "BOTTOM", "BOTTOMRIGHT" }
@@ -89,6 +126,24 @@ local GLOW_STYLE_LABELS = { button = "Button", pixel = "Pixel", autocast = "Auto
     flash = "Cooldown Manager flash" }
 local GLOW_SPEED_STYLES = { button = true, pixel = true, autocast = true, flash = true }
 
+-- What lights the warning glow (Drivers\AD_DriverWarn.lua). Ammo counts and pet
+-- happiness are plain in combat; pet health is secret, so a curve sets that
+-- glow's opacity instead of a comparison.
+Schema.WARN_WHEN = { "ammo", "petHealth", "petMood" }
+Schema.WARN_WHEN_LABELS = { ammo = "Ammo is low", petHealth = "Pet health is low",
+    petMood = "Pet is not happy" }
+-- The warning chip shows for the classes with ammo or a pet to warn about.
+Schema.WARN_CLASSES = { HUNTER = true, WARLOCK = true }
+
+-- The ammo count's own threshold colours show with the text that carries the
+-- count: the ammo icon's stack text, a spell icon's ammo text.
+function Schema.AmmoCountShown(rec)
+    local Store = NS.Store
+    if not (rec and Store) then return false end
+    if rec.kind == "ammo" then return Store.Resolve(rec, "text", "stackText") ~= false end
+    return Store.Resolve(rec, "text", "ammoText") == true
+end
+
 Schema.icon = {
     appearance = { push = true, inherit = true, fields = {
         zoom  = { d = 0.08, t = "num", min = 0, max = 0.4, label = "Icon zoom" },
@@ -100,7 +155,7 @@ Schema.icon = {
         -- to the wanted value (default true). In a list every entry must pass;
         -- nonempty gates on a non-empty text.
         borderEnabled = { d = true, t = "bool", label = "Border" },
-        borderColor = { d = { 0, 0, 0, 1 }, t = "color", label = "Border color", dep = { field = "borderEnabled" } },
+        borderColor = { d = { 0, 0, 0, 1 }, t = "color", alpha = true, label = "Border color", dep = { field = "borderEnabled" } },
         borderThickness = { d = 2, t = "int", min = 1, max = 20, label = "Border thickness", dep = { field = "borderEnabled" } },
         borderInset = { d = 0, t = "int", min = -20, max = 20, label = "Border offset", dep = { field = "borderEnabled" } },
         -- Aura icons: the engine colours the border through the button's own
@@ -140,10 +195,10 @@ Schema.icon = {
             dep = { field = "useGroupScale", value = false, unlessFree = true } },
         iconHeight = { d = 0, t = "int", min = 0, max = 200, label = "Height (0 = auto)",
             dep = { field = "useGroupScale", value = false, unlessFree = true } },
-        strata = { d = "AUTO", t = "enum",
+        strata = { adv = "frame", d = "AUTO", t = "enum",
             values = { "AUTO", "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG" },
             label = "Frame strata" },
-        frameLevel = { d = 0, t = "int", min = 0, max = 50, label = "Frame level bump" },
+        frameLevel = { adv = "frame", d = 0, t = "int", min = 0, max = 50, label = "Frame level bump" },
     } },
     states = { push = true, inherit = true, fields = {
         readyAlpha    = { d = 1.0,  t = "num", min = 0, max = 1, label = "Ready alpha" },
@@ -163,35 +218,35 @@ Schema.icon = {
         readyGlow = { d = false, t = "bool", kinds = CD, label = "Glow when ready" },
         readyGlowType = { d = "button", t = "enum", values = GLOW_STYLES, labels = GLOW_STYLE_LABELS, kinds = CD, label = "Glow style", dep = { field = "readyGlow" } },
         readyGlowColor = { d = { 0.95, 0.95, 0.32, 1 }, t = "color", kinds = CD, label = "Glow color", dep = { field = "readyGlow" } },
-        readyGlowSpeed = { d = 0.25, t = "num", min = 0.05, max = 1, kinds = CD, label = "Glow speed",
+        readyGlowSpeed = { adv = "glow", d = 0.25, t = "num", min = 0.05, max = 1, kinds = CD, label = "Glow speed",
             dep = { { field = "readyGlow" }, { field = "readyGlowType", anyOf = GLOW_SPEED_STYLES } } },
-        readyGlowLines = { d = 8, t = "int", min = 1, max = 16, kinds = CD, label = "Glow lines",
+        readyGlowLines = { adv = "glow", d = 8, t = "int", min = 1, max = 16, kinds = CD, label = "Glow lines",
             dep = { { field = "readyGlow" }, { field = "readyGlowType", value = "pixel" } } },
-        readyGlowThickness = { d = 2, t = "int", min = 1, max = 20, kinds = CD, label = "Glow thickness",
+        readyGlowThickness = { adv = "glow", d = 2, t = "int", min = 1, max = 20, kinds = CD, label = "Glow thickness",
             dep = { { field = "readyGlow" }, { field = "readyGlowType", value = "pixel" } } },
-        readyGlowLength = { d = 0, t = "int", min = 0, max = 40, kinds = CD, label = "Glow line length (0 = auto)",
+        readyGlowLength = { adv = "glow", d = 0, t = "int", min = 0, max = 40, kinds = CD, label = "Glow line length (0 = auto)",
             dep = { { field = "readyGlow" }, { field = "readyGlowType", value = "pixel" } } },
-        readyGlowParticles = { d = 4, t = "int", min = 1, max = 16, kinds = CD, label = "Glow particles",
+        readyGlowParticles = { adv = "glow", d = 4, t = "int", min = 1, max = 16, kinds = CD, label = "Glow particles",
             dep = { { field = "readyGlow" }, { field = "readyGlowType", value = "autocast" } } },
-        readyGlowIntensity = { d = 1, t = "num", min = 0.1, max = 1, kinds = CD, label = "Glow intensity",
+        readyGlowIntensity = { adv = "glow", d = 1, t = "num", min = 0.1, max = 1, kinds = CD, label = "Glow intensity",
             dep = { field = "readyGlow" } },
-        readyGlowScale = { d = 1, t = "num", min = 0.5, max = 2, kinds = CD, label = "Glow size",
+        readyGlowScale = { adv = "glow", d = 1, t = "num", min = 0.5, max = 2, kinds = CD, label = "Glow size",
             dep = { { field = "readyGlow" }, { field = "readyGlowType", value = "autocast" } } },
-        readyGlowXOffset = { d = 0, t = "int", min = -20, max = 20, kinds = CD, label = "Glow X offset",
+        readyGlowXOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = CD, label = "Glow X offset",
             dep = { field = "readyGlow" } },
-        readyGlowYOffset = { d = 0, t = "int", min = -20, max = 20, kinds = CD, label = "Glow Y offset",
+        readyGlowYOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = CD, label = "Glow Y offset",
             dep = { field = "readyGlow" } },
         -- Move shifts the glow without resizing it; the X/Y offsets above grow
         -- or shrink it.
-        readyGlowMoveX = { d = 0, t = "int", min = -20, max = 20, kinds = CD, label = "Glow move X",
+        readyGlowMoveX = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = CD, label = "Glow move X",
             dep = { field = "readyGlow" } },
-        readyGlowMoveY = { d = 0, t = "int", min = -20, max = 20, kinds = CD, label = "Glow move Y",
+        readyGlowMoveY = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = CD, label = "Glow move Y",
             dep = { field = "readyGlow" } },
         readyGlowCombatOnly = { d = false, t = "bool", kinds = CD, label = "Glow only in combat",
             dep = { field = "readyGlow" } },
-        readyGlowStrata = { d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }, kinds = CD, label = "Glow strata",
+        readyGlowStrata = { adv = "glow", d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }, kinds = CD, label = "Glow strata",
             dep = { field = "readyGlow" } },
-        readyGlowLevel = { d = 7, t = "int", min = 1, max = 30, kinds = CD, label = "Glow frame level",
+        readyGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = CD, label = "Glow frame level",
             dep = { field = "readyGlow" } },
         readyTintEnabled = { d = false, t = "bool", kinds = CD, label = "Ready tint" },
         readyTintColor = { d = { 1, 1, 1, 1 }, t = "color", kinds = CD, label = "Ready tint color", dep = { field = "readyTintEnabled" } },
@@ -201,31 +256,31 @@ Schema.icon = {
         procGlow = { d = true, t = "bool", kinds = SP, label = "Proc glow" },
         procGlowType = { d = "proc", t = "enum", values = PROC_GLOW_STYLES, labels = GLOW_STYLE_LABELS, kinds = SP, label = "Proc glow style", dep = { field = "procGlow" } },
         procGlowColor = { d = { 0.95, 0.95, 0.32, 1 }, t = "color", kinds = SP, label = "Proc glow color", dep = { field = "procGlow" } },
-        procGlowSpeed = { d = 0.4, t = "num", min = 0.05, max = 1, kinds = SP, label = "Proc glow speed",
+        procGlowSpeed = { adv = "glow", d = 0.4, t = "num", min = 0.05, max = 1, kinds = SP, label = "Proc glow speed",
             dep = { { field = "procGlow" }, { field = "procGlowType", anyOf = GLOW_SPEED_STYLES } } },
-        procGlowLines = { d = 10, t = "int", min = 1, max = 16, kinds = SP, label = "Proc glow lines",
+        procGlowLines = { adv = "glow", d = 10, t = "int", min = 1, max = 16, kinds = SP, label = "Proc glow lines",
             dep = { { field = "procGlow" }, { field = "procGlowType", value = "pixel" } } },
-        procGlowThickness = { d = 2, t = "int", min = 1, max = 20, kinds = SP, label = "Proc glow thickness",
+        procGlowThickness = { adv = "glow", d = 2, t = "int", min = 1, max = 20, kinds = SP, label = "Proc glow thickness",
             dep = { { field = "procGlow" }, { field = "procGlowType", value = "pixel" } } },
-        procGlowLength = { d = 0, t = "int", min = 0, max = 40, kinds = SP, label = "Proc glow line length (0 = auto)",
+        procGlowLength = { adv = "glow", d = 0, t = "int", min = 0, max = 40, kinds = SP, label = "Proc glow line length (0 = auto)",
             dep = { { field = "procGlow" }, { field = "procGlowType", value = "pixel" } } },
-        procGlowParticles = { d = 4, t = "int", min = 1, max = 16, kinds = SP, label = "Proc glow particles",
+        procGlowParticles = { adv = "glow", d = 4, t = "int", min = 1, max = 16, kinds = SP, label = "Proc glow particles",
             dep = { { field = "procGlow" }, { field = "procGlowType", value = "autocast" } } },
-        procGlowScale = { d = 1, t = "num", min = 0.5, max = 2, kinds = SP, label = "Proc glow size",
+        procGlowScale = { adv = "glow", d = 1, t = "num", min = 0.5, max = 2, kinds = SP, label = "Proc glow size",
             dep = { { field = "procGlow" }, { field = "procGlowType", value = "autocast" } } },
-        procGlowIntensity = { d = 1, t = "num", min = 0.1, max = 1, kinds = SP, label = "Proc glow intensity",
+        procGlowIntensity = { adv = "glow", d = 1, t = "num", min = 0.1, max = 1, kinds = SP, label = "Proc glow intensity",
             dep = { field = "procGlow" } },
-        procGlowXOffset = { d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Proc glow X offset",
+        procGlowXOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Proc glow X offset",
             dep = { field = "procGlow" } },
-        procGlowYOffset = { d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Proc glow Y offset",
+        procGlowYOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Proc glow Y offset",
             dep = { field = "procGlow" } },
-        procGlowMoveX = { d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Proc glow move X",
+        procGlowMoveX = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Proc glow move X",
             dep = { field = "procGlow" } },
-        procGlowMoveY = { d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Proc glow move Y",
+        procGlowMoveY = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Proc glow move Y",
             dep = { field = "procGlow" } },
-        procGlowStrata = { d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }, kinds = SP, label = "Proc glow strata",
+        procGlowStrata = { adv = "glow", d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }, kinds = SP, label = "Proc glow strata",
             dep = { field = "procGlow" } },
-        procGlowLevel = { d = 7, t = "int", min = 1, max = 30, kinds = SP, label = "Proc glow frame level",
+        procGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = SP, label = "Proc glow frame level",
             dep = { field = "procGlow" } },
         -- On by default, like Blizzard's action buttons.
         usabilityTint = { d = true, t = "bool", kinds = SP, label = "Usability tints" },
@@ -245,34 +300,82 @@ Schema.icon = {
         usableGlow = { d = false, t = "bool", kinds = SP, label = "Glow when usable" },
         usableGlowType = { d = "button", t = "enum", values = GLOW_STYLES, labels = GLOW_STYLE_LABELS, kinds = SP, label = "Usable glow style", dep = { field = "usableGlow" } },
         usableGlowColor = { d = { 0.48, 0.85, 0.56, 1 }, t = "color", kinds = SP, label = "Usable glow color", dep = { field = "usableGlow" } },
-        usableGlowSpeed = { d = 0.25, t = "num", min = 0.05, max = 1, kinds = SP, label = "Usable glow speed",
+        usableGlowSpeed = { adv = "glow", d = 0.25, t = "num", min = 0.05, max = 1, kinds = SP, label = "Usable glow speed",
             dep = { { field = "usableGlow" }, { field = "usableGlowType", anyOf = GLOW_SPEED_STYLES } } },
-        usableGlowLines = { d = 8, t = "int", min = 1, max = 16, kinds = SP, label = "Usable glow lines",
+        usableGlowLines = { adv = "glow", d = 8, t = "int", min = 1, max = 16, kinds = SP, label = "Usable glow lines",
             dep = { { field = "usableGlow" }, { field = "usableGlowType", value = "pixel" } } },
-        usableGlowThickness = { d = 2, t = "int", min = 1, max = 20, kinds = SP, label = "Usable glow thickness",
+        usableGlowThickness = { adv = "glow", d = 2, t = "int", min = 1, max = 20, kinds = SP, label = "Usable glow thickness",
             dep = { { field = "usableGlow" }, { field = "usableGlowType", value = "pixel" } } },
-        usableGlowLength = { d = 0, t = "int", min = 0, max = 40, kinds = SP, label = "Usable glow line length (0 = auto)",
+        usableGlowLength = { adv = "glow", d = 0, t = "int", min = 0, max = 40, kinds = SP, label = "Usable glow line length (0 = auto)",
             dep = { { field = "usableGlow" }, { field = "usableGlowType", value = "pixel" } } },
-        usableGlowParticles = { d = 4, t = "int", min = 1, max = 16, kinds = SP, label = "Usable glow particles",
+        usableGlowParticles = { adv = "glow", d = 4, t = "int", min = 1, max = 16, kinds = SP, label = "Usable glow particles",
             dep = { { field = "usableGlow" }, { field = "usableGlowType", value = "autocast" } } },
-        usableGlowScale = { d = 1, t = "num", min = 0.5, max = 2, kinds = SP, label = "Usable glow size",
+        usableGlowScale = { adv = "glow", d = 1, t = "num", min = 0.5, max = 2, kinds = SP, label = "Usable glow size",
             dep = { { field = "usableGlow" }, { field = "usableGlowType", value = "autocast" } } },
-        usableGlowIntensity = { d = 1, t = "num", min = 0.1, max = 1, kinds = SP, label = "Usable glow intensity",
+        usableGlowIntensity = { adv = "glow", d = 1, t = "num", min = 0.1, max = 1, kinds = SP, label = "Usable glow intensity",
             dep = { field = "usableGlow" } },
-        usableGlowXOffset = { d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Usable glow X offset",
+        usableGlowXOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Usable glow X offset",
             dep = { field = "usableGlow" } },
-        usableGlowYOffset = { d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Usable glow Y offset",
+        usableGlowYOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Usable glow Y offset",
             dep = { field = "usableGlow" } },
-        usableGlowMoveX = { d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Usable glow move X",
+        usableGlowMoveX = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Usable glow move X",
             dep = { field = "usableGlow" } },
-        usableGlowMoveY = { d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Usable glow move Y",
+        usableGlowMoveY = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Usable glow move Y",
             dep = { field = "usableGlow" } },
         usableGlowCombatOnly = { d = false, t = "bool", kinds = SP, label = "Usable glow only in combat",
             dep = { field = "usableGlow" } },
-        usableGlowStrata = { d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }, kinds = SP, label = "Usable glow strata",
+        usableGlowStrata = { adv = "glow", d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }, kinds = SP, label = "Usable glow strata",
             dep = { field = "usableGlow" } },
-        usableGlowLevel = { d = 7, t = "int", min = 1, max = 30, kinds = SP, label = "Usable glow frame level",
+        usableGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = SP, label = "Usable glow frame level",
             dep = { field = "usableGlow" } },
+        -- Glows while the ammo runs low, the pet's health is low or the pet is
+        -- not happy (Drivers\AD_DriverWarn.lua), whatever the icon's own state.
+        warnGlow = { d = false, t = "bool", kinds = NA, classOnly = Schema.WARN_CLASSES, label = "Warning glow" },
+        warnGlowWhen = { d = "ammo", t = "enum", values = Schema.WARN_WHEN, labels = Schema.WARN_WHEN_LABELS,
+            kinds = NA, classOnly = Schema.WARN_CLASSES, label = "Glow when", dep = { field = "warnGlow" } },
+        warnAmmoBelow = { d = 400, t = "int", min = 1, max = 2000, kinds = NA, classOnly = Schema.WARN_CLASSES,
+            label = "Ammo at or below", dep = { { field = "warnGlow" }, { field = "warnGlowWhen", value = "ammo" } } },
+        warnPetHealth = { d = 50, t = "int", min = 1, max = 99, kinds = NA, classOnly = Schema.WARN_CLASSES,
+            label = "Pet health at or below (%)",
+            dep = { { field = "warnGlow" }, { field = "warnGlowWhen", value = "petHealth" } } },
+        warnPetMood = { d = "notHappy", t = "enum", values = { "notHappy", "unhappy" },
+            labels = { notHappy = "Content or unhappy", unhappy = "Unhappy" },
+            kinds = NA, classOnly = Schema.WARN_CLASSES, label = "Glow while the pet is",
+            dep = { { field = "warnGlow" }, { field = "warnGlowWhen", value = "petMood" } } },
+        warnGlowType = { d = "flash", t = "enum", values = GLOW_STYLES, labels = GLOW_STYLE_LABELS, kinds = NA,
+            classOnly = Schema.WARN_CLASSES, label = "Warning glow style", dep = { field = "warnGlow" } },
+        warnGlowColor = { d = { 1, 0.3, 0.2, 1 }, t = "color", kinds = NA, classOnly = Schema.WARN_CLASSES,
+            label = "Warning glow color", dep = { field = "warnGlow" } },
+        warnGlowSpeed = { adv = "glow", d = 0.25, t = "num", min = 0.05, max = 1, kinds = NA, classOnly = Schema.WARN_CLASSES,
+            label = "Warning glow speed",
+            dep = { { field = "warnGlow" }, { field = "warnGlowType", anyOf = GLOW_SPEED_STYLES } } },
+        warnGlowLines = { adv = "glow", d = 8, t = "int", min = 1, max = 16, kinds = NA, classOnly = Schema.WARN_CLASSES,
+            label = "Warning glow lines", dep = { { field = "warnGlow" }, { field = "warnGlowType", value = "pixel" } } },
+        warnGlowThickness = { adv = "glow", d = 2, t = "int", min = 1, max = 20, kinds = NA, classOnly = Schema.WARN_CLASSES,
+            label = "Warning glow thickness", dep = { { field = "warnGlow" }, { field = "warnGlowType", value = "pixel" } } },
+        warnGlowLength = { adv = "glow", d = 0, t = "int", min = 0, max = 40, kinds = NA, classOnly = Schema.WARN_CLASSES,
+            label = "Warning glow line length (0 = auto)",
+            dep = { { field = "warnGlow" }, { field = "warnGlowType", value = "pixel" } } },
+        warnGlowParticles = { adv = "glow", d = 4, t = "int", min = 1, max = 16, kinds = NA, classOnly = Schema.WARN_CLASSES,
+            label = "Warning glow particles", dep = { { field = "warnGlow" }, { field = "warnGlowType", value = "autocast" } } },
+        warnGlowScale = { adv = "glow", d = 1, t = "num", min = 0.5, max = 2, kinds = NA, classOnly = Schema.WARN_CLASSES,
+            label = "Warning glow size", dep = { { field = "warnGlow" }, { field = "warnGlowType", value = "autocast" } } },
+        warnGlowIntensity = { adv = "glow", d = 1, t = "num", min = 0.1, max = 1, kinds = NA, classOnly = Schema.WARN_CLASSES,
+            label = "Warning glow intensity", dep = { field = "warnGlow" } },
+        warnGlowXOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = NA, classOnly = Schema.WARN_CLASSES,
+            label = "Warning glow X offset", dep = { field = "warnGlow" } },
+        warnGlowYOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = NA, classOnly = Schema.WARN_CLASSES,
+            label = "Warning glow Y offset", dep = { field = "warnGlow" } },
+        warnGlowMoveX = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = NA, classOnly = Schema.WARN_CLASSES,
+            label = "Warning glow move X", dep = { field = "warnGlow" } },
+        warnGlowMoveY = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = NA, classOnly = Schema.WARN_CLASSES,
+            label = "Warning glow move Y", dep = { field = "warnGlow" } },
+        warnGlowCombatOnly = { d = false, t = "bool", kinds = NA, classOnly = Schema.WARN_CLASSES,
+            label = "Warning glow only in combat", dep = { field = "warnGlow" } },
+        warnGlowStrata = { adv = "glow", d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }, kinds = NA,
+            classOnly = Schema.WARN_CLASSES, label = "Warning glow strata", dep = { field = "warnGlow" } },
+        warnGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = NA, classOnly = Schema.WARN_CLASSES,
+            label = "Warning glow frame level", dep = { field = "warnGlow" } },
         rangeTint = { d = false, t = "bool", kinds = SP, label = "Out-of-range tint" },
         rangeTintColor = { d = { 0.85, 0.2, 0.2, 1 }, t = "color", kinds = SP, label = "Out-of-range color", dep = { field = "rangeTint" } },
     } },
@@ -283,39 +386,50 @@ Schema.icon = {
         labelFont = { d = "", t = "text", font = true, label = "Label font",
             dep = { field = "labelText", nonempty = true } },
         labelSize = { d = 12, t = "int", min = 6, max = 32, label = "Label size", dep = { field = "labelText", nonempty = true } },
-        labelColor = { d = { 1, 1, 1, 1 }, t = "color", label = "Label color", dep = { field = "labelText", nonempty = true } },
+        labelColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Label color", dep = { field = "labelText", nonempty = true } },
         labelAnchor = { d = "CENTER", t = "enum",
             values = { "CENTER", "TOP", "BOTTOM", "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" },
             label = "Label anchor", dep = { field = "labelText", nonempty = true } },
-        labelX = { d = 0, t = "int", min = -50, max = 50, label = "Label X", dep = { field = "labelText", nonempty = true } },
-        labelY = { d = 0, t = "int", min = -50, max = 50, label = "Label Y", dep = { field = "labelText", nonempty = true } },
+        labelX = { adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Label X", dep = { field = "labelText", nonempty = true } },
+        labelY = { adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Label Y", dep = { field = "labelText", nonempty = true } },
         labelShowReady = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label when ready", dep = { field = "labelText", nonempty = true } },
         labelShowCooldown = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label on cooldown", dep = { field = "labelText", nonempty = true } },
         -- Aura icons: drawn on the engine button, which the game shows exactly
         -- while the aura is up, so it holds in combat with no presence read.
-        labelActiveOnly = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label only while the aura is up", dep = { field = "labelText", nonempty = true } },
+        -- The missing twin sits under that button, clipped to the area it
+        -- covers, so the live button hides it while the aura is up.
+        labelActiveOnly = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label only while the aura is up",
+            dep = { { field = "labelText", nonempty = true }, { field = "labelMissingOnly", notValue = true } } },
+        labelMissingOnly = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label only while the aura is missing",
+            dep = { { field = "labelText", nonempty = true }, { field = "labelActiveOnly", notValue = true } } },
         labelText2 = { inherit = false, d = "", t = "text", label = "Label 2 text" },
         labelSize2 = { d = 12, t = "int", min = 6, max = 32, label = "Label 2 size", dep = { field = "labelText2", nonempty = true } },
-        labelColor2 = { d = { 1, 1, 1, 1 }, t = "color", label = "Label 2 color", dep = { field = "labelText2", nonempty = true } },
+        labelColor2 = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Label 2 color", dep = { field = "labelText2", nonempty = true } },
         labelAnchor2 = { d = "TOP", t = "enum",
             values = { "CENTER", "TOP", "BOTTOM", "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" },
             label = "Label 2 anchor", dep = { field = "labelText2", nonempty = true } },
-        labelX2 = { d = 0, t = "int", min = -50, max = 50, label = "Label 2 X", dep = { field = "labelText2", nonempty = true } },
-        labelY2 = { d = 0, t = "int", min = -50, max = 50, label = "Label 2 Y", dep = { field = "labelText2", nonempty = true } },
+        labelX2 = { adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Label 2 X", dep = { field = "labelText2", nonempty = true } },
+        labelY2 = { adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Label 2 Y", dep = { field = "labelText2", nonempty = true } },
         labelShowReady2 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label 2 when ready", dep = { field = "labelText2", nonempty = true } },
         labelShowCooldown2 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label 2 on cooldown", dep = { field = "labelText2", nonempty = true } },
-        labelActiveOnly2 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label 2 only while the aura is up", dep = { field = "labelText2", nonempty = true } },
+        labelActiveOnly2 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label 2 only while the aura is up",
+            dep = { { field = "labelText2", nonempty = true }, { field = "labelMissingOnly2", notValue = true } } },
+        labelMissingOnly2 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label 2 only while the aura is missing",
+            dep = { { field = "labelText2", nonempty = true }, { field = "labelActiveOnly2", notValue = true } } },
         labelText3 = { inherit = false, d = "", t = "text", label = "Label 3 text" },
         labelSize3 = { d = 12, t = "int", min = 6, max = 32, label = "Label 3 size", dep = { field = "labelText3", nonempty = true } },
-        labelColor3 = { d = { 1, 1, 1, 1 }, t = "color", label = "Label 3 color", dep = { field = "labelText3", nonempty = true } },
+        labelColor3 = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Label 3 color", dep = { field = "labelText3", nonempty = true } },
         labelAnchor3 = { d = "BOTTOM", t = "enum",
             values = { "CENTER", "TOP", "BOTTOM", "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" },
             label = "Label 3 anchor", dep = { field = "labelText3", nonempty = true } },
-        labelX3 = { d = 0, t = "int", min = -50, max = 50, label = "Label 3 X", dep = { field = "labelText3", nonempty = true } },
-        labelY3 = { d = 0, t = "int", min = -50, max = 50, label = "Label 3 Y", dep = { field = "labelText3", nonempty = true } },
+        labelX3 = { adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Label 3 X", dep = { field = "labelText3", nonempty = true } },
+        labelY3 = { adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Label 3 Y", dep = { field = "labelText3", nonempty = true } },
         labelShowReady3 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label 3 when ready", dep = { field = "labelText3", nonempty = true } },
         labelShowCooldown3 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label 3 on cooldown", dep = { field = "labelText3", nonempty = true } },
-        labelActiveOnly3 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label 3 only while the aura is up", dep = { field = "labelText3", nonempty = true } },
+        labelActiveOnly3 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label 3 only while the aura is up",
+            dep = { { field = "labelText3", nonempty = true }, { field = "labelMissingOnly3", notValue = true } } },
+        labelMissingOnly3 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label 3 only while the aura is missing",
+            dep = { { field = "labelText3", nonempty = true }, { field = "labelActiveOnly3", notValue = true } } },
     } },
     -- Transition sounds. A sound cannot be unplayed, so the driver fires only
     -- on verified transitions. Each trigger is a toggle plus a t = "sound"
@@ -334,6 +448,10 @@ Schema.icon = {
         rechargeSound = { d = "", t = "sound", kinds = SP, label = "Recharge-start sound", dep = { field = "rechargeSoundEnabled" } },
         chargeGainedSoundEnabled = { d = false, t = "bool", kinds = SP, label = "Play a sound when a charge returns" },
         chargeGainedSound = { d = "", t = "sound", kinds = SP, label = "Charge-gained sound", dep = { field = "chargeGainedSoundEnabled" } },
+        -- The moment it can be pressed: usable (IsSpellUsable, plain) and off
+        -- its real cooldown. A reactive spell (Mongoose Bite) rings on the dodge.
+        usableSoundEnabled = { d = false, t = "bool", kinds = SP, label = "Play a sound when usable" },
+        usableSound = { d = "", t = "sound", kinds = SP, label = "Usable sound", dep = { field = "usableSoundEnabled" } },
     } },
     -- The key bound to the spell's action button, found by walking the bars.
     -- Factory.KeybindEnabled shows it when this switch or the group's is on.
@@ -346,12 +464,12 @@ Schema.icon = {
             label = "Match by spell name (ranks)", dep = { field = "keybindEnabled" } },
         keybindSize = { d = 12, t = "int", min = 6, max = 32, label = "Keybind size", dep = { field = "keybindEnabled" } },
         keybindFont = { d = "", t = "text", font = true, label = "Keybind font", dep = { field = "keybindEnabled" } },
-        keybindColor = { d = { 1, 1, 1, 1 }, t = "color", label = "Keybind color", dep = { field = "keybindEnabled" } },
+        keybindColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Keybind color", dep = { field = "keybindEnabled" } },
         keybindAnchor = { d = "TOPLEFT", t = "enum",
             values = { "TOPLEFT", "TOP", "TOPRIGHT", "LEFT", "CENTER", "RIGHT", "BOTTOMLEFT", "BOTTOM", "BOTTOMRIGHT" },
             label = "Keybind anchor", dep = { field = "keybindEnabled" } },
-        keybindX = { d = 2, t = "int", min = -50, max = 50, label = "Keybind X", dep = { field = "keybindEnabled" } },
-        keybindY = { d = -2, t = "int", min = -50, max = 50, label = "Keybind Y", dep = { field = "keybindEnabled" } },
+        keybindX = { adv = "text", d = 2, t = "int", min = -50, max = 50, label = "Keybind X", dep = { field = "keybindEnabled" } },
+        keybindY = { adv = "text", d = -2, t = "int", min = -50, max = 50, label = "Keybind Y", dep = { field = "keybindEnabled" } },
     } },
     -- Things that run out: an item's bag count, the quiver. Counts are compared
     -- only when plain; a secret count keeps the last known state.
@@ -375,7 +493,7 @@ Schema.icon = {
         -- 0 takes the totem's own pulse, for the totems that pulse.
         pulseInterval = { d = 0, t = "num", min = 0, max = 10, step = 0.5, fmt = "%.1f",
             label = "Seconds between pulses (0 = the totem's own)", dep = { field = "pulseShow" } },
-        pulseColor = { d = { 1, 0.82, 0.2, 1 }, t = "color", label = "Pulse bar color",
+        pulseColor = { d = { 1, 0.82, 0.2, 1 }, t = "color", alpha = true, label = "Pulse bar color",
             dep = { field = "pulseShow" } },
         pulseHeight = { d = 3, t = "int", min = 2, max = 10, label = "Pulse bar height",
             dep = { field = "pulseShow" } },
@@ -394,7 +512,7 @@ Schema.icon = {
     -- are hidden too.
     anchor = { fields = {
         anchorEnabled = { d = false, t = "bool", hidden = true, label = "Anchor this icon" },
-        anchorTargetKind = { d = "group", t = "enum", values = { "group", "bar", "layout", "frame", "mouse" },
+        anchorTargetKind = { d = "group", t = "enum", values = { "group", "bar", "icon", "layout", "frame", "mouse" },
             hidden = true, label = "Anchor to", dep = { field = "anchorEnabled" } },
         anchorTargetId = { d = 0, t = "id", hidden = true, label = "Anchor target id" },
         anchorTargetFrame = { d = "", t = "text", hidden = true, label = "Anchor frame name" },
@@ -416,11 +534,11 @@ Schema.icon = {
         showSwipe = { d = true,  t = "bool", label = "Cooldown swipe" },
         gcdSwipe = { d = "hidden", t = "enum", values = GCD_LOOKS, labels = GCD_LOOK_LABELS,
             kinds = { spell = true }, label = "GCD" },
-        gcdSwipeColor = { d = { 0, 0, 0, 0.5 }, t = "color", kinds = { spell = true },
+        gcdSwipeColor = { d = { 0, 0, 0, 0.5 }, t = "color", alpha = true, kinds = { spell = true },
             label = "GCD swipe color", dep = { field = "gcdSwipe", anyOf = GCD_SWIPE_DRAWN } },
         wandSwipe = { d = "hidden", t = "enum", values = GCD_LOOKS, labels = GCD_LOOK_LABELS,
             kinds = { spell = true }, classOnly = WAND_CLASSES, label = "Wand GCD" },
-        wandSwipeColor = { d = { 0, 0, 0, 0.5 }, t = "color", kinds = { spell = true },
+        wandSwipeColor = { d = { 0, 0, 0, 0.5 }, t = "color", alpha = true, kinds = { spell = true },
             classOnly = WAND_CLASSES, label = "Wand swipe color",
             dep = { field = "wandSwipe", anyOf = GCD_SWIPE_DRAWN } },
         -- While a charge spell still has a charge (recharging), these two hold
@@ -430,17 +548,17 @@ Schema.icon = {
         edgeWaitForNoCharges = { d = false, t = "bool", kinds = { spell = true }, label = "Edge only when no charges", dep = { field = "showEdge" } },
         showBling = { d = true,  t = "bool", label = "Finish flash" },
         reverse   = { d = false, t = "bool", label = "Reverse swipe", dep = { field = "showSwipe" } },
-        swipeColor = { d = { 0, 0, 0, 0.8 }, t = "color", label = "Swipe color", dep = { field = "showSwipe" } },
+        swipeColor = { d = { 0, 0, 0, 0.8 }, t = "color", alpha = true, label = "Swipe color", dep = { field = "showSwipe" } },
         -- 1.8 matches the Cooldown Manager's edge. CooldownFrameTemplate's own
         -- 1.0 draws a stubby line that stops short of the icon corner.
         edgeScale = { d = 1.8, t = "num", min = 0.1, max = 3, label = "Edge scale", dep = { field = "showEdge" } },
-        edgeColor = { d = { 1, 1, 1, 1 }, t = "color", label = "Edge color", dep = { field = "showEdge" } },
+        edgeColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Edge color", dep = { field = "showEdge" } },
         swipeInset = { d = 0, t = "int", min = -20, max = 40, label = "Swipe inset",
             dep = { { field = "showSwipe" }, { field = "separateInsets", value = false } } },
         separateInsets = { d = false, t = "bool", label = "Separate inset W/H", dep = { field = "showSwipe" } },
-        swipeInsetX = { d = 0, t = "int", min = -20, max = 40, label = "Swipe inset W",
+        swipeInsetX = { adv = "inset", d = 0, t = "int", min = -20, max = 40, label = "Swipe inset W",
             dep = { { field = "showSwipe" }, { field = "separateInsets" } } },
-        swipeInsetY = { d = 0, t = "int", min = -20, max = 40, label = "Swipe inset H",
+        swipeInsetY = { adv = "inset", d = 0, t = "int", min = -20, max = 40, label = "Swipe inset H",
             dep = { { field = "showSwipe" }, { field = "separateInsets" } } },
     } },
     auraMissing = { push = true, inherit = true, kinds = AU, fields = {
@@ -532,32 +650,32 @@ Schema.icon = {
                 { field = "activeGlowTimeUnit", value = "sec" } } },
         activeGlowType = { d = "button", t = "enum", values = AURA_GLOW_STYLES, labels = GLOW_STYLE_LABELS, label = "Active glow style", dep = { field = "activeGlow" } },
         activeGlowColor = { d = { 0.95, 0.95, 0.32, 1 }, t = "color", label = "Active glow color", dep = { field = "activeGlow" } },
-        activeGlowSpeed = { d = 0.25, t = "num", min = 0.05, max = 1, label = "Active glow speed",
+        activeGlowSpeed = { adv = "glow", d = 0.25, t = "num", min = 0.05, max = 1, label = "Active glow speed",
             dep = { { field = "activeGlow" }, { field = "activeGlowType", anyOf = GLOW_SPEED_STYLES } } },
-        activeGlowLines = { d = 8, t = "int", min = 1, max = 16, label = "Active glow lines",
+        activeGlowLines = { adv = "glow", d = 8, t = "int", min = 1, max = 16, label = "Active glow lines",
             dep = { { field = "activeGlow" }, { field = "activeGlowType", value = "pixel" } } },
-        activeGlowThickness = { d = 2, t = "int", min = 1, max = 20, label = "Active glow thickness",
+        activeGlowThickness = { adv = "glow", d = 2, t = "int", min = 1, max = 20, label = "Active glow thickness",
             dep = { { field = "activeGlow" }, { field = "activeGlowType", value = "pixel" } } },
         -- On the live button this picks one of the dash texture's 8 bands.
-        activeGlowLength = { d = 0, t = "int", min = 0, max = 40, label = "Active glow line length (0 = auto)",
+        activeGlowLength = { adv = "glow", d = 0, t = "int", min = 0, max = 40, label = "Active glow line length (0 = auto)",
             dep = { { field = "activeGlow" }, { field = "activeGlowType", value = "pixel" } } },
-        activeGlowParticles = { d = 4, t = "int", min = 1, max = 16, label = "Active glow particles",
+        activeGlowParticles = { adv = "glow", d = 4, t = "int", min = 1, max = 16, label = "Active glow particles",
             dep = { { field = "activeGlow" }, { field = "activeGlowType", value = "autocast" } } },
-        activeGlowIntensity = { d = 1, t = "num", min = 0.1, max = 1, label = "Active glow intensity",
+        activeGlowIntensity = { adv = "glow", d = 1, t = "num", min = 0.1, max = 1, label = "Active glow intensity",
             dep = { field = "activeGlow" } },
-        activeGlowScale = { d = 1, t = "num", min = 0.5, max = 2, label = "Active glow size",
+        activeGlowScale = { adv = "glow", d = 1, t = "num", min = 0.5, max = 2, label = "Active glow size",
             dep = { { field = "activeGlow" }, { field = "activeGlowType", value = "autocast" } } },
-        activeGlowXOffset = { d = 0, t = "int", min = -20, max = 20, label = "Active glow X offset",
+        activeGlowXOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, label = "Active glow X offset",
             dep = { field = "activeGlow" } },
-        activeGlowYOffset = { d = 0, t = "int", min = -20, max = 20, label = "Active glow Y offset",
+        activeGlowYOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, label = "Active glow Y offset",
             dep = { field = "activeGlow" } },
-        activeGlowMoveX = { d = 0, t = "int", min = -20, max = 20, label = "Active glow move X",
+        activeGlowMoveX = { adv = "glow", d = 0, t = "int", min = -20, max = 20, label = "Active glow move X",
             dep = { field = "activeGlow" } },
-        activeGlowMoveY = { d = 0, t = "int", min = -20, max = 20, label = "Active glow move Y",
+        activeGlowMoveY = { adv = "glow", d = 0, t = "int", min = -20, max = 20, label = "Active glow move Y",
             dep = { field = "activeGlow" } },
-        activeGlowStrata = { d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }, label = "Active glow strata",
+        activeGlowStrata = { adv = "glow", d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }, label = "Active glow strata",
             dep = { field = "activeGlow" } },
-        activeGlowLevel = { d = 7, t = "int", min = 1, max = 30, label = "Active glow frame level",
+        activeGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, label = "Active glow frame level",
             dep = { field = "activeGlow" } },
     } },
     -- The engine button's swipe is our own Cooldown widget, so its look is
@@ -567,15 +685,15 @@ Schema.icon = {
         -- Colour and direction default per kind (two fields, one label): aura
         -- icons get the reversed dark swipe, a spell's aura phase the Cooldown
         -- Manager's unreversed gold (CooldownViewerConstants.ITEM_AURA_COLOR).
-        swipeColor = { d = { 0, 0, 0, 0.8 }, t = "color", kinds = AU, label = "Aura swipe color", dep = { field = "swipeShow" } },
-        overlaySwipeColor = { d = { 1, 0.95, 0.57, 0.7 }, t = "color", kinds = SP, label = "Aura swipe color",
+        swipeColor = { d = { 0, 0, 0, 0.8 }, t = "color", alpha = true, kinds = AU, label = "Aura swipe color", dep = { field = "swipeShow" } },
+        overlaySwipeColor = { d = { 1, 0.95, 0.57, 0.7 }, t = "color", alpha = true, kinds = SP, label = "Aura swipe color",
             dep = { field = "swipeShow" } },
         swipeReverse = { d = true, t = "bool", kinds = AU, label = "Reverse aura swipe", dep = { field = "swipeShow" } },
         overlaySwipeReverse = { d = false, t = "bool", kinds = SP, label = "Reverse aura swipe",
             dep = { field = "swipeShow" } },
         swipeEdge = { d = false, t = "bool", label = "Aura swipe edge" },
         -- As on the cooldown swipe: 1.8 is the Cooldown Manager's edge length.
-        edgeColor = { d = { 1, 1, 1, 1 }, t = "color", label = "Aura edge color", dep = { field = "swipeEdge" } },
+        edgeColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Aura edge color", dep = { field = "swipeEdge" } },
         edgeScale = { d = 1.8, t = "num", min = 0.1, max = 3, label = "Aura edge scale", dep = { field = "swipeEdge" } },
         swipeBling = { d = false, t = "bool", label = "Aura finish flash" },
     } },
@@ -586,24 +704,24 @@ Schema.icon = {
             labels = { global = "Same as Settings", up = "Round up", down = "Round down" },
             label = "Round timer numbers", dep = { field = "durationText" } },
         durationSize = { d = 14, t = "int", min = 6, max = 32, label = "Duration text size", dep = { field = "durationText" } },
-        durationColor = { d = { 1, 1, 1, 1 }, t = "color", label = "Duration text color", dep = { field = "durationText" } },
+        durationColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Duration text color", dep = { field = "durationText" } },
         -- A baked NumericRuleFormatter renders the countdown from the real
         -- remaining time, so it works on secret durations with no ticker. M:SS
         -- ("1:30") from 60 s up to this many seconds, "12 m" above; 0 = off.
         durationAbbrev = { d = 600, t = "enum", values = ABBREV_VALUES, labels = ABBREV_LABELS,
             label = "Minutes and seconds (1:30)", dep = { field = "durationText" } },
-        durationShadow = { d = false, t = "bool", label = "Duration text shadow", dep = { field = "durationText" } },
+        durationShadow = { adv = "text", d = false, t = "bool", label = "Duration text shadow", dep = { field = "durationText" } },
         durationDecimals = { d = false, t = "bool", label = "Decimal seconds", dep = { field = "durationText" } },
         durationDecimalThreshold = { d = 10, t = "int", min = 2, max = 60, label = "Decimals under (seconds)",
             dep = { { field = "durationText" }, { field = "durationDecimals" } } },
-        durationOutline = { d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" },
+        durationOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" },
             label = "Duration text outline", dep = { field = "durationText" } },
         durationFont = { d = "", t = "text", font = true, label = "Duration text font", dep = { field = "durationText" } },
         durationAnchor = { d = "CENTER", t = "enum",
             values = { "CENTER", "TOP", "BOTTOM", "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" },
             label = "Duration text anchor", dep = { field = "durationText" } },
-        durationX = { d = 0, t = "int", min = -50, max = 50, label = "Duration text X", dep = { field = "durationText" } },
-        durationY = { d = 0, t = "int", min = -50, max = 50, label = "Duration text Y", dep = { field = "durationText" } },
+        durationX = { adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Duration text X", dep = { field = "durationText" } },
+        durationY = { adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Duration text Y", dep = { field = "durationText" } },
         -- Whether a charge is left comes from the shadow.
         hideDurWithCharges = { d = false, t = "bool", kinds = SP, label = "Hide duration while charges remain",
             dep = { field = "durationText" } },
@@ -626,15 +744,15 @@ Schema.icon = {
             dep = { { field = "durationText" }, { field = "durationColorBands" } } },
         stackText = { d = true, t = "bool", kinds = STK, label = "Stack text" },
         stackSize = { d = 14, t = "int", min = 6, max = 32, kinds = STK, label = "Stack text size", dep = { field = "stackText" } },
-        stackColor = { d = { 1, 1, 1, 1 }, t = "color", kinds = STK, label = "Stack text color", dep = { field = "stackText" } },
-        stackOutline = { d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = STK, label = "Stack text outline", dep = { field = "stackText" } },
+        stackColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, kinds = STK, label = "Stack text color", dep = { field = "stackText" } },
+        stackOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = STK, label = "Stack text outline", dep = { field = "stackText" } },
         stackFont = { d = "", t = "text", font = true, kinds = STK, label = "Stack text font", dep = { field = "stackText" } },
         stackAnchor = { d = "BOTTOMRIGHT", t = "enum",
             values = { "BOTTOMRIGHT", "BOTTOMLEFT", "TOPRIGHT", "TOPLEFT", "TOP", "BOTTOM", "CENTER" },
             kinds = STK, label = "Stack text anchor", dep = { field = "stackText" } },
-        stackX = { d = -2, t = "int", min = -50, max = 50, kinds = STK, label = "Stack text X", dep = { field = "stackText" } },
-        stackY = { d = 2, t = "int", min = -50, max = 50, kinds = STK, label = "Stack text Y", dep = { field = "stackText" } },
-        stackShadow = { d = false, t = "bool", kinds = STK, label = "Stack text shadow", dep = { field = "stackText" } },
+        stackX = { adv = "text", d = -2, t = "int", min = -50, max = 50, kinds = STK, label = "Stack text X", dep = { field = "stackText" } },
+        stackY = { adv = "text", d = 2, t = "int", min = -50, max = 50, kinds = STK, label = "Stack text Y", dep = { field = "stackText" } },
+        stackShadow = { adv = "text", d = false, t = "bool", kinds = STK, label = "Stack text shadow", dep = { field = "stackText" } },
         hideChargeAtZero = { d = false, t = "bool", kinds = SP, label = "Hide charge count at zero", dep = { field = "stackText" } },
         -- The engine prints an aura's count only above 1 unless it is handed a
         -- NumericRuleFormatter. The same formatter carries a color escape per
@@ -659,15 +777,38 @@ Schema.icon = {
         -- buttons compare it).
         ammoText = { d = false, t = "bool", kinds = SP, label = "Ammo stack text" },
         ammoSize = { d = 14, t = "int", min = 6, max = 32, kinds = SP, label = "Ammo text size", dep = { field = "ammoText" } },
-        ammoColor = { d = { 1, 1, 1, 1 }, t = "color", kinds = SP, label = "Ammo text color", dep = { field = "ammoText" } },
-        ammoOutline = { d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = SP, label = "Ammo text outline", dep = { field = "ammoText" } },
+        ammoColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, kinds = SP, label = "Ammo text color", dep = { field = "ammoText" } },
+        ammoOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = SP, label = "Ammo text outline", dep = { field = "ammoText" } },
         ammoFont = { d = "", t = "text", font = true, kinds = SP, label = "Ammo text font", dep = { field = "ammoText" } },
         ammoAnchor = { d = "BOTTOMLEFT", t = "enum",
             values = { "BOTTOMRIGHT", "BOTTOMLEFT", "TOPRIGHT", "TOPLEFT", "TOP", "BOTTOM", "CENTER" },
             kinds = SP, label = "Ammo text anchor", dep = { field = "ammoText" } },
-        ammoX = { d = 2, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text X", dep = { field = "ammoText" } },
-        ammoY = { d = 2, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text Y", dep = { field = "ammoText" } },
-        ammoShadow = { d = false, t = "bool", kinds = SP, label = "Ammo text shadow", dep = { field = "ammoText" } },
+        ammoX = { adv = "text", d = 2, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text X", dep = { field = "ammoText" } },
+        ammoY = { adv = "text", d = 2, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text Y", dep = { field = "ammoText" } },
+        ammoShadow = { adv = "text", d = false, t = "bool", kinds = SP, label = "Ammo text shadow", dep = { field = "ammoText" } },
+        -- Threshold colours for the ammo count (Factory.AmmoCountColor). The
+        -- count is plain in combat, so Lua compares it; the lowest threshold
+        -- it is at or below wins.
+        ammoCountColors = { d = false, t = "bool", kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
+            label = "Color by ammo count" },
+        ammoCountSteps = { d = 1, t = "int", min = 1, max = 3, kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
+            adds = "threshold", label = "Number of ammo thresholds", dep = { field = "ammoCountColors" } },
+        ammoCount1 = { d = 400, t = "int", min = 1, max = 2000, kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
+            label = "First ammo threshold (at or below)", dep = { field = "ammoCountColors" } },
+        ammoCount1Color = { d = { 1, 0.55, 0.1, 1 }, t = "color", kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
+            label = "First ammo threshold color", dep = { field = "ammoCountColors" } },
+        ammoCount2 = { d = 200, t = "int", min = 1, max = 2000, kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
+            label = "Second ammo threshold (at or below)",
+            dep = { { field = "ammoCountColors" }, { field = "ammoCountSteps", min = 2 } } },
+        ammoCount2Color = { d = { 1, 0.15, 0.15, 1 }, t = "color", kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
+            label = "Second ammo threshold color",
+            dep = { { field = "ammoCountColors" }, { field = "ammoCountSteps", min = 2 } } },
+        ammoCount3 = { d = 100, t = "int", min = 1, max = 2000, kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
+            label = "Third ammo threshold (at or below)",
+            dep = { { field = "ammoCountColors" }, { field = "ammoCountSteps", min = 3 } } },
+        ammoCount3Color = { d = { 0.65, 0, 0, 1 }, t = "color", kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
+            label = "Third ammo threshold color",
+            dep = { { field = "ammoCountColors" }, { field = "ammoCountSteps", min = 3 } } },
     } },
     -- Not schema sections: the driver (rec.driver, validated per kind by the
     -- driver module; retargeting re-keys it, never the record id) and
@@ -734,7 +875,8 @@ do
 end
 
 Schema.iconGroup = {
-    arrangement = { push = true, inherit = true, fields = {
+    -- The grid kinds only: a reminder group has no cells.
+    arrangement = { push = true, inherit = true, kinds = { cooldown = true, aura = true }, fields = {
         -- Rows is cooldown-only: the aura flow wraps by itself. Columns and the
         -- two growth fields drive the aura flow too.
         rows = { inherit = false, d = 1, t = "int", min = 1, max = 20, kinds = GK_CD, label = "Rows" },
@@ -784,28 +926,103 @@ Schema.iconGroup = {
             label = "Smooth duration (s)", fmt = "%.2f",
             dep = { { field = "dynamicLayout" }, { field = "smoothMovement" } } },
     } },
-    look = { push = true, inherit = true, fields = {
+    look = { push = true, inherit = true, kinds = { cooldown = true, aura = true, reminder = true }, fields = {
         showBorder = { d = false, t = "bool", label = "Container border" },
         showBackground = { d = false, t = "bool", label = "Container background" },
-        borderColor = { d = { 0.11, 0.16, 0.25, 1 }, t = "color", label = "Border color" },
-        bgColor = { d = { 0, 0, 0, 0.6 }, t = "color", label = "Background color" },
+        borderColor = { d = { 0.11, 0.16, 0.25, 1 }, t = "color", alpha = true, label = "Border color" },
+        bgColor = { d = { 0, 0, 0, 0.6 }, t = "color", alpha = true, label = "Background color" },
+        -- The fill inside the green outline while the window is open. A
+        -- Reminder group's is clear, so its dim marker is all that shows.
+        editFill = { d = { 0, 0, 0, 0.5 }, dk = { reminder = { 0, 0, 0, 0 } }, t = "color", alpha = true,
+            label = "Background while editing",
+            desc = "The fill behind this group while the options window is open; opacity 0 means none." },
     } },
     -- Keybind text on every member, ORed with each icon's own switch (styling
     -- stays on the icon). Cooldown groups only: auras have no binding.
     keybind = { push = true, inherit = true, kinds = GK_CD, fields = {
         showKeybinds = { d = false, t = "bool", label = "Show keybinds on all icons" },
     } },
+    -- A reminder group's pulse (Drivers\AD_DriverReminders.lua), ArcUI v1's
+    -- Cooldown Reminder window: each reminder that fires pulses at the group's
+    -- spot, and one already up is replaced, queued or stacked beside it. The
+    -- keys and ranges are v1's. Per group, so no layout look.
+    pulse = { push = true, kinds = GK_RM, fields = {
+        iconEnabled = { d = true, t = "bool", label = "Show pulse icon" },
+        -- On by default, as in v1: an approved exception to new switches
+        -- starting off.
+        cancelOnCast = { d = true, t = "bool", label = "Cancel pulse on cast" },
+        -- The pulse holds at full, no fade, until the cast or its trigger's
+        -- "Clear when" ends it (RM.HOLD_MAX as a backstop). An "On use"
+        -- pulse keeps its time: its cast is the reminder.
+        holdUntilCast = { d = false, t = "bool", label = "Stay until cast",
+            desc = "The pulse stays at full, with no fade and no time limit, until you cast the spell (or use the item), or until its trigger's Clear when option ends it. On use pulses and previews still run their time." },
+        hideMarker = { d = false, t = "bool", label = "Hide preview icon while editing",
+            desc = "While this window is open, a dim copy of the first reminder's icon marks where pulses land. On shows only the outline and name tab." },
+        queueMode = { d = "queue", t = "enum", values = { "replace", "queue", "stack" },
+            labels = { replace = "Replace", queue = "Queue", stack = "Stack (side-by-side)" },
+            label = "Overlap Behavior" },
+        stackDirection = { d = "right", t = "enum", values = { "left", "right" },
+            labels = { left = "Left", right = "Right" }, label = "Stack Direction",
+            dep = { field = "queueMode", value = "stack" } },
+        stackSpacing = { d = 4, t = "int", min = -32, max = 96, label = "Stack Spacing",
+            dep = { field = "queueMode", value = "stack" } },
+        replaceGuard = { d = 0.4, t = "num", min = 0, max = 2, step = 0.05, fmt = "%.2f",
+            label = "Replace Guard (seconds)", dep = { field = "queueMode", value = "replace" } },
+        queueMaxLen = { d = 3, t = "int", min = 1, max = 10, label = "Queue Max Length",
+            dep = { field = "queueMode", value = "queue" } },
+        queueInterDelay = { d = 0, t = "num", min = 0, max = 2, step = 0.05, fmt = "%.2f",
+            label = "Queue Gap (seconds)", dep = { field = "queueMode", value = "queue" } },
+        -- input: typed, not slid, so a pulse can run long
+        pulseDuration = { d = 2, t = "num", min = 0.1, max = 600, step = 0.05, fmt = "%.2f", input = true,
+            label = "Pulse Duration (seconds)" },
+        size = { d = 80, t = "int", min = 32, max = 256, label = "Icon Size" },
+        iconOpacity = { d = 1, t = "num", min = 0.1, max = 1, step = 0.05, label = "Icon Opacity" },
+        animStyle = { d = "fade", t = "enum", values = { "fade", "no_fade", "flash", "zoom" },
+            labels = { fade = "Fade", no_fade = "No Fade (snap off)", flash = "Flash (urgent)",
+                zoom = "Zoom (pop in + fade)" },
+            label = "Default Animation" },
+        animFadeSmoothing = { d = "OUT", t = "enum", values = { "NONE", "OUT", "IN", "IN_OUT" },
+            labels = { NONE = "Linear", OUT = "Ease Out", IN = "Ease In", IN_OUT = "Ease In/Out" },
+            label = "Fade Curve", dep = { field = "animStyle", value = "fade" } },
+        animFlashSpeed = { d = 0.10, t = "num", min = 0.03, max = 0.30, step = 0.01, fmt = "%.2f",
+            label = "Flash Step Speed", dep = { field = "animStyle", value = "flash" } },
+        animZoomStart = { d = 0.70, t = "num", min = 0.30, max = 1, step = 0.05, fmt = "%.2f",
+            label = "Zoom Start Scale", dep = { field = "animStyle", value = "zoom" } },
+        animZoomPeak = { d = 1.15, t = "num", min = 1, max = 1.50, step = 0.05, fmt = "%.2f",
+            label = "Zoom Peak Scale", dep = { field = "animStyle", value = "zoom" } },
+        animZoomPopTime = { d = 0.12, t = "num", min = 0.04, max = 0.40, step = 0.01, fmt = "%.2f",
+            label = "Zoom Pop Speed", dep = { field = "animStyle", value = "zoom" } },
+        animZoomSettleTime = { d = 0.08, t = "num", min = 0.02, max = 0.30, step = 0.01, fmt = "%.2f",
+            label = "Zoom Settle Speed", dep = { field = "animStyle", value = "zoom" } },
+    } },
+    -- A reminder group's sounds and speech. The default sound is v1's Default
+    -- (the Drumroll Ding kit); a trigger plays it only once its sound is on.
+    audio = { push = true, kinds = GK_RM, fields = {
+        soundEnabled = { d = true, t = "bool", label = "Enable sound" },
+        -- values and labels: the alerts channel's, set below the table
+        soundChannel = { d = "Master", t = "enum", label = "Sound Channel" },
+        soundName = { d = "kit:12867", t = "sound", label = "Default Alert Sound" },
+        cutoffPreviousSound = { d = false, t = "bool", label = "Cut off previous sound" },
+        cutoffFadeTime = { d = 0.1, t = "num", min = 0, max = 0.5, step = 0.05, fmt = "%.2f",
+            label = "Cutoff fade-out (seconds)", dep = { field = "cutoffPreviousSound" } },
+        ttsVoiceOverride = { d = "default", t = "enum", values = { "default", "male", "female" },
+            labels = { default = "Default (WoW setting)", male = "Male", female = "Female" },
+            label = "Voice" },
+        ttsRateOverride = { d = false, t = "bool", label = "Override speech rate" },
+        ttsRate = { d = 0, t = "int", min = -10, max = 10, label = "Speech Rate",
+            dep = { field = "ttsRateOverride" } },
+    } },
     frame = { fields = {
-        strata = { d = "MEDIUM", t = "enum",
+        strata = { adv = "frame", d = "MEDIUM", t = "enum",
             values = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG" }, label = "Frame strata" },
-        level = { d = 1, t = "int", min = 1, max = 100, label = "Frame level" },
+        level = { adv = "frame", d = 1, t = "int", min = 1, max = 100, label = "Frame level" },
     } },
     -- Anchoring (Core\AD_Anchor.lua). Dragging an anchored group edits the
     -- offsets; pos is never written while anchored. The target fields are
     -- hidden: the Anchoring tab draws its own rows.
     anchor = { fields = {
         anchorEnabled = { d = false, t = "bool", hidden = true, label = "Anchor this group" },
-        anchorTargetKind = { d = "group", t = "enum", values = { "group", "bar", "layout", "frame", "mouse" },
+        anchorTargetKind = { d = "group", t = "enum", values = { "group", "bar", "icon", "layout", "frame", "mouse" },
             hidden = true, label = "Anchor to", dep = { field = "anchorEnabled" } },
         anchorTargetId = { d = 0, t = "id", hidden = true, label = "Anchor target id" },
         anchorTargetFrame = { d = "", t = "text", hidden = true, label = "Anchor frame name" },
@@ -827,13 +1044,30 @@ Schema.iconGroup = {
                 { field = "anchorMatchWidth" } } },
     } },
     -- Mouse tier for the group's icons ("inherit": the layout, then Settings).
-    mouse = { push = true, fields = {
+    -- A reminder group's pulses never take the mouse.
+    mouse = { push = true, kinds = { cooldown = true, aura = true }, fields = {
         clickThrough = { d = "inherit", t = "enum", values = { "inherit", "on", "off" },
             label = "Click-through" },
         showTooltip = { d = "inherit", t = "enum", values = { "inherit", "on", "off" },
             label = "Show tooltips" },
     } },
 }
+
+-- A reminder group plays on the same channels as the alerts.
+do
+    local from = Schema.icon.alerts.fields.soundChannel
+    local to = Schema.iconGroup.audio.fields.soundChannel
+    to.values, to.labels = from.values, from.labels
+end
+
+-- A reminder record (a Reminder group's member) keeps its triggers as a list
+-- (rec.triggers, Store.CleanTriggers), not as schema rows. Its `pulse` section
+-- is its own look, the group's field definitions shared; a field it leaves
+-- unset reads its group's value (Store.Resolve).
+Schema.reminder = { pulse = { fields = {} } }
+for _, k in ipairs(Schema.REMINDER_LOOK) do
+    Schema.reminder.pulse.fields[k] = Schema.iconGroup.pulse.fields[k]
+end
 
 -- Bars: layout children with a free position, never group members. A bar joins
 -- a group by anchoring to it, so the group is an anchor field, not a parent.
@@ -926,23 +1160,23 @@ Schema.bar = {
             kinds = BK_HP, label = "Color by" },
         -- Only used while colorMode is "fill"; every other bar kind resolves
         -- colorMode to that default.
-        color       = { inherit = false, d = { 0.247, 0.788, 0.949, 1 }, t = "color", label = "Fill color",
+        color       = { inherit = false, d = { 0.247, 0.788, 0.949, 1 }, t = "color", alpha = true, label = "Fill color",
             kinds = BK_NOTRANGE, dep = { field = "colorMode", value = "fill" } },
-        gradLowColor = { d = { 1, 0.15, 0.15, 1 }, t = "color", kinds = BK_HP, label = "Empty health color",
+        gradLowColor = { d = { 1, 0.15, 0.15, 1 }, t = "color", alpha = true, kinds = BK_HP, label = "Empty health color",
             dep = { field = "colorMode", value = "gradient" } },
-        gradMidColor = { d = { 1, 0.82, 0.1, 1 }, t = "color", kinds = BK_HP, label = "Half health color",
+        gradMidColor = { d = { 1, 0.82, 0.1, 1 }, t = "color", alpha = true, kinds = BK_HP, label = "Half health color",
             dep = { field = "colorMode", value = "gradient" } },
-        gradHighColor = { d = { 0.2, 0.85, 0.3, 1 }, t = "color", kinds = BK_HP, label = "Full health color",
+        gradHighColor = { d = { 0.2, 0.85, 0.3, 1 }, t = "color", alpha = true, kinds = BK_HP, label = "Full health color",
             dep = { field = "colorMode", value = "gradient" } },
         -- Cast bars: channels and uninterruptible casts can have their own
         -- colour; SetVertexColorFromBoolean applies it, since whether a cast
         -- can be interrupted is secret for a target or focus in combat.
         castChannelOn = { d = false, t = "bool", kinds = BK_CAST, label = "Own color for channels" },
-        castChannelColor = { d = { 0.36, 0.85, 0.46, 1 }, t = "color", kinds = BK_CAST, label = "Channel color",
+        castChannelColor = { d = { 0.36, 0.85, 0.46, 1 }, t = "color", alpha = true, kinds = BK_CAST, label = "Channel color",
             dep = { field = "castChannelOn" } },
         castLockOn = { d = false, t = "bool", kinds = BK_CAST, label = "Own color when it can't be interrupted",
             desc = "Casts you cannot interrupt take this color. In combat the game hides whether a target's cast can be interrupted from addons, so this can only change how the bar looks." },
-        castLockColor = { d = { 0.62, 0.64, 0.68, 1 }, t = "color", kinds = BK_CAST, label = "Can't be interrupted color",
+        castLockColor = { d = { 0.62, 0.64, 0.68, 1 }, t = "color", alpha = true, kinds = BK_CAST, label = "Can't be interrupted color",
             dep = { field = "castLockOn" } },
         -- Cooldown stack bars draw charge slots, never the fill, so they lack
         -- orientation and reverse; aura stack bars keep them. onSet runs after
@@ -973,7 +1207,7 @@ Schema.bar = {
         swingOffhandStyle = { d = "thin", t = "enum", values = { "thin", "thick", "half", "mark" },
             labels = { thin = "Thin line", thick = "Thick line", half = "Half of the bar", mark = "Moving mark" },
             kinds = { swing = true }, dep = { field = "swingOffhand" }, label = "Off-hand style" },
-        swingOffhandColor = { d = { 1, 0.75, 0.3, 1 }, t = "color", kinds = { swing = true },
+        swingOffhandColor = { d = { 1, 0.75, 0.3, 1 }, t = "color", alpha = true, kinds = { swing = true },
             dep = { field = "swingOffhand" }, label = "Off-hand color" },
         -- A label riding the off-hand's moving edge while it swings, so the
         -- off-hand reads at a glance on a shared bar.
@@ -988,7 +1222,7 @@ Schema.bar = {
             label = "Off-hand label position" },
         swingOffhandLabelSize = { d = 10, t = "int", min = 6, max = 24, kinds = { swing = true },
             dep = { { field = "swingOffhand" }, { field = "swingOffhandLabel" } }, label = "Off-hand label size" },
-        swingOffhandLabelColor = { d = { 1, 1, 1, 1 }, t = "color", kinds = { swing = true },
+        swingOffhandLabelColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, kinds = { swing = true },
             dep = { { field = "swingOffhand" }, { field = "swingOffhandLabel" } }, label = "Off-hand label color" },
         -- Swing bars: two halves that close in and meet as the swing lands, and
         -- ticks where a set time is left (Bars\AD_SwingClosing.lua). The
@@ -998,7 +1232,7 @@ Schema.bar = {
         swingTicks = { d = false, t = "bool", kinds = { swing = true }, label = "Tick before the swing lands" },
         swingTickTime = { d = 0.5, t = "num", min = 0.1, max = 1.5, step = 0.05, fmt = "%g",
             kinds = { swing = true }, dep = { field = "swingTicks" }, label = "Time before it lands (s)" },
-        swingTickColor = { d = { 1, 1, 1, 0.9 }, t = "color", kinds = { swing = true },
+        swingTickColor = { d = { 1, 1, 1, 0.9 }, t = "color", alpha = true, kinds = { swing = true },
             dep = { field = "swingTicks" }, label = "Tick color" },
         -- Up to three ticks: tick 1 is the pair above, so saved bars read the
         -- same; ticks 2 and 3 default to a GCD line and a seal-twist line.
@@ -1007,17 +1241,17 @@ Schema.bar = {
         swingTick2Time = { d = 1.5, t = "num", min = 0.1, max = 1.5, step = 0.05, fmt = "%g", kinds = { swing = true },
             dep = { { field = "swingTicks" }, { field = "swingTickCount", min = 2 } },
             label = "Tick 2 time before it lands (s)" },
-        swingTick2Color = { d = { 0.4, 1, 0.4, 0.9 }, t = "color", kinds = { swing = true },
+        swingTick2Color = { d = { 0.4, 1, 0.4, 0.9 }, t = "color", alpha = true, kinds = { swing = true },
             dep = { { field = "swingTicks" }, { field = "swingTickCount", min = 2 } }, label = "Tick 2 color" },
         swingTick3Time = { d = 0.4, t = "num", min = 0.1, max = 1.5, step = 0.05, fmt = "%g", kinds = { swing = true },
             dep = { { field = "swingTicks" }, { field = "swingTickCount", min = 3 } },
             label = "Tick 3 time before it lands (s)" },
-        swingTick3Color = { d = { 1, 0.45, 0.9, 0.9 }, t = "color", kinds = { swing = true },
+        swingTick3Color = { d = { 1, 0.45, 0.9, 0.9 }, t = "color", alpha = true, kinds = { swing = true },
             dep = { { field = "swingTicks" }, { field = "swingTickCount", min = 3 } }, label = "Tick 3 color" },
         -- Swing and timer bars: a bright line on the fill's moving edge while
         -- it runs (Bars\AD_BarSpark.lua), on each half with the closing fill.
         edgeSpark = { d = false, t = "bool", kinds = { swing = true, timer = true }, label = "Spark" },
-        edgeSparkColor = { d = { 1, 1, 1, 0.9 }, t = "color", kinds = { swing = true, timer = true },
+        edgeSparkColor = { d = { 1, 1, 1, 0.9 }, t = "color", alpha = true, kinds = { swing = true, timer = true },
             dep = { field = "edgeSpark" }, label = "Spark color" },
         edgeSparkWidth = { d = 3, t = "int", min = 2, max = 16, kinds = { swing = true, timer = true },
             dep = { field = "edgeSpark" }, label = "Spark width" },
@@ -1047,7 +1281,7 @@ Schema.bar = {
         -- VERTICAL fades toward the bottom, HORIZONTAL toward the far end.
         gradientDir = { d = "VERTICAL", t = "enum", values = { "VERTICAL", "HORIZONTAL" },
             label = "Gradient direction", dep = { field = "useGradient" } },
-        gradientColor = { d = { 0, 0, 0, 0.45 }, t = "color", label = "Gradient end color",
+        gradientColor = { d = { 0, 0, 0, 0.45 }, t = "color", alpha = true, label = "Gradient end color",
             dep = { field = "useGradient" } },
         fillInset   = { d = 0, t = "int", min = 0, max = 12, label = "Fill padding" },
         -- A built-in key, or a LibSharedMedia key when an LSM addon is loaded
@@ -1072,7 +1306,7 @@ Schema.bar = {
         -- thickness. Hidden: the editor draws its own dropdown.
         borderStyle     = { d = "", t = "text", hidden = true, media = "border", label = "Border style" },
         -- Black, 5 px: bars read as solid objects rather than tinted panels.
-        borderColor     = { d = { 0, 0, 0, 1 }, t = "color", label = "Border color", dep = { field = "borderEnabled" } },
+        borderColor     = { d = { 0, 0, 0, 1 }, t = "color", alpha = true, label = "Border color", dep = { field = "borderEnabled" } },
         borderThickness = { d = 5, t = "int", min = 1, max = 20, label = "Border thickness", dep = { field = "borderEnabled" } },
         useClassColorBorder = { d = false, t = "bool", label = "Class color border", dep = { field = "borderEnabled" } },
     } },
@@ -1084,16 +1318,16 @@ Schema.bar = {
         -- 0 = from the driver (maxCharges or UnitPowerMax).
         segmentCount = { inherit = false, d = 0, t = "int", min = 0, max = 20, label = "Segment count (0 = auto)", dep = { field = "segmentsShow" } },
         -- Charge-slot bars use gaps, so only power-stack bars draw dividers.
-        dividerColor = { d = { 0.039, 0.067, 0.125, 1 }, t = "color", kinds = { stack = true },
+        dividerColor = { d = { 0.039, 0.067, 0.125, 1 }, t = "color", alpha = true, kinds = { stack = true },
             label = "Divider color", dep = { field = "segmentsShow" } },
         -- Gap between segments, in pixel units.
         segmentSpacing = { d = 1, t = "int", min = 1, max = 10, label = "Segment spacing", dep = { field = "segmentsShow" } },
         -- Keyed off the ready state, which is not secret; never a count read.
         fullColorEnabled = { d = false, t = "bool", kinds = BK_CD, label = "Full charges color" },
-        fullColor = { d = { 0.482, 0.847, 0.561, 1 }, t = "color", kinds = BK_CD, label = "Full charges color value", dep = { field = "fullColorEnabled" } },
+        fullColor = { d = { 0.482, 0.847, 0.561, 1 }, t = "color", alpha = true, kinds = BK_CD, label = "Full charges color value", dep = { field = "fullColorEnabled" } },
         -- Recharge overlay tint; off uses the fill color.
         rechargeColorEnabled = { d = false, t = "bool", kinds = BK_CD, label = "Recharge color" },
-        rechargeColor = { d = { 0.247, 0.788, 0.949, 0.55 }, t = "color", kinds = BK_CD, label = "Recharge color value", dep = { field = "rechargeColorEnabled" } },
+        rechargeColor = { d = { 0.247, 0.788, 0.949, 0.55 }, t = "color", alpha = true, kinds = BK_CD, label = "Recharge color value", dep = { field = "rechargeColorEnabled" } },
     } },
     -- Resource bars (mana, rage, energy...), run by Bars\AD_Bars.lua. They have
     -- no barMode: neither a duration fill nor a stack.
@@ -1118,7 +1352,7 @@ Schema.bar = {
             dep = { field = "style", value = "pips" } },
         -- A lit point's colour when the power colour is off (the bar style uses
         -- fill.color). Stack Colors bands override it per position.
-        pointColor = { d = { 0.247, 0.788, 0.949, 1 }, t = "color", label = "Point color",
+        pointColor = { d = { 0.247, 0.788, 0.949, 1 }, t = "color", alpha = true, label = "Point color",
             dep = { { field = "style", value = "pips" }, { field = "usePowerColor", value = false } } },
         -- The point colour showing faintly through an empty cell; 0, the
         -- default, leaves the Background colour reading as itself.
@@ -1137,7 +1371,7 @@ Schema.bar = {
         iconOffsetX = { d = 0, t = "int", min = -100, max = 100, label = "Icon offset X", dep = { field = "iconShow" } },
         iconOffsetY = { d = 0, t = "int", min = -100, max = 100, label = "Icon offset Y", dep = { field = "iconShow" } },
         iconBorderEnabled = { d = true, t = "bool", label = "Icon border", dep = { field = "iconShow" } },
-        iconBorderColor = { d = { 0, 0, 0, 1 }, t = "color", label = "Icon border color",
+        iconBorderColor = { d = { 0, 0, 0, 1 }, t = "color", alpha = true, label = "Icon border color",
             dep = { { field = "iconShow" }, { field = "iconBorderEnabled" } } },
         iconBorderThickness = { d = 1, t = "int", min = 1, max = 10, label = "Icon border thickness",
             dep = { { field = "iconShow" }, { field = "iconBorderEnabled" } } },
@@ -1164,9 +1398,9 @@ Schema.bar = {
             kinds = BK_DUR, label = "Round timer numbers", dep = { field = "durShow" } },
         durSize = { d = 12, t = "int", min = 6, max = 32, kinds = BK_DURC, label = "Duration text size" },
         durAnchor = { d = "RIGHT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS, kinds = BK_DURC, label = "Duration anchor" },
-        durOffsetX = { d = -3, t = "int", min = -100, max = 100, kinds = BK_DURC, label = "Duration offset X" },
-        durOffsetY = { d = 0, t = "int", min = -100, max = 100, kinds = BK_DURC, label = "Duration offset Y" },
-        durColor = { d = { 0.95, 0.97, 1, 1 }, t = "color", kinds = BK_DURC, label = "Duration color" },
+        durOffsetX = { adv = "text", d = -3, t = "int", min = -100, max = 100, kinds = BK_DURC, label = "Duration offset X" },
+        durOffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_DURC, label = "Duration offset Y" },
+        durColor = { d = { 0.95, 0.97, 1, 1 }, t = "color", alpha = true, kinds = BK_DURC, label = "Duration color" },
         -- Decimals: cooldown bars render C-side from the real remaining time
         -- (the shared CooldownFormatter); timer and swing bars use plain math.
         durDecimalsEnabled = { d = false, t = "bool", kinds = BK_DURC, label = "Duration decimals",
@@ -1180,9 +1414,9 @@ Schema.bar = {
         stkShow = { d = true, t = "bool", kinds = BK_CST, label = "Stack text" },
         stkSize = { d = 12, t = "int", min = 6, max = 32, kinds = BK_CST, label = "Stack text size" },
         stkAnchor = { d = "LEFT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS, kinds = BK_CST, label = "Stack anchor" },
-        stkOffsetX = { d = 3, t = "int", min = -100, max = 100, kinds = BK_CST, label = "Stack offset X" },
-        stkOffsetY = { d = 0, t = "int", min = -100, max = 100, kinds = BK_CST, label = "Stack offset Y" },
-        stkColor = { d = { 0.95, 0.97, 1, 1 }, t = "color", kinds = BK_CST, label = "Stack color" },
+        stkOffsetX = { adv = "text", d = 3, t = "int", min = -100, max = 100, kinds = BK_CST, label = "Stack offset X" },
+        stkOffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_CST, label = "Stack offset Y" },
+        stkColor = { d = { 0.95, 0.97, 1, 1 }, t = "color", alpha = true, kinds = BK_CST, label = "Stack color" },
         stkHideAtZero = { d = true, t = "bool", kinds = BK_STKZ, label = "Stack hides at zero" },
         -- The "/max" suffix, built by the stack-mode slot pass. maxCharges is
         -- not secret; the count is never read.
@@ -1191,11 +1425,11 @@ Schema.bar = {
         -- Resource bars: the power value; resFormat picks what it shows.
         resShow = { d = true, t = "bool", kinds = BK_RES, label = "Resource text" },
         resSize = { d = 12, t = "int", min = 6, max = 32, kinds = BK_RES, label = "Resource text size" },
-        resOutline = { d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = BK_RES, label = "Resource outline" },
-        resColor = { d = { 0.95, 0.97, 1, 1 }, t = "color", kinds = BK_RES, label = "Resource color" },
+        resOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = BK_RES, label = "Resource outline" },
+        resColor = { d = { 0.95, 0.97, 1, 1 }, t = "color", alpha = true, kinds = BK_RES, label = "Resource color" },
         resAnchor = { d = "CENTER", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS, kinds = BK_RES, label = "Resource anchor" },
-        resOffsetX = { d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Resource offset X" },
-        resOffsetY = { d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Resource offset Y" },
+        resOffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Resource offset X" },
+        resOffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Resource offset Y" },
         -- What text 1 says. abbreviated takes secrets; percent runs a 0..100
         -- curve and a rule formatter; valuemax formats the value against the
         -- plain max. All of it works in combat.
@@ -1208,19 +1442,19 @@ Schema.bar = {
         res2Format = { d = "percent", t = "enum", values = READOUT_VALUES, labels = READOUT_LABELS,
             kinds = BK_RES, label = "Text 2 shows", dep = { { field = "resShow" }, { field = "resCount", min = 2 } } },
         res2Size = { d = 12, t = "int", min = 6, max = 32, kinds = BK_RES, label = "Text 2 size", dep = { { field = "resShow" }, { field = "resCount", min = 2 } } },
-        res2Color = { d = { 0.95, 0.97, 1, 1 }, t = "color", kinds = BK_RES, label = "Text 2 color", dep = { { field = "resShow" }, { field = "resCount", min = 2 } } },
+        res2Color = { d = { 0.95, 0.97, 1, 1 }, t = "color", alpha = true, kinds = BK_RES, label = "Text 2 color", dep = { { field = "resShow" }, { field = "resCount", min = 2 } } },
         res2Anchor = { d = "RIGHT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS,
             kinds = BK_RES, label = "Text 2 anchor", dep = { { field = "resShow" }, { field = "resCount", min = 2 } } },
-        res2OffsetX = { d = -3, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Text 2 offset X", dep = { { field = "resShow" }, { field = "resCount", min = 2 } } },
-        res2OffsetY = { d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Text 2 offset Y", dep = { { field = "resShow" }, { field = "resCount", min = 2 } } },
+        res2OffsetX = { adv = "text", d = -3, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Text 2 offset X", dep = { { field = "resShow" }, { field = "resCount", min = 2 } } },
+        res2OffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Text 2 offset Y", dep = { { field = "resShow" }, { field = "resCount", min = 2 } } },
         res3Format = { d = "valuemax", t = "enum", values = READOUT_VALUES, labels = READOUT_LABELS,
             kinds = BK_RES, label = "Text 3 shows", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
         res3Size = { d = 12, t = "int", min = 6, max = 32, kinds = BK_RES, label = "Text 3 size", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
-        res3Color = { d = { 0.95, 0.97, 1, 1 }, t = "color", kinds = BK_RES, label = "Text 3 color", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
+        res3Color = { d = { 0.95, 0.97, 1, 1 }, t = "color", alpha = true, kinds = BK_RES, label = "Text 3 color", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
         res3Anchor = { d = "LEFT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS,
             kinds = BK_RES, label = "Text 3 anchor", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
-        res3OffsetX = { d = 3, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Text 3 offset X", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
-        res3OffsetY = { d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Text 3 offset Y", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
+        res3OffsetX = { adv = "text", d = 3, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Text 3 offset X", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
+        res3OffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Text 3 offset Y", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
         -- Health bars. Health is secret: only SetText, SetFormattedText and
         -- AbbreviateNumbers handle it, never Lua maths.
         hpShow = { d = true, t = "bool", kinds = BK_HP, label = "Health text" },
@@ -1230,31 +1464,31 @@ Schema.bar = {
                 percent = "Percent", none = "Nothing" },
             kinds = BK_HP, label = "Health text shows", dep = { field = "hpShow" } },
         hpSize = { d = 12, t = "int", min = 6, max = 32, kinds = BK_HP, label = "Health text size" },
-        hpOutline = { d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = BK_HP, label = "Health outline" },
-        hpColor = { d = { 0.95, 0.97, 1, 1 }, t = "color", kinds = BK_HP, label = "Health text color" },
+        hpOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = BK_HP, label = "Health outline" },
+        hpColor = { d = { 0.95, 0.97, 1, 1 }, t = "color", alpha = true, kinds = BK_HP, label = "Health text color" },
         hpAnchor = { d = "RIGHT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS, kinds = BK_HP, label = "Health anchor" },
-        hpOffsetX = { d = -3, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Health offset X" },
-        hpOffsetY = { d = 0, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Health offset Y" },
-        hpShadow = { d = false, t = "bool", kinds = BK_HP, label = "Health shadow" },
+        hpOffsetX = { adv = "text", d = -3, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Health offset X" },
+        hpOffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Health offset Y" },
+        hpShadow = { adv = "text", d = false, t = "bool", kinds = BK_HP, label = "Health shadow" },
         -- Texts 2 and 3, as on resource bars.
         hpCount = { inherit = false, d = 1, t = "int", min = 1, max = 3, kinds = BK_HP, label = "Number of health texts",
             dep = { field = "hpShow" } },
         hp2Format = { d = "percent", t = "enum", values = READOUT_VALUES, labels = READOUT_LABELS,
             kinds = BK_HP, label = "Text 2 shows", dep = { { field = "hpShow" }, { field = "hpCount", min = 2 } } },
         hp2Size = { d = 12, t = "int", min = 6, max = 32, kinds = BK_HP, label = "Text 2 size", dep = { { field = "hpShow" }, { field = "hpCount", min = 2 } } },
-        hp2Color = { d = { 0.95, 0.97, 1, 1 }, t = "color", kinds = BK_HP, label = "Text 2 color", dep = { { field = "hpShow" }, { field = "hpCount", min = 2 } } },
+        hp2Color = { d = { 0.95, 0.97, 1, 1 }, t = "color", alpha = true, kinds = BK_HP, label = "Text 2 color", dep = { { field = "hpShow" }, { field = "hpCount", min = 2 } } },
         hp2Anchor = { d = "LEFT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS,
             kinds = BK_HP, label = "Text 2 anchor", dep = { { field = "hpShow" }, { field = "hpCount", min = 2 } } },
-        hp2OffsetX = { d = 3, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Text 2 offset X", dep = { { field = "hpShow" }, { field = "hpCount", min = 2 } } },
-        hp2OffsetY = { d = 0, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Text 2 offset Y", dep = { { field = "hpShow" }, { field = "hpCount", min = 2 } } },
+        hp2OffsetX = { adv = "text", d = 3, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Text 2 offset X", dep = { { field = "hpShow" }, { field = "hpCount", min = 2 } } },
+        hp2OffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Text 2 offset Y", dep = { { field = "hpShow" }, { field = "hpCount", min = 2 } } },
         hp3Format = { d = "valuemax", t = "enum", values = READOUT_VALUES, labels = READOUT_LABELS,
             kinds = BK_HP, label = "Text 3 shows", dep = { { field = "hpShow" }, { field = "hpCount", min = 3 } } },
         hp3Size = { d = 12, t = "int", min = 6, max = 32, kinds = BK_HP, label = "Text 3 size", dep = { { field = "hpShow" }, { field = "hpCount", min = 3 } } },
-        hp3Color = { d = { 0.95, 0.97, 1, 1 }, t = "color", kinds = BK_HP, label = "Text 3 color", dep = { { field = "hpShow" }, { field = "hpCount", min = 3 } } },
+        hp3Color = { d = { 0.95, 0.97, 1, 1 }, t = "color", alpha = true, kinds = BK_HP, label = "Text 3 color", dep = { { field = "hpShow" }, { field = "hpCount", min = 3 } } },
         hp3Anchor = { d = "CENTER", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS,
             kinds = BK_HP, label = "Text 3 anchor", dep = { { field = "hpShow" }, { field = "hpCount", min = 3 } } },
-        hp3OffsetX = { d = 0, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Text 3 offset X", dep = { { field = "hpShow" }, { field = "hpCount", min = 3 } } },
-        hp3OffsetY = { d = 0, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Text 3 offset Y", dep = { { field = "hpShow" }, { field = "hpCount", min = 3 } } },
+        hp3OffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Text 3 offset X", dep = { { field = "hpShow" }, { field = "hpCount", min = 3 } } },
+        hp3OffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Text 3 offset Y", dep = { { field = "hpShow" }, { field = "hpCount", min = 3 } } },
         nameShow = { d = false, t = "bool", label = "Name text" },
         -- Health bars: the unit's live name (secret in instances; SetText takes
         -- it as is) or the bar's own name.
@@ -1278,21 +1512,21 @@ Schema.bar = {
         -- Above the bar at its left end, so it never collides with the stack
         -- text on the bar's left edge.
         nameAnchor = { d = "OUTERTOPLEFT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS, label = "Name anchor" },
-        nameOffsetX = { d = 0, t = "int", min = -100, max = 100, label = "Name offset X" },
-        nameOffsetY = { d = 1, t = "int", min = -100, max = 100, label = "Name offset Y" },
-        nameColor = { d = { 0.7, 0.78, 0.88, 1 }, t = "color", label = "Name color" },
+        nameOffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, label = "Name offset X" },
+        nameOffsetY = { adv = "text", d = 1, t = "int", min = -100, max = 100, label = "Name offset Y" },
+        nameColor = { d = { 0.7, 0.78, 0.88, 1 }, t = "color", alpha = true, label = "Name color" },
         readyShow = { d = false, t = "bool", kinds = BK_CD, label = "Ready text" },
         readyText = { inherit = false, d = "Ready", t = "text", kinds = BK_CD, label = "Ready text string", dep = { field = "readyShow" } },
-        readyColor = { d = { 0.482, 0.847, 0.561, 1 }, t = "color", kinds = BK_CD, label = "Ready color", dep = { field = "readyShow" } },
+        readyColor = { d = { 0.482, 0.847, 0.561, 1 }, t = "color", alpha = true, kinds = BK_CD, label = "Ready color", dep = { field = "readyShow" } },
         -- Per-text outlines; the ready text takes the duration text's styling.
-        durOutline = { d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = BK_DURC, label = "Duration outline" },
-        stkOutline = { d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = BK_CST, label = "Stack outline" },
-        nameOutline = { d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, label = "Name outline" },
+        durOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = BK_DURC, label = "Duration outline" },
+        stkOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = BK_CST, label = "Stack outline" },
+        nameOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, label = "Name outline" },
         -- Per-text drop shadow (black, 1px down and right); ready follows dur.
-        durShadow = { d = false, t = "bool", kinds = BK_DURC, label = "Duration shadow" },
-        stkShadow = { d = false, t = "bool", kinds = BK_CST, label = "Stack shadow" },
-        resShadow = { d = false, t = "bool", kinds = BK_RES, label = "Resource shadow" },
-        nameShadow = { d = false, t = "bool", label = "Name shadow" },
+        durShadow = { adv = "text", d = false, t = "bool", kinds = BK_DURC, label = "Duration shadow" },
+        stkShadow = { adv = "text", d = false, t = "bool", kinds = BK_CST, label = "Stack shadow" },
+        resShadow = { adv = "text", d = false, t = "bool", kinds = BK_RES, label = "Resource shadow" },
+        nameShadow = { adv = "text", d = false, t = "bool", label = "Name shadow" },
     } },
     -- Cooldown bars evaluate durObj curves (useChargeDur fixed at setup); timer
     -- and swing bars compare plain seconds in the GetTime loop; aura duration
@@ -1301,7 +1535,8 @@ Schema.bar = {
         kindModes = { aura = { duration = true } }, fields = {
         threshEnabled = { d = false, t = "bool", label = "Threshold colors" },
         -- Bands in play (of three); the others hide and the runtime skips them.
-        threshCount = { d = 2, t = "int", min = 1, max = 3, label = "Number of thresholds", dep = { field = "threshEnabled" } },
+        -- adds: the panel grows the count with an "Add threshold" button.
+        threshCount = { d = 2, t = "int", min = 1, max = 3, adds = "threshold", label = "Number of thresholds", dep = { field = "threshEnabled" } },
         threshAsSeconds = { d = true, t = "bool", label = "Thresholds in seconds", dep = { field = "threshEnabled" } },
         -- Seconds mode places its points as a fraction of the cooldown, so it
         -- needs the length: this field when set, else the client's
@@ -1316,16 +1551,16 @@ Schema.bar = {
         -- bars default to 1 and 0.5 s.
         thresh2Value = { d = 10, dk = { swing = 1 }, t = "num", min = 0, max = 600, step = 0.1, fmt = "%g",
             label = "Threshold 2 value", dep = { field = "threshEnabled" } },
-        thresh2Color = { d = { 0.95, 0.76, 0.31, 1 }, t = "color", label = "Threshold 2 color", dep = { field = "threshEnabled" } },
+        thresh2Color = { d = { 0.95, 0.76, 0.31, 1 }, t = "color", alpha = true, label = "Threshold 2 color", dep = { field = "threshEnabled" } },
         thresh3Value = { d = 5, dk = { swing = 0.5 }, t = "num", min = 0, max = 600, step = 0.1, fmt = "%g",
             label = "Threshold 3 value",
             dep = { { field = "threshEnabled" }, { field = "threshCount", min = 2 } } },
-        thresh3Color = { d = { 0.95, 0.40, 0.40, 1 }, t = "color", label = "Threshold 3 color",
+        thresh3Color = { d = { 0.95, 0.40, 0.40, 1 }, t = "color", alpha = true, label = "Threshold 3 color",
             dep = { { field = "threshEnabled" }, { field = "threshCount", min = 2 } } },
         thresh4Value = { d = 0, t = "num", min = 0, max = 600, step = 0.1, fmt = "%g",
             label = "Threshold 4 value",
             dep = { { field = "threshEnabled" }, { field = "threshCount", min = 3 } } },
-        thresh4Color = { d = { 1, 1, 1, 1 }, t = "color", label = "Threshold 4 color",
+        thresh4Color = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Threshold 4 color",
             dep = { { field = "threshEnabled" }, { field = "threshCount", min = 3 } } },
         -- The countdown text takes the same bands (C-side formatter on cooldown
         -- and aura bars, plain math on timer bars).
@@ -1349,19 +1584,19 @@ Schema.bar = {
         scEnabled = { d = false, t = "bool", label = "Color by stack count" },
         -- Colour 1 is the fill colour; each extra colour takes over from a
         -- stack count, on a slider from 2 to the bar's maximum (maxFn).
-        scCount = { d = 2, t = "int", min = 1, max = 3, label = "Extra colors (after the fill color)", dep = { field = "scEnabled" } },
+        scCount = { d = 2, t = "int", min = 1, max = 3, adds = "color", label = "Extra colors (after the fill color)", dep = { field = "scEnabled" } },
         sc2Value = { d = 3, t = "int", min = 2, max = 99, maxFn = Schema.MaxStacksFn, label = "Color 2 from stack", dep = { field = "scEnabled" } },
-        sc2Color = { d = { 1, 1, 0, 1 }, t = "color", label = "Color 2", dep = { field = "scEnabled" } },
+        sc2Color = { d = { 1, 1, 0, 1 }, t = "color", alpha = true, label = "Color 2", dep = { field = "scEnabled" } },
         sc3Value = { d = 5, t = "int", min = 2, max = 99, maxFn = Schema.MaxStacksFn, label = "Color 3 from stack",
             dep = { { field = "scEnabled" }, { field = "scCount", min = 2 } } },
-        sc3Color = { d = { 1, 0.5, 0, 1 }, t = "color", label = "Color 3",
+        sc3Color = { d = { 1, 0.5, 0, 1 }, t = "color", alpha = true, label = "Color 3",
             dep = { { field = "scEnabled" }, { field = "scCount", min = 2 } } },
         sc4Value = { d = 7, t = "int", min = 2, max = 99, maxFn = Schema.MaxStacksFn, label = "Color 4 from stack",
             dep = { { field = "scEnabled" }, { field = "scCount", min = 3 } } },
-        sc4Color = { d = { 0, 1, 0, 1 }, t = "color", label = "Color 4",
+        sc4Color = { d = { 0, 1, 0, 1 }, t = "color", alpha = true, label = "Color 4",
             dep = { { field = "scEnabled" }, { field = "scCount", min = 3 } } },
         maxColorEnabled = { d = false, t = "bool", label = "Max stacks color" },
-        maxColor = { d = { 0, 1, 0, 1 }, t = "color", label = "Max stacks color value", dep = { field = "maxColorEnabled" } },
+        maxColor = { d = { 0, 1, 0, 1 }, t = "color", alpha = true, label = "Max stacks color value", dep = { field = "maxColorEnabled" } },
     } },
     -- Primary resource bars: colour by power percent. UnitPowerPercent
     -- evaluates a colour curve client-side, so the possibly secret value never
@@ -1370,24 +1605,24 @@ Schema.bar = {
     powerthresholds = { push = true, kinds = BK_RES, fields = {
         pthEnabled = { d = false, t = "bool", label = "Threshold colors" },
         -- Bands in play, one by default; the runtime reads only these.
-        pthCount = { d = 1, t = "int", min = 1, max = 3, label = "Number of thresholds", dep = { field = "pthEnabled" } },
+        pthCount = { d = 1, t = "int", min = 1, max = 3, adds = "threshold", label = "Number of thresholds", dep = { field = "pthEnabled" } },
         -- Values in power units instead of percent (45 energy, 2000 mana): the
         -- plain cached max converts them, so the same percent curve serves both
         -- and the secret value never reaches Lua.
         pthAbsolute = { d = false, t = "bool", label = "Thresholds in power units", dep = { field = "pthEnabled" } },
         pthDirection = { d = "below", t = "enum", values = { "below", "above" }, label = "Color when power is", dep = { field = "pthEnabled" } },
         pth2Value = { d = 50, t = "int", min = 0, max = 20000, label = "Threshold 2 value", dep = { field = "pthEnabled" } },
-        pth2Color = { d = { 1, 1, 0, 1 }, t = "color", label = "Threshold 2 color", dep = { field = "pthEnabled" } },
+        pth2Color = { d = { 1, 1, 0, 1 }, t = "color", alpha = true, label = "Threshold 2 color", dep = { field = "pthEnabled" } },
         pth3Value = { d = 25, t = "int", min = 0, max = 20000, label = "Threshold 3 value",
             dep = { { field = "pthEnabled" }, { field = "pthCount", min = 2 } } },
-        pth3Color = { d = { 1, 0.5, 0, 1 }, t = "color", label = "Threshold 3 color",
+        pth3Color = { d = { 1, 0.5, 0, 1 }, t = "color", alpha = true, label = "Threshold 3 color",
             dep = { { field = "pthEnabled" }, { field = "pthCount", min = 2 } } },
         pth4Value = { d = 10, t = "int", min = 0, max = 20000, label = "Threshold 4 value",
             dep = { { field = "pthEnabled" }, { field = "pthCount", min = 3 } } },
-        pth4Color = { d = { 1, 0, 0, 1 }, t = "color", label = "Threshold 4 color",
+        pth4Color = { d = { 1, 0, 0, 1 }, t = "color", alpha = true, label = "Threshold 4 color",
             dep = { { field = "pthEnabled" }, { field = "pthCount", min = 3 } } },
         pthFullEnabled = { d = false, t = "bool", label = "Full power color" },
-        pthFullColor = { d = { 0, 1, 0, 1 }, t = "color", label = "Full power color value", dep = { field = "pthFullEnabled" } },
+        pthFullColor = { d = { 0, 1, 0, 1 }, t = "color", alpha = true, label = "Full power color value", dep = { field = "pthFullEnabled" } },
         pthText = { d = false, t = "bool", label = "Color the text too", dep = { field = "pthEnabled" } },
     } },
     -- Health bars: colour by health percent (execute range, low-health
@@ -1395,21 +1630,24 @@ Schema.bar = {
     -- secret value: no compare, one call per health event.
     healththresholds = { push = true, kinds = BK_HP, fields = {
         hpthEnabled = { d = false, t = "bool", label = "Threshold colors" },
-        hpthCount = { d = 1, t = "int", min = 1, max = 3, label = "Number of thresholds", dep = { field = "hpthEnabled" } },
+        hpthCount = { d = 1, t = "int", min = 1, max = 3, adds = "threshold", label = "Number of thresholds", dep = { field = "hpthEnabled" } },
         hpthDirection = { d = "below", t = "enum", values = { "below", "above" },
             labels = { below = "At or below the value", above = "At or above the value" },
             label = "Color when health is", dep = { field = "hpthEnabled" } },
         hpth2Value = { d = 35, t = "int", min = 1, max = 99, label = "First threshold (%)", dep = { field = "hpthEnabled" } },
-        hpth2Color = { d = { 1, 0.55, 0.1, 1 }, t = "color", label = "First threshold color", dep = { field = "hpthEnabled" } },
+        hpth2Color = { d = { 1, 0.55, 0.1, 1 }, t = "color", alpha = true, label = "First threshold color", dep = { field = "hpthEnabled" } },
         hpth3Value = { d = 20, t = "int", min = 1, max = 99, label = "Second threshold (%)",
             dep = { { field = "hpthEnabled" }, { field = "hpthCount", min = 2 } } },
-        hpth3Color = { d = { 1, 0.15, 0.15, 1 }, t = "color", label = "Second threshold color",
+        hpth3Color = { d = { 1, 0.15, 0.15, 1 }, t = "color", alpha = true, label = "Second threshold color",
             dep = { { field = "hpthEnabled" }, { field = "hpthCount", min = 2 } } },
         hpth4Value = { d = 10, t = "int", min = 1, max = 99, label = "Third threshold (%)",
             dep = { { field = "hpthEnabled" }, { field = "hpthCount", min = 3 } } },
-        hpth4Color = { d = { 0.65, 0, 0, 1 }, t = "color", label = "Third threshold color",
+        hpth4Color = { d = { 0.65, 0, 0, 1 }, t = "color", alpha = true, label = "Third threshold color",
             dep = { { field = "hpthEnabled" }, { field = "hpthCount", min = 3 } } },
         hpthText = { d = false, t = "bool", label = "Color the health text too", dep = { field = "hpthEnabled" } },
+        -- The last threshold's band pulses. Health is secret, so the pulse
+        -- sits in a frame whose alpha a step curve sets (HB.PaintPulse).
+        hpthPulse = { d = false, t = "bool", label = "Pulse at the last threshold", dep = { field = "hpthEnabled" } },
     } },
     -- Tick marks, laid out on size or setting changes, never per update. "all":
     -- one per unit while the bar's max is a small integer (stacks, small power
@@ -1446,7 +1684,7 @@ Schema.bar = {
             dep = { { field = "ticksShow" }, { field = "tickSpellIcons" } } },
         tickChannelOnly = { inherit = false, d = false, t = "bool", kinds = BK_CAST, label = "Tick marks on channels only",
             dep = { field = "ticksShow" } },
-        tickColor = { d = { 0, 0, 0, 1 }, t = "color", label = "Tick color", dep = { field = "ticksShow" } },
+        tickColor = { d = { 0, 0, 0, 1 }, t = "color", alpha = true, label = "Tick color", dep = { field = "ticksShow" } },
         -- Min 2: a one-pixel mark at a fractional position (a dragged bar, a
         -- fractional UI scale) can rasterise to nothing.
         tickThickness = { d = 2, t = "int", min = 2, max = 10, label = "Tick thickness", dep = { field = "ticksShow" } },
@@ -1490,14 +1728,14 @@ Schema.bar = {
     -- whether it can be interrupted) reaches only secret-safe sinks.
     cast = { push = true, inherit = true, kinds = BK_CAST, fields = {
         sparkOn = { d = false, t = "bool", label = "Spark" },
-        sparkColor = { d = { 1, 1, 1, 0.9 }, t = "color", label = "Spark color", dep = { field = "sparkOn" } },
+        sparkColor = { d = { 1, 1, 1, 0.9 }, t = "color", alpha = true, label = "Spark color", dep = { field = "sparkOn" } },
         sparkWidth = { d = 3, t = "int", min = 1, max = 16, label = "Spark width", dep = { field = "sparkOn" } },
         holdOn = { d = false, t = "bool", label = "Hold interrupted and failed casts",
             desc = "An interrupted or failed cast stays up for a moment in its color, with the reason as its name. A finished cast always goes at once." },
         holdTime = { d = 0.6, t = "num", min = 0.1, max = 3, step = 0.1, fmt = "%g", label = "Hold for (s)",
             dep = { field = "holdOn" } },
-        holdFailColor = { d = { 1, 0.55, 0.1, 1 }, t = "color", label = "Failed color", dep = { field = "holdOn" } },
-        holdIntColor = { d = { 0.9, 0.2, 0.2, 1 }, t = "color", label = "Interrupted color", dep = { field = "holdOn" } },
+        holdFailColor = { d = { 1, 0.55, 0.1, 1 }, t = "color", alpha = true, label = "Failed color", dep = { field = "holdOn" } },
+        holdIntColor = { d = { 0.9, 0.2, 0.2, 1 }, t = "color", alpha = true, label = "Interrupted color", dep = { field = "holdOn" } },
         fadeOut = { d = 0, t = "num", min = 0, max = 2, step = 0.1, fmt = "%g", label = "Fade out (s)",
             desc = "How long the bar takes to fade away when a cast ends (after the hold, when that is on). 0 = it goes at once." },
         -- Which casts show
@@ -1507,7 +1745,7 @@ Schema.bar = {
         -- Your casts only: the editor offers these on a player castbar.
         latencyOn = { d = false, t = "bool", label = "Latency zone",
             desc = "The end of your cast that your connection's delay covers: start the next cast once the fill reaches it." },
-        latencyColor = { d = { 1, 0.25, 0.2, 0.55 }, t = "color", label = "Latency color", dep = { field = "latencyOn" } },
+        latencyColor = { d = { 1, 0.25, 0.2, 0.55 }, t = "color", alpha = true, label = "Latency color", dep = { field = "latencyOn" } },
         hideBlizzard = { inherit = false, d = false, t = "bool", label = "Hide Blizzard's castbar",
             desc = "Hides the game's own castbar under your character while this castbar is loaded. Turning it off brings the game's castbar back on your next cast." },
     } },
@@ -1543,17 +1781,17 @@ Schema.bar = {
         gcdMode = { d = false, t = "bool", kinds = BK_CD, label = "GCD tracker mode" },
     } },
     frame = { fields = {
-        strata = { d = "MEDIUM", t = "enum",
+        strata = { adv = "frame", d = "MEDIUM", t = "enum",
             values = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG" }, label = "Frame strata" },
-        level = { d = 10, t = "int", min = 1, max = 100, label = "Frame level" },
+        level = { adv = "frame", d = 10, t = "int", min = 1, max = 100, label = "Frame level" },
     } },
     -- Anchoring (Core\AD_Anchor.lua). These field names are shared by every
     -- anchorable family: don't rename them here or add a second set.
     anchor = { fields = {
         anchorEnabled = { d = false, t = "bool", hidden = true, label = "Anchor this bar" },
         -- "nameplate" is the current target's nameplate (bars only).
-        anchorTargetKind = { d = "group", t = "enum", values = { "group", "bar", "layout", "frame", "nameplate", "mouse" },
-            labels = { group = "Group", bar = "Bar", layout = "Layout", frame = "Named frame",
+        anchorTargetKind = { d = "group", t = "enum", values = { "group", "bar", "icon", "layout", "frame", "nameplate", "mouse" },
+            labels = { group = "Group", bar = "Bar", icon = "Icon", layout = "Layout", frame = "Named frame",
                 nameplate = "Target's nameplate", mouse = "Mouse cursor" },
             hidden = true, label = "Anchor to", dep = { field = "anchorEnabled" } },
         anchorTargetId = { d = 0, t = "id", hidden = true, label = "Anchor target" },

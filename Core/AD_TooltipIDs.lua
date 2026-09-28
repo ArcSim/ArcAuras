@@ -15,6 +15,13 @@ local function Enabled()
         and NS.Store.GetSetting("tooltipIDs") ~= false
 end
 
+-- Which parts of the block show (Modules > Tooltip IDs): each is on unless
+-- switched off, so the block reads as it always did until someone picks.
+-- Parts: "Data" (the spell / item / ... ID), "Icons", "CDM", "Talent".
+local function Part(key)
+    return NS.Store.GetSetting("tooltipIDs" .. key) ~= false
+end
+
 local function IsSecret(v)
     return (issecretvalue and issecretvalue(v)) and true or false
 end
@@ -31,6 +38,13 @@ end
 local function AddLine(tooltip, key, value)
     if value == nil then return end
     tooltip:AddDoubleLine(KEY_COLOR .. key .. "|r", value, 1, 1, 1, 1, 1, 1)
+end
+
+-- The block's lines are gathered first, so an id with nothing left to show
+-- (every part switched off) never leaves a bare header.
+local function Push(out, key, value)
+    if value == nil then return end
+    out[#out + 1] = { key, value }
 end
 
 local LABELS
@@ -163,9 +177,13 @@ local function CDMap()
     return map
 end
 
--- "1234 (Essential), 5678 (Buff)" for a spell or aura; an item answers
--- only while it is equipped in a slot the Cooldown Manager tracks
-local function CooldownIDsFor(dtype, id)
+-- One line per category, "200028-200037 (Essential)": Forever gives a ranked
+-- spell an entry per rank, so a joined list ran across the screen. IDs sort,
+-- consecutive runs of three or more fold into a range, and past MAX_RUNS the
+-- rest is counted. An item answers only while it is equipped in a slot the
+-- Cooldown Manager tracks.
+local MAX_RUNS = 4
+local function CooldownLines(dtype, id)
     local D = Enum.TooltipDataType
     local map = CDMap()
     if not map then return nil end
@@ -182,36 +200,74 @@ local function CooldownIDsFor(dtype, id)
         end
     end
     if not list or #list == 0 then return nil end
-    local parts = {}
+    -- the map holds plain ids only (CDMapAdd), so sorting and adding is safe
+    local order, byCat = {}, {}
     for _, e in ipairs(list) do
-        parts[#parts + 1] = tostring(e.id) .. " (" .. e.cat .. ")"
+        local ids = byCat[e.cat]
+        if not ids then
+            ids = {}
+            byCat[e.cat] = ids
+            order[#order + 1] = e.cat
+        end
+        ids[#ids + 1] = e.id
     end
-    return table.concat(parts, ", ")
+    local lines = {}
+    for _, cat in ipairs(order) do
+        local ids = byCat[cat]
+        table.sort(ids)
+        local runs, i = {}, 1
+        while i <= #ids do
+            local j = i
+            while j < #ids and ids[j + 1] == ids[j] + 1 do j = j + 1 end
+            if j - i >= 2 then
+                runs[#runs + 1] = ids[i] .. "-" .. ids[j]
+            else
+                for k = i, j do runs[#runs + 1] = tostring(ids[k]) end
+            end
+            i = j + 1
+        end
+        if #runs > MAX_RUNS then
+            local more = #runs - MAX_RUNS
+            for k = #runs, MAX_RUNS + 1, -1 do runs[k] = nil end
+            runs[#runs + 1] = "+" .. more .. " more"
+        end
+        lines[#lines + 1] = table.concat(runs, ", ") .. " (" .. cat .. ")"
+    end
+    return lines
+end
+
+-- The first category line carries the key; the rest read as its continuation.
+local function PushCooldown(out, dtype, id)
+    local lines = CooldownLines(dtype, id)
+    if not lines then return end
+    for i, l in ipairs(lines) do Push(out, i == 1 and "Cooldown ID" or "", l) end
 end
 
 -- Icon, base icon, shown icon and Cooldown Manager lines. `id` is plain or
 -- nil: a secret must not index the map or reach a lookup. `held` means the id
 -- exists but is secret, so the shown art prints as "Shown icon ID" and the
 -- "Icon ID" line the combat-drop recheck adds later is not a duplicate.
-local function AddExtras(tooltip, dtype, id, owner, held)
-    local icon, original
-    if id ~= nil then icon, original = IconOf(dtype, id) end
-    AddLine(tooltip, "Icon ID", Val(icon))
-    if original ~= nil and icon ~= nil and not IsSecret(original)
-        and not IsSecret(icon) and original ~= icon then
-        AddLine(tooltip, "Base icon ID", Val(original))
-    end
-    local shown = ShownIconOf(owner)
-    if shown ~= nil then
-        if held then
-            AddLine(tooltip, "Shown icon ID", Val(shown))
-        elseif icon == nil then
-            AddLine(tooltip, "Icon ID", Val(shown))
-        elseif not IsSecret(icon) and shown ~= icon then
-            AddLine(tooltip, "Shown icon ID", Val(shown))
+local function AddExtras(out, dtype, id, owner, held)
+    if Part("Icons") then
+        local icon, original
+        if id ~= nil then icon, original = IconOf(dtype, id) end
+        Push(out, "Icon ID", Val(icon))
+        if original ~= nil and icon ~= nil and not IsSecret(original)
+            and not IsSecret(icon) and original ~= icon then
+            Push(out, "Base icon ID", Val(original))
+        end
+        local shown = ShownIconOf(owner)
+        if shown ~= nil then
+            if held then
+                Push(out, "Shown icon ID", Val(shown))
+            elseif icon == nil then
+                Push(out, "Icon ID", Val(shown))
+            elseif not IsSecret(icon) and shown ~= icon then
+                Push(out, "Shown icon ID", Val(shown))
+            end
         end
     end
-    if id ~= nil then AddLine(tooltip, "Cooldown ID", CooldownIDsFor(dtype, id)) end
+    if id ~= nil and Part("CDM") then PushCooldown(out, dtype, id) end
 end
 
 -- Talent buttons carry their node IDs as plain fields, on the button or a
@@ -236,6 +292,11 @@ end
 
 function T.Append(tooltip, data)
     if not Enabled() then return end
+    -- "Only while holding Shift": read as the tooltip builds
+    if NS.Store.GetSetting("tooltipIDsShift") == true
+        and not (IsShiftKeyDown and IsShiftKeyDown()) then
+        return
+    end
     if not tooltip or not tooltip.GetOwner then return end
     if tooltip.IsForbidden and tooltip:IsForbidden() then return end
     BuildLabels()
@@ -255,23 +316,34 @@ function T.Append(tooltip, data)
     if tooltip._adIDDone and tooltip._adIDGeneric == dedup then return end
     tooltip._adIDGeneric = dedup
     tooltip._adIDDone = true
-    tooltip:AddLine(" ")
-    tooltip:AddLine(HEADER)
-    if label and hasID then
-        AddLine(tooltip, label, Val(id))
-        -- The combat-drop recheck rewrites this line in place.
-        if idSecret then
-            tooltip._adIDSecretLine = tooltip:NumLines()
-            T._pending = T._pending or setmetatable({}, { __mode = "k" })
-            T._pending[tooltip] = true
-        end
+    local out, idIndex = {}, nil
+    if label and hasID and Part("Data") then
+        Push(out, label, Val(id))
+        idIndex = #out
     end
     -- A secret id goes in as nil; the combat-drop recheck adds its lines.
-    AddExtras(tooltip, data and data.type, (label and hasID and not idSecret) and id or nil,
+    AddExtras(out, data and data.type, (label and hasID and not idSecret) and id or nil,
         owner, label ~= nil and idSecret)
-    AddLine(tooltip, "Node ID", Val(nodeID))
-    AddLine(tooltip, "Entry ID", Val(entryID))
-    AddLine(tooltip, "Definition ID", Val(defID))
+    if Part("Talent") then
+        Push(out, "Node ID", Val(nodeID))
+        Push(out, "Entry ID", Val(entryID))
+        Push(out, "Definition ID", Val(defID))
+    end
+    if #out == 0 then return end
+    tooltip:AddLine(" ")
+    tooltip:AddLine(HEADER)
+    local idLine
+    for i, l in ipairs(out) do
+        AddLine(tooltip, l[1], l[2])
+        if i == idIndex then idLine = tooltip:NumLines() end
+    end
+    -- The combat-drop recheck rewrites the id line in place (0 = the id line
+    -- is switched off) and adds the lines the secret held back.
+    if label and idSecret and (idLine or Part("Icons") or Part("CDM")) then
+        tooltip._adIDSecretLine = idLine or 0
+        T._pending = T._pending or setmetatable({}, { __mode = "k" })
+        T._pending[tooltip] = true
+    end
     tooltip:Show()
 end
 
@@ -313,18 +385,27 @@ local function RecheckOne(tooltip)
     local id = fresh and fresh.id
     if IsSecret(id) then return false end
     local text = Val(id)
-    local name = tooltip.GetName and tooltip:GetName()
-    local fs = text and name and _G[name .. "TextRight" .. line]
-    if fs and fs.SetText then
-        fs:SetText(text)
+    local ok = text ~= nil
+    if ok and line > 0 then
+        local name = tooltip.GetName and tooltip:GetName()
+        local fs = name and _G[name .. "TextRight" .. line]
+        ok = fs ~= nil and fs.SetText ~= nil
+        if ok then fs:SetText(text) end
+    end
+    if ok then
         -- The lines the secret id held back; the shown art printed already.
-        local icon, original = IconOf(fresh.type, id)
-        AddLine(tooltip, "Icon ID", Val(icon))
-        if original ~= nil and icon ~= nil and not IsSecret(original)
-            and not IsSecret(icon) and original ~= icon then
-            AddLine(tooltip, "Base icon ID", Val(original))
+        if Part("Icons") then
+            local icon, original = IconOf(fresh.type, id)
+            AddLine(tooltip, "Icon ID", Val(icon))
+            if original ~= nil and icon ~= nil and not IsSecret(original)
+                and not IsSecret(icon) and original ~= icon then
+                AddLine(tooltip, "Base icon ID", Val(original))
+            end
         end
-        AddLine(tooltip, "Cooldown ID", CooldownIDsFor(fresh.type, id))
+        if Part("CDM") then
+            local lines = CooldownLines(fresh.type, id)
+            for i, l in ipairs(lines or {}) do AddLine(tooltip, i == 1 and "Cooldown ID" or "", l) end
+        end
         tooltip:Show()   -- re-fit the width to the longer value
     end
     tooltip._adIDSecretLine = nil

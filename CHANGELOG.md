@@ -1,5 +1,43 @@
 # Arc Auras
 
+## 1.6.0
+
+Reminder groups, pet and ammo warnings, frame picking and a clearer editor.
+
+### New Features
+
+- **Reminder groups** - Spells, items and weapon enchants pulse in the middle of your screen when they're ready, with sounds, text to speech and animations.
+- **Reminder triggers** - A reminder can fire the moment a spell becomes usable, even while it's on cooldown, and stay on screen until you cast it.
+- **Warning glow** - An icon can glow while your ammo runs low, your pet's health is low or your pet isn't happy.
+- **Ammo count colors** - The ammo count changes color at up to three thresholds you set.
+- **Pet and ammo conditions** - Load conditions for your pet's happiness and for low ammo.
+- **Sound when usable** - A spell icon can play a sound the moment it can be cast.
+- **Pick a frame** - Anchor any bar, group or icon to a UI frame by clicking it on screen or choosing a common one from a list. Bars and groups can also anchor to a free icon.
+- **Missing text** - An aura icon's label can show only while the aura is missing.
+
+### Improvements
+
+- **A clearer editor** - Tabs by what you want to happen (Show & Hide, Glows, Sounds), a table of how an icon looks in each state, and fine-tuning that folds away until you need it.
+- **Modules page** - Button Press Highlight, Tooltip IDs and Auto-rank now live on their own page.
+- **New Layout** - Pick a starting point from template cards, an empty layout or an import.
+- **Color opacity** - Color pickers set opacity too, where it applies.
+- **Thresholds** - Add or remove thresholds with a button instead of a slider.
+- **Health bars** - Can pulse at their last threshold, for example your pet under 20%.
+- **Tooltip IDs** - Choose which IDs show, or show them only while holding Shift.
+- **Sound lists** - Each sound says where it comes from: Arc Auras, the game or another addon.
+- **Talent picker** - Hovering a talent shows its full description, and every icon is fully visible.
+- **Edit buttons** - A bar's Edit button sits small inside its corner, and whatever you're editing reads Editing in yellow.
+- **Groups** - Choose the background behind a group while you edit it. The Add window's Icon Group tab is now just Group.
+
+### Bug Fixes
+
+- **Hide when ready** - Cooldown bars set to hide when ready now hide right after a reload.
+- **Combo points** - The bar no longer misses a point until you gain the next one.
+- **Tooltip IDs** - Spells with many Cooldown Manager entries no longer stretch the tooltip across the screen.
+- **Shared sounds** - Sounds from your other addons now show in every sound list.
+- **Talent picker** - The three trees fill the window evenly, and their backgrounds fill each panel.
+- **Scrolling** - Making the window bigger no longer leaves a page scrolled down with no way back up.
+
 ## 1.5.0
 
 Weapon enchants, totems by spell, a range bar, smarter swing bars, more aura glows and fewer tabs.

@@ -294,8 +294,10 @@ function RB.SetBandColor(rec, i, c)
     local cur = RB.BandsOf(rec)[i]
     if not (cur and type(c) == "table") then return end
     local o = cur.color or GREY
-    if o[1] == c[1] and o[2] == c[2] and o[3] == c[3] then return end
-    RB.OwnBands(rec)[i].color = { c[1], c[2], c[3], c[4] or o[4] or 1 }
+    -- the opacity slider's alpha counts: an opacity-only edit is a change
+    local a = c[4] or o[4] or 1
+    if o[1] == c[1] and o[2] == c[2] and o[3] == c[3] and (o[4] or 1) == a then return end
+    RB.OwnBands(rec)[i].color = { c[1], c[2], c[3], a }
     Dirty(rec)
 end
 

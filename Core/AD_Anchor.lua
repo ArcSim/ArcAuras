@@ -1,8 +1,9 @@
--- Anchoring: bars, groups and free icons pin to a group, bar, layout, named
--- frame or the cursor, and bars to the target's nameplate. An `anchor` section must use
+-- Anchoring: bars, groups and free icons pin to a group, bar, free icon, layout,
+-- named frame or the cursor, and bars to the target's nameplate. An `anchor` section must use
 -- these fields: anchorEnabled, anchorTargetKind/Id/Frame, anchorSrcPoint,
 -- anchorDstPoint, anchorOffsetX/Y, anchorMatchWidth, anchorMatchWidthAdjust
--- (bars also anchorMatchHeight, anchorMatchHeightAdjust).
+-- (bars also anchorMatchHeight, anchorMatchHeightAdjust). The values of a family's
+-- anchorTargetKind are the kinds its records may pick, here and in the panel.
 
 local ADDON, NS = ...
 local Store = NS.Store
@@ -26,15 +27,34 @@ end
 -- the kinds that name no record: nothing to look up by id
 local NO_ID = { frame = true, nameplate = true, mouse = true }
 
+-- May this record pick that target kind? Its family's schema list answers, so
+-- the pick list, the setter and the pin can never disagree.
+local allowSets = {}   -- family -> { [kind] = true }
+function Anchor.Allows(rec, kind)
+    local fam = rec and Store.FamilyOf(rec)
+    if not fam then return false end
+    local set = allowSets[fam]
+    if not set then
+        set = {}
+        local sec = NS.Schema and NS.Schema[fam] and NS.Schema[fam].anchor
+        local def = sec and sec.fields and sec.fields.anchorTargetKind
+        for _, v in ipairs((def and def.values) or {}) do set[v] = true end
+        allowSets[fam] = set
+    end
+    return set[kind] == true
+end
+
 function Anchor.IsEnabled(rec)
     if rec == nil or R(rec, "anchorEnabled") ~= true then return false end
     -- A group member's cell places it: an anchor it kept from being free
     -- must not pull it out of the group.
     if rec.type == "icon" and rec.groupId ~= nil then return false end
+    local kind = R(rec, "anchorTargetKind") or "group"
+    -- A kind the family does not offer (an import from elsewhere) places free.
+    if not Anchor.Allows(rec, kind) then return false end
     -- Enabled with nothing picked (target id 0 on a record kind) is a half
     -- state a stale save can carry. It places free, so it must read as not
     -- anchored everywhere.
-    local kind = R(rec, "anchorTargetKind") or "group"
     if not NO_ID[kind] and (R(rec, "anchorTargetId") or 0) == 0 then return false end
     return true
 end
@@ -52,10 +72,6 @@ end
 local function IsMouseKind(rec)
     return (R(rec, "anchorTargetKind") or "group") == "mouse"
 end
-
--- the kinds that follow the cursor: groups, bars and free icons (a layout is
--- only ever a target)
-local MOUSE_TYPES = { bar = true, group = true, icon = true }
 
 -- a plain number, or nil when the game keeps it secret
 local function Plain(v)
@@ -210,6 +226,42 @@ function Anchor.CreatesCycle(startId, targetRec)
     return cursor ~= nil
 end
 
+-- The game names the plates it makes NamePlate1, NamePlate2 ... under
+-- NamePlateDriverFrame.
+local function IsPlateName(n)
+    return n == "NamePlateDriverFrame" or n:match("^NamePlate%d+$") ~= nil
+end
+
+-- Why a named frame cannot be a target, or nil when it can. A frame pinned to
+-- a secret position reads secret sizes itself (GetSize is secret whenever the
+-- anchoring is), and our glows, drags and text scaling read them. A plate, or
+-- anything inside one, can turn secret at any time, so it is refused by name
+-- up the parents. A forbidden frame answers only IsForbidden, so that is asked
+-- first, and every other read can be secret.
+local function Secret(v) return issecretvalue ~= nil and issecretvalue(v) end
+function Anchor.FrameProblem(t)
+    if type(t) ~= "table" or not t.GetObjectType then return "missing" end
+    local f, depth = t, 0
+    while f ~= nil and depth < 32 do
+        depth = depth + 1
+        if f.IsForbidden then
+            local fb = f:IsForbidden()
+            if Secret(fb) or fb then return "forbidden" end
+        end
+        local n = f.GetName and f:GetName()
+        if type(n) == "string" and not Secret(n) and IsPlateName(n) then return "plate" end
+        if f == UIParent or f == WorldFrame then break end
+        local p = f.GetParent and f:GetParent()
+        if Secret(p) then return "secret" end
+        f = p
+    end
+    if t.IsAnchoringSecret then
+        local s = t:IsAnchoringSecret()
+        if Secret(s) or s then return "secret" end
+    end
+    return nil
+end
+
 -- the frame a source should pin to, or nil to fall back to free placement
 function Anchor.ResolveTarget(rec)
     if not Anchor.IsEnabled(rec) then return nil end
@@ -220,18 +272,14 @@ function Anchor.ResolveTarget(rec)
         if type(name) ~= "string" or name == "" then return nil end
         local t = _G[name]
         -- a forbidden frame would taint us the moment we anchor to it
-        if type(t) == "table" and t.GetObjectType
-            and not (t.IsForbidden and t:IsForbidden())
-            and t.IsShown and t:IsShown() then
-            return t
-        end
-        return nil
+        if Anchor.FrameProblem(t) then return nil end
+        -- an engine-owned frame's shown state can be secret
+        local shown = t.IsShown and t:IsShown()
+        if Secret(shown) or not shown then return nil end
+        return t
     end
     if kind == "nameplate" then return Anchor.TargetPlate() end
-    if kind == "mouse" then
-        if not MOUSE_TYPES[rec.type] then return nil end
-        return EnsureMouseProxy()
-    end
+    if kind == "mouse" then return EnsureMouseProxy() end
 
     local tid = R(rec, "anchorTargetId") or 0
     if tid == 0 or tid == rec.id then return nil end
@@ -401,7 +449,7 @@ function Anchor.Apply(rec, frame)
         UnpinMouse(frame)
         return ApplyPlate(rec, frame)
     end
-    if Anchor.IsEnabled(rec) and IsMouseKind(rec) and MOUSE_TYPES[rec.type] then
+    if Anchor.IsEnabled(rec) and IsMouseKind(rec) then
         frame._adPlatePin = nil
         if frame._adPlateHid then
             frame._adPlateHid = nil
@@ -495,11 +543,13 @@ end
 
 local KIND_LABEL = { layout = "Layout", group = "Group", bar = "Bar", icon = "Icon" }
 
+-- A grouped icon is never a target: its group's cell places it.
 function Anchor.TargetChoices(rec, kind)
     local out = {}
     if not (rec and Store.EachRecord) then return out end
     Store.EachRecord(function(id, other)
         if id ~= rec.id and other.type == kind
+            and not (kind == "icon" and other.groupId ~= nil)
             and not Anchor.CreatesCycle(rec.id, other) then
             out[#out + 1] = { value = id,
                 text = other.name or ((KIND_LABEL[kind] or "Record") .. " " .. id) }
@@ -510,32 +560,39 @@ function Anchor.TargetChoices(rec, kind)
 end
 
 -- One-pick target selection: an anchor is one choice, not enable, kind and
--- target on three rows. The bar and group panels both use these, so they
--- cannot drift apart.
+-- target on three rows. Every anchor panel lists and writes picks through
+-- these, so no family can drift from another.
 
-local PREFIX = { group = "Group", bar = "Bar", layout = "Layout" }
-local PICK_ORDER = { "group", "bar", "layout" }
+local PREFIX = { group = "Group", bar = "Bar", icon = "Icon", layout = "Layout" }
+local PICK_ORDER = { "group", "bar", "icon", "layout" }
+-- The picks that name no record, in list order. Only bars offer the plate: a
+-- bar's runtime is guarded against a secret rect, and an icon's glows and
+-- text scaling are not.
+local SPECIAL_PICKS = {
+    { value = "nameplate", text = "Target's nameplate" },
+    { value = "mouse", text = "Mouse cursor" },
+}
 
 -- everything this record may legally anchor to, in one flat list
 function Anchor.PickList(rec)
     local items = { { value = "none", text = "None (free position)" } }
-    -- Bars only: a bar's runtime is guarded against a secret rect; a group's
-    -- edit-time drop and snap math is not.
-    if rec and rec.type == "bar" then
-        items[#items + 1] = { value = "nameplate", text = "Target's nameplate" }
-    end
-    if rec and MOUSE_TYPES[rec.type] then
-        items[#items + 1] = { value = "mouse", text = "Mouse cursor" }
+    if not rec then return items end
+    for _, s in ipairs(SPECIAL_PICKS) do
+        if Anchor.Allows(rec, s.value) then items[#items + 1] = { value = s.value, text = s.text } end
     end
     for _, kind in ipairs(PICK_ORDER) do
-        for _, it in ipairs(Anchor.TargetChoices(rec, kind)) do
-            items[#items + 1] = {
-                value = kind .. ":" .. it.value,
-                text = (PREFIX[kind] or "?") .. ":  " .. (it.text or ""),
-            }
+        if Anchor.Allows(rec, kind) then
+            for _, it in ipairs(Anchor.TargetChoices(rec, kind)) do
+                items[#items + 1] = {
+                    value = kind .. ":" .. it.value,
+                    text = (PREFIX[kind] or "?") .. ":  " .. (it.text or ""),
+                }
+            end
         end
     end
-    items[#items + 1] = { value = "frame", text = "Named frame..." }
+    if Anchor.Allows(rec, "frame") then
+        items[#items + 1] = { value = "frame", text = "Named frame..." }
+    end
     return items
 end
 
@@ -555,14 +612,14 @@ function Anchor.PickSet(rec, v)
         Store.SetOverride(rec, "anchor", "anchorEnabled", false)
         return
     end
-    if v == "frame" or (v == "nameplate" and rec.type == "bar")
-        or (v == "mouse" and MOUSE_TYPES[rec.type]) then
+    if NO_ID[v] then
+        if not Anchor.Allows(rec, v) then return end
         Store.SetOverride(rec, "anchor", "anchorEnabled", true)
         Store.SetOverride(rec, "anchor", "anchorTargetKind", v)
         return
     end
     local kind, id = tostring(v):match("^(%a+):(%d+)$")
-    if not kind or not PREFIX[kind] then return end
+    if not kind or not PREFIX[kind] or not Anchor.Allows(rec, kind) then return end
     Store.SetOverride(rec, "anchor", "anchorEnabled", true)
     Store.SetOverride(rec, "anchor", "anchorTargetKind", kind)
     Store.SetOverride(rec, "anchor", "anchorTargetId", tonumber(id))
@@ -622,8 +679,12 @@ function Anchor.DescribePick(rec)
         if type(n) ~= "string" or n == "" then
             return "Named frame: no name entered yet, so it stays free."
         end
-        return (_G[n] ~= nil) and ("Anchored to the frame " .. n .. ".")
-            or ("No frame called " .. n .. " exists, so it stays free.")
+        local why = Anchor.FrameProblem(_G[n])
+        if why == "missing" then return "No frame called " .. n .. " exists, so it stays free." end
+        if why == "plate" then return n .. " is a nameplate, so it stays free." end
+        if why then return "The game protects " .. n .. ", so it stays free." end
+        if Anchor.ResolveTarget(rec) == nil then return n .. " is hidden now, so it stays free." end
+        return "Anchored to the frame " .. n .. "."
     end
     local t = Store.Get(R(rec, "anchorTargetId") or 0)
     if not t then return "That anchor target no longer exists, so it stays free." end
@@ -661,13 +722,4 @@ function Anchor.PlateReport()
     end
     out[#out + 1] = "bars set to the target's nameplate: " .. n
     return out
-end
-
-function Anchor.KindChoices()
-    return {
-        { value = "group",  text = "Icon group" },
-        { value = "bar",    text = "Another bar" },
-        { value = "layout", text = "Layout" },
-        { value = "frame",  text = "Named frame" },
-    }
 end

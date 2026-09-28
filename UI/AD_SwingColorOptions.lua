@@ -1,4 +1,4 @@
--- AD_SwingColorOptions: a swing bar's ability colour rules, in the Ability Colors block of the bar editor's Color Changes tab.
+-- AD_SwingColorOptions: a swing bar's ability colour rules, in the Ability Colors block of the bar editor's Appearance > Fill & Colors.
 -- AD_Options calls Options.SwingColorRows while it builds the bar pane; every edit goes through NS.Bars.SwingColor.
 local ADDON, NS = ...
 local Options = NS.Options
@@ -100,7 +100,7 @@ function Options.SwingColorRows(pg, ctx, vis, owner)
                 return c
             end,
             function(c) Edit(function(S, r) S.SetRule(r, i, "color", c) end) end,
-            ruleVis)
+            ruleVis, { alpha = true })
         AT.RowActions(pg, {
             { label = "Move up", w = 80, quiet = true,
               onClick = function() Edit(function(S, r) S.MoveRule(r, i, -1) end) end,

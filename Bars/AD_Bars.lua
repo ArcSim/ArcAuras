@@ -1179,11 +1179,13 @@ local function BuildCooldownCurve(entry)
     if #bands == 0 then return nil, nil end
     table.sort(bands, function(a, b) return a.value > b.value end)
 
+    -- the alphas too, or an opacity-only edit keeps the old curve
     local hash = (asSec and "s" or "p") .. string.format("%.1f", ref)
     for _, b in ipairs(bands) do
-        hash = hash .. string.format("|%g:%.2f,%.2f,%.2f", b.value, b.color[1], b.color[2], b.color[3])
+        hash = hash .. string.format("|%g:%.2f,%.2f,%.2f,%.2f", b.value, b.color[1], b.color[2], b.color[3],
+            b.color[4] or 1)
     end
-    hash = hash .. string.format("|%.2f,%.2f,%.2f", base[1], base[2], base[3])
+    hash = hash .. string.format("|%.2f,%.2f,%.2f,%.2f", base[1], base[2], base[3], base[4] or 1)
     if entry.curve and entry.curveHash == hash then return entry.curve, hash end
 
     local curve = C_CurveUtil.CreateColorCurve()
@@ -1269,8 +1271,9 @@ local function StartColorTicker(entry)
         if durObj then
             local col = durObj:EvaluateRemainingPercent(entry.curve)
             if col then
+                -- all four: a three-value write resets the texture's alpha to 1
                 for i = 1, #targets do
-                    targets[i]:SetVertexColor(col:GetRGB())
+                    targets[i]:SetVertexColor(col:GetRGBA())
                 end
             end
         end
@@ -1818,6 +1821,10 @@ local function CooldownRefresh(entry)
     end
 
     CooldownPushState(entry)
+    -- A first ready read waits for a second before Hide when ready hides the
+    -- bar. A spell that stays ready sends no further event (a reload, or a
+    -- cooldown ending quietly), so the second read is scheduled here.
+    if entry.pendingReady and not entry.stateHidden then CooldownSchedulePostGCD(entry) end
 end
 
 -- Timer runtime: plain GetTime math; OnUpdate only while running
@@ -1916,7 +1923,7 @@ local function RunTimedFill(entry, duration, onDone)
                         break
                     end
                 end
-                bar:SetStatusBarColor(col[1], col[2], col[3], 1)
+                bar:SetStatusBarColor(col[1], col[2], col[3], col[4] or 1)
                 if pt.text then
                     local fs = shell.texts.dur
                     if fs then
@@ -1983,9 +1990,11 @@ local POWER_ALL = {
     [1] = { token = "RAGE",        name = "Rage",        color = { 1, 0, 0 },      frequent = true, classic = true },
     [2] = { token = "FOCUS",       name = "Focus",       color = { 1, 0.5, 0.25 }, frequent = true },
     [3] = { token = "ENERGY",      name = "Energy",      color = { 1, 1, 0 },      frequent = true, classic = true },
-    -- Combo points: Blizzard's own colour; UNIT_POWER_UPDATE carries them
-    -- (token COMBO_POINTS). Target-bound on Forever, see ResourceCurrent.
-    [4] = { token = "COMBO_POINTS", name = "Combo Points", color = { 1, 0.96, 0.41 }, classic = true },
+    -- Combo points: Blizzard's own colour. They ride UNIT_POWER_FREQUENT
+    -- (token COMBO_POINTS) as Blizzard's combo frame does: the throttled
+    -- UNIT_POWER_UPDATE could leave a point unshown until the next one.
+    -- Target-bound on Forever, see ResourceCurrent.
+    [4] = { token = "COMBO_POINTS", name = "Combo Points", color = { 1, 0.96, 0.41 }, frequent = true, classic = true },
     [6] = { token = "RUNIC_POWER", name = "Runic Power", color = { 0, 0.82, 1 },   frequent = true },
 }
 Bars.POWER_ALL = POWER_ALL
@@ -2348,8 +2357,9 @@ local function ResourceCurve(entry)
     if not (C_CurveUtil and C_CurveUtil.CreateColorCurve and CreateColor and UnitPowerPercent) then
         return nil
     end
-    local br, bg, bb = PowerColorOf(rec, entry.powerType)
-    local base = { br, bg, bb, 1 }
+    -- the base keeps its alpha: a Fill or Point colour can be see-through
+    local br, bg, bb, ba = PowerColorOf(rec, entry.powerType)
+    local base = { br, bg, bb, ba or 1 }
     local below = (R(rec, "powerthresholds", "pthDirection") or "below") ~= "above"
     local bands = {}
     -- Percent by default; "power units" convert through the plain cached max,
@@ -2374,12 +2384,16 @@ local function ResourceCurve(entry)
         bands = dd
     end
     local full = fullOn and (R(rec, "powerthresholds", "pthFullColor") or { 0, 1, 0, 1 }) or nil
+    -- the alphas too, or an opacity-only edit keeps the old curve
     local hash = (below and "b" or "a") .. (absolute and ("u" .. tostring(domain)) or "")
-        .. string.format("|%.2f,%.2f,%.2f", base[1], base[2], base[3])
+        .. string.format("|%.2f,%.2f,%.2f,%.2f", base[1], base[2], base[3], base[4])
     for _, b in ipairs(bands) do
-        hash = hash .. string.format("|%.3f:%.2f,%.2f,%.2f", b.p, b.color[1], b.color[2], b.color[3])
+        hash = hash .. string.format("|%.3f:%.2f,%.2f,%.2f,%.2f", b.p, b.color[1], b.color[2], b.color[3],
+            b.color[4] or 1)
     end
-    if full then hash = hash .. string.format("|F%.2f,%.2f,%.2f", full[1], full[2], full[3]) end
+    if full then
+        hash = hash .. string.format("|F%.2f,%.2f,%.2f,%.2f", full[1], full[2], full[3], full[4] or 1)
+    end
     if entry.pthCurve and entry.pthHash == hash then return entry.pthCurve end
 
     local EPS = 0.0001
@@ -2415,10 +2429,10 @@ local function ResourceColor(entry)
     local curve = ResourceCurve(entry)
     if curve then
         local col = UnitPowerPercent("player", entry.powerType, false, curve)
-        if col ~= nil and type(col) ~= "number" and col.GetRGB then
-            local cr, cg, cb = col:GetRGB()
-            if cr ~= nil and not (issecretvalue and issecretvalue(cr)) then
-                r, g, b, a = cr, cg, cb, 1
+        if col ~= nil and type(col) ~= "number" and col.GetRGBA then
+            local cr, cg, cb, ca = col:GetRGBA()
+            if cr ~= nil and not (issecretvalue and (issecretvalue(cr) or issecretvalue(ca))) then
+                r, g, b, a = cr, cg, cb, ca or 1
             end
         end
     end
@@ -2552,12 +2566,13 @@ local function EnsurePip(entry, i)
 end
 
 -- the colour of pip i of n: the max colour on the last cell, else the
--- position band it falls in (stack colours), else this refresh's bar colour
-local function PipColor(entry, i, n, r, g, b)
+-- position band it falls in (stack colours), else this refresh's bar colour;
+-- each with its alpha, which the lit cell draws
+local function PipColor(entry, i, n, r, g, b, a)
     local rec = entry.rec
     if i == n and R(rec, "stackcolors", "maxColorEnabled") == true then
         local c = R(rec, "stackcolors", "maxColor") or { 0, 1, 0, 1 }
-        return c[1], c[2], c[3]
+        return c[1], c[2], c[3], c[4] or 1
     end
     if R(rec, "stackcolors", "scEnabled") == true then
         local bands = StackBands(rec, n)
@@ -2565,26 +2580,27 @@ local function PipColor(entry, i, n, r, g, b)
             for k = #bands, 1, -1 do
                 if i >= bands[k].from then
                     local c = bands[k].color
-                    return c[1], c[2], c[3]
+                    return c[1], c[2], c[3], c[4] or 1
                 end
             end
         end
     end
-    return r, g, b
+    return r, g, b, a or 1
 end
 
--- Colours only: lit or unlit comes from the value fed to each lit bar.
+-- Colours only: lit or unlit comes from the value fed to each lit bar. The
+-- dim copy keeps the Empty pip tint as its own alpha.
 local function PaintPips(entry)
     local n = entry.pipCount or 0
     if n == 0 then return end
-    local r, g, b = entry.cr, entry.cg, entry.cb
-    if not r then r, g, b = PowerColorOf(entry.rec, entry.powerType) end
+    local r, g, b, a = entry.cr, entry.cg, entry.cb, entry.ca
+    if not r then r, g, b, a = PowerColorOf(entry.rec, entry.powerType) end
     local tint = R(entry.rec, "resource", "pipEmptyTint")
     if tint == nil then tint = 0 end
     for i = 1, n do
         local p = entry.pips[i]
-        local pr, pg, pb = PipColor(entry, i, n, r, g, b)
-        p.litBar:SetStatusBarColor(pr, pg, pb, 1)
+        local pr, pg, pb, pa = PipColor(entry, i, n, r, g, b, a)
+        p.litBar:SetStatusBarColor(pr, pg, pb, pa)
         p.dim:SetVertexColor(pr, pg, pb, tint)
     end
 end
@@ -2807,8 +2823,9 @@ local function ResourceRefresh(entry)
     end
 
     local r, g, b, a, curved = ResourceColor(entry)
-    if entry.cr ~= r or entry.cg ~= g or entry.cb ~= b then
-        entry.cr, entry.cg, entry.cb = r, g, b
+    if entry.cr ~= r or entry.cg ~= g or entry.cb ~= b or entry.ca ~= a then
+        -- the alpha rides along: the pips paint from this cache
+        entry.cr, entry.cg, entry.cb, entry.ca = r, g, b, a
         shell.fill:SetStatusBarColor(r, g, b, a)
         if entry.pipsOn then PaintPips(entry) end
         -- "colour the text too" rides the same answer, on every readout;
@@ -3105,20 +3122,22 @@ function HB.ReactionColor(unit)
     return nil
 end
 
--- the gradient: empty -> half -> full, plain colours, cached by recipe
+-- the gradient: empty -> half -> full, plain colours, cached by recipe. The
+-- colours' alphas ride the points and the recipe, so opacity edits show.
 function HB.GradientCurve(entry)
     local rec = entry.rec
     if not (C_CurveUtil and C_CurveUtil.CreateColorCurve and CreateColor) then return nil end
     local lo = R(rec, "fill", "gradLowColor") or { 1, 0.15, 0.15, 1 }
     local mid = R(rec, "fill", "gradMidColor") or { 1, 0.82, 0.1, 1 }
     local hi = R(rec, "fill", "gradHighColor") or { 0.2, 0.85, 0.3, 1 }
-    local hash = string.format("%.3f,%.3f,%.3f|%.3f,%.3f,%.3f|%.3f,%.3f,%.3f",
-        lo[1], lo[2], lo[3], mid[1], mid[2], mid[3], hi[1], hi[2], hi[3])
+    local hash = string.format("%.3f,%.3f,%.3f,%.3f|%.3f,%.3f,%.3f,%.3f|%.3f,%.3f,%.3f,%.3f",
+        lo[1], lo[2], lo[3], lo[4] or 1, mid[1], mid[2], mid[3], mid[4] or 1,
+        hi[1], hi[2], hi[3], hi[4] or 1)
     if entry.hpGrad and entry.hpGradHash == hash then return entry.hpGrad end
     local c = C_CurveUtil.CreateColorCurve()
-    c:AddPoint(0, CreateColor(lo[1], lo[2], lo[3], 1))
-    c:AddPoint(0.5, CreateColor(mid[1], mid[2], mid[3], 1))
-    c:AddPoint(1, CreateColor(hi[1], hi[2], hi[3], 1))
+    c:AddPoint(0, CreateColor(lo[1], lo[2], lo[3], lo[4] or 1))
+    c:AddPoint(0.5, CreateColor(mid[1], mid[2], mid[3], mid[4] or 1))
+    c:AddPoint(1, CreateColor(hi[1], hi[2], hi[3], hi[4] or 1))
     entry.hpGrad, entry.hpGradHash = c, hash
     return c
 end
@@ -3164,7 +3183,10 @@ function HB.PaintBase(entry, unit, preview)
             col = HB.ReactionColor(unit)
         end
     end
-    if col and col.GetRGB then
+    if col and mode == "gradient" and col.GetRGBA then
+        -- all four: the gradient colours' own alphas
+        fill:SetStatusBarColor(col:GetRGBA())
+    elseif col and col.GetRGB then
         fill:SetStatusBarColor(col:GetRGB())
     else
         fill:SetStatusBarColor(BarColorOf(rec))
@@ -3192,6 +3214,23 @@ function HB.Bands(rec)
     return dd
 end
 
+-- One band's step curve: `on` while the band holds, 0 elsewhere.
+function HB.StepCurve(p, below, on)
+    local c = C_CurveUtil.CreateCurve()
+    if below then
+        c:AddPoint(0, on)
+        c:AddPoint(p, on)
+        c:AddPoint(p + HB.EPS, 0)
+        c:AddPoint(1, 0)
+    else
+        c:AddPoint(0, 0)
+        c:AddPoint(p - HB.EPS, 0)
+        c:AddPoint(p, on)
+        c:AddPoint(1, on)
+    end
+    return c
+end
+
 -- (Re)build the band textures and their alpha curves. The textures live on the
 -- fill, under the sheen, covering the fill texture, so a band paints only the
 -- filled part. "Below": the lowest band that holds wins; "above": the highest.
@@ -3205,26 +3244,19 @@ function HB.BuildBands(entry)
     local hash = (below and "b" or "a") .. texPath
     for k = 1, n do
         local b = bands[k]
-        hash = hash .. string.format("|%.3f:%.2f,%.2f,%.2f", b.p, b.color[1], b.color[2], b.color[3])
+        hash = hash .. string.format("|%.3f:%.2f,%.2f,%.2f,%.2f", b.p, b.color[1], b.color[2], b.color[3],
+            b.color[4] or 1)
     end
     if entry.hpBandHash ~= hash then
         entry.hpBandHash = hash
-        entry.hpBandCurves = {}
+        -- Two curves a band: the pulse keeps the 0 / 1 gate, the texture shows
+        -- the colour's alpha while the band holds (the same curve at alpha 1).
+        entry.hpBandCurves, entry.hpBandFills = {}, {}
         for k = 1, n do
             local b = bands[k]
-            local c = C_CurveUtil.CreateCurve()
-            if below then
-                c:AddPoint(0, 1)
-                c:AddPoint(b.p, 1)
-                c:AddPoint(b.p + HB.EPS, 0)
-                c:AddPoint(1, 0)
-            else
-                c:AddPoint(0, 0)
-                c:AddPoint(b.p - HB.EPS, 0)
-                c:AddPoint(b.p, 1)
-                c:AddPoint(1, 1)
-            end
-            entry.hpBandCurves[k] = c
+            local a = b.color[4] or 1
+            entry.hpBandCurves[k] = HB.StepCurve(b.p, below, 1)
+            entry.hpBandFills[k] = (a == 1) and entry.hpBandCurves[k] or HB.StepCurve(b.p, below, a)
         end
     end
     for k = 1, n do
@@ -3244,16 +3276,62 @@ function HB.BuildBands(entry)
     end
     for k = n + 1, #entry.hpBandTex do entry.hpBandTex[k]:Hide() end
     entry.hpBandN = n
+    HB.BuildPulse(entry, bands, below, texPath)
+end
+
+-- "Pulse at the last threshold": the band that wins when all hold (the lowest
+-- below, the highest above) throbs. Health is secret, so the loop plays in a
+-- frame whose alpha that band's curve sets; nothing reads the health.
+function HB.BuildPulse(entry, bands, below, texPath)
+    local n = entry.hpBandN or 0
+    local p = entry.hpPulse
+    if n == 0 or R(entry.rec, "healththresholds", "hpthPulse") ~= true then
+        if p then
+            p.ag:Stop()
+            p:Hide()
+        end
+        entry.hpPulseK = nil
+        return
+    end
+    if not p then
+        p = CreateFrame("Frame", nil, entry.shell.fill)
+        p.tex = p:CreateTexture(nil, "ARTWORK")
+        p.tex:SetAllPoints(p)
+        p.tex:SetBlendMode("ADD")
+        p.ag = p.tex:CreateAnimationGroup()
+        p.ag:SetLooping("BOUNCE")
+        local a = p.ag:CreateAnimation("Alpha")
+        a:SetFromAlpha(0)
+        a:SetToAlpha(0.8)
+        a:SetDuration(0.5)
+        entry.hpPulse = p
+    end
+    local k = below and 1 or n
+    entry.hpPulseK = k
+    -- re-anchored every pass: a texture swap makes a new fill texture
+    p:ClearAllPoints()
+    p:SetAllPoints(entry.shell.fillTex)
+    p.tex:SetTexture(texPath)
+    local c = bands[k].color
+    p.tex:SetVertexColor(c[1], c[2], c[3], 1)
+    p:Show()
+    if not p.ag:IsPlaying() then p.ag:Play() end
 end
 
 function HB.PaintBands(entry, unit, preview)
     local curves = entry.hpBandCurves
+    local fills = entry.hpBandFills or curves
     for k = 1, entry.hpBandN or 0 do
-        local t, c = entry.hpBandTex[k], curves and curves[k]
+        local t, c = entry.hpBandTex[k], fills and fills[k]
         if t and c then
             if preview then t:SetAlpha(c:Evaluate(HB.PREVIEW))
             else t:SetAlpha(UnitHealthPercent(unit, true, c)) end
         end
+    end
+    local pc = entry.hpPulseK and curves and curves[entry.hpPulseK]
+    if pc and entry.hpPulse then
+        if preview then entry.hpPulse:SetAlpha(pc:Evaluate(HB.PREVIEW))
+        else entry.hpPulse:SetAlpha(UnitHealthPercent(unit, true, pc)) end
     end
 end
 
@@ -3266,9 +3344,13 @@ function HB.TextCurve(entry)
     if not (bands and C_CurveUtil and C_CurveUtil.CreateColorCurve and CreateColor) then return nil end
     local base = R(rec, "text", "hpColor") or { 0.95, 0.97, 1, 1 }
     local below = (R(rec, "healththresholds", "hpthDirection") or "below") ~= "above"
-    local hash = (below and "b" or "a") .. string.format("|%.2f,%.2f,%.2f", base[1], base[2], base[3])
+    -- the alphas too (the points carry them), or an opacity-only edit keeps
+    -- the old curve
+    local hash = (below and "b" or "a") .. string.format("|%.2f,%.2f,%.2f,%.2f", base[1], base[2], base[3],
+        base[4] or 1)
     for _, b in ipairs(bands) do
-        hash = hash .. string.format("|%.3f:%.2f,%.2f,%.2f", b.p, b.color[1], b.color[2], b.color[3])
+        hash = hash .. string.format("|%.3f:%.2f,%.2f,%.2f,%.2f", b.p, b.color[1], b.color[2], b.color[3],
+            b.color[4] or 1)
     end
     if entry.hpTextCurve and entry.hpTextHash == hash then return entry.hpTextCurve end
     local curve = C_CurveUtil.CreateColorCurve()
@@ -4955,6 +5037,13 @@ local function EnsureSharedEvents()
             local info = POWER_ALL[e.powerType]
             if token and info and info.token ~= token then return end
             ResourceRefresh(e)
+            -- Target-bound combo points: the event can come a frame before
+            -- GetComboPoints answers the new count, so read once more.
+            if e.powerType == 4 and NS.IsForever == true then
+                Events.Coalesce("adbars_cp_" .. tostring(e.rec.id), function()
+                    if live[e.rec.id] == e then ResourceRefresh(e) end
+                end)
+            end
         end)
     end)
     SafeOn("UNIT_POWER_UPDATE", "adbars", function(_, unit, token)
@@ -5203,6 +5292,8 @@ function Bars.Release(barId)
         end
     end
     if e.predTex then e.predTex:Hide() end
+    -- a hidden frame's animation keeps running
+    if e.hpPulse then e.hpPulse.ag:Stop() end
     e.predCost = nil
     -- cost-icon detectors are UIParent children too
     if e.costIcons then
@@ -5448,14 +5539,15 @@ function PV.PaintResource(e, cur)
         LayoutPips(e)
         LayoutTicks(e)
     end
-    local r, g, b = PowerColorOf(rec, e.powerType)
+    local r, g, b, a = PowerColorOf(rec, e.powerType)
     local curve = ResourceCurve(e)
     if curve and range > 0 then
         local col = curve:Evaluate(cur / range)
-        if col then r, g, b = col:GetRGB() end
+        if col then r, g, b, a = col:GetRGBA() end
     end
-    e.cr, e.cg, e.cb = r, g, b
-    shell.fill:SetStatusBarColor(r, g, b, 1)
+    -- as live: the pips paint from this cache, alpha included
+    e.cr, e.cg, e.cb, e.ca = r, g, b, a
+    shell.fill:SetStatusBarColor(r, g, b, a or 1)
     if e.pipsOn then
         PaintPips(e)
         for i = 1, e.pipCount or 0 do
@@ -5519,7 +5611,7 @@ function PV.PaintCooldown(e, remaining, len, started)
     shell.fill:SetValue(drain and remaining or (len - remaining))
     if e.curve then
         local col = e.curve:Evaluate(remaining / len)
-        if col then shell.fill:SetStatusBarColor(col:GetRGB()) end
+        if col then shell.fill:SetStatusBarColor(col:GetRGBA()) end
     else
         shell.fill:SetStatusBarColor(BarColorOf(rec))
     end
@@ -5551,7 +5643,7 @@ function PV.PaintCharges(e, count, p, rechargeStart, len)
             s.recharge:SetValue((i == count + 1) and p or 0)
             if i == count + 1 and e.curve and p > 0 then
                 local col = e.curve:Evaluate(1 - p)
-                if col then s.recharge:GetStatusBarTexture():SetVertexColor(col:GetRGB()) end
+                if col then s.recharge:GetStatusBarTexture():SetVertexColor(col:GetRGBA()) end
             end
         end
     end

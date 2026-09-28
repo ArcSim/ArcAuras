@@ -8,7 +8,7 @@ local AT = {}
 -- Other addons carry copies of this file, generated from it by the
 -- arc-theme-sync tool, which compares this number to find stale copies.
 -- Bump it on every change and never edit a copy.
-AT.VERSION = 16
+AT.VERSION = 20
 
 AT.WHITE = "Interface\\Buttons\\WHITE8X8"
 AT.DISCORD = "https://discord.gg/yMZmnFjUTd"
@@ -40,6 +40,10 @@ AT.LAY = {
     fieldW = 180,
     sliderW = 110,       -- the slider; with the [-][value][+] stepper
                          -- the cluster is ~190px, like ArcSkin's range rows
+    -- AT.Card: a card is cardMin to cardMax wide (a wide pane leaves the rest
+    -- empty rather than stretch it), cards sit cardGap apart, and the header
+    -- line is cardHead tall.
+    cardMin = 300, cardMax = 440, cardGap = 12, cardHead = 30,
 }
 
 local COL, WHITE, LAY = AT.COL, AT.WHITE, AT.LAY
@@ -297,13 +301,41 @@ function AT.MakeQuietButton(parent, label, w)
     return b
 end
 
+-- The check a see-through colour shows over: light cells on the swatch's own
+-- dark well, built on first use.
+local function SwatchCheck(b, w, h)
+    if b._check then return b._check end
+    local cells, s, iw, ih = {}, 4, w - 2, h - 2
+    for r = 0, math.ceil(ih / s) - 1 do
+        for c = 0, math.ceil(iw / s) - 1 do
+            if (r + c) % 2 == 0 then
+                local t = b:CreateTexture(nil, "ARTWORK")
+                t:SetTexture(WHITE)
+                t:SetVertexColor(COL.faint[1], COL.faint[2], COL.faint[3], 1)
+                t:SetPoint("TOPLEFT", 1 + c * s, -1 - r * s)
+                t:SetSize(math.min(s, iw - c * s), math.min(s, ih - r * s))
+                cells[#cells + 1] = t
+            end
+        end
+    end
+    b._check = cells
+    return cells
+end
+
 function AT.MakeSwatch(parent, w, h)
     local b = CreateFrame("Button", nil, parent, "BackdropTemplate")
-    b:SetSize(w or 24, h or 14); Skin(b, COL.well)
+    w, h = w or 24, h or 14
+    b:SetSize(w, h); Skin(b, COL.well)
     b.tex = b:CreateTexture(nil, "OVERLAY")
     b.tex:SetTexture(WHITE)
     b.tex:SetPoint("TOPLEFT", 1, -1); b.tex:SetPoint("BOTTOMRIGHT", -1, 1)
-    function b:SetColor(c) self.tex:SetVertexColor(c[1], c[2], c[3], 1) end
+    -- a: the opacity to show, over the check; nil draws the colour solid
+    function b:SetColor(c, a)
+        if a ~= nil or self._check then
+            for _, t in ipairs(SwatchCheck(self, w, h)) do t:SetShown(a ~= nil) end
+        end
+        self.tex:SetVertexColor(c[1], c[2], c[3], a or 1)
+    end
     b:SetScript("OnEnter", function() b:SetBackdropBorderColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 1) end)
     b:SetScript("OnLeave", function() b:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1) end)
     return b
@@ -790,10 +822,42 @@ function AT.RowLabel(row, text)
     return fs
 end
 
+-- The one-version "new" mark: a small cyan-outlined word for a tab chip, a
+-- card or a row; the caller anchors it. SetText sizes it to the text in whole
+-- units and returns the width, plus true when the text measured 0 (a guess).
+function AT.NewChip(parent, text)
+    local c = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+    c:SetHeight(14)
+    Skin(c, { 0, 0, 0, 0 }, COL.arc)
+    c.fs = c:CreateFontString(nil, "OVERLAY")
+    c.fs:SetFont(STANDARD_TEXT_FONT, 8, "")
+    c.fs:SetPoint("CENTER", 0, 0)
+    c.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    function c:SetText(t)
+        t = t or "NEW"
+        local fs = self.fs
+        fs:SetText(t)
+        local w = (fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth())
+            or fs:GetStringWidth() or 0
+        local guessed = false
+        if type(w) ~= "number" or w <= 0 then
+            w = #t * 8 * 0.62
+            guessed = true
+        end
+        local cw = math.ceil(w) + 8
+        self:SetWidth(cw)
+        return cw, guessed
+    end
+    c:SetText(text)
+    return c
+end
+
 -- Tab strip: chips on one cyan line. Unselected chips sit under the line (+1)
 -- so it hides their bottom edges; the selected one sits above it (+3) with no
 -- bottom edge, opening into the page below. Chips wrap when the strip is too
 -- narrow. Set() is pooled and idempotent: call it from a _sync.
+-- Set(names, active, onClick, fontSize, badges): badges is optional, a map of
+-- chip name to mark text, and puts that mark inside the chip after its label.
 function AT.TabRow(parent)
     local strip = CreateFrame("Frame", nil, parent)
     strip._tabs = {}
@@ -819,7 +883,7 @@ function AT.TabRow(parent)
             e:Show()
         end
     end
-    function strip:Set(names, active, onClick, fontSize)
+    function strip:Set(names, active, onClick, fontSize, badges)
         self._lineF:SetFrameLevel(self:GetFrameLevel() + 2)
         -- The selected chip's fill: the window bg, or set strip._openFill =
         -- COL.panel when the strip sits on a panel-bodied page.
@@ -872,6 +936,27 @@ function AT.TabRow(parent)
                         guessed = true
                     end
                     local w = math.floor((sw or 40) + 24 + 0.5)
+                    -- A mark widens its chip rather than squeezing the label:
+                    -- the label keeps the left inset, the mark the right one.
+                    local badge = badges and badges[name]
+                    if badge then
+                        tb.badge = tb.badge or AT.NewChip(tb)
+                        local bw, bGuess = tb.badge:SetText(badge)
+                        if bGuess then guessed = true end
+                        w = w + 4 + bw
+                        tb.fs:ClearAllPoints()
+                        tb.fs:SetPoint("LEFT", 12, 0)
+                        tb.badge:ClearAllPoints()
+                        tb.badge:SetPoint("RIGHT", -12, 0)
+                        tb.badge:Show()
+                        tb._badged = true
+                    elseif tb._badged then
+                        -- a pooled chip that wore a mark goes back to plain
+                        tb.badge:Hide()
+                        tb.fs:ClearAllPoints()
+                        tb.fs:SetPoint("CENTER", 0, 0)
+                        tb._badged = nil
+                    end
                     tb:SetWidth(w)
                     if x + w > maxW and x > 0 then x = 0; rowY = rowY - (chipH + 4) end
                     tb:ClearAllPoints()
@@ -880,6 +965,8 @@ function AT.TabRow(parent)
                     local on = (name == active)
                     tb._active = on
                     tb:SetFrameLevel(self:GetFrameLevel() + (on and 3 or 1))
+                    -- over the chip's own fill whatever level the chip took
+                    if tb._badged then tb.badge:SetFrameLevel(tb:GetFrameLevel() + 1) end
                     if on then
                         -- open bottom: fill continuous with whatever sits
                         -- under the line, arc side/top edges
@@ -1094,7 +1181,8 @@ function AT.MakeScrollable(pg)
     }
     pg:SetScript("OnMouseWheel", function(_, delta)
         local over = overflow()
-        if over <= 0 then return end
+        -- A page left scrolled past a shorter end still turns back.
+        if over <= 0 and (pg._scrollOff or 0) <= 0 then return end
         local cur = (pg._scrollOff or 0) - delta * 36
         if cur < 0 then cur = 0 elseif cur > over then cur = over end
         if cur == pg._scrollOff then return end
@@ -1105,10 +1193,183 @@ function AT.MakeScrollable(pg)
     return pg
 end
 
+-- One section's rows inside its box: each row's _sync, the label column, the
+-- rows top down, the controls on the column. bw: the box's width when the
+-- caller knows it (a card), else measured. synced: the rows' _sync already ran
+-- this pass. Returns the rows' full height.
+local function LayRows(pg, sec, side, bw, synced)
+    -- Sync before measuring: a label that arrives in _sync would otherwise be
+    -- measured empty and squeeze the column.
+    if not synced then
+        for _, r in ipairs(sec.rows) do
+            if r._sync then r._sync() end
+        end
+    end
+    -- Unbounded width: GetStringWidth reports the truncated width, and the
+    -- column would ratchet down pass after pass.
+    local col
+    for _, r in ipairs(sec.rows) do
+        if r._colLabel and ((not r._visibleFn) or r._visibleFn()) then
+            local fs = r._colLabel
+            local w = (fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth())
+                   or fs:GetStringWidth() or 0
+            w = 10 + w + 16
+            if not col or w > col then col = w end
+        end
+    end
+    local by = -2
+    for _, row in ipairs(sec.rows) do
+        if (not row._visibleFn) or row._visibleFn() then
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", sec.box, "TOPLEFT", 6, by)
+            row:SetPoint("TOPRIGHT", sec.box, "TOPRIGHT", -6, by)
+            row:Show(); by = by - row._h
+        else row:Hide() end
+    end
+    if col then
+        -- An anchored frame has no width until the client lays it out, so on
+        -- the first pass the box measures 0. Derive it from the page (sized by
+        -- the window) with the section insets.
+        bw = bw or sec.box:GetWidth() or 0
+        if bw <= 60 then
+            local pw = pg:GetWidth() or 0
+            if pw > 60 then
+                bw = (side and (pw / 2) or pw) - 12
+            end
+        end
+        -- Still unknown: ask for one more pass on the next frame.
+        if bw <= 60 then pg._sizeUnresolved = true end
+        if bw > 60 then
+            -- Cap the column so the widest control fits: the box clips its
+            -- children, so an overhanging one is cut off.
+            local widest = 34
+            for _, r in ipairs(sec.rows) do
+                if r._colCtrl and ((not r._visibleFn) or r._visibleFn()) then
+                    local cw = r._colCtrl:GetWidth() or 0
+                    if cw > widest then widest = cw end
+                end
+            end
+            local cap = bw - widest - 12
+            if col > cap then col = math.max(12, cap) end
+        end
+        for _, r in ipairs(sec.rows) do
+            if r._colCtrl then
+                r._colCtrl:ClearAllPoints()
+                r._colCtrl:SetPoint("LEFT", r, "LEFT", col, 0)
+                -- _colFill = true stretches the control to the row's right
+                -- edge; a frame stops it at that frame.
+                if r._colFill == true then
+                    r._colCtrl:SetPoint("RIGHT", r, "RIGHT", -12, 0)
+                elseif r._colFill then
+                    r._colCtrl:SetPoint("RIGHT", r._colFill, "LEFT", -8, 0)
+                end
+                if r._colLabel then r._colLabel:SetPoint("RIGHT", r, "LEFT", col - 6, 0) end
+            end
+        end
+    end
+    return math.max(10, -by + 3)
+end
+
+-- The narrowest a card can be with nothing cut: its header line, or its widest
+-- label beside its widest control and what trails that control (_colTrail).
+function AT.CardNeed(sec)
+    local function W(fs)
+        local w = (fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth()) or fs:GetStringWidth() or 0
+        return math.ceil(w)
+    end
+    local lab, ctrl = 0, 0
+    for _, r in ipairs(sec.rows) do
+        if (not r._visibleFn) or r._visibleFn() then
+            if r._colLabel then
+                local w = W(r._colLabel)
+                if w > lab then lab = w end
+            end
+            if r._colCtrl then
+                local w = (r._colCtrl:GetWidth() or 0) + (r._colTrail or 0)
+                if w > ctrl then ctrl = w end
+            end
+        end
+    end
+    -- the row insets, the label's margins and the column's right margin
+    local need = lab + ctrl + 50
+    local c = sec.card
+    if c then
+        local head = 6 + 8 + 18 + 8 + W(c.title) + 16 + W(c.note) + 8 + 6
+        if head > need then need = head end
+    end
+    return need
+end
+
+-- A run of card sections from y down: the hidden ones hidden, the rest in
+-- lines of as many as fit (up to three) at one width between the cardMin and
+-- cardMax widths, left aligned, each line as tall as its tallest card. A wide
+-- pane leaves the rest of the line empty. Returns the y under them.
+function AT.LayoutCards(pg, run, y)
+    local shown = {}
+    for _, sec in ipairs(run) do
+        local vis = (not sec.visibleFn) or sec.visibleFn()
+        if vis then
+            vis = false
+            for _, r in ipairs(sec.rows) do
+                if (not r._visibleFn) or r._visibleFn() then vis = true break end
+            end
+        end
+        if vis then shown[#shown + 1] = sec else sec.box:Hide() end
+    end
+    if #shown == 0 then return y end
+    -- every row synced first: the widths below read their words
+    for _, sec in ipairs(shown) do
+        for _, r in ipairs(sec.rows) do
+            if r._sync then r._sync() end
+        end
+    end
+    local pw = pg:GetWidth() or 0
+    if pw <= 60 then
+        -- no width on the first pass: one to a line now, the next pass lines them up
+        pg._sizeUnresolved = true
+        pw = LAY.cardMax + 12
+    end
+    local avail = pw - 12
+    local need = LAY.cardMin
+    for _, sec in ipairs(shown) do
+        local n = AT.CardNeed(sec)
+        if n > need then need = n end
+    end
+    local per, w = 1, math.floor(math.min(avail, math.max(LAY.cardMax, need)))
+    for k = 3, 2, -1 do
+        local kw = math.min(LAY.cardMax, math.floor((avail - (k - 1) * LAY.cardGap) / k))
+        if kw >= need then
+            per, w = k, kw
+            break
+        end
+    end
+    local idx = 1
+    while idx <= #shown do
+        if idx > 1 then y = y - LAY.cardGap end
+        local last = math.min(#shown, idx + per - 1)
+        local lineH = 0
+        for k = idx, last do
+            local sec = shown[k]
+            sec.box:ClearAllPoints()
+            sec.box:SetPoint("TOPLEFT", pg, "TOPLEFT", 6 + (k - idx) * (w + LAY.cardGap), y)
+            sec.box:SetWidth(w)
+            sec.box:Show()
+            -- the rows, and a little room under the last one
+            local h = LayRows(pg, sec, nil, w, true) + 5
+            if h > lineH then lineH = h end
+        end
+        for k = idx, last do shown[k].box:SetHeight(lineH) end
+        y = y - lineH
+        idx = last + 1
+    end
+    return y - LAY.gap
+end
+
 -- Flows the rows, sizes each box to its visible rows and aligns controls on
 -- one column per section; call it after anything shows or hides a row. Each
 -- pass runs row._sync (builders set it; custom rows set their own) and hides
--- any row or section whose visibleFn returns false.
+-- any row or section whose visibleFn returns false. Cards (AT.Card) that follow
+-- each other flow in lines (AT.LayoutCards).
 function AT.LayoutPage(pg)
     if not (pg and pg._sections) then return end
     if pg._scroll then
@@ -1130,9 +1391,22 @@ function AT.LayoutPage(pg)
         else row:Hide() end
     end
     local pairTopY, pairBottomY
-    for _, sec in ipairs(pg._sections) do
+    local secs = pg._sections
+    local i = 1
+    while i <= #secs do
+        local sec = secs[i]
+        i = i + 1
         local side = sec.side
-        if sec.visibleFn and not sec.visibleFn() then
+        if sec.card then
+            -- this card and the ones right after it, in lines
+            local run = { sec }
+            while i <= #secs and secs[i].card do
+                run[#run + 1] = secs[i]
+                i = i + 1
+            end
+            y = AT.LayoutCards(pg, run, y)
+            pairTopY, pairBottomY = nil, nil
+        elseif sec.visibleFn and not sec.visibleFn() then
             if sec.hit then sec.hit:Hide() end
             if sec.title then sec.title:Hide() end
             if sec.hr then sec.hr:Hide() end
@@ -1186,75 +1460,7 @@ function AT.LayoutPage(pg)
             end
             local boxTop = topY - hdrH
             span(sec.box, boxTop)
-
-            -- Sync before measuring: a label that arrives in _sync would
-            -- otherwise be measured empty and squeeze the column.
-            for _, r in ipairs(sec.rows) do
-                if r._sync then r._sync() end
-            end
-            -- Unbounded width: GetStringWidth reports the truncated width,
-            -- and the column would ratchet down pass after pass.
-            local col
-            for _, r in ipairs(sec.rows) do
-                if r._colLabel and ((not r._visibleFn) or r._visibleFn()) then
-                    local fs = r._colLabel
-                    local w = (fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth())
-                           or fs:GetStringWidth() or 0
-                    w = 10 + w + 16
-                    if not col or w > col then col = w end
-                end
-            end
-            local by = -2
-            for _, row in ipairs(sec.rows) do
-                if (not row._visibleFn) or row._visibleFn() then
-                    row:ClearAllPoints()
-                    row:SetPoint("TOPLEFT", sec.box, "TOPLEFT", 6, by)
-                    row:SetPoint("TOPRIGHT", sec.box, "TOPRIGHT", -6, by)
-                    row:Show(); by = by - row._h
-                else row:Hide() end
-            end
-            if col then
-                -- An anchored frame has no width until the client lays it
-                -- out, so on the first pass the box measures 0. Derive it
-                -- from the page (sized by the window) with span()'s insets.
-                local bw = sec.box:GetWidth() or 0
-                if bw <= 60 then
-                    local pw = pg:GetWidth() or 0
-                    if pw > 60 then
-                        bw = (side and (pw / 2) or pw) - 12
-                    end
-                end
-                -- Still unknown: ask for one more pass on the next frame.
-                if bw <= 60 then pg._sizeUnresolved = true end
-                if bw > 60 then
-                    -- Cap the column so the widest control fits: the box
-                    -- clips its children, so an overhanging one is cut off.
-                    local widest = 34
-                    for _, r in ipairs(sec.rows) do
-                        if r._colCtrl and ((not r._visibleFn) or r._visibleFn()) then
-                            local cw = r._colCtrl:GetWidth() or 0
-                            if cw > widest then widest = cw end
-                        end
-                    end
-                    local cap = bw - widest - 12
-                    if col > cap then col = math.max(12, cap) end
-                end
-                for _, r in ipairs(sec.rows) do
-                    if r._colCtrl then
-                        r._colCtrl:ClearAllPoints()
-                        r._colCtrl:SetPoint("LEFT", r, "LEFT", col, 0)
-                        -- _colFill = true stretches the control to the row's
-                        -- right edge; a frame stops it at that frame.
-                        if r._colFill == true then
-                            r._colCtrl:SetPoint("RIGHT", r, "RIGHT", -12, 0)
-                        elseif r._colFill then
-                            r._colCtrl:SetPoint("RIGHT", r._colFill, "LEFT", -8, 0)
-                        end
-                        if r._colLabel then r._colLabel:SetPoint("RIGHT", r, "LEFT", col - 6, 0) end
-                    end
-                end
-            end
-            local fullH = math.max(10, -by + 3)
+            local fullH = LayRows(pg, sec, side)
             local f = sec.f or 1
             local shownH = (f >= 1) and fullH or math.max(2, math.floor(fullH * f + 0.5))
             sec.box:SetShown(not (sec.collapsed and f <= 0))
@@ -1268,7 +1474,18 @@ function AT.LayoutPage(pg)
     end
     -- _contentH is the full laid-out height, so add the scroll offset back.
     pg._contentH = -y + 8 + (pg._scrollOff or 0)
-    if pg._scroll then pg._scroll.paint() end
+    if pg._scroll then
+        -- The clamp above had the last pass's height. Content that just got
+        -- shorter (a bigger window flows more cards to a line) would leave the
+        -- page scrolled past its end with no bar, so lay it out once more.
+        if (pg._scrollOff or 0) > pg._scroll.overflow() and not pg._reclamping then
+            pg._reclamping = true
+            AT.LayoutPage(pg)
+            pg._reclamping = nil
+            return
+        end
+        pg._scroll.paint()
+    end
 
     -- Something was laid out against an unresolved width, so run once more
     -- on the next frame. One re-pass is queued at a time, three in a row at
@@ -1287,6 +1504,107 @@ function AT.LayoutPage(pg)
     else
         pg._relayoutTries = nil
     end
+end
+
+-- Cards
+
+-- A card: a boxed section headed by a switch, a title and a note at the right
+-- (what it does, or when it fires). Off, its rows keep their places, dimmed
+-- and closed to the mouse; on, its border turns deep teal. Cards in a row flow
+-- in lines (AT.LayoutCards); add its rows after it, as for any section.
+-- spec = { title, note (words, or a function giving them), isOn(), setOn(v),
+--   visibleFn, tip = { title, body } for the switch, offTip (the dimmed rows') }
+AT.CARD_DIM = 0.4
+AT.CardMethods = AT.CardMethods or {}
+AT.CardMethods.__index = AT.CardMethods
+
+function AT.Card(pg, spec)
+    local box = AT.Section(pg, nil, { visibleFn = spec.visibleFn })
+    local sec = pg._curSection
+    Skin(box, COL.box, COL.line)
+    local c = setmetatable({ pg = pg, sec = sec, box = box, spec = spec }, AT.CardMethods)
+    sec.card = c
+    local head = AT.AddRow(pg, LAY.cardHead, spec.visibleFn)
+    c.head = head
+    local cb = AT.MakeCheckbox(head)
+    cb:SetPoint("LEFT", 8, 0)
+    local title = head:CreateFontString(nil, "OVERLAY")
+    title:SetFont(STANDARD_TEXT_FONT, 14, "")
+    title:SetPoint("LEFT", cb, "RIGHT", 8, 0)
+    title:SetJustifyH("LEFT")
+    title:SetWordWrap(false)
+    title:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+    title:SetText(spec.title or "")
+    local note = head:CreateFontString(nil, "OVERLAY")
+    note:SetFont(STANDARD_TEXT_FONT, 11, "")
+    note:SetPoint("RIGHT", -8, 0)
+    note:SetJustifyH("RIGHT")
+    note:SetWordWrap(false)
+    note:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
+    c.check, c.title, c.note = cb, title, note
+    local function flip()
+        AT.CloseDropdown()
+        local v = not c:On()
+        if spec.setOn then spec.setOn(v) end
+        PlaySound(v and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF, "Master")
+        AT.LayoutPage(pg)
+    end
+    cb:SetScript("OnClick", flip)
+    -- the whole header clicks, as a toggle row does
+    head:EnableMouse(true)
+    head:SetScript("OnMouseUp", flip)
+    head:HookScript("OnEnter", function() cb:SetHover(true) end)
+    head:HookScript("OnLeave", function() cb:SetHover(false) end)
+    cb:HookScript("OnEnter", function() cb:SetHover(true) end)
+    cb:HookScript("OnLeave", function() cb:SetHover(false) end)
+    if spec.tip then
+        AT.Tooltip(head, spec.tip[1], spec.tip[2])
+        AT.Tooltip(cb, spec.tip[1], spec.tip[2])
+    end
+    -- over the rows while the card is off, so no click reaches them
+    local block = CreateFrame("Frame", nil, box)
+    block:SetPoint("TOPLEFT", box, "TOPLEFT", 0, -(2 + LAY.cardHead))
+    block:SetPoint("BOTTOMRIGHT", box, "BOTTOMRIGHT", 0, 0)
+    block:EnableMouse(true)
+    block:Hide()
+    AT.Tooltip(block, spec.title or "", spec.offTip or "Off. Tick the box at the top of the card to change these.")
+    c.block = block
+    head._sync = function() c:Sync() end
+    return c
+end
+
+function AT.CardMethods:On()
+    local f = self.spec.isOn
+    return f ~= nil and f() == true
+end
+
+function AT.CardMethods:NoteText()
+    local n = self.spec.note
+    if type(n) == "function" then n = n() end
+    return type(n) == "string" and n or ""
+end
+
+-- The rows under the header.
+function AT.CardMethods:Rows()
+    local out = {}
+    for _, r in ipairs(self.sec.rows) do
+        if r ~= self.head then out[#out + 1] = r end
+    end
+    return out
+end
+
+-- Runs as the header row's _sync, ahead of the card's rows.
+function AT.CardMethods:Sync()
+    local on = self:On()
+    self.check:SetOn(on)
+    local b = on and COL.arcDeep or COL.line
+    self.box:SetBackdropBorderColor(b[1], b[2], b[3], 1)
+    self.note:SetText(self:NoteText())
+    for _, r in ipairs(self.sec.rows) do
+        if r ~= self.head then r:SetAlpha(on and 1 or AT.CARD_DIM) end
+    end
+    self.block:SetFrameLevel(self.box:GetFrameLevel() + 20)
+    self.block:SetShown(not on)
 end
 
 -- Row builders
@@ -1377,26 +1695,48 @@ function AT.RowDropdown(pg, owner, label, get, set, itemsFn, visibleFn, onSelect
     return row
 end
 
-function AT.RowColor(pg, label, get, set, visibleFn)
+-- opts.alpha: the picker shows its opacity slider, the value is
+-- { r, g, b, a } (one without an a reads as opts.alphaDefault, else 1) and
+-- the swatch shows the opacity. Without it the value is { r, g, b }.
+function AT.RowColor(pg, label, get, set, visibleFn, opts)
     local row = AT.AddRow(pg, LAY.rowH, visibleFn)
     local lbl = AT.RowLabel(row, label)
     local sw = AT.MakeSwatch(row)
     sw:SetPoint("LEFT", row._ctrlX, 0)
-    local function refresh() sw:SetColor(get()) end
+    local alpha = opts ~= nil and opts.alpha == true
+    local function A(c) return c[4] or (opts and opts.alphaDefault) or 1 end
+    local function refresh()
+        local c = get()
+        sw:SetColor(c, alpha and A(c) or nil)
+    end
     refresh()
     sw:SetScript("OnClick", function()
         AT.CloseDropdown()
+        if not ColorPickerFrame.SetupColorPickerAndShow then return end
         local c = get()
-        if ColorPickerFrame.SetupColorPickerAndShow then
-            ColorPickerFrame:SetupColorPickerAndShow({
-                r = c[1], g = c[2], b = c[3], hasOpacity = false,
-                swatchFunc = function()
-                    local r, g, b = ColorPickerFrame:GetColorRGB()
-                    set({ r, g, b }); refresh()
-                end,
-                cancelFunc = function() set({ c[1], c[2], c[3] }); refresh() end,
-            })
+        local was = { c[1], c[2], c[3], c[4] }
+        -- The setup's own colour and opacity writes are not picks, and one
+        -- change can arrive through both callbacks.
+        local ready, last = false, nil
+        local function pick()
+            if not ready then return end
+            local r, g, b = ColorPickerFrame:GetColorRGB()
+            local v = { r, g, b }
+            if alpha then v[4] = ColorPickerFrame:GetColorAlpha() or A(was) end
+            if last and last[1] == v[1] and last[2] == v[2] and last[3] == v[3] and last[4] == v[4] then
+                return
+            end
+            last = v
+            set(v); refresh()
         end
+        ColorPickerFrame:SetupColorPickerAndShow({
+            r = c[1], g = c[2], b = c[3], hasOpacity = alpha, opacity = alpha and A(c) or nil,
+            swatchFunc = pick, opacityFunc = alpha and pick or nil,
+            cancelFunc = function()
+                set({ was[1], was[2], was[3], alpha and was[4] or nil }); refresh()
+            end,
+        })
+        ready = true
     end)
     row._colLabel, row._colCtrl = lbl, sw
     row._sync = refresh
@@ -1488,6 +1828,8 @@ function AT.RowSlider(pg, label, get, set, minV, maxV, step, isPct, visibleFn)
     end)
     refresh()
     row._colLabel, row._colCtrl = lbl, s
+    -- the stepper cluster after the slider: a card's width counts it
+    row._colTrail = 78
     row._sync = refresh
     return row
 end

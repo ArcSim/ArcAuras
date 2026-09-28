@@ -124,6 +124,22 @@ end
 local function HasTarget()
     return Plain("hasTarget", UnitExists and UnitExists("target"))
 end
+-- Pet happiness: 1 unhappy, 2 content, 3 happy; nil with no hunter pet out. It
+-- has no secrecy annotation; a secret read keeps the last real answer.
+local lastMood
+function Conditions.PetMood()
+    local h = C_PetInfo and C_PetInfo.GetPetHappiness and C_PetInfo.GetPetHappiness()
+    if IsSecret(h) then return lastMood end
+    lastMood = type(h) == "number" and h or nil
+    return lastMood
+end
+-- At or below the Settings line; an empty slot is out of stock, not low.
+local function AmmoLow()
+    local F = NS.Factory
+    local n = F and F.AmmoCount and F.AmmoCount()
+    return n ~= nil and n <= (Store.GetSetting("ammoLowAt") or Conditions.AMMO_LOW_AT)
+end
+Conditions.AMMO_LOW_AT = 400
 
 -- Vocabulary. key: what rec.c stores (saved, so never renamed). text: follows
 -- the list name ("Load when", "Fade when"). ev: the events that change it.
@@ -140,6 +156,8 @@ local FORM_EV = { "UPDATE_SHAPESHIFT_FORM", "UPDATE_SHAPESHIFT_FORMS" }
 local DEAD_EV = { "PLAYER_DEAD", "PLAYER_ALIVE", "PLAYER_UNGHOST" }
 local VEHICLE_EV = { "UNIT_ENTERED_VEHICLE", "UNIT_EXITED_VEHICLE",
     "PLAYER_CONTROL_LOST", "PLAYER_CONTROL_GAINED", "VEHICLE_UPDATE" }
+local MOOD_EV = { "UNIT_HAPPINESS", "UNIT_PET" }
+local AMMO_EV = { "UNIT_INVENTORY_CHANGED", "BAG_UPDATE_DELAYED", "PLAYER_EQUIPMENT_CHANGED" }
 
 local function FormIs(name)
     return function() return Form() == name end
@@ -174,6 +192,17 @@ local VOCAB = {
         read = function() return not Casting() end },
     { key = "hasPet", cat = "player", text = "Pet is out", ev = { "UNIT_PET" },
         read = function() return Plain("hasPet", UnitExists and UnitExists("pet")) end },
+    { key = "petHappy", cat = "player", class = "HUNTER", text = "Pet is happy", ev = MOOD_EV,
+        read = function() return Conditions.PetMood() == 3 end },
+    { key = "petNotHappy", cat = "player", class = "HUNTER", text = "Pet is not happy", ev = MOOD_EV,
+        read = function()
+            local h = Conditions.PetMood()
+            return h ~= nil and h < 3
+        end },
+    { key = "petUnhappy", cat = "player", class = "HUNTER", text = "Pet is unhappy", ev = MOOD_EV,
+        read = function() return Conditions.PetMood() == 1 end },
+    { key = "ammoLow", cat = "player", class = "HUNTER", text = "Ammo is low", ev = AMMO_EV,
+        read = AmmoLow },
     -- SecretWhenUnitIdentityRestricted: Plain keeps the last real answer
     { key = "pvp", cat = "player", text = "PvP flagged",
         ev = { "UNIT_FACTION", "PLAYER_FLAGS_CHANGED" },
@@ -525,13 +554,15 @@ local UNIT_ARG = {
     UNIT_SPELLCAST_START = "player", UNIT_SPELLCAST_STOP = "player",
     UNIT_SPELLCAST_CHANNEL_START = "player", UNIT_SPELLCAST_CHANNEL_STOP = "player",
     UNIT_SPELLCAST_EMPOWER_START = "player", UNIT_SPELLCAST_EMPOWER_STOP = "player",
-    UNIT_PET = "player",
+    UNIT_PET = "player", UNIT_INVENTORY_CHANGED = "player",
+    UNIT_HAPPINESS = "pet",
     UNIT_FACTION = "either",   -- the PvP flag (player) or hostility (target)
 }
 
 local function OnEvent(event, unit)
     local want = UNIT_ARG[event]
     if want == "player" and unit ~= "player" then return end
+    if want == "pet" and unit ~= "pet" then return end
     if want == "either" and unit ~= "player" and unit ~= "target" then return end
     Conditions.Queue()
     -- A taxi or vehicle can settle a moment after the control events.

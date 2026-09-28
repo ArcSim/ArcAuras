@@ -77,16 +77,30 @@ local KITS = {
 local byName = {}
 for _, e in ipairs(OWN) do byName[e[1]] = PATH .. e[2] end
 
--- Optional LibSharedMedia: ours are registered for other pickers, and its list
--- feeds ours. ArcUI or the ProcTracker may have registered the same names
--- (same clips) first, and LSM keeps the first, so only the gaps are filled.
-local LSM = LibStub and LibStub("LibSharedMedia-3.0", true) or nil
-if LSM then
-    for _, e in ipairs(OWN) do
-        if not LSM:IsValid("sound", e[1]) then
-            LSM:Register("sound", e[1], PATH .. e[2])
+-- Optional LibSharedMedia, looked up when needed: the addons that bring it
+-- load after this one (addons load in alphabetical order), so a lookup at load
+-- finds nothing. Its list feeds ours, and ours go to it the first time it is
+-- there, for other addons' pickers. ArcUI or the ProcTracker may have
+-- registered the same names (same clips) first, and LSM keeps the first, so
+-- only the gaps are filled.
+local shared
+function Sounds.Lib()
+    local lsm = LibStub and LibStub("LibSharedMedia-3.0", true) or nil
+    if lsm and lsm ~= shared then
+        shared = lsm
+        for _, e in ipairs(OWN) do
+            if not lsm:IsValid("sound", e[1]) then
+                lsm:Register("sound", e[1], PATH .. e[2])
+            end
         end
     end
+    return lsm
+end
+Sounds.Lib()
+-- Every addon has loaded by login, so ours reach other pickers even when no
+-- Arc Auras sound list is ever opened.
+if NS.Events then
+    NS.Events.On("PLAYER_LOGIN", "adsounds", function() Sounds.Lib() end)
 end
 
 -- "Master" ignores the SFX and music sliders, which suits an alert; the
@@ -107,31 +121,36 @@ function Sounds.PathFor(name)
     if type(name) ~= "string" or name == "" then return nil end
     local own = byName[name]
     if own then return own end
-    if LSM then return LSM:Fetch("sound", name, true) end
+    local lsm = Sounds.Lib()
+    if lsm then return lsm:Fetch("sound", name, true) end
     return nil
 end
 
 -- { value = stored key, text = shown name }, "None" first; ours drop "ArcUI: ".
+-- Each name says where it comes from: ours and the game's play for anyone a
+-- profile is shared with, another addon's only for players who have it too.
 function Sounds.Items()
     local items = { { value = "", text = "None" } }
     for _, e in ipairs(OWN) do
-        items[#items + 1] = { value = e[1], text = e[1]:sub(8) }
+        items[#items + 1] = { value = e[1], text = e[1]:sub(8) .. " (Arc Auras)" }
     end
     for _, k in ipairs(KITS) do
         items[#items + 1] = { value = "kit:" .. k[1], text = k[2] .. " (Built-in)" }
     end
-    if LSM then
+    local lsm = Sounds.Lib()
+    if lsm then
         local extra = {}
-        for _, n in ipairs(LSM:List("sound")) do
+        for _, n in ipairs(lsm:List("sound")) do
             if n ~= "None" and not byName[n] then extra[#extra + 1] = n end
         end
         table.sort(extra)
-        for _, n in ipairs(extra) do items[#items + 1] = { value = n, text = n } end
+        for _, n in ipairs(extra) do items[#items + 1] = { value = n, text = n .. " (other addon)" } end
     end
     return items
 end
 
--- Shown name for a stored key (summaries, tooltips).
+-- Shown name for a stored key (summaries, tooltips). A sound no loaded addon
+-- provides, as from an imported profile, says so instead of failing silently.
 function Sounds.Label(name)
     if type(name) ~= "string" or name == "" then return "None" end
     local kit = name:match("^kit:(%d+)$")
@@ -142,7 +161,9 @@ function Sounds.Label(name)
         return name
     end
     if byName[name] then return name:sub(8) end
-    return name
+    local lsm = Sounds.Lib()
+    if lsm and lsm:IsValid("sound", name) then return name .. " (other addon)" end
+    return name .. " (not installed)"
 end
 
 -- Returns willPlay, soundHandle like PlaySound; nil for "" or an unknown key.

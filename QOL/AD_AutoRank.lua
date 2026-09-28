@@ -129,7 +129,7 @@ local function QueueScan(delay)
     C_Timer.After(delay or 0.5, RunScan)
 end
 
--- The QOL page's button: brings every bar spell up to its top known rank.
+-- The Auto-rank module page's button: brings every bar spell up to its top known rank.
 -- Returns the upgraded count, or nil and a reason when it cannot run now.
 function AutoRank.UpgradeAll()
     if not AutoRank.Supported() then return nil, "unsupported" end

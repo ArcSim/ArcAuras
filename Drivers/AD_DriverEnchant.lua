@@ -72,6 +72,20 @@ function DE.ReadHand(handKey)
     return out
 end
 
+-- The weapon in a hand, as its item ID, or nil: an empty hand, a shield or a
+-- held item takes no enchant.
+function DE.WeaponIn(handKey)
+    local hand = DE.HANDS[handKey] or DE.HANDS.main
+    local id = GetInventoryItemID("player", hand.inv)
+    if not Plain(id) or not id then return nil end
+    if C_Item and C_Item.GetItemInfoInstant then
+        local _, _, _, _, _, classID = C_Item.GetItemInfoInstant(id)
+        local weapon = (Enum and Enum.ItemClass and Enum.ItemClass.Weapon) or 2
+        if classID ~= nil and Plain(classID) and classID ~= weapon then return nil end
+    end
+    return id
+end
+
 -- The enchant this icon tracks: an entry while it is on, false while it is
 -- not, nil while the answer is secret.
 function DE.Read(rec)

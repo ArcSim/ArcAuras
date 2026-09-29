@@ -36,6 +36,7 @@ jobs:
       - name: Package and upload to Wago
         uses: BigWigsMods/packager@v2.6.1
         with:
-          args: '-n ":{package-name}-{project-version}{classic}"'
+          # Forever alone, as release.yml: the toc also lists retail.
+          args: '-g forever -n ":{package-name}-{project-version}{classic}"'
         env:
           WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}   # Wago only, see above

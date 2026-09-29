@@ -6,7 +6,9 @@ local ADDON, NS = ...
 local NL = {}
 NS.NewLayout = NL
 
-NL.CARD_W, NL.CARD_H, NL.GAP = 200, 164, 12
+-- CARD_H carries room for an optional secondary button (only the Starter
+-- card uses one today) so every card in a row still lines up.
+NL.CARD_W, NL.CARD_H, NL.GAP = 200, 190, 12
 NL.PREV_H = 76
 -- the picture area inside a card's preview: a narrow card keeps all of it
 NL.STAGE_W, NL.STAGE_H = 160, 60
@@ -22,12 +24,31 @@ function NL.AddTemplate(t)
     NL.TEMPLATES[#NL.TEMPLATES + 1] = t
 end
 
+-- Cards other files add under "Start blank or import" (an importer): the card
+-- entry plus an `avail` test, read once when the window builds.
+NL.EXTRA = {}
+
+function NL.AddOwnCard(entry)
+    NL.EXTRA[#NL.EXTRA + 1] = entry
+end
+
 NL.AddTemplate({
     key = "starter",
     title = "Starter Layout",
     desc = "Cooldowns, Utility and Buffs groups under your character, ready to fill.",
     rows = function() return NS.Store.STARTER_ROWS end,
     make = function() return NS.Store.NewStarterLayout() end,
+    -- A second, explicit action so the plain card click still just makes an
+    -- empty starter layout with nothing extra.
+    secondary = {
+        label = "+ My Action Bars",
+        tip = "Also finds the spells and items on your action bars and lets you pick which become icons. Out of combat only.",
+        pick = function()
+            local rec = NS.Store.NewStarterLayout()
+            NS.Options.OpenLayout(rec)
+            if NS.Options.BarImport then NS.Options.BarImport.OpenForStarter(rec) end
+        end,
+    },
 })
 
 -- A template's groups in miniature: a row of squares per group, sized and
@@ -145,6 +166,16 @@ function NL.MakeCard(parent, entry)
     c.desc:SetJustifyV("TOP")
     c.desc:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     c.desc:SetText(entry.desc)
+    -- An optional second action (Starter's "+ My Action Bars"): a slim button
+    -- of its own, so the card's own click still just makes the plain layout.
+    if entry.secondary then
+        local sec = AT.MakeQuietButton(c, entry.secondary.label, NL.CARD_W - 16)
+        sec:SetHeight(18)
+        sec:SetPoint("BOTTOM", 0, 7)
+        sec:SetScript("OnClick", function() entry.secondary.pick() end)
+        if entry.secondary.tip then AT.Tooltip(sec, entry.secondary.label, entry.secondary.tip) end
+        c.secondaryBtn = sec
+    end
     NL.Paint(c, false)
     c:SetScript("OnEnter", function(s) NL.Paint(s, true) end)
     c:SetScript("OnLeave", function(s) NL.Paint(s, false) end)
@@ -202,18 +233,23 @@ function NL.Fill(pane)
                     if rows then NL.DrawRows(stage, rows) end
                 end,
                 pick = function() O.OpenLayout(t.make()) end,
+                secondary = t.secondary,
             }
         end
     end
     AT.Section(pg, "Start from a template")
     NL.tplRow = NL.CardRow(pg, tpl)
     AT.Section(pg, "Start blank or import")
-    NL.ownRow = NL.CardRow(pg, {
+    local own = {
         { title = "Empty Layout", desc = "A blank layout. Add your own groups, icons and bars.",
           draw = NL.DrawEmpty, pick = function() O.OpenLayout(S.NewLayout()) end },
         { title = "Import a Layout", desc = "Paste a layout someone shared with you.",
           draw = NL.DrawImport, pick = function() O.Select("ie") end },
-    })
+    }
+    for _, e in ipairs(NL.EXTRA) do
+        if not e.avail or e.avail() then own[#own + 1] = e end
+    end
+    NL.ownRow = NL.CardRow(pg, own)
     AT.LayoutPage(pg)
 end
 

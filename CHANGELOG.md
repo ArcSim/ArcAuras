@@ -1,5 +1,42 @@
 # Arc Auras
 
+## 1.7.0
+
+Aura groups for any aura or nameplate, text elements, clickable party bars, aura sounds, over-shields and less CPU.
+
+### New Features
+
+- **Every aura on a unit** - Aura groups can show every buff or debuff on a unit, no spell IDs needed.
+- **Nameplate debuffs** - Aura groups can show your debuffs on enemy nameplates.
+- **Text elements** - Put health, power, cooldowns, aura timers or your own words anywhere.
+- **Clickable health bars** - Party health bars target on click and work with click casting.
+- **Aura sounds** - Aura icons can play a sound when the aura appears, gains a stack or drops.
+- **Over-shield** - Shields past full health now show inside the health bar.
+- **Select several** - Ctrl or Shift click items to move, export or edit them together.
+- **From your action bars** - Fill a group with icons from your action bars.
+- **Cooldown glow** - Icons can glow while on cooldown.
+
+### Improvements
+
+- **Lighter on CPU** - Cooldown icons do much less work in combat.
+- **Group + button** - Adds icons straight into that group.
+- **Thinner bars** - Bars go down to 1 pixel.
+- **Edit buttons** - Show them on icons only, bars only, or not at all.
+- **Add texts** - Health and resource texts use a + Add button.
+- **Text offsets** - Texts move up to 200 pixels, and offsets start at 0. Existing setups keep their look.
+- **More sounds** - Eleven new alert sounds.
+
+### Bug Fixes
+
+- **Aura bars** - Draw right away after a reload in combat.
+- **Macro keybinds** - Spells on your bars through a macro show their keybind and press highlight.
+- **Aura group growth** - Groups grow from the corner you picked.
+- **Friendly units** - Aura bars treat immune friendly units as friendly.
+- **Tooltip IDs** - The aura ID line hides in combat instead of showing <secret>.
+- **Range checks** - Fixed an error checking range to your target in dungeons.
+- **Outside texts** - Text above or below a bar lines up with its edge.
+- **Stack colors** - The Keep each stack's own color switch now shows.
+
 ## 1.6.0
 
 Reminder groups, pet and ammo warnings, frame picking and a clearer editor.

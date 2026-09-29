@@ -1,8 +1,8 @@
-## Interface: 16001
+## Interface: 120100, 16001
 ## Title: |cff3fc9f2Arc|r Auras
 ## Notes: Icons, icon groups and bars for your cooldowns, auras and resources, all set up from one panel. /arcauras
 ## Author: Arc
-## Version: 1.6.0
+## Version: 1.7.0
 ## IconTexture: Interface\AddOns\ArcAuras\Textures\ArcAuras_Icon_256
 ## SavedVariables: ArcAurasDB
 ## OptionalDeps: ArcUI
@@ -17,12 +17,15 @@ Core\AD_Forever.lua [ExcludeLoadGameType standard]
 Core\AD_Theme.lua
 Core\AD_Schema.lua
 Core\AD_Events.lua
+Core\AD_Perf.lua
 Core\AD_Sounds.lua
 Core\AD_Store.lua
 Core\AD_Migrate.lua
+Core\AD_ImportArcUI.lua
 Core\AD_Anchor.lua
 Core\AD_Conditions.lua
 Core\AD_SpellCatalog.lua
+Core\AD_BarScan.lua
 Core\AD_SpellNames.lua
 Core\AD_TooltipIDs.lua
 QOL\AD_AutoRank.lua
@@ -32,29 +35,57 @@ Drivers\AD_DriverCooldown.lua
 Drivers\AD_DriverTotem.lua
 Drivers\AD_DriverEnchant.lua
 Drivers\AD_DriverWarn.lua
+Drivers\AD_DriverCustom.lua
 Drivers\AD_DriverRange.lua
 Drivers\AD_DriverAura.lua
+Drivers\AD_AuraSounds.lua
 Drivers\AD_DriverAuraGroups.lua
 Bars\AD_Bars.lua
+Bars\AD_ResourcePowers.lua
 Bars\AD_SwingOffhand.lua
 Bars\AD_SwingClosing.lua
 Bars\AD_SwingAbilities.lua
 Bars\AD_SwingColors.lua
 Bars\AD_SwingRange.lua
+Bars\AD_ClickUnit.lua
 Bars\AD_BarSpark.lua
 Bars\AD_Castbar.lua
 Bars\AD_EnchantBar.lua
 Bars\AD_RangeBar.lua
+Bars\AD_TextElement.lua
+Bars\AD_AuraBarPrebuild.lua
 Core\AD_LayoutEngine.lua
 Drivers\AD_DriverReminders.lua
+Drivers\AD_DriverSpecial.lua
+Drivers\Special\AD_SpecialMSW.lua
+Drivers\Special\AD_Special_DoomWinds.lua
+Drivers\Special\AD_Special_Tempest.lua
+Drivers\Special\AD_Special_StormUnleashed.lua
+Drivers\Special\AD_Special_ElemTempest.lua
+Drivers\Special\AD_Special_DRE.lua
+Drivers\Special\AD_Special_RestoDRE.lua
+Drivers\Special\AD_Special_Soulburst.lua
+Drivers\Special\AD_Special_PowerInfusion.lua
+Drivers\Special\AD_Special_NaturesGuardian.lua
+Core\AD_SpecialIcon.lua
+Drivers\AD_DriverUnitAuras.lua
 UI\AD_Options.lua
 UI\AD_Modules.lua
 UI\AD_EditorTabs.lua
 UI\AD_FramePicker.lua
 UI\AD_NewLayout.lua
+UI\AD_BarImport.lua
+UI\AD_ImportArcUIOptions.lua
 UI\AD_RangeOptions.lua
+UI\AD_CustomOptions.lua
 UI\AD_SwingColorOptions.lua
+UI\AD_UnitAuraOptions.lua
+UI\AD_MultiSelect.lua
+UI\AD_TextOptions.lua
 UI\AD_ReminderOptions.lua
+UI\AD_RetailWho.lua
+UI\AD_TalentPickerRetail.lua
+UI\AD_SpecialOptions.lua
 UI\AD_OptionsLoader.lua
 UI\AD_IconScreen.lua
 UI\AD_Minimap.lua

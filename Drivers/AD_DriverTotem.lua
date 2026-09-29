@@ -16,8 +16,10 @@ DT.SLOTS = 4
 -- A cast and the slot update it causes land within this many seconds.
 DT.PAIR_WINDOW = 0.5
 -- Seconds between pulses, keyed by the rank 1 spell ID; other ranks match by
--- name, and a pulse setting on the icon wins.
-DT.PULSE_EVERY = {
+-- name, and a pulse setting on the icon wins. Forever's classic totems only:
+-- the retail totems' periods are not in the spell data at hand, so retail
+-- starts empty and only a typed interval draws the bar there.
+DT.PULSE_EVERY = NS.IsForever == true and {
     [8143] = 3,    -- Tremor Totem
     [2484] = 3,    -- Earthbind Totem
     [16190] = 3,   -- Mana Tide Totem
@@ -26,7 +28,7 @@ DT.PULSE_EVERY = {
     [5394] = 2,    -- Healing Stream Totem
     [8166] = 5,    -- Poison Cleansing Totem
     [8170] = 5,    -- Disease Cleansing Totem
-}
+} or {}
 -- What a shaman's totem slots hold on Forever (FIRE_TOTEM_SLOT .. AIR_TOTEM_SLOT),
 -- for hints only: a slot is a slot, whatever the game puts in it.
 DT.ELEMENTS = { "Fire", "Earth", "Water", "Air" }

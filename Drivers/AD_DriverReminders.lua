@@ -260,13 +260,16 @@ function RM.Evaluate(w, rec)
         -- on cooldown: not castable, so "when usable" is armed again
         w.ready = false
         if w.castable then RM.UsableEdges(w, rec) end
+        -- an external watch hears the cooldown start (never on its first read)
+        if w.ext and last == true and w.cb and w.cb.started then w.cb.started() end
         return
     end
     if last ~= false then return end
     w.vtok = w.vtok + 1
     local tok, id, item = w.vtok, w.id, rec.kind == "item"
     C_Timer.After(item and RM.VERIFY_ITEM or RM.VERIFY_SPELL, function()
-        local live, r = RM.watch[id], Store.Get(id)
+        local live = RM.watch[id]
+        local r = live and (live.rec or Store.Get(id))
         if not (live and r) or live.vtok ~= tok then return end
         if item then RM.Feed(live, r) end
         if live.main:IsShown() == true then
@@ -274,13 +277,18 @@ function RM.Evaluate(w, rec)
             return
         end
         live.ready = true
-        RM.Ready(r, live)
+        if live.ext then
+            if live.cb and live.cb.ready then live.cb.ready() end
+        else
+            RM.Ready(r, live)
+        end
         RM.Usable(live, r)
     end)
 end
 
 function RM.Update(id)
-    local w, rec = RM.watch[id], Store.Get(id)
+    local w = RM.watch[id]
+    local rec = w and (w.rec or Store.Get(id))
     if not (w and rec) then return end
     RM.Feed(w, rec)
     RM.Evaluate(w, rec)
@@ -292,7 +300,7 @@ function RM.UpdateAll()
     local again = RM.reresolve
     RM.reresolve = nil
     for id, w in pairs(RM.watch) do
-        local rec = Store.Get(id)
+        local rec = w.rec or Store.Get(id)
         if rec and not w.ench then
             if again then
                 local was = w.eff
@@ -416,6 +424,16 @@ function RM.UsableEdges(w, rec, use)
     local now = use and w.ready == true
     local lastUse, lastNow = w.canUse, w.castable
     w.canUse, w.castable = use, now
+    -- an external watch hears the castable edges (usable and off cooldown)
+    -- and, apart, the plain usable ones (a reactive spell mid-cooldown)
+    if w.ext then
+        local cb = w.cb
+        if cb then
+            if cb.usable and lastNow ~= nil and lastNow ~= now then cb.usable(now) end
+            if cb.usableRaw and lastUse ~= nil and lastUse ~= use then cb.usableRaw(use) end
+        end
+        return
+    end
     for _, t in ipairs(rec.triggers or {}) do
         if t.type == "when_usable" then
             local was, cur = lastNow, now
@@ -440,9 +458,60 @@ end
 
 function RM.UsableAll()
     for id, w in pairs(RM.watch) do
-        local rec = w.usable and Store.Get(id)
+        local rec = w.usable and (w.rec or Store.Get(id))
         if rec then RM.Usable(w, rec) end
     end
+end
+
+-- External watches: another module (the custom rule engine) watches a spell
+-- through the same shadow and edges, keyed by its own string, and hears the
+-- edges through callbacks (started, ready, usable(castable), usableRaw(usable))
+-- instead of triggers. w.rec is a stand-in record, so every read above
+-- serves both.
+function RM.WatchSpell(key, spellID, cb)
+    local w = RM.watch[key]
+    if w and w.ext then
+        w.cb = cb or w.cb
+        if w.rec.driver.spellID ~= spellID then
+            w.rec.driver.spellID = spellID
+            RM.Resolve(w, w.rec)
+            RM.Feed(w, w.rec)
+            w.avail = w.main:IsShown() ~= true
+            w.ready = w.avail
+            w.castable, w.canUse = nil, nil
+        end
+        RM.WantUsable(w, w.rec, cb ~= nil and (cb.usable ~= nil or cb.usableRaw ~= nil))
+        return w
+    end
+    local sh = RM.shadows[key]
+    if not sh then
+        sh = NS.DriverCooldown.MakeShadow()
+        sh:SetScript("OnCooldownDone", function() RM.Update(key) end)
+        RM.shadows[key] = sh
+    end
+    w = { id = key, main = sh, vtok = 0, ttok = 0, ext = true, cb = cb,
+        rec = { kind = "spell", driver = { spellID = spellID } } }
+    RM.watch[key] = w
+    RM.Resolve(w, w.rec)
+    RM.Feed(w, w.rec)
+    w.avail = sh:IsShown() ~= true
+    w.ready = w.avail
+    if cb and (cb.usable or cb.usableRaw) then RM.WantUsable(w, w.rec, true) end
+    RM.QueueSync()
+    return w
+end
+
+function RM.Unwatch(key)
+    local w = RM.watch[key]
+    if not (w and w.ext) then return end
+    RM.Drop(key)
+    RM.QueueSync()
+end
+
+-- An external watch's spell is off its real cooldown (the GCD never counts).
+function RM.WatchReady(key)
+    local w = RM.watch[key]
+    return w ~= nil and w.avail == true
 end
 
 -- One trigger fires. preview: a panel test, which skips the conditions and
@@ -1388,8 +1457,15 @@ function RM.Sync()
             end
         end
     end
-    for id in pairs(RM.watch) do
-        if not keep[id] then RM.Drop(id) end
+    for id, w in pairs(RM.watch) do
+        if w.ext then
+            -- an external watch stays until its owner drops it, and keeps the
+            -- cooldown (and usable) events it needs armed
+            shadows = true
+            if w.usable then usab = true end
+        elseif not keep[id] then
+            RM.Drop(id)
+        end
     end
     table.sort(list)
     RM.live = list

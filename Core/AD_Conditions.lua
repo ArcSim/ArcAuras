@@ -30,22 +30,45 @@ end
 -- InCombatLockdown still reads false while PLAYER_REGEN_DISABLED is delivered.
 local inCombat = false
 local encounterActive = false
+-- worn pieces per item set, counted once per pass
+local setMemo = {}
 
--- The stance bar's spell ID names the form; Forever's classic IDs and retail's
--- are both listed. GetShapeshiftFormID is the druid fallback.
-local FORM_BY_SPELL = {
-    [768] = "cat", [5487] = "bear", [9634] = "bear", [24858] = "moonkin",
-    [783] = "travel", [1066] = "travel", [33943] = "travel", [40120] = "travel",
-    [33891] = "tree", [114282] = "tree",
-    [2457] = "battle", [71] = "defensive", [2458] = "berserker",
-    [386164] = "battle", [386208] = "battle", [386196] = "defensive",
-    [15473] = "shadowform", [232698] = "shadowform",
-}
+-- The stance bar's spell ID names the form, one table per game version:
+-- Forever's classic IDs or retail's. GetShapeshiftFormID is the druid fallback.
+-- Retail forms with no condition row yet (stealth, shadowdance, ghostwolf, the
+-- paladin auras) read as their own name, never as "other".
+local FORM_BY_SPELL
+if NS.IsForever == true then
+    FORM_BY_SPELL = {
+        [768] = "cat", [5487] = "bear", [9634] = "bear", [24858] = "moonkin",
+        [783] = "travel", [1066] = "travel", [33943] = "travel", [40120] = "travel",
+        [33891] = "tree",
+        [2457] = "battle", [71] = "defensive", [2458] = "berserker",
+        [15473] = "shadowform",
+    }
+else
+    -- Treant Form is a cosmetic look with every caster spell open, so it reads as
+    -- caster form; a warrior spec's two stances are the same three IDs.
+    FORM_BY_SPELL = {
+        [768] = "cat", [5487] = "bear", [24858] = "moonkin", [197625] = "moonkin",
+        [783] = "travel", [276012] = "travel", [165962] = "travel", [276029] = "travel",
+        [210053] = "travel", [33891] = "tree", [114282] = "none",
+        [386164] = "battle", [386208] = "defensive", [386196] = "berserker",
+        [232698] = "shadowform",
+        [1784] = "stealth", [115191] = "stealth", [158188] = "stealth",
+        [185313] = "shadowdance", [185422] = "shadowdance",
+        [2645] = "ghostwolf", [317706] = "ghostwolf",
+        [465] = "devotion", [183435] = "retribution", [317920] = "concentration",
+        [32223] = "crusader",
+    }
+end
+-- Form 36 is Treant Form, the cosmetic look, so it is not Tree of Life here.
 local FORM_BY_ID = {
     [1] = "cat", [5] = "bear", [8] = "bear", [31] = "moonkin", [35] = "moonkin",
     [3] = "travel", [4] = "travel", [27] = "travel", [29] = "travel",
-    [2] = "tree", [36] = "tree",
+    [2] = "tree",
 }
+Conditions.FORM_BY_SPELL, Conditions.FORM_BY_ID = FORM_BY_SPELL, FORM_BY_ID
 local function CurrentForm()
     local idx = GetShapeshiftForm and GetShapeshiftForm()
     if IsSecret(idx) then return "unknown" end
@@ -141,6 +164,82 @@ local function AmmoLow()
 end
 Conditions.AMMO_LOW_AT = 400
 
+-- Rows of one game version key off the flavor flag, never an API probe:
+-- Forever ships most retail APIs and answers nothing useful through them.
+local function Retail() return NS.IsForever ~= true end
+local function Forever() return NS.IsForever == true end
+
+-- Blizzard's DifficultyUtil.ID values for the rows below.
+local DIFF = { dungeonNormal = 1, dungeonHeroic = 2, keystone = 8, dungeonMythic = 23,
+    dungeonTimewalk = 24, raidLFR = 17, raidNormal = 14, raidHeroic = 15, raidMythic = 16,
+    raidTimewalk = 33 }
+
+-- The instance's plain difficultyID; 0 outside one, or while it reads secret.
+local function Difficulty()
+    if not GetInstanceInfo then return 0 end
+    local _, _, id = GetInstanceInfo()
+    if IsSecret(id) then return lastPlain.difficulty or 0 end
+    lastPlain.difficulty = type(id) == "number" and id or 0
+    return lastPlain.difficulty
+end
+
+local function DiffIs(id)
+    return function() return Difficulty() == id end
+end
+
+-- A keystone run, from the key going in to the dungeon being left; the
+-- timer's own flag also covers a key already slotted in a lobby.
+local function MythicPlus()
+    local CM = C_ChallengeMode
+    if Plain("keyActive", CM and CM.IsChallengeModeActive and CM.IsChallengeModeActive()) then
+        return true
+    end
+    return Difficulty() == DIFF.keystone
+end
+
+-- Blizzard's own "in a delve": every lair is a delve, not every delve a lair.
+local function InDelve()
+    local D = C_DelvesUI
+    if not (D and D.HasActiveDelve) then return false end
+    if not Plain("delve", D.HasActiveDelve()) then return false end
+    return not Plain("lair", D.IsInLair and D.IsInLair())
+end
+
+local function RatedPvP()
+    local P = C_PvP
+    if not P then return false end
+    return Plain("ratedBG", P.IsRatedBattleground and P.IsRatedBattleground())
+        or Plain("ratedArena", P.IsRatedArena and P.IsRatedArena())
+        or Plain("ratedShuffle", P.IsRatedSoloShuffle and P.IsRatedSoloShuffle())
+        or Plain("ratedSoloRBG", P.IsRatedSoloRBG and P.IsRatedSoloRBG())
+end
+
+local function WarMode()
+    local P = C_PvP
+    return Plain("warMode", P and P.IsWarModeActive and P.IsWarModeActive())
+end
+
+-- The assigned group role, else the spec's own: PlayerUtil's effective-role
+-- rule. The player's identity is never restricted, but a secret still keeps
+-- the last plain answer.
+local function Role()
+    local r = UnitGroupRolesAssigned and UnitGroupRolesAssigned("player")
+    if IsSecret(r) then return lastPlain.role end
+    if type(r) ~= "string" or r == "NONE" or r == "" then
+        r = Store.CurSpecRole and Store.CurSpecRole() or nil
+    end
+    lastPlain.role = r
+    return r
+end
+
+local function RoleIs(name)
+    return function() return Role() == name end
+end
+
+local function Leader()
+    return Plain("leader", UnitIsGroupLeader and UnitIsGroupLeader("player"))
+end
+
 -- Vocabulary. key: what rec.c stores (saved, so never renamed). text: follows
 -- the list name ("Load when", "Fade when"). ev: the events that change it.
 -- poll: no event reports it. class: only that class's panel lists it.
@@ -158,6 +257,15 @@ local VEHICLE_EV = { "UNIT_ENTERED_VEHICLE", "UNIT_EXITED_VEHICLE",
     "PLAYER_CONTROL_LOST", "PLAYER_CONTROL_GAINED", "VEHICLE_UPDATE" }
 local MOOD_EV = { "UNIT_HAPPINESS", "UNIT_PET" }
 local AMMO_EV = { "UNIT_INVENTORY_CHANGED", "BAG_UPDATE_DELAYED", "PLAYER_EQUIPMENT_CHANGED" }
+local DIFF_EV = { "PLAYER_DIFFICULTY_CHANGED", "ZONE_CHANGED_NEW_AREA" }
+local KEY_EV = { "CHALLENGE_MODE_START", "CHALLENGE_MODE_COMPLETED",
+    "PLAYER_DIFFICULTY_CHANGED", "ZONE_CHANGED_NEW_AREA" }
+local DELVE_EV = { "ACTIVE_DELVE_DATA_UPDATE", "ZONE_CHANGED_NEW_AREA" }
+local PVP_EV = { "PVP_MATCH_ACTIVE", "PVP_MATCH_INACTIVE", "ZONE_CHANGED_NEW_AREA" }
+local WARMODE_EV = { "WAR_MODE_STATUS_UPDATE", "PLAYER_FLAGS_CHANGED" }
+local ROLE_EV = { "PLAYER_ROLES_ASSIGNED", "ROLE_CHANGED_INFORM", "GROUP_ROSTER_UPDATE",
+    "PLAYER_SPECIALIZATION_CHANGED" }
+local LEADER_EV = { "PARTY_LEADER_CHANGED", "GROUP_ROSTER_UPDATE" }
 
 local function FormIs(name)
     return function() return Form() == name end
@@ -192,17 +300,18 @@ local VOCAB = {
         read = function() return not Casting() end },
     { key = "hasPet", cat = "player", text = "Pet is out", ev = { "UNIT_PET" },
         read = function() return Plain("hasPet", UnitExists and UnitExists("pet")) end },
+    -- pet mood and ammo are Forever's: retail has neither
     { key = "petHappy", cat = "player", class = "HUNTER", text = "Pet is happy", ev = MOOD_EV,
-        read = function() return Conditions.PetMood() == 3 end },
+        avail = Forever, read = function() return Conditions.PetMood() == 3 end },
     { key = "petNotHappy", cat = "player", class = "HUNTER", text = "Pet is not happy", ev = MOOD_EV,
-        read = function()
+        avail = Forever, read = function()
             local h = Conditions.PetMood()
             return h ~= nil and h < 3
         end },
     { key = "petUnhappy", cat = "player", class = "HUNTER", text = "Pet is unhappy", ev = MOOD_EV,
-        read = function() return Conditions.PetMood() == 1 end },
+        avail = Forever, read = function() return Conditions.PetMood() == 1 end },
     { key = "ammoLow", cat = "player", class = "HUNTER", text = "Ammo is low", ev = AMMO_EV,
-        read = AmmoLow },
+        avail = Forever, read = AmmoLow },
     -- SecretWhenUnitIdentityRestricted: Plain keeps the last real answer
     { key = "pvp", cat = "player", text = "PvP flagged",
         ev = { "UNIT_FACTION", "PLAYER_FLAGS_CHANGED" },
@@ -229,6 +338,14 @@ local VOCAB = {
         read = function() return GroupKind() == "party" end },
     { key = "raid", cat = "group", text = "In a raid group", ev = GROUP_EV,
         read = function() return GroupKind() == "raid" end },
+    { key = "roleTank", cat = "group", text = "Tank role", avail = Retail, ev = ROLE_EV,
+        read = RoleIs("TANK") },
+    { key = "roleHealer", cat = "group", text = "Healer role", avail = Retail, ev = ROLE_EV,
+        read = RoleIs("HEALER") },
+    { key = "roleDamage", cat = "group", text = "Damage role", avail = Retail, ev = ROLE_EV,
+        read = RoleIs("DAMAGER") },
+    { key = "groupLeader", cat = "group", text = "Group leader", avail = Retail, ev = LEADER_EV,
+        read = Leader },
     { key = "instance", cat = "place", text = "In an instance", ev = PLACE_EV,
         read = function() return InstanceType() ~= "none" end },
     { key = "openWorld", cat = "place", text = "Open world", ev = PLACE_EV,
@@ -250,6 +367,35 @@ local VOCAB = {
             return Plain("petBattle", C_PetBattles and C_PetBattles.IsInBattle
                 and C_PetBattles.IsInBattle())
         end },
+    { key = "delve", cat = "place", text = "In a delve", avail = Retail, ev = DELVE_EV,
+        read = InDelve },
+    { key = "scenario", cat = "place", text = "In a scenario", avail = Retail, ev = PLACE_EV,
+        read = function() return InstanceType() == "scenario" end },
+    { key = "ratedPvP", cat = "place", text = "Rated PvP", avail = Retail, ev = PVP_EV,
+        read = RatedPvP },
+    { key = "warMode", cat = "place", text = "War Mode on", avail = Retail, ev = WARMODE_EV,
+        read = WarMode },
+    { key = "mythicPlus", cat = "difficulty", text = "Mythic+ keystone", avail = Retail,
+        ev = KEY_EV, read = MythicPlus },
+    { key = "dungeonNormal", cat = "difficulty", text = "Normal dungeon", avail = Retail,
+        ev = DIFF_EV, read = DiffIs(DIFF.dungeonNormal) },
+    { key = "dungeonHeroic", cat = "difficulty", text = "Heroic dungeon", avail = Retail,
+        ev = DIFF_EV, read = DiffIs(DIFF.dungeonHeroic) },
+    { key = "dungeonMythic", cat = "difficulty", text = "Mythic 0 dungeon", avail = Retail,
+        ev = DIFF_EV, read = DiffIs(DIFF.dungeonMythic) },
+    { key = "timewalking", cat = "difficulty", text = "Timewalking", avail = Retail,
+        ev = DIFF_EV, read = function()
+            local d = Difficulty()
+            return d == DIFF.dungeonTimewalk or d == DIFF.raidTimewalk
+        end },
+    { key = "raidLFR", cat = "difficulty", text = "Raid Finder", avail = Retail,
+        ev = DIFF_EV, read = DiffIs(DIFF.raidLFR) },
+    { key = "raidNormal", cat = "difficulty", text = "Normal raid", avail = Retail,
+        ev = DIFF_EV, read = DiffIs(DIFF.raidNormal) },
+    { key = "raidHeroic", cat = "difficulty", text = "Heroic raid", avail = Retail,
+        ev = DIFF_EV, read = DiffIs(DIFF.raidHeroic) },
+    { key = "raidMythic", cat = "difficulty", text = "Mythic raid", avail = Retail,
+        ev = DIFF_EV, read = DiffIs(DIFF.raidMythic) },
     { key = "formCaster", cat = "form", class = "DRUID", text = "Caster form",
         ev = FORM_EV, read = FormIs("none") },
     { key = "formCat", cat = "form", class = "DRUID", text = "Cat Form",
@@ -287,6 +433,7 @@ Conditions.CATEGORIES = {
     { id = "target", text = "Target" },
     { id = "group", text = "Group" },
     { id = "place", text = "Place" },
+    { id = "difficulty", text = "Difficulty" },
     { id = "form", text = "Forms and Stances" },
     { id = "other", text = "Other" },
 }
@@ -334,13 +481,23 @@ end
 function Conditions.Refresh()
     wipe(memo)
     formMemo = nil
+    wipe(setMemo)
 end
 
--- Unknown keys (saved by a newer version) stay on the record but decide nothing.
+-- A key this client cannot evaluate decides nothing: one saved by a newer
+-- version, or a row of the other game version (a Forever record's pet mood on
+-- retail, a retail record's keystone on Forever). Read as false, either would
+-- block the record for good.
+local function Live(key)
+    local d = BY_KEY[key]
+    if d and d.avail and not d.avail() then return nil end
+    return d
+end
+
 local function SetHas(set)
     if type(set) ~= "table" then return false end
     for key in pairs(set) do
-        if BY_KEY[key] then return true end
+        if Live(key) then return true end
     end
     return false
 end
@@ -348,7 +505,7 @@ end
 local function SetAny(set)
     if type(set) ~= "table" then return false end
     for key in pairs(set) do
-        if BY_KEY[key] and Is(key) then return true end
+        if Live(key) and Is(key) then return true end
     end
     return false
 end
@@ -356,7 +513,7 @@ end
 local function SetMatch(set, all)
     local n, hit = 0, 0
     for key in pairs(set) do
-        if BY_KEY[key] then
+        if Live(key) then
             n = n + 1
             if Is(key) then hit = hit + 1 end
         end
@@ -392,6 +549,74 @@ local function RangeHolds(rec)
     return v == (mode == "in")
 end
 
+-- Set pieces, a load rule of its own (retail only): the record goes inert
+-- unless the character wears at least N pieces of one item set. Armor never
+-- changes in combat and both reads are plain (GetInventoryItemID, the set id
+-- C_Item.GetItemInfo returns); an item whose data is not cached yet counts as
+-- no piece until GET_ITEM_INFO_RECEIVED runs the pass again.
+local SET_SLOTS = 19
+local SET_EV = { "PLAYER_EQUIPMENT_CHANGED", "GET_ITEM_INFO_RECEIVED" }
+local function SetRuleOf(c)
+    if NS.IsForever == true then return nil end
+    local id, n = tonumber(c.setID), tonumber(c.setPieces)
+    if not id or id <= 0 then return nil end
+    if not n or n < 1 then n = 1 end
+    return math.floor(id), math.floor(n)
+end
+
+function Conditions.SetRule(rec)
+    return SetRuleOf((rec and rec.c) or EMPTY)
+end
+
+-- the set an item belongs to, or nil: none, unknown yet, or secret
+local function ItemSetOf(itemID)
+    local GI = C_Item and C_Item.GetItemInfo
+    if not (itemID and GI) then return nil end
+    local setID = select(16, GI(itemID))
+    if IsSecret(setID) or type(setID) ~= "number" or setID <= 0 then return nil end
+    return setID
+end
+
+function Conditions.SetPiecesWorn(setID)
+    local n = setMemo[setID]
+    if n then return n end
+    n = 0
+    for slot = 1, SET_SLOTS do
+        local itemID = GetInventoryItemID and GetInventoryItemID("player", slot)
+        if itemID and not IsSecret(itemID) and ItemSetOf(itemID) == setID then n = n + 1 end
+    end
+    setMemo[setID] = n
+    return n
+end
+
+-- The sets on the worn gear, { id, name } each, for a picker.
+function Conditions.WornSets()
+    local out, seen = {}, {}
+    for slot = 1, SET_SLOTS do
+        local itemID = GetInventoryItemID and GetInventoryItemID("player", slot)
+        local setID = (itemID and not IsSecret(itemID)) and ItemSetOf(itemID) or nil
+        if setID and not seen[setID] then
+            seen[setID] = true
+            out[#out + 1] = { id = setID, name = Conditions.SetName(setID) }
+        end
+    end
+    table.sort(out, function(a, b) return a.id < b.id end)
+    return out
+end
+
+function Conditions.SetName(setID)
+    local GS = C_Item and C_Item.GetItemSetInfo
+    local name = GS and GS(setID)
+    if IsSecret(name) or type(name) ~= "string" or name == "" then return "Set " .. tostring(setID) end
+    return name
+end
+
+local function SetHolds(rec)
+    local id, n = Conditions.SetRule(rec)
+    if not id then return true end
+    return Conditions.SetPiecesWorn(id) >= n
+end
+
 -- The "when" half of the load layer ("who" is Store.IsLoaded). Failing it only
 -- makes a record inert, keeping its frames so it can return in combat: aura
 -- engine slots can't be created while auras are secret.
@@ -401,6 +626,7 @@ local function WhenOK(rec)
         return false
     end
     if SetAny(c.loadNever) then return false end
+    if not SetHolds(rec) then return false end
     return true
 end
 
@@ -538,6 +764,8 @@ local inUse, polled, pollLast = {}, {}, {}
 local pollTicker
 -- The spells live records' target range rules read.
 local rangeUse = {}
+-- whether a live record reads a set-pieces rule (its gear events arm then)
+local setUse = false
 
 local function EventValid(e)
     if invalid[e] then return false end
@@ -555,7 +783,7 @@ local UNIT_ARG = {
     UNIT_SPELLCAST_CHANNEL_START = "player", UNIT_SPELLCAST_CHANNEL_STOP = "player",
     UNIT_SPELLCAST_EMPOWER_START = "player", UNIT_SPELLCAST_EMPOWER_STOP = "player",
     UNIT_PET = "player", UNIT_INVENTORY_CHANGED = "player",
-    UNIT_HAPPINESS = "pet",
+    UNIT_HAPPINESS = "pet", PLAYER_SPECIALIZATION_CHANGED = "player",
     UNIT_FACTION = "either",   -- the PvP flag (player) or hostility (target)
 }
 
@@ -592,6 +820,9 @@ local function Arm()
             for _, e in ipairs(d.ev) do want[e] = true end
         end
         if d.poll then polled[key] = true end
+    end
+    if setUse then
+        for _, e in ipairs(SET_EV) do want[e] = true end
     end
     for e in pairs(want) do
         if not armed[e] and EventValid(e) then
@@ -640,12 +871,13 @@ local function CollectKeys(c)
         local set = c[list]
         if type(set) == "table" then
             for key in pairs(set) do
-                if BY_KEY[key] then inUse[key] = true end
+                if Live(key) then inUse[key] = true end
             end
         end
     end
     local id = RuleOf(c)
     if id then rangeUse[id] = true end
+    if SetRuleOf(c) then setUse = true end
 end
 
 -- Evaluate every live record, then paint, since a painter reads its parents'
@@ -657,6 +889,7 @@ function Conditions.Pass()
     local now = GetTime()
     wipe(inUse)
     wipe(rangeUse)
+    setUse = false
     local flipped = false
     for _, recType in ipairs(subjectOrder) do
         subjects[recType].each(function(id)
@@ -766,7 +999,20 @@ function Conditions.Count(rec, list)
     local n = 0
     if type(set) == "table" then
         for key in pairs(set) do
-            if BY_KEY[key] then n = n + 1 end
+            if Live(key) then n = n + 1 end
+        end
+    end
+    return n
+end
+
+-- How many checked keys are rows of the other game version: saved, ignored
+-- here, and worth one line in the panel.
+function Conditions.Foreign(rec, list)
+    local set = rec and rec.c and rec.c[list]
+    local n = 0
+    if type(set) == "table" then
+        for key in pairs(set) do
+            if BY_KEY[key] and not Live(key) then n = n + 1 end
         end
     end
     return n
@@ -850,6 +1096,25 @@ function Conditions.SetRangeSpell(rec, id)
     Store.Dirty("load", rec.id)
 end
 
+-- The set-pieces rule: an item set id (nil = no rule) and the pieces needed.
+function Conditions.SetSetID(rec, id)
+    if not rec then return end
+    id = tonumber(id)
+    id = (id and id > 0) and math.floor(id) or nil
+    if rec.c.setID == id then return end
+    rec.c.setID = id
+    Store.Dirty("load", rec.id)
+end
+
+function Conditions.SetSetPieces(rec, n)
+    if not rec then return end
+    n = tonumber(n)
+    n = n and math.max(1, math.min(SET_SLOTS, math.floor(n))) or nil
+    if rec.c.setPieces == n then return end
+    rec.c.setPieces = n
+    Store.Dirty("load", rec.id)
+end
+
 -- Old "hide when" keys are folded into Fade when by Store.Normalize itself
 -- (FoldHideWhen), so that migration never depends on this file having loaded.
 
@@ -888,6 +1153,16 @@ function Conditions.Normalize(rec)
         local id = tonumber(c.rangeSpell)
         c.rangeSpell = (id and id > 0) and math.floor(id) or nil
     end
+    -- the set-pieces rule's keys are kept in shape on both flavors (a Forever
+    -- save carries a retail record's rule back)
+    if c.setID ~= nil then
+        local id = tonumber(c.setID)
+        c.setID = (id and id > 0) and math.floor(id) or nil
+    end
+    if c.setPieces ~= nil then
+        local n = tonumber(c.setPieces)
+        c.setPieces = n and math.max(1, math.min(SET_SLOTS, math.floor(n))) or nil
+    end
     -- An empty faction set is legal: it means "nowhere", like classes.
     if c.factions ~= nil then
         if type(c.factions) ~= "table" then
@@ -902,10 +1177,17 @@ end
 
 -- Init, called from the layout engine's Init
 
+-- The bare IsEncounterInProgress is a deprecated alias on retail.
+local function EncounterNow()
+    local IE = C_InstanceEncounter
+    local f = (IE and IE.IsEncounterInProgress) or IsEncounterInProgress
+    return f ~= nil and f() == true
+end
+
 function Conditions.Init()
     inCombat = (InCombatLockdown and InCombatLockdown()) == true
         or Plain("combatInit", UnitAffectingCombat and UnitAffectingCombat("player"))
-    encounterActive = (IsEncounterInProgress and IsEncounterInProgress()) == true
+    encounterActive = EncounterNow()
     Events.On("PLAYER_REGEN_DISABLED", "adcond_base", function()
         inCombat = true
         Conditions.Queue()
@@ -923,7 +1205,7 @@ function Conditions.Init()
         Conditions.Queue()
     end)
     Events.On("PLAYER_ENTERING_WORLD", "adcond_base", function()
-        encounterActive = (IsEncounterInProgress and IsEncounterInProgress()) == true
+        encounterActive = EncounterNow()
         Conditions.Queue()
     end)
     -- The one way faction changes mid-session (a Pandaren choosing). It is a

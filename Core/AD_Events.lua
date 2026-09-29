@@ -12,6 +12,12 @@ local counts = {}    -- [event] = number of subscribers
 frame:SetScript("OnEvent", function(_, event, ...)
     local list = subs[event]
     if not list then return end
+    -- /arcperf (Core\AD_Perf.lua): each handler timed while it is on
+    local P = NS.Perf
+    if P and P.on then
+        for key, fn in pairs(list) do P.Top(P.Key("event", event, key), fn, event, ...) end
+        return
+    end
     for _, fn in pairs(list) do
         fn(event, ...)
     end
@@ -54,6 +60,11 @@ end
 function Events.Fire(message, ...)
     local list = msgs[message]
     if not list then return end
+    local P = NS.Perf
+    if P and P.on then
+        for key, fn in pairs(list) do P.Call(P.Key("message", message, key), fn, message, ...) end
+        return
+    end
     for _, fn in pairs(list) do
         fn(message, ...)
     end
@@ -72,6 +83,11 @@ function Events.Coalesce(key, fn)
         queued = false
         local run = pending
         pending = {}
+        local P = NS.Perf
+        if P and P.on then
+            for key, f in pairs(run) do P.Top(P.Key("next frame", "", key), f) end
+            return
+        end
         for _, f in pairs(run) do
             f()
         end

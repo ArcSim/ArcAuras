@@ -101,11 +101,13 @@ local function Scan()
 
     -- Source 2: action bars, with macros resolved to their spell
     for slot = 1, 180 do
-        local actionType, id = GetActionInfo(slot)
+        local actionType, id, sub = GetActionInfo(slot)
         if actionType == "spell" and id then
             AddSpell(seen, id, "ActionBar")
         elseif actionType == "macro" and id then
-            local spellID = GetMacroSpell(id)
+            -- the id is the macro's spell when the third return says so;
+            -- an older client gives the macro index instead
+            local spellID = (sub == "spell") and id or GetMacroSpell(id)
             if spellID then AddSpell(seen, spellID, "Macro") end
         end
     end
@@ -113,8 +115,9 @@ local function Scan()
     -- Source 3: the active talent tree
     if C_ClassTalents and C_Traits then
         local configID = C_ClassTalents.GetActiveConfigID()
-        local specIdx = GetSpecialization and GetSpecialization()
-        local specID = specIdx and GetSpecializationInfo(specIdx)
+        local SI = C_SpecializationInfo
+        local specIdx = SI and SI.GetSpecialization and SI.GetSpecialization()
+        local specID = specIdx and SI.GetSpecializationInfo(specIdx)
         local treeID = configID and specID and C_ClassTalents.GetTraitTreeForSpec(specID)
         if configID and treeID then
             local nodeIDs = C_Traits.GetTreeNodes(treeID)
@@ -239,12 +242,15 @@ end
 local Talents = {}
 NS.TalentCatalog = Talents
 
-local tEntries = {}      -- sorted { {nodeID, name, nameLower, icon, rank, maxRanks, entryID, spellID, treeID, groupID, posX, posY, edges} }
+local tEntries = {}      -- sorted { {nodeID, name, nameLower, icon, rank, maxRanks, entryID, spellID, treeID, groupID, posX, posY, edges, and on retail home, subTreeID, subTreeActive, taken, entries, activeEntryID} }
 local tDirty = true
 local taken = {}         -- [nodeID] = true, rebuilt with tEntries
+local activeEntryOf = {} -- [nodeID] = the active entry's ID, rebuilt with tEntries
 local tSubscribed = false
 local tGroups = {}       -- the classic trees, in Blizzard's display order
 local tBounds = {}       -- { minX, maxX, minY, maxY } over the kept nodes, for the picker
+local tHero = {}         -- retail: the class's hero trees { id, name, active, specs = { [specID] = true } }
+local tPanels            -- retail: the picker's class / hero / spec panels (Talents.Panels)
 
 -- configID + every tree it carries, spec-free where possible
 local function ActiveTrees()
@@ -256,21 +262,18 @@ local function ActiveTrees()
         return configID, info.treeIDs
     end
     -- retail fallback: the active spec's tree
-    local specIdx = GetSpecialization and GetSpecialization()
-    local specID = specIdx and GetSpecializationInfo(specIdx)
+    local SI = C_SpecializationInfo
+    local specIdx = SI and SI.GetSpecialization and SI.GetSpecialization()
+    local specID = specIdx and SI.GetSpecializationInfo(specIdx)
     local treeID = specID and C_ClassTalents.GetTraitTreeForSpec
         and C_ClassTalents.GetTraitTreeForSpec(specID)
     if treeID then return configID, { treeID } end
     return configID, nil
 end
 
--- Name and icon come from the node's active entry (a choice node shows your
--- pick), else its first entry, so untaken talents still list. The entry and
--- its spell come back too: the picker's tooltip shows the game's talent text.
-local function NodeDisplay(configID, nodeInfo)
-    local entryID = (nodeInfo.activeEntry and nodeInfo.activeEntry.entryID)
-        or (nodeInfo.entryIDs and nodeInfo.entryIDs[1])
-    if not entryID then return end
+-- One entry's name, icon and spell, from its definition first (immune to a
+-- runtime spell override), then the spell.
+local function EntryDisplay(configID, entryID)
     local entryInfo = C_Traits.GetEntryInfo and C_Traits.GetEntryInfo(configID, entryID)
     local defID = entryInfo and entryInfo.definitionID
     local defInfo = defID and C_Traits.GetDefinitionInfo and C_Traits.GetDefinitionInfo(defID)
@@ -281,7 +284,141 @@ local function NodeDisplay(configID, nodeInfo)
         name = name or C_Spell.GetSpellName(defInfo.spellID)
         icon = icon or C_Spell.GetSpellTexture(defInfo.spellID)
     end
-    return name, icon, entryID, defInfo.spellID
+    return name, icon, defInfo.spellID
+end
+
+-- Name and icon come from the node's active entry (a choice node shows your
+-- pick), else its first entry, so untaken talents still list. The entry and
+-- its spell come back too: the picker's tooltip shows the game's talent text.
+local function NodeDisplay(configID, nodeInfo)
+    local entryID = (nodeInfo.activeEntry and nodeInfo.activeEntry.entryID)
+        or (nodeInfo.entryIDs and nodeInfo.entryIDs[1])
+    if not entryID then return end
+    local name, icon, spellID = EntryDisplay(configID, entryID)
+    return name, icon, entryID, spellID
+end
+
+-- A choice node's options (two or more entries), so a condition can name one.
+local function NodeEntries(configID, nodeInfo)
+    local ids = nodeInfo.entryIDs
+    if type(ids) ~= "table" or #ids < 2 then return nil end
+    local out = {}
+    for _, entryID in ipairs(ids) do
+        local name, icon, spellID = EntryDisplay(configID, entryID)
+        if name then
+            out[#out + 1] = { entryID = entryID, name = name, icon = icon or 134400, spellID = spellID }
+        end
+    end
+    if #out < 2 then return nil end
+    return out
+end
+
+-- Retail keeps every spec's nodes and every hero tree in one class tree. A
+-- node's home: hero (it carries a subTreeID), else spec or class by the
+-- currency its cost is paid in (the talent frame's treeCurrencyInfo[2] and
+-- [1]); with no cost data, spec nodes sit at posX 10000 and beyond.
+local function NodeHome(configID, nodeID, nodeInfo, classCur, specCur)
+    if nodeInfo.subTreeID then return "hero" end
+    if specCur and C_Traits.GetNodeCost then
+        for _, cost in ipairs(C_Traits.GetNodeCost(configID, nodeID) or {}) do
+            if cost.ID == specCur then return "spec" end
+            if cost.ID == classCur then return "class" end
+        end
+    end
+    return ((nodeInfo.posX or 0) >= 10000) and "spec" or "class"
+end
+
+-- Retail: the player's class's hero trees, each with the specs it serves. The
+-- picker draws the current spec's, the Load Conditions rows list every one.
+local function ScanHeroTrees(configID)
+    wipe(tHero)
+    local CT = C_ClassTalents
+    if not (CT and CT.GetHeroTalentSpecsForClassSpec and C_Traits.GetSubTreeInfo) then return end
+    local Store = NS.Store
+    local tag = Store and Store.ClassTag and Store.ClassTag()
+    local specs = {}
+    for _, cls in ipairs((Store and Store.ClassSpecMatrix and Store.ClassSpecMatrix()) or {}) do
+        if cls.tag == tag then
+            for _, sp in ipairs(cls.specs) do specs[#specs + 1] = sp.id end
+        end
+    end
+    local cur = Store and Store.CurSpecID and Store.CurSpecID()
+    if #specs == 0 and cur then specs[1] = cur end
+    local byID = {}
+    for _, specID in ipairs(specs) do
+        local ids = CT.GetHeroTalentSpecsForClassSpec(configID, specID)
+        for _, id in ipairs(type(ids) == "table" and ids or {}) do
+            local t = byID[id]
+            if not t then
+                local info = C_Traits.GetSubTreeInfo(configID, id)
+                t = { id = id, name = (info and info.name) or ("Hero tree " .. id),
+                    active = info ~= nil and info.isActive == true, specs = {} }
+                byID[id] = t
+                tHero[#tHero + 1] = t
+            end
+            t.specs[specID] = true
+        end
+    end
+    table.sort(tHero, function(a, b) return a.name < b.name end)
+end
+
+local function Extents(list)
+    local b = {}
+    for _, e in ipairs(list) do
+        b.minX = math.min(b.minX or e.posX, e.posX)
+        b.maxX = math.max(b.maxX or e.posX, e.posX)
+        b.minY = math.min(b.minY or e.posY, e.posY)
+        b.maxY = math.max(b.maxY or e.posY, e.posY)
+    end
+    return b
+end
+
+-- The retail picker's panels: the class tree, the spec's hero trees (each its
+-- own band) and the spec tree, each with its own extents.
+local function BuildPanels()
+    local class, spec, heroLists = {}, {}, {}
+    for _, e in ipairs(tEntries) do
+        if e.home == "spec" then
+            spec[#spec + 1] = e
+        elseif e.home == "hero" then
+            local l = heroLists[e.subTreeID]
+            if not l then
+                l = {}
+                heroLists[e.subTreeID] = l
+            end
+            l[#l + 1] = e
+        else
+            class[#class + 1] = e
+        end
+    end
+    local hero, seen = {}, {}
+    for _, t in ipairs(tHero) do
+        local l = heroLists[t.id]
+        if l then
+            seen[t.id] = true
+            hero[#hero + 1] = { id = t.id, name = t.name, active = t.active, list = l, bounds = Extents(l) }
+        end
+    end
+    -- a sub-tree the hero API did not name is still drawn, under its id
+    for id, l in pairs(heroLists) do
+        if not seen[id] then
+            hero[#hero + 1] = { id = id, name = "Hero tree " .. id,
+                active = l[1].subTreeActive == true, list = l, bounds = Extents(l) }
+        end
+    end
+    table.sort(hero, function(a, b) return a.name < b.name end)
+    local SI = C_SpecializationInfo
+    local specName
+    local idx = SI and SI.GetSpecialization and SI.GetSpecialization()
+    if type(idx) == "number" and SI.GetSpecializationInfo then
+        local _, nm = SI.GetSpecializationInfo(idx)
+        specName = nm
+    end
+    return {
+        class = { name = UnitClass("player") or "Class", list = class, bounds = Extents(class) },
+        spec = { name = specName or "Spec", list = spec, bounds = Extents(spec) },
+        hero = hero,
+    }
 end
 
 -- Some nodes sit an order of magnitude off the tree (Hunter tree 1091, node
@@ -333,12 +470,36 @@ end
 local function ScanTalents()
     wipe(tEntries)
     wipe(taken)
+    wipe(activeEntryOf)
     wipe(tGroups)
     wipe(tBounds)
+    wipe(tHero)
+    tPanels = nil
     local configID, trees = ActiveTrees()
     if not (configID and trees) then
         tDirty = false
         return
+    end
+    -- Retail: the currencies that tell class nodes from spec nodes, and the
+    -- current spec's hero trees (the others' nodes stay out of the picker).
+    local retail = NS.IsForever ~= true
+    local classCur, specCur, heroAllowed
+    if retail then
+        if C_Traits.GetTreeCurrencyInfo then
+            local ci = C_Traits.GetTreeCurrencyInfo(configID, trees[1], false)
+            classCur = ci and ci[1] and ci[1].traitCurrencyID
+            specCur = ci and ci[2] and ci[2].traitCurrencyID
+        end
+        ScanHeroTrees(configID)
+        local cur = NS.Store and NS.Store.CurSpecID and NS.Store.CurSpecID()
+        if cur then
+            for _, t in ipairs(tHero) do
+                if t.specs[cur] then
+                    heroAllowed = heroAllowed or {}
+                    heroAllowed[t.id] = true
+                end
+            end
+        end
     end
     -- The classic trees. A node's tree is the one of its groupIDs that is a
     -- top-level display group, as in ClassTalentsFrameMixin:GetTraitTreeName.
@@ -369,9 +530,24 @@ local function ScanTalents()
                 local nodeInfo = C_Traits.GetNodeInfo(configID, nodeID)
                 if nodeInfo then
                     local rank = nodeInfo.activeRank or 0
-                    if rank > 0 then taken[nodeID] = true end
+                    local visible = nodeInfo.isVisible ~= false
+                    local sub = nodeInfo.subTreeID
+                    -- retail: a hidden node (another spec's) or one of the hero
+                    -- tree not chosen is never taken, whatever rank it reports
+                    local counts = rank > 0
+                    if retail and (not visible or (sub and nodeInfo.subTreeActive ~= true)) then
+                        counts = false
+                    end
+                    if counts then taken[nodeID] = true end
+                    local ae = nodeInfo.activeEntry and nodeInfo.activeEntry.entryID
+                    if ae then activeEntryOf[nodeID] = ae end
                     local name, icon, entryID, spellID = NodeDisplay(configID, nodeInfo)
-                    if name then
+                    local keep = name ~= nil
+                    -- retail draws only visible nodes, and only the spec's hero trees
+                    if retail and (not visible or (sub and heroAllowed and not heroAllowed[sub])) then
+                        keep = false
+                    end
+                    if keep then
                         local groupID
                         for _, g in ipairs(nodeInfo.groupIDs or {}) do
                             if topGroup[g] then groupID = g break end
@@ -397,6 +573,14 @@ local function ScanTalents()
                             posX = nodeInfo.posX or 0,
                             posY = nodeInfo.posY or 0,
                             edges = edges,
+                            -- retail: the panel it draws in, its hero tree, whether
+                            -- it counts, a choice node's options and the active one
+                            home = retail and NodeHome(configID, nodeID, nodeInfo, classCur, specCur) or nil,
+                            subTreeID = sub,
+                            subTreeActive = nodeInfo.subTreeActive,
+                            taken = counts,
+                            entries = retail and NodeEntries(configID, nodeInfo) or nil,
+                            activeEntryID = ae,
                         }
                     end
                 end
@@ -405,8 +589,22 @@ local function ScanTalents()
     end
 
     -- taken[] keeps every node, so a condition saved against a node dropped
-    -- here still evaluates correctly.
-    tEntries = DropOffCanvas(tEntries)
+    -- here still evaluates correctly. Retail's panels are separate grids far
+    -- apart, so the off-canvas rule runs per panel there.
+    if retail then
+        local byHome = { class = {}, spec = {}, hero = {} }
+        for _, e in ipairs(tEntries) do
+            local l = byHome[e.home]
+            l[#l + 1] = e
+        end
+        local kept = {}
+        for _, home in ipairs({ "class", "hero", "spec" }) do
+            for _, e in ipairs(DropOffCanvas(byHome[home])) do kept[#kept + 1] = e end
+        end
+        tEntries = kept
+    else
+        tEntries = DropOffCanvas(tEntries)
+    end
 
     -- Whole-tree extents, plus each tree's band (the picker heads its column)
     -- and the points spent in it.
@@ -440,6 +638,7 @@ local function ScanTalents()
         if at ~= bt then return at end
         return a.name < b.name
     end)
+    if retail then tPanels = BuildPanels() end
     tDirty = false
 end
 
@@ -447,7 +646,7 @@ end
 -- RegisterEvent throws on an unknown name, so use ValidEvents.
 Talents.EVENTS = { "TRAIT_CONFIG_UPDATED", "TRAIT_NODE_CHANGED",
     "PLAYER_TALENT_UPDATE", "ACTIVE_COMBAT_CONFIG_CHANGED",
-    "ACTIVE_PLAYER_SPECIALIZATION_CHANGED" }
+    "ACTIVE_PLAYER_SPECIALIZATION_CHANGED", "TRAIT_SUB_TREE_CHANGED" }
 
 function Talents.ValidEvents()
     local out = {}
@@ -480,6 +679,41 @@ end
 function Talents.IsTaken(nodeID)
     Talents.Ensure()
     return taken[nodeID] == true
+end
+
+-- The entry a node has active (a choice node's pick), or nil.
+function Talents.ActiveEntry(nodeID)
+    Talents.Ensure()
+    return activeEntryOf[nodeID]
+end
+
+-- One option of a choice node: { entryID, name, icon, spellID }, or nil.
+function Talents.EntryInfo(nodeID, entryID)
+    local e = Talents.Known(nodeID)
+    for _, opt in ipairs((e and e.entries) or {}) do
+        if opt.entryID == entryID then return opt end
+    end
+    return nil
+end
+
+-- Retail: the class's hero trees ({ id, name, active, specs }); empty elsewhere.
+function Talents.HeroTrees()
+    Talents.Ensure()
+    return tHero
+end
+
+function Talents.HeroName(id)
+    for _, t in ipairs(Talents.HeroTrees()) do
+        if t.id == id then return t.name end
+    end
+    return nil
+end
+
+-- Retail: what the retail picker draws ({ class, spec, hero = { ... } }, each
+-- with name, list and bounds); nil on a spec-less client or with no tree.
+function Talents.Panels()
+    Talents.Ensure()
+    return tPanels
 end
 
 -- A stored node may be missing from the current tree (imported from another

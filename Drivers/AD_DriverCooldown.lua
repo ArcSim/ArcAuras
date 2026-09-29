@@ -13,7 +13,8 @@ NS.DriverCooldown = Driver
 
 local attached = {}      -- [iconId] = { rec, frame, sCD, sCharge, isCharge }
 local shadowCache = {}   -- [iconId] = { sCD, sCharge } kept across detach
-local rangeTicker        -- shared 0.25s range pulse, alive only while attached
+local rangeTicker        -- fallback 0.25s range pulse, alive only while attached
+local rangeIcons = {}    -- [sid] = { [iconId] = a }: icons whose range tint rides that spell's check
 
 local function MakeShadow()
     local w = CreateFrame("Cooldown", nil, UIParent, "CooldownFrameTemplate")
@@ -62,6 +63,7 @@ end
 -- is declared reads the (nil) global of that name instead.
 local Feed
 local PlayReadyAlert
+local FeedUsability
 
 -- Every alert plays through here. Callers fire it on verified shadow edges
 -- only, since a sound cannot be taken back.
@@ -76,25 +78,99 @@ local function PlayAlert(rec, enKey, soundKey)
 end
 Driver.PlayAlert = PlayAlert
 
+-- Usability pass state: a pass reads the target once and IsSpellUsable once
+-- per spell. An icon's settings are re-read only after a change (AD_DIRTY).
+local cfgGen = 0
+local inPass, passTarget = false, false
+
+-- Is there a target: false only on a plain no. UnitExists can answer a secret
+-- boolean in combat on Forever, and testing one throws; unknown lets the range
+-- read run, which answers nil with no target. Only the fallback range read asks.
+local function MaybeTarget()
+    local e = UnitExists("target")
+    if issecretvalue and issecretvalue(e) then return true end
+    return e == true
+end
+local passU, passM = {}, {}   -- [sid] = this pass's usable / no-mana keys
+Events.OnMessage("AD_DIRTY", "adcd_cfg", function() cfgGen = cfgGen + 1 end)
+
+-- Range rides SPELL_RANGE_CHECK_UPDATE through NS.DriverRange (loaded after
+-- this file). A client without C_Spell.EnableSpellRangeCheck sends no such
+-- event: there the fallback pulse reads IsSpellInRange instead.
+local function RangeByEvent()
+    return NS.DriverRange ~= nil and C_Spell.EnableSpellRangeCheck ~= nil
+end
+
+-- The range engine counts wants per spell, so releasing an icon's check never
+-- turns off a range bar's check on the same spell.
+local function SetRangeWant(a, want)
+    local old = a.rangeSid
+    if old == want then return end
+    local id = a.rec.id
+    a.rangeKey = a.rangeKey or ("adcd:" .. id)
+    a.rangeSid = want
+    if old then
+        local set = rangeIcons[old]
+        if set then
+            set[id] = nil
+            if next(set) == nil then rangeIcons[old] = nil end
+        end
+        NS.DriverRange.WantSpellRange(a.rangeKey, old, false)
+    end
+    if want then
+        local set = rangeIcons[want]
+        if not set then
+            set = {}
+            rangeIcons[want] = set
+        end
+        set[id] = a
+        NS.DriverRange.WantSpellRange(a.rangeKey, want, true)
+    end
+end
+
+-- The settings the feeds read per icon, cached until the next change. A
+-- refresh also drops the frame's skip signatures, so the setters rerun.
+local function UsabCfg(a)
+    if a.cfgGen == cfgGen then return end
+    a.cfgGen = cfgGen
+    local rec = a.rec
+    a.rangeOn = Store.Resolve(rec, "states", "rangeTint") ~= false
+    a.edgeOn = Store.Resolve(rec, "alerts", "usableSoundEnabled") == true
+    a.kbOn = Factory.KeybindEnabled(rec)
+    a.kbByName = Store.Resolve(rec, "keybind", "keybindByName") == true
+    a.frame._adUsabSig = nil
+    a.frame._adStateSig = nil
+end
+
+-- IsSpellUsable's answers as plain keys: 1 true, 2 false, 3 secret, 0 other.
+-- A secret is only tested, never compared.
+local function Key(v)
+    if issecretvalue and issecretvalue(v) then return 3 end
+    return (v == true and 1) or (v == false and 2) or 0
+end
+
+local function UsableKeys(sid)
+    if inPass and passU[sid] then return passU[sid], passM[sid] end
+    local u, m = C_Spell.IsSpellUsable(sid)
+    u, m = Key(u), Key(m)
+    if inPass then passU[sid], passM[sid] = u, m end
+    return u, m
+end
+
 -- Can it be pressed now: usable (IsSpellUsable is plain on Forever) and off
 -- its real cooldown (the GCD is ignored). nil when the read is secret.
 local function UsableNow(a)
     local sid = a.effSid or (a.rec.driver and a.rec.driver.spellID)
     if not (sid and C_Spell.IsSpellUsable) then return nil end
-    local usable = C_Spell.IsSpellUsable(sid)
-    if issecretvalue and issecretvalue(usable) then return nil end
-    return usable == true and not a.frame._adOnCooldown
+    local u = UsableKeys(sid)
+    if u == 3 then return nil end
+    return u == 1 and not a.frame._adOnCooldown
 end
 
 -- "Play a sound when usable" on the edge into pressable, from either side (a
 -- dodge lighting Mongoose Bite, its cooldown ending after one). Never on the
 -- first read; re-checked after 0.15s, as the GCD filter can fake an edge.
-local function UsableEdge(a)
-    if Store.Resolve(a.rec, "alerts", "usableSoundEnabled") ~= true then
-        a.usableLast = nil
-        return
-    end
-    local now = UsableNow(a)
+local function EdgeFrom(a, now)
     if now == nil then return end
     if a.usableLast == false and now then
         local id = a.rec.id
@@ -106,6 +182,15 @@ local function UsableEdge(a)
         end)
     end
     a.usableLast = now
+end
+
+local function UsableEdge(a)
+    UsabCfg(a)
+    if not a.edgeOn then
+        a.usableLast = nil
+        return
+    end
+    EdgeFrom(a, UsableNow(a))
 end
 
 -- Keybinds (spells and custom timers)
@@ -164,10 +249,16 @@ local function KBSlot(bar, i)
 end
 
 local function KBRememberSlot(slot, txt)
-    local atype, id = GetActionInfo(slot)
+    local atype, id, sub = GetActionInfo(slot)
     -- Macro slots count as the spell they cast, or macros would get no key.
-    if atype == "macro" and id and GetMacroSpell then
-        id, atype = GetMacroSpell(id), "spell"
+    -- The client hands back that spell as the id with "spell" as the third
+    -- return; only an older one returns the macro index.
+    if atype == "macro" and id then
+        if not (issecretvalue and issecretvalue(sub)) and sub == "spell" then
+            atype = "spell"
+        elseif GetMacroSpell then
+            id, atype = GetMacroSpell(id), "spell"
+        end
     end
     if atype == "spell" and id
         and not (issecretvalue and issecretvalue(id)) then
@@ -314,9 +405,10 @@ end
 local function ApplyKeybind(a)
     local rec = a.rec
     if rec.kind ~= "spell" and rec.kind ~= "timer" then return end
+    UsabCfg(a)
     local txt
-    if Factory.KeybindEnabled(rec) then
-        local byName = Store.Resolve(rec, "keybind", "keybindByName") == true
+    if a.kbOn then
+        local byName = a.kbByName
         -- the rank / override the feed resolved first (that is what the bar
         -- most likely holds), then the stored id
         local sid = rec.driver and rec.driver.spellID
@@ -362,8 +454,11 @@ SlashCmdList.ADKEYS = function(msg)
     for _, bar in ipairs(KB_BARS) do
         for i = 1, 12 do
             local slot, key, visible = KBSlot(bar, i)
-            local atype, id = GetActionInfo(slot)
-            if atype == "macro" and id and GetMacroSpell then id, atype = GetMacroSpell(id), "spell" end
+            local atype, id, sub = GetActionInfo(slot)
+            if atype == "macro" and id then
+                if not (issecretvalue and issecretvalue(sub)) and sub == "spell" then atype = "spell"
+                elseif GetMacroSpell then id, atype = GetMacroSpell(id), "spell" end
+            end
             if atype == "spell" and id and not (issecretvalue and issecretvalue(id)) then
                 local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(id)
                 if id == wantID or (wantName and nm and nm:lower() == wantName) then
@@ -381,8 +476,11 @@ SlashCmdList.ADKEYS = function(msg)
         if not ForbiddenFrame(btn) then
             local slot = tonumber(rawget(btn, "action"))
             if slot and slot > 0 and HasAction and HasAction(slot) then
-                local atype, id = GetActionInfo(slot)
-                if atype == "macro" and id and GetMacroSpell then id, atype = GetMacroSpell(id), "spell" end
+                local atype, id, sub = GetActionInfo(slot)
+                if atype == "macro" and id then
+                    if not (issecretvalue and issecretvalue(sub)) and sub == "spell" then atype = "spell"
+                    elseif GetMacroSpell then id, atype = GetMacroSpell(id), "spell" end
+                end
                 if atype == "spell" and id and not (issecretvalue and issecretvalue(id)) then
                     local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(id)
                     if id == wantID or (wantName and nm and nm:lower() == wantName) then
@@ -434,7 +532,19 @@ local function PushState(a)
         end
     end
     a.lastM, a.lastC = m, c
-    Factory.SetState(a.frame, a.rec, dim, m)
+    -- Every GCD feeds every icon: SetState repaints only when a plain input
+    -- it reads moved. ApplyStyle, a settings change and a re-attach drop
+    -- f._adStateSig; a proc, a usability code or a combat edge is in it.
+    local f = a.frame
+    UsabCfg(a)
+    local sig = (dim and "d" or "-") .. (m and "m" or "-") .. (f._adProcOn and "p" or "-")
+        .. (InCombatLockdown() and "c" or "-") .. (f._adUsability or "") .. "|" .. (f._adGlowLaneOnly or "")
+    if f._adStateSig ~= sig then
+        f._adStateSig = sig
+        Factory.SetState(f, a.rec, dim, m)
+    end
+    -- a state write moves what the usability skip froze: its next feed paints
+    f._adUsabSig = nil
     UsableEdge(a)
 end
 
@@ -489,6 +599,8 @@ Feed = function(a)
         local ov = C_Spell.GetOverrideSpell(sid)
         if ov and ov ~= 0 and ov ~= sid then sid = ov end
     end
+    -- a new rank / override takes over the range check at the end of this feed
+    local rangeMoved = a.rangeSid ~= nil and a.rangeSid ~= sid
     a.effSid = sid
     -- the tooltip shows this rank / override too (our own frame field)
     a.frame._adEffSid = sid
@@ -583,6 +695,7 @@ Feed = function(a)
     ApplyKeybind(a)
 
     PushState(a)
+    if rangeMoved then FeedUsability(a) end
 end
 
 local function FeedAll()
@@ -728,36 +841,71 @@ end
 
 -- Usability and range (spells)
 -- A secret boolean (restricted content) throws on a test: check it first.
+-- A feed whose plain inputs match the frame's last signature stops before the
+-- setters; every other writer of these visuals drops f._adUsabSig.
+local CODE_N = { range = 1, nomana = 2, unusable = 3 }
 
-local function FeedUsability(a)
+FeedUsability = function(a)
     -- the tracked rank / override: mana cost and range belong to it
     local sid = a.effSid or (a.rec.driver and a.rec.driver.spellID)
     if not sid then return end
+    UsabCfg(a)
+    local f = a.frame
     local code
-    if Store.Resolve(a.rec, "states", "rangeTint") ~= false
-        and UnitExists("target") and C_Spell.IsSpellInRange then
-        local inRange = C_Spell.IsSpellInRange(sid, "target")
-        if not (issecretvalue and issecretvalue(inRange)) and inRange == false then
-            code = "range"
+    if RangeByEvent() then
+        -- the engine's last plain answer: out only on checksRange true, isInRange false
+        SetRangeWant(a, a.rangeOn and sid or nil)
+        if a.rangeOn and NS.DriverRange.SpellOut(sid) then code = "range" end
+    elseif a.rangeOn and C_Spell.IsSpellInRange then
+        local target = passTarget
+        if not inPass then target = MaybeTarget() end
+        if target then
+            local inRange = C_Spell.IsSpellInRange(sid, "target")
+            if not (issecretvalue and issecretvalue(inRange)) and inRange == false then
+                code = "range"
+            end
         end
     end
-    if not code and C_Spell.IsSpellUsable then
-        local usable, noMana = C_Spell.IsSpellUsable(sid)
-        if issecretvalue and (issecretvalue(usable) or issecretvalue(noMana)) then
-            usable, noMana = nil, nil
-        end
-        if noMana == true then
-            code = "nomana"
-        elseif usable == false then
-            code = "unusable"
+    local u
+    if C_Spell.IsSpellUsable and (not code or a.edgeOn) then
+        local m
+        u, m = UsableKeys(sid)
+        -- a secret in either answer leaves the icon usable
+        if not code and u ~= 3 and m ~= 3 then
+            if m == 1 then
+                code = "nomana"
+            elseif u == 2 then
+                code = "unusable"
+            end
         end
     end
-    Factory.SetUsability(a.frame, a.rec, code)
-    UsableEdge(a)
+    -- the usable sound's input: pressable now, nil when unknown
+    local now
+    if a.edgeOn and u and u ~= 3 then now = u == 1 and not f._adOnCooldown end
+    local sig = sid * 16 + (CODE_N[code] or 0) + (now == nil and 0 or (now and 4 or 8))
+    if f._adUsabSig == sig then return end
+    f._adUsabSig = sig
+    Factory.SetUsability(f, a.rec, code)
+    if a.edgeOn then EdgeFrom(a, now) else a.usableLast = nil end
 end
 
 local function FeedUsabilityAll()
+    wipe(passU)
+    wipe(passM)
+    -- one target read per pass, for the fallback's range reads only
+    inPass, passTarget = true, (not RangeByEvent()) and MaybeTarget()
     for _, a in pairs(attached) do FeedUsability(a) end
+    inPass = false
+end
+
+-- A range answer moved: repaint only the icons on that spell.
+local function OnSpellRange(sid)
+    local set = rangeIcons[sid]
+    if not set then return end
+    for _, a in pairs(set) do
+        a.frame._adUsabSig = nil
+        FeedUsability(a)
+    end
 end
 
 PlayReadyAlert = function(rec)
@@ -864,10 +1012,13 @@ local function EnsureEvents()
     Events.On("PLAYER_TOTEM_UPDATE", "adcd_totem", function()
         Events.Coalesce("adcd_feedtotems", FeedAllTotems)
     end)
-    -- Range has no event: a pulse, alive only while icons are attached.
-    if not rangeTicker and C_Timer and C_Timer.NewTicker then
+    -- Range answers arrive by event. The 0.25 s pulse is only the fallback for
+    -- a client without C_Spell.EnableSpellRangeCheck, which has no such event.
+    if RangeByEvent() then
+        NS.DriverRange.OnSpellRange("adcd", OnSpellRange)
+    elseif not rangeTicker and C_Timer and C_Timer.NewTicker then
         rangeTicker = C_Timer.NewTicker(0.25, function()
-            if UnitExists("target") then FeedUsabilityAll() end
+            if MaybeTarget() then FeedUsabilityAll() end
         end)
     end
     Events.On("PLAYER_EQUIPMENT_CHANGED", "adcd_items", function()
@@ -960,6 +1111,7 @@ local function MaybeReleaseEvents()
         rangeTicker:Cancel()
         rangeTicker = nil
     end
+    if NS.DriverRange then NS.DriverRange.OnSpellRange("adcd", nil) end
     Events.Off("PLAYER_EQUIPMENT_CHANGED", "adcd_items")
     Events.Off("GET_ITEM_INFO_RECEIVED", "adcd_items")
     Events.Off("PLAYER_ENTERING_WORLD", "adcd")
@@ -977,6 +1129,7 @@ function Driver.Attach(rec, f)
         if rec.kind == "aura" and NS.DriverAura then
             -- aura icons ride the engine-owned AuraContainer backend
             NS.DriverAura.Attach(rec, f)
+            if NS.AuraSounds then NS.AuraSounds.Attach(rec) end
         elseif rec.kind == "trinket" or rec.kind == "item" or rec.kind == "ammo" then
             local ai = attachedItems[rec.id]
             if not ai then
@@ -1004,8 +1157,13 @@ function Driver.Attach(rec, f)
             FeedTotem(at)
         elseif rec.kind == "enchant" and NS.DriverEnchant then
             NS.DriverEnchant.Attach(rec, f)
+        elseif rec.kind == "timer" and NS.DriverCustom then
+            -- a Custom Icon: its rules feed it (Drivers\AD_DriverCustom.lua)
+            NS.DriverCustom.Attach(rec, f)
+        elseif rec.kind == "special" and NS.SpecialIcon then
+            -- a Special Aura: its tracker feeds it (Core\AD_SpecialIcon.lua)
+            NS.SpecialIcon.Attach(rec, f)
         else
-            -- Timer icons have no feed here: they show as ready.
             Factory.SetState(f, rec, false)
         end
         return
@@ -1033,6 +1191,8 @@ function Driver.Attach(rec, f)
     else
         a.rec, a.frame = rec, f
     end
+    -- a (re)attach re-reads the settings and paints the usability in full
+    a.cfgGen = nil
     local sid = rec.driver and rec.driver.spellID
     local info = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
     a.isCharge = (info and (info.maxCharges or 0) > 1) == true
@@ -1051,14 +1211,22 @@ function Driver.Detach(id)
     -- Every kind is released here. The aura driver parks its slots: engine
     -- slots cannot be destroyed.
     if NS.DriverAura then NS.DriverAura.Detach(id) end
+    if NS.AuraSounds then NS.AuraSounds.Detach(id) end
     attachedItems[id] = nil
     local at = attachedTotems[id]
     if at and NS.DriverTotem then NS.DriverTotem.Detach(id, at.frame) end
     attachedTotems[id] = nil
     if NS.DriverEnchant then NS.DriverEnchant.Detach(id) end
+    if NS.DriverCustom then NS.DriverCustom.Detach(id) end
+    if NS.SpecialIcon then NS.SpecialIcon.Detach(id) end
     local a = attached[id]
     if a then
-        if a.frame then a.frame._adEffSid = nil end
+        SetRangeWant(a, nil)
+        if a.frame then
+            a.frame._adEffSid = nil
+            a.frame._adUsabSig = nil
+            a.frame._adStateSig = nil
+        end
         a.sCD:SetScript("OnShow", nil)
         a.sCD:SetScript("OnHide", nil)
         a.sCD:SetScript("OnCooldownDone", nil)
@@ -1078,4 +1246,6 @@ function Driver.Refeed(id)
     local at = attachedTotems[id]
     if at then FeedTotem(at) end
     if NS.DriverEnchant then NS.DriverEnchant.Refeed(id) end
+    if NS.DriverCustom then NS.DriverCustom.Refeed(id) end
+    if NS.SpecialIcon then NS.SpecialIcon.Refeed(id) end
 end

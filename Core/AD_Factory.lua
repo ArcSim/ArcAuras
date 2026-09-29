@@ -35,14 +35,22 @@ Factory.frames = frames
 -- to is tried first. A secret read keeps the old map and retries after combat.
 local ART_BARS = { 1, 61, 49, 25, 37, 145, 157, 169, 13, 73, 85, 97, 109, 121, 133 }
 local artSlots, artDirty, artRetry = {}, true, false
+-- [sid] = its slot, or false for none; kept until the map is rebuilt, and
+-- only answers read with no secret in them are kept
+local slotOf = {}
+local sawSecretRead = false
 
 local function Plain(v)
-    if issecretvalue and issecretvalue(v) then return nil end
+    if issecretvalue and issecretvalue(v) then
+        sawSecretRead = true
+        return nil
+    end
     return v
 end
 
 local function ArtRebuild()
     artDirty = false
+    wipe(slotOf)
     local fresh, sawSecret = {}, false
     local function remember(key, slot)
         if key ~= nil and fresh[key] == nil then fresh[key] = slot end
@@ -73,6 +81,9 @@ end
 
 local function ArtSlotFor(sid)
     if artDirty then ArtRebuild() end
+    local hit = slotOf[sid]
+    if hit ~= nil then return hit or nil end
+    sawSecretRead = false
     local slot
     local nm = NS.IsForever == true and C_Spell.GetSpellName and Plain(C_Spell.GetSpellName(sid)) or nil
     if type(nm) ~= "string" or nm == "" then nm = nil end
@@ -86,6 +97,7 @@ local function ArtSlotFor(sid)
         if base ~= nil then slot = artSlots[base] end
     end
     if slot == nil and nm then slot = artSlots["n:" .. nm] end
+    if not sawSecretRead then slotOf[sid] = slot or false end
     return slot
 end
 
@@ -172,29 +184,33 @@ function Factory.AuraActiveTexture(rec)
     return OverrideFor(rec, "appearance", "customIcon")
 end
 
+-- A spell icon's own art. It follows the override spell unless the icon pins
+-- the base spell. GetSpellTexture gives (icon, originalIcon); on Forever
+-- neither moves for a toggle, so active art comes from the action bar.
+local function SpellArt(d, activeArt)
+    local sid = d.spellID
+    if sid and not d.ignoreSpellOverride and C_Spell.GetOverrideSpell then
+        local ov = C_Spell.GetOverrideSpell(sid)
+        if ov and ov ~= 0 then sid = ov end
+    end
+    if not sid then return QUESTION_MARK end
+    if activeArt then
+        local live = LiveSpellArt(sid)
+        if live then return live end
+        return C_Spell.GetSpellTexture(sid) or QUESTION_MARK
+    end
+    local tex, orig = C_Spell.GetSpellTexture(sid)
+    return orig or tex or QUESTION_MARK
+end
+
 -- The kind's own art, ignoring overrides: what the game itself would show.
 local function KindTexture(rec)
     local d = rec.driver or {}
     local kind = rec.kind
-    if kind == "spell" or kind == "aura" or kind == "timer" then
-        local sid = d.spellID
-        -- Follow the override spell's art unless the icon pins the base spell.
-        if kind == "spell" and sid and not d.ignoreSpellOverride
-            and C_Spell.GetOverrideSpell then
-            local ov = C_Spell.GetOverrideSpell(sid)
-            if ov and ov ~= 0 then sid = ov end
-        end
-        -- GetSpellTexture gives (icon, originalIcon); on Forever neither moves
-        -- for a toggle, so active art comes from the action bar (LiveSpellArt).
-        local tex, orig
-        if sid then tex, orig = C_Spell.GetSpellTexture(sid) end
-        if kind == "spell" and sid then
-            if Store.Resolve(rec, "appearance", "activeArt") == false then
-                tex = orig or tex
-            else
-                tex = LiveSpellArt(sid) or tex
-            end
-        end
+    if kind == "spell" then
+        return SpellArt(d, Store.Resolve(rec, "appearance", "activeArt") ~= false)
+    elseif kind == "aura" or kind == "timer" then
+        local tex = d.spellID and C_Spell.GetSpellTexture(d.spellID)
         return tex or QUESTION_MARK
     elseif kind == "trinket" then
         local tex = d.slotID and GetInventoryItemTexture("player", d.slotID)
@@ -224,6 +240,9 @@ local function KindTexture(rec)
         local e = E and E.Read(rec)
         if e and e.icon then return e.icon end
         return GetInventoryItemTexture("player", E and E.InvSlot(rec) or 16) or QUESTION_MARK
+    elseif kind == "special" then
+        -- the tracker's own art (Core\AD_SpecialIcon.lua; nil without the hub)
+        return NS.SpecialIcon and NS.SpecialIcon.Texture(rec) or QUESTION_MARK
     end
     return QUESTION_MARK
 end
@@ -236,6 +255,37 @@ function Factory.GetTexture(rec)
     ovTex = ovTex or OverrideFor(rec, "appearance", "customIcon")
     if ovTex then return ovTex end
     return KindTexture(rec)
+end
+
+-- The art pass runs on busy events (ACTIONBAR_UPDATE_STATE, UNIT_AURA), so a
+-- spell icon re-reads there only what can move, its override spell and live
+-- button art, with its settings kept until the next change, and paints only
+-- a new texture. ApplyStyle records what it painted in f._adArt.
+local artGen = 0
+NS.Events.OnMessage("AD_DIRTY", "adart_cfg", function() artGen = artGen + 1 end)
+
+local function PaintArt(f, tex)
+    -- a secret texture paints fine but is never compared
+    if issecretvalue and issecretvalue(tex) then
+        f._adArt = nil
+    elseif tex == f._adArt then
+        return
+    else
+        f._adArt = tex
+    end
+    f.icon:SetTexture(tex)
+end
+
+-- GetTexture's answer for a spell icon, from the cached settings.
+function Factory.RefreshArt(f, rec)
+    if f._adArtGen ~= artGen or f._adArtRec ~= rec then
+        f._adArtGen, f._adArtRec = artGen, rec
+        f._adArtOv = Store.Resolve(rec, "appearance", "customIcon")
+        f._adArtOvFrom = Store.Resolve(rec, "appearance", "customIconFrom")
+        f._adArtActive = Store.Resolve(rec, "appearance", "activeArt") ~= false
+    end
+    PaintArt(f, OverrideTexture(f._adArtOv, f._adArtOvFrom)
+        or SpellArt(rec.driver or {}, f._adArtActive))
 end
 
 -- The art the live aura button shows (the preview's "aura up" phase draws it):
@@ -642,6 +692,7 @@ function Factory.Release(id)
         if NS.IconScreen and NS.IconScreen.On(id) then NS.IconScreen.Stop() end
         Factory.StopGlow(f)   -- ready + proc + aura lanes
         Factory.StopUsableGlow(f)
+        f._adStateSig = nil   -- the lanes just stopped: the next feed repaints
         if NS.DriverWarn then NS.DriverWarn.Drop(f) end
         f._adPureGCD = nil   -- pooled frames must not carry GCD presentation
         f._adPureWand = nil
@@ -1044,7 +1095,7 @@ local function StyleStackText(fs, rec, kS, anchorTo)
     local anch = R("text", "stackAnchor") or "BOTTOMRIGHT"
     fs:ClearAllPoints()
     fs:SetPoint(anch, anchorTo, anch,
-        (R("text", "stackX") or -2) * kS, (R("text", "stackY") or 2) * kS)
+        (R("text", "stackX") or 0) * kS, (R("text", "stackY") or 0) * kS)
     fs:SetShadowColor(0, 0, 0, R("text", "stackShadow") == true and 1 or 0)
     fs:SetShadowOffset(1, -1)
 end
@@ -1111,7 +1162,14 @@ end
 function Factory.ApplyStyle(f, rec)
     local R = function(section, field) return Store.Resolve(rec, section, field) end
 
-    f.icon:SetTexture(Factory.GetTexture(rec))
+    -- Always painted here. The art pass and the driver's skips then re-read
+    -- their settings, as a restyle follows every change.
+    local tex = Factory.GetTexture(rec)
+    f.icon:SetTexture(tex)
+    f._adArt = not (issecretvalue and issecretvalue(tex)) and tex or nil
+    f._adArtRec = nil
+    f._adUsabSig = nil
+    f._adStateSig = nil
     local forceHide = R("appearance", "forceHideIcon") == true
     f.icon:SetShown(not forceHide)
     local L, Rt, T, B = IconTexCoords(rec)
@@ -1253,7 +1311,7 @@ function Factory.ApplyStyle(f, rec)
         local aanch = R("text", "ammoAnchor") or "BOTTOMLEFT"
         f.ammoText:ClearAllPoints()
         f.ammoText:SetPoint(aanch, f, aanch,
-            (R("text", "ammoX") or 2) * kS, (R("text", "ammoY") or 2) * kS)
+            (R("text", "ammoX") or 0) * kS, (R("text", "ammoY") or 0) * kS)
         f.ammoText:SetShadowColor(0, 0, 0, R("text", "ammoShadow") == true and 1 or 0)
         f.ammoText:SetShadowOffset(1, -1)
         f.ammoText:Show()
@@ -1306,7 +1364,7 @@ function Factory.ApplyStyle(f, rec)
         local kan = R("keybind", "keybindAnchor") or "TOPLEFT"
         f.keybindText:ClearAllPoints()
         f.keybindText:SetPoint(kan, f, kan,
-            (R("keybind", "keybindX") or 2) * kS, (R("keybind", "keybindY") or -2) * kS)
+            (R("keybind", "keybindX") or 0) * kS, (R("keybind", "keybindY") or 0) * kS)
         f.keybindText:Show()
     else
         f.keybindText:Hide()
@@ -1316,6 +1374,8 @@ function Factory.ApplyStyle(f, rec)
     Factory.SetState(f, rec, f._adOnCooldown, f._adDesatState)
     -- the warning glow follows the ammo and the pet, not the icon's state
     if NS.DriverWarn then NS.DriverWarn.Sync(f, rec) end
+    -- a special icon's texts are its templates expanded, so it paints again
+    if rec.kind == "special" and NS.SpecialIcon then NS.SpecialIcon.Restyle(f, rec) end
 end
 
 -- A label "only while the aura is missing" can only work where the live
@@ -2370,6 +2430,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     end
     Factory.UpdateGlow(f, rec, not onCooldown)
     Factory.UpdateUsableGlow(f, rec)
+    Factory.UpdateCooldownGlow(f, rec)
 end
 
 -- usability code from the driver: "range" | "nomana" | "unusable" | nil
@@ -2661,6 +2722,19 @@ local function EnsureEditChip(f)
     return b
 end
 
+-- Settings "Edit buttons on screen": whether this kind ("icon" or "bar")
+-- shows its Edit chip while the options window is open. The one reader of
+-- the setting (the engine's bar chrome and the Settings row go through it):
+-- nil is "all", the way the panel stores the default.
+function Factory.EditChipsOn(kind)
+    local v = Store.GetSetting("editButtons")
+    if v == "none" then return false end
+    -- anything but the other kind's "only" keeps a kind's chips (a value the
+    -- panel never wrote reads as all)
+    if kind == "bar" then return v ~= "icons" end
+    return v ~= "bars"
+end
+
 -- The chip of the icon the editor has open reads Editing, widened to fit.
 function Factory.SetEditing(f, on)
     local b = f._adEditBtn
@@ -2699,6 +2773,7 @@ function Factory.StopGlow(f)
     Factory.StopProcGlow(f)
     Factory.StopReadyGlow(f)
     Factory.StopAuraGlow(f)
+    Factory.StopCooldownGlow(f)
 end
 
 -- The Aura Active glow is drawn on the live engine button (SetAuraButtonGlow):
@@ -2712,7 +2787,8 @@ function Factory.UpdateGlow(f, rec, ready)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
     local want = ready and rec.kind ~= "aura" and R("states", "readyGlow") == true
         and LaneAllowed(f, "ready")
-    -- Combat-only is re-checked on every rebuild; combat start and end rebuild.
+    -- Combat-only is re-checked on every restyle and at each combat edge
+    -- (Factory.CombatGlows).
     if want and R("states", "readyGlowCombatOnly") == true
         and not InCombatLockdown() then
         want = false
@@ -2805,6 +2881,71 @@ function Factory.UpdateUsableGlow(f, rec)
     f._adUsableSig = sig
 end
 
+-- The cooldown glow, key "adcdg": lit while the icon wears its cooldown look
+-- (f._adOnCooldown, which the driver keeps clear of the GCD), on the kinds the
+-- schema's cooldownGlow names.
+function Factory.StopCooldownGlow(f)
+    if not f._adCdGlowOn then return end
+    StopLane(f, "adcdg")
+    f._adCdGlowOn = false
+    f._adCdGlowSig = nil
+end
+
+function Factory.UpdateCooldownGlow(f, rec)
+    local LCG = GetLCG()
+    if not LCG then return end
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    local want = f._adOnCooldown == true and rec.kind ~= "aura"
+        and R("states", "cooldownGlow") == true
+        and R("appearance", "forceHideIcon") ~= true
+        and LaneAllowed(f, "cooldown")
+    if want and R("states", "cooldownGlowCombatOnly") == true
+        and not InCombatLockdown() then
+        want = false
+    end
+    if not want then
+        Factory.StopCooldownGlow(f)
+        return
+    end
+    local c = R("states", "cooldownGlowColor") or { 0.95, 0.95, 0.32, 1 }
+    local inten = R("states", "cooldownGlowIntensity") or 1
+    local color = { c[1], c[2], c[3], (c[4] or 1) * inten }
+    local gtype = DrawnGlowStyle(R("states", "cooldownGlowType") or "button")
+    local speed = R("states", "cooldownGlowSpeed") or 0.25
+    local xo = R("states", "cooldownGlowXOffset") or 0
+    local yo = R("states", "cooldownGlowYOffset") or 0
+    local lines = R("states", "cooldownGlowLines") or 8
+    local th = R("states", "cooldownGlowThickness") or 2
+    local parts = R("states", "cooldownGlowParticles") or 4
+    local scale = R("states", "cooldownGlowScale") or 1
+    local lvl = R("states", "cooldownGlowLevel") or GLOW_LEVEL
+    local strata = R("states", "cooldownGlowStrata") or "inherit"
+    local len = R("states", "cooldownGlowLength") or 0
+    local mx = R("states", "cooldownGlowMoveX") or 0
+    local my = R("states", "cooldownGlowMoveY") or 0
+    local sig = GlowSig(f, gtype, color, speed, lines, th, parts, scale, xo, yo, lvl, strata,
+        LaneExt(f, gtype, len, mx, my))
+    if f._adCdGlowOn and f._adCdGlowSig == sig then return end
+    Factory.StopCooldownGlow(f)
+    StartLane(f, "adcdg", gtype, { color = color, speed = speed, lines = lines,
+        thickness = th, particles = parts, scale = scale, xo = xo, yo = yo,
+        level = lvl, strata = strata, length = len, mx = mx, my = my })
+    f._adCdGlowOn = true
+    f._adCdGlowSig = sig
+end
+
+-- A combat edge re-checks only the lanes with a combat-only switch, with the
+-- inputs SetState last gave them. Aura holders have none of these lanes.
+function Factory.CombatGlows(f, rec)
+    if rec.kind == "aura" then return end
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    if R("states", "readyGlowCombatOnly") == true then
+        Factory.UpdateGlow(f, rec, not f._adOnCooldown)
+    end
+    if R("states", "usableGlowCombatOnly") == true then Factory.UpdateUsableGlow(f, rec) end
+    if R("states", "cooldownGlowCombatOnly") == true then Factory.UpdateCooldownGlow(f, rec) end
+end
+
 -- Duration text visibility, re-applied per feed. Hiding while charges remain
 -- uses the shadow-derived f._adChargesAvail, never the secret charge count.
 function Factory.ApplyDurationVis(f, rec)
@@ -2876,6 +3017,8 @@ function Factory.ShowTooltip(f, rec)
     elseif kind == "enchant" then
         -- the weapon's tooltip carries its enchant line and time
         GameTooltip:SetInventoryItem("player", NS.DriverEnchant and NS.DriverEnchant.InvSlot(rec) or 16)
+    elseif kind == "special" and NS.SpecialIcon then
+        NS.SpecialIcon.Tooltip(rec)
     else
         GameTooltip:SetText(rec.name or "Arc Auras")
     end
@@ -2925,7 +3068,7 @@ end
 
 function Factory.SetEditMode(f, rec, on)
     f._adRecId = rec.id
-    if on then
+    if on and Factory.EditChipsOn("icon") then
         local b = EnsureEditChip(f)
         b:SetFrameLevel(f:GetFrameLevel() + 100)
         b:Show()

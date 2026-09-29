@@ -11,7 +11,7 @@ NS.Schema = Schema
 
 Schema.VERSION = 1
 
-Schema.ICON_KINDS = { "spell", "item", "trinket", "timer", "totem", "aura", "ammo", "enchant" }
+Schema.ICON_KINDS = { "spell", "item", "trinket", "timer", "totem", "aura", "ammo", "enchant", "special" }
 -- A reminder group (Drivers\AD_DriverReminders.lua) is a pulse window: its
 -- members are reminder records, never icons.
 Schema.GROUP_KINDS = { "cooldown", "aura", "reminder" }
@@ -19,7 +19,22 @@ Schema.GROUP_KINDS = { "cooldown", "aura", "reminder" }
 -- "stack"). The create UI hides swing where C_SwingTimer is missing, but the
 -- kind stays valid everywhere, so sync never rewrites a record. Legacy "timer"
 -- and "stack" (power) bars stay legal but cannot be created.
-Schema.BAR_KINDS = { "cooldown", "aura", "swing", "resource", "health", "cast", "enchant", "range" }
+Schema.BAR_KINDS = { "cooldown", "aura", "swing", "resource", "health", "cast", "enchant", "range", "text" }
+-- A text element's sources (rec.driver.source, Bars\AD_TextElement.lua): each
+-- reads plain in combat or reaches the screen through a text sink only.
+Schema.TEXT_SOURCES = { "static", "power", "health", "combo", "ammo", "petMood", "range", "clock",
+    "spellCd", "spellCharges", "auraTime", "auraStacks", "rules", "custom" }
+Schema.TEXT_SOURCE_LABELS = { static = "Words you type", power = "Your power", health = "Health",
+    combo = "Combo points", ammo = "Ammo count", petMood = "Pet happiness", range = "Target range band",
+    clock = "Time of day", spellCd = "A spell's cooldown", spellCharges = "A spell's charges",
+    auraTime = "An aura's time left", auraStacks = "An aura's stacks", rules = "Custom rules",
+    custom = "A Custom Icon or Bar's value" }
+-- What a numeric source shows (power, health): the value, its maximum or the
+-- percent; a rule-driven one: the stacks, the time left or both.
+Schema.TEXT_SHOWS = { "current", "max", "percent" }
+Schema.TEXT_SHOW_LABELS = { current = "Current value", max = "Maximum", percent = "Percent" }
+Schema.TEXT_READOUTS = { "stacks", "left", "both" }
+Schema.TEXT_READOUT_LABELS = { stacks = "The stacks", left = "The time left", both = "Both: stacks (time left)" }
 -- Units a castbar can follow (rec.driver.unit): the three that fire cast events
 -- and a change event of their own.
 Schema.CAST_UNITS = { "player", "target", "focus" }
@@ -70,21 +85,92 @@ Schema.REMINDER_LOOK = { "cancelOnCast", "holdUntilCast", "pulseDuration", "size
     "animFadeSmoothing", "animFlashSpeed", "animZoomStart", "animZoomPeak", "animZoomPopTime",
     "animZoomSettleTime" }
 
+-- Custom Icons and Custom Bars (the `timer` icon kind and bar kind): rules on
+-- rec.driver.rules (Store.CleanRules), run by Drivers\AD_DriverCustom.lua. Each
+-- rule is WHEN (a trigger) -> only if (guards) -> THEN (an action). Every
+-- trigger is an event the game keeps plain in combat: UNIT_COMBAT on you and
+-- your pet, COMBAT_TEXT_UPDATE's type, your own casts, cooldown and usable
+-- edges read off shadow Cooldowns, proc overlays, combat, target and totem events.
+Schema.CUSTOM_MAX_RULES = 8
+Schema.CUSTOM_SHOW_WHILE = { "timer", "stacks", "either", "always" }
+Schema.CUSTOM_SHOW_WHILE_LABELS = { timer = "The timer runs", stacks = "Stacks are above 0",
+    either = "The timer runs or stacks are above 0", always = "Always" }
+-- Trigger groups, in the dropdown's order; each trigger lists in one group.
+Schema.CUSTOM_TRIGGER_GROUPS = {
+    { key = "spell", label = "Spells",
+        list = { "cast", "cd_start", "cd_end", "spell_update", "usable_on", "usable_off", "proc_on", "proc_off" } },
+    { key = "you", label = "You, in melee",
+        list = { "dodge", "parry", "block", "miss", "hit", "crit", "absorb", "resist", "immune", "avoided" } },
+    { key = "pet", label = "Your pet",
+        list = { "pet_dodge", "pet_parry", "pet_block", "pet_hit", "pet_crit" } },
+    { key = "text", label = "From the game's combat text",
+        list = { "extra_attacks", "reactive", "health_low", "mana_low", "combo_points", "interrupted",
+            "energize", "healed", "heal_crit" } },
+    { key = "other", label = "Other",
+        list = { "combat_start", "combat_end", "target_changed", "totem_placed", "totem_gone", "chain" } },
+}
+-- Your attacks on the target (UNIT_COMBAT on "target"); listed only once the
+-- engine's CUSTOM_TARGET_FEEDBACK switch is on.
+Schema.CUSTOM_TARGET_TRIGGERS = { "target_dodge", "target_parry", "target_block", "target_miss",
+    "target_hit", "target_crit" }
+Schema.CUSTOM_TRIGGER_LABELS = {
+    cast = "You cast a spell", cd_start = "A spell's cooldown started", cd_end = "A spell's cooldown ended",
+    spell_update = "The game sent a spell update",
+    usable_on = "A spell became usable", usable_off = "A spell stopped being usable",
+    proc_on = "A proc glow started", proc_off = "A proc glow ended",
+    dodge = "You dodged", parry = "You parried", block = "You blocked", miss = "An attack missed you",
+    hit = "You were hit", crit = "You took a critical hit", absorb = "You absorbed an attack",
+    resist = "You resisted a spell", immune = "You were immune", avoided = "You evaded, deflected or reflected",
+    pet_dodge = "Your pet dodged", pet_parry = "Your pet parried", pet_block = "Your pet blocked",
+    pet_hit = "Your pet was hit", pet_crit = "Your pet took a critical hit",
+    extra_attacks = "You gained extra attacks", reactive = "A reactive ability lit up",
+    health_low = "Your health is low", mana_low = "Your mana is low", combo_points = "Your combo points changed",
+    interrupted = "Your cast was interrupted", energize = "You gained a resource",
+    healed = "You were healed", heal_crit = "You took a critical heal",
+    combat_start = "You entered combat", combat_end = "You left combat", target_changed = "Your target changed",
+    totem_placed = "A totem was placed", totem_gone = "A totem is gone",
+    chain = "Another Custom item's timer ended",
+    target_dodge = "Your attack was dodged", target_parry = "Your attack was parried",
+    target_block = "Your attack was blocked", target_miss = "Your attack missed",
+    target_hit = "You hit the target", target_crit = "You crit the target",
+}
+Schema.CUSTOM_ACTIONS = { "start", "stop", "add", "remove", "set", "reset", "sound", "speak" }
+Schema.CUSTOM_ACTION_LABELS = { start = "Start the timer", stop = "Stop the timer", add = "Add stacks",
+    remove = "Remove stacks", set = "Set stacks", reset = "Reset the timer and stacks",
+    sound = "Play a sound", speak = "Speak text" }
+Schema.CUSTOM_START_MODES = { "restart", "extend", "idle" }
+Schema.CUSTOM_START_MODE_LABELS = { restart = "Restart it", extend = "Extend it by the seconds",
+    idle = "Only if it is not running" }
+Schema.CUSTOM_COMBAT = { "any", "in", "out" }
+Schema.CUSTOM_COMBAT_LABELS = { any = "In or out of combat", ["in"] = "In combat", out = "Out of combat" }
+Schema.CUSTOM_TIMER_STATES = { "any", "running", "idle" }
+Schema.CUSTOM_TIMER_STATE_LABELS = { any = "Running or not", running = "The timer is running",
+    idle = "The timer is not running" }
+
 -- enchant: a weapon enchant, timed on the swipe; its sounds say applied and
 -- fell off (NS.DriverEnchant).
-local CD  = { spell = true, item = true, trinket = true, timer = true, totem = true, enchant = true }
-local USE = { spell = true, item = true, trinket = true, timer = true, enchant = true }
+-- special: a Special Aura (Core\AD_SpecialIcon.lua over NS.Special, retail
+-- only): a deck's position on the stack text, its procs and chance on the
+-- labels, "all procs used" or a running internal cooldown as the cooldown look.
+local CD  = { spell = true, item = true, trinket = true, timer = true, totem = true, enchant = true, special = true }
+-- the cooldown-driven sounds; a special icon's own pair is the proc edge
+local USE_CD = { spell = true, item = true, trinket = true, timer = true, enchant = true }
+local USE = { spell = true, item = true, trinket = true, timer = true, enchant = true, special = true }
 local SP  = { spell = true }
 local AU  = { aura = true }
 local AA  = { spell = true, aura = true }
+local SPC = { special = true }
 -- Every kind but aura: holder-only options (keep bright) mean nothing on an
 -- engine-drawn aura button.
 local NA  = { spell = true, item = true, trinket = true, timer = true, totem = true, ammo = true,
-    enchant = true }
+    enchant = true, special = true }
 -- Stack text: only kinds something writes a count for (spell charges, item and
--- ammo bag counts, aura applications, timer stacks, enchant charges). Trinkets
--- have none.
-local STK = { spell = true, item = true, timer = true, aura = true, ammo = true, enchant = true }
+-- ammo bag counts, aura applications, timer stacks, enchant charges, a deck's
+-- position). Trinkets have none.
+local STK = { spell = true, item = true, timer = true, aura = true, ammo = true, enchant = true, special = true }
+-- The "while on cooldown" glow: the kinds whose cooldown look means a real
+-- cooldown (a totem's or enchant's is "missing", worded apart).
+local CDG = { spell = true, item = true, trinket = true, timer = true, special = true }
 -- An ammo count: the ammo icon's stack text, a spell icon's ammo text.
 local AMMO_CT = { ammo = true, spell = true }
 -- "Minutes and seconds" cutoffs in seconds, for icons and bars alike.
@@ -132,8 +218,10 @@ local GLOW_SPEED_STYLES = { button = true, pixel = true, autocast = true, flash 
 Schema.WARN_WHEN = { "ammo", "petHealth", "petMood" }
 Schema.WARN_WHEN_LABELS = { ammo = "Ammo is low", petHealth = "Pet health is low",
     petMood = "Pet is not happy" }
--- The warning chip shows for the classes with ammo or a pet to warn about.
-Schema.WARN_CLASSES = { HUNTER = true, WARLOCK = true }
+-- The warning chip shows for the classes with ammo or a pet to warn about; on
+-- retail the three classes with a lasting pet (a death knight's is Unholy's).
+Schema.WARN_CLASSES = NS.IsForever == true and { HUNTER = true, WARLOCK = true }
+    or { HUNTER = true, WARLOCK = true, DEATHKNIGHT = true }
 
 -- The ammo count's own threshold colours show with the text that carries the
 -- count: the ammo icon's stack text, a spell icon's ammo text.
@@ -248,6 +336,40 @@ Schema.icon = {
             dep = { field = "readyGlow" } },
         readyGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = CD, label = "Glow frame level",
             dep = { field = "readyGlow" } },
+        -- Glows while the real cooldown runs (the GCD never counts: the
+        -- driver's dim state ignores it); a special icon's "all procs used"
+        -- or running internal cooldown is that state too.
+        cooldownGlow = { d = false, t = "bool", kinds = CDG, label = "Glow while on cooldown" },
+        cooldownGlowType = { d = "button", t = "enum", values = GLOW_STYLES, labels = GLOW_STYLE_LABELS, kinds = CDG, label = "Cooldown glow style", dep = { field = "cooldownGlow" } },
+        cooldownGlowColor = { d = { 0.95, 0.95, 0.32, 1 }, t = "color", kinds = CDG, label = "Cooldown glow color", dep = { field = "cooldownGlow" } },
+        cooldownGlowSpeed = { adv = "glow", d = 0.25, t = "num", min = 0.05, max = 1, kinds = CDG, label = "Cooldown glow speed",
+            dep = { { field = "cooldownGlow" }, { field = "cooldownGlowType", anyOf = GLOW_SPEED_STYLES } } },
+        cooldownGlowLines = { adv = "glow", d = 8, t = "int", min = 1, max = 16, kinds = CDG, label = "Cooldown glow lines",
+            dep = { { field = "cooldownGlow" }, { field = "cooldownGlowType", value = "pixel" } } },
+        cooldownGlowThickness = { adv = "glow", d = 2, t = "int", min = 1, max = 20, kinds = CDG, label = "Cooldown glow thickness",
+            dep = { { field = "cooldownGlow" }, { field = "cooldownGlowType", value = "pixel" } } },
+        cooldownGlowLength = { adv = "glow", d = 0, t = "int", min = 0, max = 40, kinds = CDG, label = "Cooldown glow line length (0 = auto)",
+            dep = { { field = "cooldownGlow" }, { field = "cooldownGlowType", value = "pixel" } } },
+        cooldownGlowParticles = { adv = "glow", d = 4, t = "int", min = 1, max = 16, kinds = CDG, label = "Cooldown glow particles",
+            dep = { { field = "cooldownGlow" }, { field = "cooldownGlowType", value = "autocast" } } },
+        cooldownGlowIntensity = { adv = "glow", d = 1, t = "num", min = 0.1, max = 1, kinds = CDG, label = "Cooldown glow intensity",
+            dep = { field = "cooldownGlow" } },
+        cooldownGlowScale = { adv = "glow", d = 1, t = "num", min = 0.5, max = 2, kinds = CDG, label = "Cooldown glow size",
+            dep = { { field = "cooldownGlow" }, { field = "cooldownGlowType", value = "autocast" } } },
+        cooldownGlowXOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = CDG, label = "Cooldown glow X offset",
+            dep = { field = "cooldownGlow" } },
+        cooldownGlowYOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = CDG, label = "Cooldown glow Y offset",
+            dep = { field = "cooldownGlow" } },
+        cooldownGlowMoveX = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = CDG, label = "Cooldown glow move X",
+            dep = { field = "cooldownGlow" } },
+        cooldownGlowMoveY = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = CDG, label = "Cooldown glow move Y",
+            dep = { field = "cooldownGlow" } },
+        cooldownGlowCombatOnly = { d = false, t = "bool", kinds = CDG, label = "Cooldown glow only in combat",
+            dep = { field = "cooldownGlow" } },
+        cooldownGlowStrata = { adv = "glow", d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }, kinds = CDG, label = "Cooldown glow strata",
+            dep = { field = "cooldownGlow" } },
+        cooldownGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = CDG, label = "Cooldown glow frame level",
+            dep = { field = "cooldownGlow" } },
         readyTintEnabled = { d = false, t = "bool", kinds = CD, label = "Ready tint" },
         readyTintColor = { d = { 1, 1, 1, 1 }, t = "color", kinds = CD, label = "Ready tint color", dep = { field = "readyTintEnabled" } },
         cooldownTintEnabled = { d = false, t = "bool", kinds = CD, label = "Cooldown tint" },
@@ -390,8 +512,8 @@ Schema.icon = {
         labelAnchor = { d = "CENTER", t = "enum",
             values = { "CENTER", "TOP", "BOTTOM", "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" },
             label = "Label anchor", dep = { field = "labelText", nonempty = true } },
-        labelX = { adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Label X", dep = { field = "labelText", nonempty = true } },
-        labelY = { adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Label Y", dep = { field = "labelText", nonempty = true } },
+        labelX = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Label X", dep = { field = "labelText", nonempty = true } },
+        labelY = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Label Y", dep = { field = "labelText", nonempty = true } },
         labelShowReady = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label when ready", dep = { field = "labelText", nonempty = true } },
         labelShowCooldown = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label on cooldown", dep = { field = "labelText", nonempty = true } },
         -- Aura icons: drawn on the engine button, which the game shows exactly
@@ -408,8 +530,8 @@ Schema.icon = {
         labelAnchor2 = { d = "TOP", t = "enum",
             values = { "CENTER", "TOP", "BOTTOM", "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" },
             label = "Label 2 anchor", dep = { field = "labelText2", nonempty = true } },
-        labelX2 = { adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Label 2 X", dep = { field = "labelText2", nonempty = true } },
-        labelY2 = { adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Label 2 Y", dep = { field = "labelText2", nonempty = true } },
+        labelX2 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Label 2 X", dep = { field = "labelText2", nonempty = true } },
+        labelY2 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Label 2 Y", dep = { field = "labelText2", nonempty = true } },
         labelShowReady2 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label 2 when ready", dep = { field = "labelText2", nonempty = true } },
         labelShowCooldown2 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label 2 on cooldown", dep = { field = "labelText2", nonempty = true } },
         labelActiveOnly2 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label 2 only while the aura is up",
@@ -422,8 +544,8 @@ Schema.icon = {
         labelAnchor3 = { d = "BOTTOM", t = "enum",
             values = { "CENTER", "TOP", "BOTTOM", "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" },
             label = "Label 3 anchor", dep = { field = "labelText3", nonempty = true } },
-        labelX3 = { adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Label 3 X", dep = { field = "labelText3", nonempty = true } },
-        labelY3 = { adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Label 3 Y", dep = { field = "labelText3", nonempty = true } },
+        labelX3 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Label 3 X", dep = { field = "labelText3", nonempty = true } },
+        labelY3 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Label 3 Y", dep = { field = "labelText3", nonempty = true } },
         labelShowReady3 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label 3 when ready", dep = { field = "labelText3", nonempty = true } },
         labelShowCooldown3 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label 3 on cooldown", dep = { field = "labelText3", nonempty = true } },
         labelActiveOnly3 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label 3 only while the aura is up",
@@ -434,16 +556,23 @@ Schema.icon = {
     -- Transition sounds. A sound cannot be unplayed, so the driver fires only
     -- on verified transitions. Each trigger is a toggle plus a t = "sound"
     -- field: a name from NS.Sounds, or "" for none.
-    alerts = { push = true, kinds = USE, fields = {
+    alerts = { push = true, kinds = { spell = true, item = true, trinket = true, timer = true, enchant = true,
+        special = true, aura = true }, fields = {
         soundChannel = { d = "Master", t = "enum", values = { "Master", "SFX", "Music", "Ambience", "Dialog" },
             labels = { Master = "Master (ignores the other sliders)", SFX = "Sound Effects", Music = "Music", Ambience = "Ambience", Dialog = "Dialog" },
             label = "Sound channel" },
-        readySoundEnabled = { d = false, t = "bool", label = "Play a sound when ready" },
-        readySound = { d = "", t = "sound", label = "Ready sound", dep = { field = "readySoundEnabled" } },
+        readySoundEnabled = { d = false, t = "bool", kinds = USE_CD, label = "Play a sound when ready" },
+        readySound = { d = "", t = "sound", kinds = USE_CD, label = "Ready sound", dep = { field = "readySoundEnabled" } },
         -- From shadow edges, never secret numbers: cooldown start, recharge
         -- start, and a charge returning while the spell stays castable.
-        cooldownSoundEnabled = { d = false, t = "bool", label = "Play a sound when the cooldown starts" },
-        cooldownSound = { d = "", t = "sound", label = "Cooldown-start sound", dep = { field = "cooldownSoundEnabled" } },
+        cooldownSoundEnabled = { d = false, t = "bool", kinds = USE_CD, label = "Play a sound when the cooldown starts" },
+        cooldownSound = { d = "", t = "sound", kinds = USE_CD, label = "Cooldown-start sound", dep = { field = "cooldownSoundEnabled" } },
+        -- A special icon's moments: the tracker's proc edge (NS.Special.Proc),
+        -- and the draw its chance reads as 100%.
+        procSoundEnabled = { d = false, t = "bool", kinds = SPC, label = "Play a sound on proc" },
+        procSound = { d = "", t = "sound", kinds = SPC, label = "Proc sound", dep = { field = "procSoundEnabled" } },
+        sureSoundEnabled = { d = false, t = "bool", kinds = SPC, label = "Play a sound when the next draw is guaranteed" },
+        sureSound = { d = "", t = "sound", kinds = SPC, label = "Guaranteed sound", dep = { field = "sureSoundEnabled" } },
         rechargeSoundEnabled = { d = false, t = "bool", kinds = SP, label = "Play a sound when recharging starts" },
         rechargeSound = { d = "", t = "sound", kinds = SP, label = "Recharge-start sound", dep = { field = "rechargeSoundEnabled" } },
         chargeGainedSoundEnabled = { d = false, t = "bool", kinds = SP, label = "Play a sound when a charge returns" },
@@ -452,6 +581,17 @@ Schema.icon = {
         -- its real cooldown. A reactive spell (Mongoose Bite) rings on the dodge.
         usableSoundEnabled = { d = false, t = "bool", kinds = SP, label = "Play a sound when usable" },
         usableSound = { d = "", t = "sound", kinds = SP, label = "Usable sound", dep = { field = "usableSoundEnabled" } },
+        -- An aura icon's moments, played by the game (Drivers\AD_AuraSounds.lua):
+        -- in combat too, for any caster's copy; `files`: a sound file, no kit.
+        auraGainSoundEnabled = { d = false, t = "bool", kinds = { aura = true }, label = "Play a sound when the aura appears" },
+        auraGainSound = { d = "", t = "sound", files = true, kinds = { aura = true }, label = "Appear sound",
+            dep = { field = "auraGainSoundEnabled" } },
+        auraStackSoundEnabled = { d = false, t = "bool", kinds = { aura = true }, label = "Play a sound when it gains a stack" },
+        auraStackSound = { d = "", t = "sound", files = true, kinds = { aura = true }, label = "Stack sound",
+            dep = { field = "auraStackSoundEnabled" } },
+        auraLostSoundEnabled = { d = false, t = "bool", kinds = { aura = true }, label = "Play a sound when the aura drops" },
+        auraLostSound = { d = "", t = "sound", files = true, kinds = { aura = true }, label = "Drop sound",
+            dep = { field = "auraLostSoundEnabled" } },
     } },
     -- The key bound to the spell's action button, found by walking the bars.
     -- Factory.KeybindEnabled shows it when this switch or the group's is on.
@@ -468,8 +608,8 @@ Schema.icon = {
         keybindAnchor = { d = "TOPLEFT", t = "enum",
             values = { "TOPLEFT", "TOP", "TOPRIGHT", "LEFT", "CENTER", "RIGHT", "BOTTOMLEFT", "BOTTOM", "BOTTOMRIGHT" },
             label = "Keybind anchor", dep = { field = "keybindEnabled" } },
-        keybindX = { adv = "text", d = 2, t = "int", min = -50, max = 50, label = "Keybind X", dep = { field = "keybindEnabled" } },
-        keybindY = { adv = "text", d = -2, t = "int", min = -50, max = 50, label = "Keybind Y", dep = { field = "keybindEnabled" } },
+        keybindX = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Keybind X", dep = { field = "keybindEnabled" } },
+        keybindY = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Keybind Y", dep = { field = "keybindEnabled" } },
     } },
     -- Things that run out: an item's bag count, the quiver. Counts are compared
     -- only when plain; a secret count keeps the last known state.
@@ -750,8 +890,8 @@ Schema.icon = {
         stackAnchor = { d = "BOTTOMRIGHT", t = "enum",
             values = { "BOTTOMRIGHT", "BOTTOMLEFT", "TOPRIGHT", "TOPLEFT", "TOP", "BOTTOM", "CENTER" },
             kinds = STK, label = "Stack text anchor", dep = { field = "stackText" } },
-        stackX = { adv = "text", d = -2, t = "int", min = -50, max = 50, kinds = STK, label = "Stack text X", dep = { field = "stackText" } },
-        stackY = { adv = "text", d = 2, t = "int", min = -50, max = 50, kinds = STK, label = "Stack text Y", dep = { field = "stackText" } },
+        stackX = { adv = "text", d = 0, t = "int", min = -200, max = 200, kinds = STK, label = "Stack text X", dep = { field = "stackText" } },
+        stackY = { adv = "text", d = 0, t = "int", min = -200, max = 200, kinds = STK, label = "Stack text Y", dep = { field = "stackText" } },
         stackShadow = { adv = "text", d = false, t = "bool", kinds = STK, label = "Stack text shadow", dep = { field = "stackText" } },
         hideChargeAtZero = { d = false, t = "bool", kinds = SP, label = "Hide charge count at zero", dep = { field = "stackText" } },
         -- The engine prints an aura's count only above 1 unless it is handed a
@@ -783,8 +923,8 @@ Schema.icon = {
         ammoAnchor = { d = "BOTTOMLEFT", t = "enum",
             values = { "BOTTOMRIGHT", "BOTTOMLEFT", "TOPRIGHT", "TOPLEFT", "TOP", "BOTTOM", "CENTER" },
             kinds = SP, label = "Ammo text anchor", dep = { field = "ammoText" } },
-        ammoX = { adv = "text", d = 2, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text X", dep = { field = "ammoText" } },
-        ammoY = { adv = "text", d = 2, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text Y", dep = { field = "ammoText" } },
+        ammoX = { adv = "text", d = 0, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text X", dep = { field = "ammoText" } },
+        ammoY = { adv = "text", d = 0, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text Y", dep = { field = "ammoText" } },
         ammoShadow = { adv = "text", d = false, t = "bool", kinds = SP, label = "Ammo text shadow", dep = { field = "ammoText" } },
         -- Threshold colours for the ammo count (Factory.AmmoCountColor). The
         -- count is plain in combat, so Lua compares it; the lowest threshold
@@ -809,6 +949,53 @@ Schema.icon = {
         ammoCount3Color = { d = { 0.65, 0, 0, 1 }, t = "color", kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
             label = "Third ammo threshold color",
             dep = { { field = "ammoCountColors" }, { field = "ammoCountSteps", min = 3 } } },
+    } },
+    -- A Special Aura's texts (Core\AD_SpecialIcon.lua): the stack text and the
+    -- labels are templates over the tracker's tokens; the label holding the
+    -- proc count and the one holding the chance take these colours. The
+    -- defaults are ProcTracker's, which the migration bridge fills.
+    special = { push = true, kinds = SPC, fields = {
+        stackTemplate = { inherit = false, d = "", t = "text", label = "Stack text template",
+            desc = "What the stack text shows. Tokens: {left} {drawn} {size} {procs} {procsLeft} {max} {chance} {viol} {count}. Empty: the tracker's own.",
+            hint = "The tracker's own" },
+        procColorMode = { d = "state", t = "enum", values = { "state", "fixed" },
+            labels = { state = "By procs used", fixed = "The label's own color" }, label = "Proc count color" },
+        procEmptyColor = { d = { 0, 1, 0, 1 }, t = "color", label = "Proc count color: none used",
+            dep = { field = "procColorMode", value = "state" } },
+        procHalfColor = { d = { 1, 0.82, 0, 1 }, t = "color", label = "Proc count color: some used",
+            dep = { field = "procColorMode", value = "state" } },
+        procFullColor = { d = { 1, 0, 0, 1 }, t = "color", label = "Proc count color: all used",
+            dep = { field = "procColorMode", value = "state" } },
+        chanceDecimals = { d = true, t = "bool", label = "Chance with a decimal under 10%" },
+        chanceColorMode = { d = "fixed", t = "enum", values = { "fixed", "procs", "chance" },
+            labels = { fixed = "The label's own color", procs = "By procs left", chance = "By the chance" },
+            label = "Chance color" },
+        chanceLowPct = { d = 3, t = "int", min = 0, max = 100, label = "Cold below (%)",
+            dep = { field = "chanceColorMode", value = "chance" } },
+        chanceHighPct = { d = 10, t = "int", min = 0, max = 100, label = "Hot from (%)",
+            dep = { field = "chanceColorMode", value = "chance" } },
+        chanceColdColor = { d = { 0.6, 0.6, 0.6, 1 }, t = "color", label = "Cold chance color",
+            dep = { field = "chanceColorMode", value = "chance" } },
+        chanceMidColor = { d = { 1, 0.82, 0, 1 }, t = "color", label = "Mid chance color",
+            dep = { field = "chanceColorMode", value = "chance" } },
+        chanceHotColor = { d = { 0, 1, 0, 1 }, t = "color", label = "Hot chance color",
+            dep = { field = "chanceColorMode", value = "chance" } },
+        -- By procs left: green with every proc left, red at none, gold between,
+        -- unless a colour per count is chosen (decks hold at most five).
+        chanceLeftCustom = { d = false, t = "bool", label = "Custom color per procs left",
+            dep = { field = "chanceColorMode", value = "procs" } },
+        chanceLeft0Color = { d = { 1, 0, 0, 1 }, t = "color", label = "Chance color at 0 procs left",
+            dep = { { field = "chanceColorMode", value = "procs" }, { field = "chanceLeftCustom" } } },
+        chanceLeft1Color = { d = { 1, 0.82, 0, 1 }, t = "color", label = "Chance color at 1 proc left",
+            dep = { { field = "chanceColorMode", value = "procs" }, { field = "chanceLeftCustom" } } },
+        chanceLeft2Color = { d = { 1, 0.82, 0, 1 }, t = "color", label = "Chance color at 2 procs left",
+            dep = { { field = "chanceColorMode", value = "procs" }, { field = "chanceLeftCustom" } } },
+        chanceLeft3Color = { d = { 1, 0.82, 0, 1 }, t = "color", label = "Chance color at 3 procs left",
+            dep = { { field = "chanceColorMode", value = "procs" }, { field = "chanceLeftCustom" } } },
+        chanceLeft4Color = { d = { 1, 0.82, 0, 1 }, t = "color", label = "Chance color at 4 procs left",
+            dep = { { field = "chanceColorMode", value = "procs" }, { field = "chanceLeftCustom" } } },
+        chanceLeft5Color = { d = { 1, 0.82, 0, 1 }, t = "color", label = "Chance color at 5 procs left",
+            dep = { { field = "chanceColorMode", value = "procs" }, { field = "chanceLeftCustom" } } },
     } },
     -- Not schema sections: the driver (rec.driver, validated per kind by the
     -- driver module; retargeting re-keys it, never the record id) and
@@ -871,6 +1058,66 @@ do
             def.showIf = src.showIf or laneOK
             fields[name .. suf] = def
         end
+    end
+end
+
+-- An aura group showing every aura on one unit (Drivers\AD_DriverUnitAuras.lua)
+-- shows at most this many per half: Rows by Columns, clamped. The game makes
+-- buttons in batches of 10 as auras need them, each dressed as it is made.
+Schema.UNIT_AURA_MAX = 40
+-- Enemy nameplates get one container per plate token; the game numbers up to 40.
+Schema.UNIT_AURA_PLATES = 40
+
+-- The game hides an aura by spell ID only for buffs on you or your pet and
+-- debuffs on a unit you cannot assist (a target, a focus, an enemy plate);
+-- elsewhere an exclude list is skipped, so the hidden aura would still show.
+function Schema.UnitAuraHideOK(unit, harmful)
+    if harmful then return unit == "target" or unit == "focus" or unit == "nameplate" end
+    return unit == "player" or unit == "pet"
+end
+
+-- The unit and type a show-all group reads, and whether it shows both
+-- halves: enemy nameplates carry debuffs only, whatever Aura type a group set
+-- before it moved to them.
+function Schema.UnitAuraShape(rec)
+    local Store = NS.Store
+    local unit = Store.Resolve(rec, "unitAuras", "unit")
+    if unit == "nameplate" then return unit, true, false end
+    local t = Store.Resolve(rec, "unitAuras", "auraType")
+    return unit, t == "debuff", t == "both"
+end
+
+-- With both halves, the list is offered when the game honours it for one.
+function Schema.UnitAuraHideShown(rec)
+    local Store = NS.Store
+    if not (rec and Store) then return false end
+    local unit, harmful, both = Schema.UnitAuraShape(rec)
+    if both then return Schema.UnitAuraHideOK(unit, false) or Schema.UnitAuraHideOK(unit, true) end
+    return Schema.UnitAuraHideOK(unit, harmful)
+end
+
+function Schema.UnitAuraOffPlates(rec)
+    return NS.Store.Resolve(rec, "unitAuras", "unit") ~= "nameplate"
+end
+
+-- Max shown, retired for Rows by Columns: a saved cap under one line becomes
+-- that many columns, so the box and the cap stay as they were; a longer one
+-- becomes the rows it filled. Before the strip drops the key.
+function Schema.FoldUnitAuraCap(rec)
+    local u = rec.type == "group" and rec.o and rec.o.unitAuras
+    local ms = u and tonumber(u.maxShown)
+    if not ms then return end
+    u.maxShown = nil
+    if u.rows ~= nil then return end
+    ms = math.max(1, math.floor(ms))
+    local a = rec.o.arrangement
+    local cols = math.max(1, math.floor(tonumber(a and a.cols) or Schema.iconGroup.arrangement.fields.cols.d))
+    if ms < cols then
+        rec.o.arrangement = a or {}
+        rec.o.arrangement.cols = ms
+        u.rows = 1
+    else
+        u.rows = math.min(math.ceil(ms / cols), Schema.iconGroup.unitAuras.fields.rows.max)
     end
 end
 
@@ -941,6 +1188,65 @@ Schema.iconGroup = {
     -- stays on the icon). Cooldown groups only: auras have no binding.
     keybind = { push = true, inherit = true, kinds = GK_CD, fields = {
         showKeybinds = { d = false, t = "bool", label = "Show keybinds on all icons" },
+    } },
+    -- What an aura group shows: its own aura icons by spell ID, or every aura on
+    -- one unit, drawn by the game (Store.ShowsAll). What the group is, so no
+    -- push bar and no layout look.
+    unitAuras = { kinds = GK_AU, fields = {
+        -- only where the game has the aura engine
+        shows = { d = "tracked", t = "enum", values = { "tracked", "unit" },
+            labels = { tracked = "Tracked auras", unit = "All auras on a unit" }, label = "Shows",
+            showIf = function() return NS.DriverAuraGroups ~= nil and NS.DriverAuraGroups.IsAvailable() end,
+            desc = "Tracked auras: the aura icons you add to this group, matched by spell ID. All auras on a unit: every buff or debuff on one unit, drawn by the game, with no icons to add." },
+        unit = { d = "player", t = "enum", values = { "player", "pet", "target", "focus", "nameplate" },
+            labels = { player = "Player", pet = "Pet", target = "Target", focus = "Focus",
+                nameplate = "Enemy nameplates" }, label = "Unit",
+            valueIf = { focus = function()
+                return not (C_EventUtils and C_EventUtils.IsEventValid)
+                    or C_EventUtils.IsEventValid("PLAYER_FOCUS_CHANGED")
+            end },
+            dep = { field = "shows", value = "unit" } },
+        -- enemy nameplates show debuffs only in this version; both halves share
+        -- the unit's container as two aura groups
+        auraType = { d = "buff", t = "enum", values = { "buff", "debuff", "both" },
+            labels = { buff = "Buffs", debuff = "Debuffs", both = "Buffs and debuffs" }, label = "Aura type",
+            valueIf = { buff = Schema.UnitAuraOffPlates, both = Schema.UnitAuraOffPlates },
+            dep = { field = "shows", value = "unit" } },
+        caster = { d = "any", t = "enum", values = { "any", "mine", "others" },
+            labels = { any = "Anyone", mine = "Me (or my pet)", others = "Anyone but me" }, label = "Cast by",
+            dep = { field = "shows", value = "unit" } },
+        -- The grid: Rows by the arrangement's Columns is the cap, per half.
+        rows = { d = 1, t = "int", min = 1, max = 10, label = "Rows",
+            desc = "How many rows of auras show, each Columns wide (Appearance, Grid); up to 40 auras. The rest show as others end.",
+            dep = { field = "shows", value = "unit" } },
+        fill = { d = "across", t = "enum", values = { "across", "down" },
+            labels = { across = "Fill across first", down = "Fill down first" }, label = "Fill order",
+            desc = "Across fills a row, then starts the next. Down fills a column, then starts the next.",
+            dep = { { field = "shows", value = "unit" }, { field = "unit", notValue = "nameplate" } } },
+        debuffLine = { d = true, t = "bool", label = "Debuffs start a new line",
+            desc = "On: the debuffs start on the line after the buffs. Off: they follow straight on.",
+            dep = { { field = "shows", value = "unit" }, { field = "auraType", value = "both" },
+                { field = "unit", notValue = "nameplate" } } },
+        order = { d = "default", t = "enum", values = { "default", "time" },
+            labels = { default = "Game default", time = "Time left" }, label = "Order",
+            desc = "Game default puts your own auras first. Time left puts the aura closest to running out first; auras that never end come last.",
+            dep = { field = "shows", value = "unit" } },
+        -- offered only where the game honours it (Schema.UnitAuraHideOK)
+        hideSpells = { d = "", t = "text", label = "Hide these spells", hint = "Spell IDs, comma separated",
+            desc = "Spell IDs to leave out of this group, separated by commas or spaces.",
+            showIf = Schema.UnitAuraHideShown, dep = { field = "shows", value = "unit" } },
+        -- Enemy nameplates: a row per plate, on the plate's edge. The pool of
+        -- plate rows is Nameplates covered deep, grown out of combat.
+        plateCount = { d = 20, t = "int", min = 1, max = Schema.UNIT_AURA_PLATES, label = "Nameplates covered",
+            desc = "How many nameplates get a row, in the order the game numbers them. Each one keeps a set of frames ready.",
+            dep = { { field = "shows", value = "unit" }, { field = "unit", value = "nameplate" } } },
+        plateEdge = { d = "top", t = "enum", values = { "top", "bottom" },
+            labels = { top = "Top", bottom = "Bottom" }, label = "Attach to the plate",
+            dep = { { field = "shows", value = "unit" }, { field = "unit", value = "nameplate" } } },
+        plateX = { d = 0, t = "int", min = -200, max = 200, label = "Offset X",
+            dep = { { field = "shows", value = "unit" }, { field = "unit", value = "nameplate" } } },
+        plateY = { d = 0, t = "int", min = -200, max = 200, label = "Offset Y",
+            dep = { { field = "shows", value = "unit" }, { field = "unit", value = "nameplate" } } },
     } },
     -- A reminder group's pulse (Drivers\AD_DriverReminders.lua), ArcUI v1's
     -- Cooldown Reminder window: each reminder that fires pulses at the group's
@@ -1091,10 +1397,11 @@ local BK_CAST = { cast = true }
 local BK_DURC = { cooldown = true, aura = true, timer = true, swing = true, cast = true, enchant = true }
 local BK_RES  = { resource = true }
 local BK_HP   = { health = true }
-local BK_CST  = { cooldown = true, stack = true, aura = true, enchant = true }
+-- Timer (custom) bars write their rule-driven stacks as the stack text.
+local BK_CST  = { cooldown = true, stack = true, aura = true, enchant = true, timer = true }
 -- Hide-at-zero needs our own writer to pass the count through the secret-safe
 -- truncator; the engine writes an aura bar's stack text.
-local BK_STKZ = { cooldown = true, stack = true }
+local BK_STKZ = { cooldown = true, stack = true, timer = true }
 local BK_TMSW = { timer = true, swing = true, aura = true, enchant = true }
 -- Aura bars too: SetDurationBar takes direction and interpolation from the
 -- caller, so fillMode and smoothing work on aura duration bars.
@@ -1107,6 +1414,10 @@ local BK_SMOOTH = { cooldown = true, aura = true, resource = true, health = true
 -- fill colour, fill direction or tick marks there.
 local BK_NOTRANGE = { cooldown = true, aura = true, timer = true, stack = true, swing = true,
     resource = true, health = true, cast = true, enchant = true }
+-- Every kind that draws a bar: a text element (Bars\AD_TextElement.lua) is one
+-- string in a box, with no fill, chrome or text runs of the bar's.
+local BK_DRAWN = { cooldown = true, aura = true, timer = true, stack = true, swing = true,
+    resource = true, health = true, cast = true, enchant = true, range = true }
 
 local BAR_ANCHORS ={ "LEFT", "CENTER", "RIGHT", "TOPLEFT", "TOP", "TOPRIGHT",
     "BOTTOMLEFT", "BOTTOM", "BOTTOMRIGHT" }
@@ -1129,6 +1440,25 @@ local TEXT_ANCHOR_LABELS = {
 }
 Schema.TEXT_ANCHOR_LABELS = TEXT_ANCHOR_LABELS
 
+-- Every position offset defaults to 0: 0 means on the anchor point, nothing
+-- hidden. These were the old defaults, which a record from before keeps
+-- (Store.KeepOldOffsets): { section, field, old, the anchor an X runs along
+-- (an outer top or bottom anchor drops it), a switch that must be on }.
+Schema.OLD_OFFSETS = {
+    icon = {
+        { "keybind", "keybindX", 2 }, { "keybind", "keybindY", -2 },
+        { "text", "stackX", -2 }, { "text", "stackY", 2 },
+        { "text", "ammoX", 2 }, { "text", "ammoY", 2 },
+    },
+    bar = {
+        { "text", "durOffsetX", -3, "durAnchor" }, { "text", "stkOffsetX", 3, "stkAnchor" },
+        { "text", "res2OffsetX", -3, "res2Anchor" }, { "text", "res3OffsetX", 3, "res3Anchor" },
+        { "text", "hpOffsetX", -3, "hpAnchor" }, { "text", "hp2OffsetX", 3, "hp2Anchor" },
+        { "text", "nameOffsetY", 1 },
+        { "anchor", "anchorOffsetY", -2, nil, "anchorEnabled" },
+    },
+}
+
 -- Live slider bounds: a field may carry minFn / maxFn (record -> number), which
 -- the editor's number rows re-read on every sync. The stack threshold sliders
 -- use this one to run up to the bar's own maximum.
@@ -1137,20 +1467,35 @@ Schema.MaxStacksFn = function(rec)
     return (B and B.MaxStacksFor and B.MaxStacksFor(rec)) or 5
 end
 
+-- A text element's format rows show by its source (a count, an amount, a time):
+-- the runtime classifies (Bars\AD_TextElement.lua); without it every row shows.
+local function TextSourceIs(what)
+    return function(rec)
+        local T = NS.TextElements
+        if not (T and T[what]) then return true end
+        return T[what](rec) == true
+    end
+end
+Schema.TextNumeric = TextSourceIs("NumericSource")
+Schema.TextCounted = TextSourceIs("CountedSource")
+Schema.TextTimed = TextSourceIs("TimedSource")
+
 local READOUT_VALUES = { "value", "abbreviated", "valuemax", "percent", "none" }
 local READOUT_LABELS = { value = "Value", abbreviated = "Short value (5.2k)", valuemax = "Value / max",
     percent = "Percent", none = "Nothing" }
 
 Schema.bar = {
     size = { push = true, fields = {
-        -- Both run to 600 because a standing bar is thin and tall.
-        width   = { d = 193, t = "int", min = 4, max = 600, label = "Bar width" },
-        height  = { d = 24, t = "int", min = 4, max = 600, label = "Bar height" },
+        -- Both run to 600 because a standing bar is thin and tall, and down to
+        -- 1 because a one-pixel line is a legal bar (the renderers clamp their
+        -- own insets, never this size).
+        width   = { d = 193, t = "int", min = 1, max = 600, label = "Bar width" },
+        height  = { d = 24, t = "int", min = 1, max = 600, label = "Bar height" },
         -- Multiplies width and height rather than calling SetScale.
         scale   = { d = 1, t = "num", min = 0.25, max = 4, label = "Bar scale" },
         opacity = { d = 1, t = "num", min = 0.1, max = 1, label = "Opacity" },
     } },
-    fill = { push = true, inherit = true, fields = {
+    fill = { push = true, inherit = true, kinds = BK_DRAWN, fields = {
         -- Health bars. Health is secret on Forever: the gradient goes through
         -- UnitHealthPercent and a colour curve, class vs reaction through
         -- SetVertexColorFromBoolean (a creature has no class colour).
@@ -1250,11 +1595,12 @@ Schema.bar = {
             dep = { { field = "swingTicks" }, { field = "swingTickCount", min = 3 } }, label = "Tick 3 color" },
         -- Swing and timer bars: a bright line on the fill's moving edge while
         -- it runs (Bars\AD_BarSpark.lua), on each half with the closing fill.
-        edgeSpark = { d = false, t = "bool", kinds = { swing = true, timer = true }, label = "Spark" },
+        edgeSpark = { d = false, t = "bool", kinds = { swing = true, timer = true },
+            kindModes = { timer = { duration = true } }, label = "Spark" },
         edgeSparkColor = { d = { 1, 1, 1, 0.9 }, t = "color", alpha = true, kinds = { swing = true, timer = true },
-            dep = { field = "edgeSpark" }, label = "Spark color" },
+            kindModes = { timer = { duration = true } }, dep = { field = "edgeSpark" }, label = "Spark color" },
         edgeSparkWidth = { d = 3, t = "int", min = 2, max = 16, kinds = { swing = true, timer = true },
-            dep = { field = "edgeSpark" }, label = "Spark width" },
+            kindModes = { timer = { duration = true } }, dep = { field = "edgeSpark" }, label = "Spark width" },
         -- Main-hand swing bars: each next-swing ability marked where it comes off
         -- cooldown (Bars\AD_SwingAbilities.lua). The spell IDs live on the driver
         -- (rec.driver.swingAbilIDs), so the editor draws that row itself.
@@ -1290,7 +1636,7 @@ Schema.bar = {
         rotateTexture = { d = false, t = "bool", label = "Rotate texture" },
     } },
     -- One section, two editor blocks: Background and Border.
-    look = { push = true, inherit = true, fields = {
+    look = { push = true, inherit = true, kinds = BK_DRAWN, fields = {
         bgShow          = { d = true, t = "bool", label = "Background" },
         -- "" = the fill's own texture, dimmed; else a built-in or
         -- LibSharedMedia texture. Hidden: the editor draws its own dropdown.
@@ -1360,7 +1706,7 @@ Schema.bar = {
             dep = { field = "style", value = "pips" } },
     } },
     -- Side icon. On a cast bar it shows the spell being cast.
-    icon = { push = true, inherit = true, kinds = { cooldown = true, aura = true, cast = true, enchant = true }, fields = {
+    icon = { push = true, inherit = true, kinds = { cooldown = true, aura = true, cast = true, enchant = true, timer = true }, fields = {
         iconShow = { d = false, t = "bool", label = "Icon" },
         -- Off: the icon keeps its own size; on: it follows the bar's thickness.
         iconFollowBar = { d = false, t = "bool", label = "Match the bar's size", dep = { field = "iconShow" } },
@@ -1376,7 +1722,7 @@ Schema.bar = {
         iconBorderThickness = { d = 1, t = "int", min = 1, max = 10, label = "Icon border thickness",
             dep = { { field = "iconShow" }, { field = "iconBorderEnabled" } } },
         -- Not on cast bars: their icon is whatever is being cast.
-        iconOverride = { inherit = false, d = 0, t = "id", kinds = { cooldown = true, aura = true },
+        iconOverride = { inherit = false, d = 0, t = "id", kinds = { cooldown = true, aura = true, timer = true },
             label = "Icon override (spell/texture ID)", dep = { field = "iconShow" } },
         -- Cast bars: a shield on the icon (or the bar's start without one) for
         -- casts that cannot be interrupted. The flag is secret for a target in
@@ -1387,7 +1733,7 @@ Schema.bar = {
     } },
     -- Each text is a flat-prefixed run (dur, stk, res, hp, name, ready) so the
     -- generic rows cluster them. Changing an anchor zeroes that text's offsets.
-    text = { push = true, inherit = true, fields = {
+    text = { push = true, inherit = true, kinds = BK_DRAWN, fields = {
         -- One font per bar: a built-in or LibSharedMedia font; "" = the game's
         -- default. Hidden: the bar editor draws its own dropdown.
         font = { d = "", t = "text", hidden = true, font = true, label = "Font" },
@@ -1398,7 +1744,7 @@ Schema.bar = {
             kinds = BK_DUR, label = "Round timer numbers", dep = { field = "durShow" } },
         durSize = { d = 12, t = "int", min = 6, max = 32, kinds = BK_DURC, label = "Duration text size" },
         durAnchor = { d = "RIGHT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS, kinds = BK_DURC, label = "Duration anchor" },
-        durOffsetX = { adv = "text", d = -3, t = "int", min = -100, max = 100, kinds = BK_DURC, label = "Duration offset X" },
+        durOffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_DURC, label = "Duration offset X" },
         durOffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_DURC, label = "Duration offset Y" },
         durColor = { d = { 0.95, 0.97, 1, 1 }, t = "color", alpha = true, kinds = BK_DURC, label = "Duration color" },
         -- Decimals: cooldown bars render C-side from the real remaining time
@@ -1414,7 +1760,7 @@ Schema.bar = {
         stkShow = { d = true, t = "bool", kinds = BK_CST, label = "Stack text" },
         stkSize = { d = 12, t = "int", min = 6, max = 32, kinds = BK_CST, label = "Stack text size" },
         stkAnchor = { d = "LEFT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS, kinds = BK_CST, label = "Stack anchor" },
-        stkOffsetX = { adv = "text", d = 3, t = "int", min = -100, max = 100, kinds = BK_CST, label = "Stack offset X" },
+        stkOffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_CST, label = "Stack offset X" },
         stkOffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_CST, label = "Stack offset Y" },
         stkColor = { d = { 0.95, 0.97, 1, 1 }, t = "color", alpha = true, kinds = BK_CST, label = "Stack color" },
         stkHideAtZero = { d = true, t = "bool", kinds = BK_STKZ, label = "Stack hides at zero" },
@@ -1437,15 +1783,15 @@ Schema.bar = {
             kinds = BK_RES, label = "Resource text shows", dep = { field = "resShow" } },
         -- Texts 2 and 3 have their own format, size, colour and place; outline
         -- and shadow come from text 1.
-        resCount = { inherit = false, d = 1, t = "int", min = 1, max = 3, kinds = BK_RES, label = "Number of resource texts",
-            dep = { field = "resShow" } },
+        resCount = { inherit = false, d = 1, t = "int", min = 1, max = 3, kinds = BK_RES, adds = "resource text",
+            label = "Number of resource texts", dep = { field = "resShow" } },
         res2Format = { d = "percent", t = "enum", values = READOUT_VALUES, labels = READOUT_LABELS,
             kinds = BK_RES, label = "Text 2 shows", dep = { { field = "resShow" }, { field = "resCount", min = 2 } } },
         res2Size = { d = 12, t = "int", min = 6, max = 32, kinds = BK_RES, label = "Text 2 size", dep = { { field = "resShow" }, { field = "resCount", min = 2 } } },
         res2Color = { d = { 0.95, 0.97, 1, 1 }, t = "color", alpha = true, kinds = BK_RES, label = "Text 2 color", dep = { { field = "resShow" }, { field = "resCount", min = 2 } } },
         res2Anchor = { d = "RIGHT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS,
             kinds = BK_RES, label = "Text 2 anchor", dep = { { field = "resShow" }, { field = "resCount", min = 2 } } },
-        res2OffsetX = { adv = "text", d = -3, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Text 2 offset X", dep = { { field = "resShow" }, { field = "resCount", min = 2 } } },
+        res2OffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Text 2 offset X", dep = { { field = "resShow" }, { field = "resCount", min = 2 } } },
         res2OffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Text 2 offset Y", dep = { { field = "resShow" }, { field = "resCount", min = 2 } } },
         res3Format = { d = "valuemax", t = "enum", values = READOUT_VALUES, labels = READOUT_LABELS,
             kinds = BK_RES, label = "Text 3 shows", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
@@ -1453,7 +1799,7 @@ Schema.bar = {
         res3Color = { d = { 0.95, 0.97, 1, 1 }, t = "color", alpha = true, kinds = BK_RES, label = "Text 3 color", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
         res3Anchor = { d = "LEFT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS,
             kinds = BK_RES, label = "Text 3 anchor", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
-        res3OffsetX = { adv = "text", d = 3, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Text 3 offset X", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
+        res3OffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Text 3 offset X", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
         res3OffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Text 3 offset Y", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
         -- Health bars. Health is secret: only SetText, SetFormattedText and
         -- AbbreviateNumbers handle it, never Lua maths.
@@ -1467,19 +1813,19 @@ Schema.bar = {
         hpOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = BK_HP, label = "Health outline" },
         hpColor = { d = { 0.95, 0.97, 1, 1 }, t = "color", alpha = true, kinds = BK_HP, label = "Health text color" },
         hpAnchor = { d = "RIGHT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS, kinds = BK_HP, label = "Health anchor" },
-        hpOffsetX = { adv = "text", d = -3, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Health offset X" },
+        hpOffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Health offset X" },
         hpOffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Health offset Y" },
         hpShadow = { adv = "text", d = false, t = "bool", kinds = BK_HP, label = "Health shadow" },
         -- Texts 2 and 3, as on resource bars.
-        hpCount = { inherit = false, d = 1, t = "int", min = 1, max = 3, kinds = BK_HP, label = "Number of health texts",
-            dep = { field = "hpShow" } },
+        hpCount = { inherit = false, d = 1, t = "int", min = 1, max = 3, kinds = BK_HP, adds = "health text",
+            label = "Number of health texts", dep = { field = "hpShow" } },
         hp2Format = { d = "percent", t = "enum", values = READOUT_VALUES, labels = READOUT_LABELS,
             kinds = BK_HP, label = "Text 2 shows", dep = { { field = "hpShow" }, { field = "hpCount", min = 2 } } },
         hp2Size = { d = 12, t = "int", min = 6, max = 32, kinds = BK_HP, label = "Text 2 size", dep = { { field = "hpShow" }, { field = "hpCount", min = 2 } } },
         hp2Color = { d = { 0.95, 0.97, 1, 1 }, t = "color", alpha = true, kinds = BK_HP, label = "Text 2 color", dep = { { field = "hpShow" }, { field = "hpCount", min = 2 } } },
         hp2Anchor = { d = "LEFT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS,
             kinds = BK_HP, label = "Text 2 anchor", dep = { { field = "hpShow" }, { field = "hpCount", min = 2 } } },
-        hp2OffsetX = { adv = "text", d = 3, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Text 2 offset X", dep = { { field = "hpShow" }, { field = "hpCount", min = 2 } } },
+        hp2OffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Text 2 offset X", dep = { { field = "hpShow" }, { field = "hpCount", min = 2 } } },
         hp2OffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Text 2 offset Y", dep = { { field = "hpShow" }, { field = "hpCount", min = 2 } } },
         hp3Format = { d = "valuemax", t = "enum", values = READOUT_VALUES, labels = READOUT_LABELS,
             kinds = BK_HP, label = "Text 3 shows", dep = { { field = "hpShow" }, { field = "hpCount", min = 3 } } },
@@ -1513,7 +1859,7 @@ Schema.bar = {
         -- text on the bar's left edge.
         nameAnchor = { d = "OUTERTOPLEFT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS, label = "Name anchor" },
         nameOffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, label = "Name offset X" },
-        nameOffsetY = { adv = "text", d = 1, t = "int", min = -100, max = 100, label = "Name offset Y" },
+        nameOffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, label = "Name offset Y" },
         nameColor = { d = { 0.7, 0.78, 0.88, 1 }, t = "color", alpha = true, label = "Name color" },
         readyShow = { d = false, t = "bool", kinds = BK_CD, label = "Ready text" },
         readyText = { inherit = false, d = "Ready", t = "text", kinds = BK_CD, label = "Ready text string", dep = { field = "readyShow" } },
@@ -1532,7 +1878,7 @@ Schema.bar = {
     -- and swing bars compare plain seconds in the GetTime loop; aura duration
     -- bars get engine-driven colour layers, so their time never reaches Lua.
     thresholds = { push = true, kinds = { cooldown = true, timer = true, aura = true, swing = true },
-        kindModes = { aura = { duration = true } }, fields = {
+        kindModes = { aura = { duration = true }, timer = { duration = true } }, fields = {
         threshEnabled = { d = false, t = "bool", label = "Threshold colors" },
         -- Bands in play (of three); the others hide and the runtime skips them.
         -- adds: the panel grows the count with an "Add threshold" button.
@@ -1719,6 +2065,13 @@ Schema.bar = {
         -- SetAlphaFromBoolean, never into an `if`.
         absorbOverflow = { d = false, t = "bool", label = "Glow when shields pass full health",
             dep = { field = "absorbShow" } },
+        -- The whole shield from the bar's far end, clipped to the health fill:
+        -- only the part past full health shows, drawn by the game, no maths.
+        -- On by default, unlike other new switches: a shield on a full-health
+        -- unit is otherwise invisible. Works with the glow.
+        absorbOver = { d = true, t = "bool", label = "Show over-shield inside the bar",
+            dep = { field = "absorbShow" },
+            desc = "The part of a shield that doesn't fit past full health draws over the end of the health, so a shield on a full-health unit still shows." },
         healAbsorbShow = { d = false, t = "bool", label = "Heal absorbs" },
         healAbsorbColor = { d = { 0.55, 0.05, 0.2, 1 }, t = "color", label = "Heal absorb color", dep = { field = "healAbsorbShow" } },
         healAbsorbAlpha = { d = 0.7, t = "num", min = 0.1, max = 1, label = "Heal absorb opacity", dep = { field = "healAbsorbShow" } },
@@ -1763,6 +2116,44 @@ Schema.bar = {
         cellDim = { d = 0.25, t = "num", min = 0, max = 1, label = "Unlit cell opacity",
             dep = { field = "style", value = "segmented" } },
     } },
+    -- Text elements (Bars\AD_TextElement.lua): one string in a box. The value
+    -- comes from the source on Tracking (rec.driver); every read the game
+    -- keeps secret goes straight into a text sink.
+    textel = { push = true, inherit = true, kinds = { text = true }, fields = {
+        -- "" = the game's default face; a built-in or a LibSharedMedia font.
+        font = { d = "", t = "text", font = true, label = "Font" },
+        size = { d = 14, t = "int", min = 6, max = 64, label = "Text size" },
+        outline = { d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" },
+            labels = { OUTLINE = "Outline", THICKOUTLINE = "Thick outline", NONE = "None" }, label = "Outline" },
+        shadow = { d = false, t = "bool", label = "Shadow" },
+        color = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Text color" },
+        justifyH = { d = "CENTER", t = "enum", values = { "LEFT", "CENTER", "RIGHT" },
+            labels = { LEFT = "Left", CENTER = "Center", RIGHT = "Right" }, label = "Align" },
+        justifyV = { d = "MIDDLE", t = "enum", values = { "TOP", "MIDDLE", "BOTTOM" },
+            labels = { TOP = "Top", MIDDLE = "Middle", BOTTOM = "Bottom" }, label = "Vertical align" },
+        bgShow = { d = false, t = "bool", label = "Box background" },
+        bgColor = { d = { 0, 0, 0, 0.5 }, t = "color", alpha = true, label = "Box background color",
+            dep = { field = "bgShow" } },
+        -- The words around the value: this element's own, never a layout look.
+        -- A countdown the game draws itself (a spell's or an aura's time) has none.
+        prefix = { inherit = false, d = "", t = "text", label = "Prefix",
+            desc = "Words before the value. Not on a countdown the game draws (a spell's time left, an aura's)." },
+        suffix = { inherit = false, d = "", t = "text", label = "Suffix",
+            desc = "Words after the value. Not on a countdown the game draws (a spell's time left, an aura's)." },
+        numFormat = { d = "plain", t = "enum", values = { "plain", "abbreviated" },
+            labels = { plain = "As is", abbreviated = "Short (5.2k)" }, label = "Number format",
+            showIf = Schema.TextNumeric },
+        blankAtZero = { d = false, t = "bool", label = "Blank at zero", showIf = Schema.TextCounted,
+            desc = "Show nothing while the count is 0 (charges, combo points, ammo, stacks)." },
+        decimals = { d = false, t = "bool", label = "Show tenths", showIf = Schema.TextTimed },
+        decimalsBelow = { d = 10, t = "int", min = 2, max = 60, label = "Tenths below (seconds)",
+            dep = { field = "decimals" }, showIf = Schema.TextTimed },
+        abbrev = { d = 600, t = "enum", values = ABBREV_VALUES, labels = ABBREV_LABELS,
+            label = "Show minutes (1:30)", showIf = Schema.TextTimed },
+        rounding = { d = "global", t = "enum", values = { "global", "up", "down" },
+            labels = { global = "Same as Settings", up = "Round up", down = "Round down" },
+            label = "Rounding", showIf = Schema.TextTimed },
+    } },
     -- Not pushable, like conditions. hiddenAlpha is the opacity for the state
     -- hides below; every kind it lists must honor it.
     behavior = { fields = {
@@ -1779,6 +2170,12 @@ Schema.bar = {
         hiddenAlpha = { d = 0, t = "num", min = 0, max = 1, kinds = { cooldown = true, timer = true, swing = true, cast = true, enchant = true }, label = "Hidden opacity" },
         -- Spell 61304 (the GCD), inverted readiness, exempt from the debounce.
         gcdMode = { d = false, t = "bool", kinds = BK_CD, label = "GCD tracker mode" },
+        -- A health bar's click area: a secure unit button over the bar that
+        -- targets the unit, opens its menu and takes click-cast bindings, in
+        -- combat too (Bars\AD_ClickUnit.lua). A party member's bar is a unit
+        -- frame, so it starts on, unlike other new switches.
+        clickable = { d = false, du = { party1 = true, party2 = true, party3 = true, party4 = true },
+            t = "bool", kinds = BK_HP, label = "Clickable (target on click)" },
     } },
     frame = { fields = {
         strata = { adv = "frame", d = "MEDIUM", t = "enum",
@@ -1804,7 +2201,7 @@ Schema.bar = {
             dep = { { field = "anchorEnabled" }, { field = "anchorTargetKind", notValue = "mouse" } } },
         anchorOffsetX = { d = 0, t = "int", min = -500, max = 500,
             label = "Anchor offset X", dep = { field = "anchorEnabled" } },
-        anchorOffsetY = { d = -2, t = "int", min = -500, max = 500,
+        anchorOffsetY = { d = 0, t = "int", min = -500, max = 500,
             label = "Anchor offset Y", dep = { field = "anchorEnabled" } },
         -- A standing bar matches the target's height, its long side. Not on a
         -- nameplate: its size can be secret, and a resize would lay the bar out

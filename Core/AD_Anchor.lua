@@ -405,7 +405,7 @@ local function MatchSize(rec, frame, target)
         local adj = R(rec, "anchorMatchWidthAdjust") or 0
         local v = standing and target:GetHeight() or target:GetWidth()
         if v and v > 0 then
-            v = SnapSize(frame, math.max(8, v * k + adj))
+            v = SnapSize(frame, math.max(1, v * k + adj))
             if standing then frame:SetHeight(v) else frame:SetWidth(v) end
         end
     end
@@ -413,7 +413,7 @@ local function MatchSize(rec, frame, target)
         local adj = R(rec, "anchorMatchHeightAdjust") or 0
         local v = standing and target:GetWidth() or target:GetHeight()
         if v and v > 0 then
-            v = SnapSize(frame, math.max(4, v * k + adj))
+            v = SnapSize(frame, math.max(1, v * k + adj))
             if standing then frame:SetWidth(v) else frame:SetHeight(v) end
         end
     end

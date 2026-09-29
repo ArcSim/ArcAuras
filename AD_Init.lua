@@ -19,12 +19,18 @@ loader:SetScript("OnEvent", function(self, event, arg1)
         if NS.DriverAuraGroups and NS.DriverAuraGroups.PreBuild then
             NS.DriverAuraGroups.PreBuild()
         end
+        if NS.DriverUnitAuras and NS.DriverUnitAuras.PreBuild then
+            NS.DriverUnitAuras.PreBuild()
+        end
         self:UnregisterEvent("ADDON_LOADED")
     elseif event == "PLAYER_LOGIN" then
         -- On Forever the client can assign the saved variables global after
         -- ADDON_LOADED; point the store at the live table.
         NS.Store.AdoptLiveSV()
         NS.LayoutEngine.Init()
+        -- Aura bars build here, inside the login window, as the aura slots
+        -- did at ADDON_LOADED: the queued draw runs a frame later, outside it.
+        if NS.Bars and NS.Bars.PreBuildAura then NS.Bars.PreBuildAura() end
         NS.LayoutEngine.QueueRebuild()
         self:UnregisterEvent("PLAYER_LOGIN")
     elseif event == "PLAYER_ENTERING_WORLD" then
@@ -78,6 +84,13 @@ SlashCmdList["ARCUIVTWO"] = function(msg)
     -- Chat output only ever answers a command the player typed.
     if msg == "plate" and NS.Anchor and NS.Anchor.PlateReport then
         for _, line in ipairs(NS.Anchor.PlateReport()) do
+            print("|cff3fc9f2Arc Auras:|r " .. line)
+        end
+        return
+    end
+    -- "/arcauras special" prints every Special Aura tracker's state (retail only).
+    if msg == "special" and NS.Special and NS.Special.Diag then
+        for _, line in ipairs(NS.Special.Diag()) do
             print("|cff3fc9f2Arc Auras:|r " .. line)
         end
         return

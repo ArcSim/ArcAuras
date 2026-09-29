@@ -16,6 +16,8 @@ NS.DriverAuraGroups = Groups
 local IS_121 = ((select(4, GetBuildInfo()) or 0) >= 120100)
     or (C_Secrets and C_Secrets.ShouldAurasBeSecret ~= nil)
 local MEMBER_SLOTS = 10
+local SLOT_KEYS = {}
+for k = 1, MEMBER_SLOTS do SLOT_KEYS[k] = "adSlot" .. k end
 local SLOT_CAP = { player = 1, target = 2, pet = 1 }  -- two casters can apply one debuff
 local BASE_FILTER = { player = "HELPFUL", target = "HARMFUL", pet = "HELPFUL" }
 -- the engine rows, chained in this order (a missing one is skipped)
@@ -37,6 +39,7 @@ local function AurasSecretNow()
     if issecretvalue and issecretvalue(v) then return true end
     return v == true
 end
+Groups.AurasSecretNow = AurasSecretNow
 
 function Groups.IsAvailable() return IS_121 end
 
@@ -52,6 +55,12 @@ local function IsDynamic(grec)
     return grec ~= nil and Store.Resolve(grec, "arrangement", "dynamicLayout") == true
 end
 Groups.IsDynamic = IsDynamic
+
+-- A group showing every aura on a unit has no member rows: its own engine
+-- draws it (Drivers\AD_DriverUnitAuras.lua).
+local function ShowsAll(grec)
+    return Store.ShowsAll ~= nil and Store.ShowsAll(grec)
+end
 
 -- Membership
 
@@ -214,9 +223,15 @@ local function StyleSlotButton(b, rt)
     local h = (dims and dims.h) or rt.cfg.iconH or 36
     Factory.StyleAuraButton(b, rec, h, { w = w, h = h, ghost = false })
 end
+-- Shared with the show-all engine (Drivers\AD_DriverUnitAuras.lua), which
+-- styles every button from one record.
+Groups.StyleSlotButton = StyleSlotButton
 
-local function StyleRuntimeButtons(rt)
-    local resized = false
+-- Restyles a runtime's buttons where the game allows it (resized first, when
+-- their size changed). True when one was locked, so the caller retries at its
+-- settle edge. Shared with the show-all engine.
+local function StyleButtons(rt)
+    local resized, locked = false, false
     for _, b in ipairs(rt.buttons or {}) do
         local ok
         if b.CanBeAccessedInContext then
@@ -237,7 +252,7 @@ local function StyleRuntimeButtons(rt)
             end
             StyleSlotButton(b, rt)
         else
-            pendingSync = true
+            locked = true
         end
     end
     if resized and not InCombatLockdown() then
@@ -245,6 +260,12 @@ local function StyleRuntimeButtons(rt)
             if c.UpdateAllAuras then c:UpdateAllAuras() end
         end
     end
+    return locked
+end
+Groups.StyleButtons = StyleButtons
+
+local function StyleRuntimeButtons(rt)
+    if StyleButtons(rt) then pendingSync = true end
 end
 
 -- Runtime build
@@ -343,6 +364,51 @@ local function GroupDims(grec)
     return w, h, sx, sy, math.max(1, R("cols") or 6),
         R("growthH") or "RIGHT", R("growthV") or "DOWN"
 end
+Groups.GroupDims = GroupDims
+
+-- One container's flow: the spacing of each of its groups (keys), the line
+-- size, the padding, the reading direction and the corner the buttons start
+-- from, through whichever setter names this client has. Returns the corner.
+-- Shared with the show-all engine.
+local function ApplyFlow(c, keys, sx, sy, lineSize, pad, flowRight, flowDown)
+    if c.SetAuraGroupLayout then
+        for _, key in ipairs(keys) do
+            c:SetAuraGroupLayout(key, {
+                elementSpacingX = sx, elementSpacingY = sy,
+                elementSpacing = sx, lineSpacing = sy,
+                groupSpacing = sx, groupLineSpacing = sy,
+            })
+        end
+    end
+    if c.SetFlowLayoutMaximumLineSize then
+        c:SetFlowLayoutMaximumLineSize(lineSize)
+    elseif c.SetAuraLayoutRowWidth then
+        c:SetAuraLayoutRowWidth(lineSize)
+    end
+    if c.SetFlowLayoutPadding then
+        c:SetFlowLayoutPadding(pad, pad, pad, pad)
+    elseif c.SetAuraLayoutPadding then
+        c:SetAuraLayoutPadding(pad, pad, pad, pad)
+    end
+    local FD = AnchorUtil and AnchorUtil.FlowDirection
+    if FD then
+        local dirH = flowRight and FD.Right or FD.Left
+        local dirV = flowDown and FD.Down or FD.Up
+        if c.SetFlowLayoutGrowthDirection then
+            c:SetFlowLayoutGrowthDirection(dirH, dirV)
+        elseif c.SetAuraLayoutGrowthDirection then
+            c:SetAuraLayoutGrowthDirection(dirH, dirV)
+        end
+    end
+    local corner = (flowDown and "TOP" or "BOTTOM") .. (flowRight and "LEFT" or "RIGHT")
+    if c.SetFlowLayoutAnchorPoint then
+        c:SetFlowLayoutAnchorPoint(corner)
+    elseif c.SetAuraLayoutAnchorPoint then
+        c:SetAuraLayoutAnchorPoint(corner)
+    end
+    return corner
+end
+Groups.ApplyFlow = ApplyFlow
 
 local function ApplyEngineLayout(groupId, grec)
     local rt = runtimes[groupId]
@@ -384,44 +450,11 @@ local function ApplyEngineLayout(groupId, grec)
     if vMode == "TOP" then flowDown = true
     elseif vMode == "BOTTOM" then flowDown = false
     else flowDown = (growthV ~= "UP") end
-    local flowCorner = (flowDown and "TOP" or "BOTTOM") .. (flowRight and "LEFT" or "RIGHT")
 
-    local FD = AnchorUtil and AnchorUtil.FlowDirection
     local pad = Store.Resolve(grec, "arrangement", "containerPadding") or 0
     if pad < 0 then pad = 0 end
     for _, c in pairs(rt.engines) do
-        if c.SetAuraGroupLayout then
-            for k = 1, MEMBER_SLOTS do
-                c:SetAuraGroupLayout("adSlot" .. k, {
-                    elementSpacingX = sx, elementSpacingY = sy,
-                    elementSpacing = sx, lineSpacing = sy,
-                    groupSpacing = sx, groupLineSpacing = sy,
-                })
-            end
-        end
-        local lineSize = perRow * (iconW + sx)
-        if c.SetFlowLayoutMaximumLineSize then
-            c:SetFlowLayoutMaximumLineSize(lineSize)
-        elseif c.SetAuraLayoutRowWidth then
-            c:SetAuraLayoutRowWidth(lineSize)
-        end
-        if c.SetFlowLayoutPadding then
-            c:SetFlowLayoutPadding(pad, pad, pad, pad)
-        elseif c.SetAuraLayoutPadding then
-            c:SetAuraLayoutPadding(pad, pad, pad, pad)
-        end
-        if FD then
-            local dirH = flowRight and FD.Right or FD.Left
-            local dirV = flowDown and FD.Down or FD.Up
-            if c.SetFlowLayoutGrowthDirection then
-                c:SetFlowLayoutGrowthDirection(dirH, dirV)
-            elseif c.SetAuraLayoutGrowthDirection then
-                c:SetAuraLayoutGrowthDirection(dirH, dirV)
-            end
-        end
-        if c.SetAuraLayoutAnchorPoint then
-            c:SetAuraLayoutAnchorPoint(flowCorner)
-        end
+        ApplyFlow(c, SLOT_KEYS, sx, sy, perRow * (iconW + sx), pad, flowRight, flowDown)
     end
 
     -- Pin the rows to the group frame, which keeps its grid-sized rect in flow
@@ -463,28 +496,32 @@ local function ApplyEngineLayout(groupId, grec)
     end
 end
 
--- Mirror the group frame's shown state, effective alpha and strata onto the
--- rows, which are not its children: conditions and the flip must carry over.
-local function UpdateEngineShown(groupId, grec)
-    local rt = runtimes[groupId]
-    if not rt then return end
-    local Engine = NS.LayoutEngine
-    local gf = Engine and Engine.GetGroupFrame and Engine.GetGroupFrame(groupId)
-    local on = EngineModeActive() and IsDynamic(grec) and Store.IsLoaded(grec)
-        and gf ~= nil and gf:IsShown()
+-- Mirror the group frame's shown state, effective alpha and strata onto a
+-- container, which is not its child: conditions and the flip must carry over.
+-- Shared with the show-all engine.
+local function MirrorOnto(c, gf, on)
     local alpha = 1
     if gf then
         alpha = gf.GetEffectiveAlpha and gf:GetEffectiveAlpha() or gf:GetAlpha() or 1
         if issecretvalue and issecretvalue(alpha) then alpha = 1 end
     end
-    for _, c in pairs(rt.engines) do
-        c:SetShown(on)
-        c:SetAlpha(alpha)
-        if gf then
-            c:SetFrameStrata(gf:GetFrameStrata())
-            c:SetFrameLevel(gf:GetFrameLevel() + 2)
-        end
+    c:SetShown(on)
+    c:SetAlpha(alpha)
+    if gf then
+        c:SetFrameStrata(gf:GetFrameStrata())
+        c:SetFrameLevel(gf:GetFrameLevel() + 2)
     end
+end
+Groups.MirrorOnto = MirrorOnto
+
+local function UpdateEngineShown(groupId, grec)
+    local rt = runtimes[groupId]
+    if not rt then return end
+    local Engine = NS.LayoutEngine
+    local gf = Engine and Engine.GetGroupFrame and Engine.GetGroupFrame(groupId)
+    local on = EngineModeActive() and IsDynamic(grec) and not ShowsAll(grec)
+        and Store.IsLoaded(grec) and gf ~= nil and gf:IsShown()
+    for _, c in pairs(rt.engines) do MirrorOnto(c, gf, on) end
 end
 
 -- Sync (SyncAll is the one reconciler)
@@ -541,7 +578,7 @@ function Groups.SyncAll()
     for _, layout in ipairs(Store.Layouts()) do
         local groupsOf = Store.ChildrenOf(layout)
         for _, grec in ipairs(groupsOf) do
-            if grec.groupKind == "aura" then
+            if grec.groupKind == "aura" and not ShowsAll(grec) then
                 live[grec.id] = true
                 local rt = runtimes[grec.id] or BuildRuntime(grec.id)
                 if rt then
@@ -553,7 +590,8 @@ function Groups.SyncAll()
             end
         end
     end
-    -- runtimes whose group is gone: park (frames reused if it returns)
+    -- runtimes whose group is gone or shows every aura on a unit: park
+    -- (frames reused if it returns)
     for groupId, rt in pairs(runtimes) do
         if not live[groupId] then
             rt.slotTargetMode = nil
@@ -587,7 +625,7 @@ function Groups.PreBuild()
     for _, layout in ipairs(Store.Layouts()) do
         local groupsOf = Store.ChildrenOf(layout)
         for _, grec in ipairs(groupsOf) do
-            if grec.groupKind == "aura" then
+            if grec.groupKind == "aura" and not ShowsAll(grec) then
                 local iconW, iconH = GroupDims(grec)
                 local members = MembersOf(grec)
                 local slotRecs = {}

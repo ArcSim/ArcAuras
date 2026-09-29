@@ -60,7 +60,6 @@ local function SnapPlacement(f, container, x, y)
     end
 end
 
-local inCombat = false
 local moveMode = false
 local editMode = false   -- true while the options panel is open
 
@@ -773,11 +772,12 @@ local function PlaceBar(rec, container)
     f:SetParent(container)
     f:SetFrameStrata(EditStrata(Store.Resolve(rec, "frame", "strata")))
     f:SetFrameLevel(Store.Resolve(rec, "frame", "level") or 10)
-    -- Scale multiplies width and height rather than calling SetScale.
+    -- Scale multiplies width and height rather than calling SetScale. One
+    -- unit is the floor: a one-pixel line is a legal bar.
     local w = Store.Resolve(rec, "size", "width") or 220
     local h = Store.Resolve(rec, "size", "height") or 16
     local sc = Store.Resolve(rec, "size", "scale") or 1
-    f:SetSize(Snap(math.max(8, w * sc)), Snap(math.max(4, h * sc)))
+    f:SetSize(Snap(math.max(1, w * sc)), Snap(math.max(1, h * sc)))
     -- Place it free now and register it as an anchor source; the post-pass
     -- re-places it once every frame exists, so a bar can target a group,
     -- another bar, a layout or a named frame regardless of build order.
@@ -789,7 +789,9 @@ local function PlaceBar(rec, container)
     f:SetMovable(editMode)
     f:EnableMouse(editMode)
     local ch = EnsureBarChrome(f)
-    ch.chip:SetShown(editMode)
+    -- Settings "Edit buttons on screen" can keep the bars' chips away; the
+    -- harness's stand-in factory has no reader, so it counts as on.
+    ch.chip:SetShown(editMode and (Factory.EditChipsOn == nil or Factory.EditChipsOn("bar")))
     if editMode then
         ch.chip:SetFrameStrata(CHROME_STRATA)
         ch.chip:SetFrameLevel(150)   -- under the group handle's 200
@@ -1263,11 +1265,11 @@ local function EnsureGroupArrows(gf)
 end
 
 local function UpdateGroupArrows(gf, rec)
-    -- a group kind that places itself (Engine.GROUP_KINDS) has no grid to grow
+    -- a group that places itself (Engine.HandlerFor) has no grid to grow
     local want = editMode and Store.GetSetting("showLayoutArrows") ~= false
         and NS.Options ~= nil and NS.Options.SelectedGroupId ~= nil
         and NS.Options.SelectedGroupId() == rec.id
-        and not Engine.GROUP_KINDS[rec.groupKind]
+        and not Engine.HandlerFor(rec)
     if not (want or gf._adArrows) then return end
     for _, b in ipairs(EnsureGroupArrows(gf)) do
         local s = b._adSpec
@@ -1374,6 +1376,24 @@ end
 Engine.GROUP_KINDS = {}
 function Engine.RegisterGroupKind(kind, handler)
     Engine.GROUP_KINDS[kind] = handler
+end
+
+-- A grid group a handler takes over whole while claims(group) is true (an aura
+-- group showing every aura on a unit, Drivers\AD_DriverUnitAuras.lua). Asked on
+-- every rebuild, so a group moves between the grid and the handler with its
+-- setting; the same place / release contract as a group kind.
+Engine.GROUP_CLAIMS = {}
+function Engine.RegisterGroupClaim(handler)
+    Engine.GROUP_CLAIMS[#Engine.GROUP_CLAIMS + 1] = handler
+end
+
+-- The handler that places this group itself, or nil for the grid.
+function Engine.HandlerFor(group)
+    local gk = Engine.GROUP_KINDS[group.groupKind]
+    if gk then return gk end
+    for _, h in ipairs(Engine.GROUP_CLAIMS) do
+        if h.claims(group) then return h end
+    end
 end
 
 -- The container's own look (Arrangement > Container), off by default; the
@@ -1571,9 +1591,11 @@ if NS.Conditions then
         end,
     })
     C.RegisterSubject("group", {
+        -- A handler that hides the frame it places still draws the group
+        -- (an aura group on enemy nameplates), so its conditions run too.
         each = function(fn)
             for id, gf in pairs(groupFrames) do
-                if gf:IsShown() then fn(id) end
+                if gf:IsShown() or gf._adPlacer then fn(id) end
             end
         end,
         apply = function(rec)
@@ -1647,8 +1669,20 @@ function Engine.Rebuild()
                     -- The post-pass re-places it if it is anchored.
                     if NS.Anchor then NS.Anchor.Register(group, gf) end
                     gf:Show()
-                    local gk = Engine.GROUP_KINDS[group.groupKind]
+                    local gk = Engine.HandlerFor(group)
+                    -- a group a handler lets go of (an aura group back on its
+                    -- icons) is released by it before the grid draws
+                    local was = gf._adPlacer
+                    if was and was ~= gk and was.release then was.release(group) end
+                    gf._adPlacer = gk
                     if gk then
+                        -- a claimed grid group keeps its icons, undrawn
+                        if was ~= gk then
+                            for _, rec in ipairs(Store.IconsOf(group)) do
+                                Factory.Release(rec.id)
+                                NS.DriverCooldown.Detach(rec.id)
+                            end
+                        end
                         gk.place(group, gf, editMode)
                         ContainerLook(group, gf)
                     else
@@ -1667,7 +1701,8 @@ function Engine.Rebuild()
                     GhostTag(gf, group, 4)
                 else
                     gf:Hide()
-                    local gk = Engine.GROUP_KINDS[group.groupKind]
+                    local gk = gf._adPlacer or Engine.HandlerFor(group)
+                    gf._adPlacer = nil
                     if gk and gk.release then gk.release(group) end
                     for _, rec in ipairs(Store.IconsOf(group)) do
                         Factory.Release(rec.id)
@@ -1720,7 +1755,9 @@ function Engine.Rebuild()
             container:Hide()
             local groups, freeIcons, bars = Store.ChildrenOf(layout)
             for _, group in ipairs(groups) do
-                local gk = Engine.GROUP_KINDS[group.groupKind]
+                local gf = groupFrames[group.id]
+                local gk = (gf and gf._adPlacer) or Engine.HandlerFor(group)
+                if gf then gf._adPlacer = nil end
                 if gk and gk.release then gk.release(group) end
                 for _, rec in ipairs(Store.IconsOf(group)) do
                     Factory.Release(rec.id)
@@ -1796,14 +1833,20 @@ function Engine.IsEditMode() return editMode end
 
 function Engine.Init()
     Events.OnMessage("AD_DIRTY", "engine", function() Engine.QueueRebuild() end)
-    Events.On("PLAYER_REGEN_DISABLED", "adeng", function()
-        inCombat = true
-        Engine.QueueRebuild()
-    end)
-    Events.On("PLAYER_REGEN_ENABLED", "adeng", function()
-        inCombat = false
-        Engine.QueueRebuild()
-    end)
+    -- A combat edge restyles nothing: combat conditions run their own pass,
+    -- so only the combat-only glows re-check, a frame later, as
+    -- InCombatLockdown still reads false while PLAYER_REGEN_DISABLED runs.
+    local function CombatEdge()
+        Events.Coalesce("ad_combat_glows", function()
+            for iconId, f in pairs(Factory.frames) do
+                local rec = f:IsShown() and Store.Get(iconId)
+                if rec then Factory.CombatGlows(f, rec) end
+            end
+            if NS.DriverWarn then NS.DriverWarn.ApplyAll() end
+        end)
+    end
+    Events.On("PLAYER_REGEN_DISABLED", "adeng", CombatEdge)
+    Events.On("PLAYER_REGEN_ENABLED", "adeng", CombatEdge)
     Events.On("PLAYER_SPECIALIZATION_CHANGED", "adeng", function(_, unit)
         if unit == "player" or unit == nil then Engine.QueueRebuild() end
     end)
@@ -1822,13 +1865,13 @@ function Engine.Init()
     Events.On("SPELLS_CHANGED", "adeng", function() Engine.QueueRebuild() end)
     -- Toggle art (aspects, stances, auras) flips with no promised
     -- SPELL_UPDATE_ICON, so re-read only the art on every event the action bar
-    -- repaints from: one SetTexture per shown spell icon, once a frame.
+    -- repaints from, once a frame; Factory.RefreshArt paints only a change.
     local function ArtPass()
         Events.Coalesce("ad_icon_art", function()
             for iconId, f in pairs(Factory.frames) do
                 local rec = Store.Get(iconId)
                 if rec and rec.kind == "spell" and f.icon and f:IsShown() then
-                    f.icon:SetTexture(Factory.GetTexture(rec))
+                    Factory.RefreshArt(f, rec)
                 end
             end
         end)
@@ -1894,5 +1937,4 @@ function Engine.Init()
             end
         end)
     end)
-    inCombat = InCombatLockdown()
 end

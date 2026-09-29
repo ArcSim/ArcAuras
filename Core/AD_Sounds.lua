@@ -72,6 +72,18 @@ local KITS = {
     { 12867, "Drumroll Ding" },
     { 23404, "PvP Warning" },
     { 25477, "Countdown" },
+    -- the proc-tracker kits: a payoff fanfare (Reveal) or a short cut (Alert)
+    { 63971, "Reveal: Legendary" },
+    { 31578, "Reveal: Epic Loot" },
+    { 118238, "Reveal: Azerite" },
+    { 147833, "Reveal: Corrupted" },
+    { 51561, "Reveal: Warforged" },
+    { 31581, "Reveal: Bonus Roll" },
+    { 38326, "Reveal: Dig Site" },
+    { 8960, "Alert: Ready Check" },
+    { 23287, "Alert: Power Aura" },
+    { 97597, "Alert: Orb Impact" },
+    { 44292, "Alert: Invasion" },
 }
 
 local byName = {}
@@ -129,13 +141,16 @@ end
 -- { value = stored key, text = shown name }, "None" first; ours drop "ArcUI: ".
 -- Each name says where it comes from: ours and the game's play for anyone a
 -- profile is shared with, another addon's only for players who have it too.
-function Sounds.Items()
+-- filesOnly leaves out the built-in kits (the game's aura sounds take files).
+function Sounds.Items(filesOnly)
     local items = { { value = "", text = "None" } }
     for _, e in ipairs(OWN) do
         items[#items + 1] = { value = e[1], text = e[1]:sub(8) .. " (Arc Auras)" }
     end
-    for _, k in ipairs(KITS) do
-        items[#items + 1] = { value = "kit:" .. k[1], text = k[2] .. " (Built-in)" }
+    if not filesOnly then
+        for _, k in ipairs(KITS) do
+            items[#items + 1] = { value = "kit:" .. k[1], text = k[2] .. " (Built-in)" }
+        end
     end
     local lsm = Sounds.Lib()
     if lsm then

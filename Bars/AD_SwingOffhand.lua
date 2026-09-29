@@ -215,8 +215,8 @@ local function Layout(e, o)
     -- the bar's cross size, snapped the way the layout engine sizes its frame
     local hp = K.Px(e.holder)
     local sc = K.R(rec, "size", "scale") or 1
-    local raw = o.vertical and math.max(8, (K.R(rec, "size", "width") or 220) * sc)
-        or math.max(4, (K.R(rec, "size", "height") or 16) * sc)
+    local raw = o.vertical and math.max(1, (K.R(rec, "size", "width") or 220) * sc)
+        or math.max(1, (K.R(rec, "size", "height") or 16) * sc)
     local inner = math.max(hp, math.floor(raw / hp + 0.5) * hp) - 2 * inset
     local th = (o.style == "half") and (math.floor(inner / 2 / px) * px)
         or ((LINE_PX[o.style] or 2) * px)

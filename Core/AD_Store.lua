@@ -82,25 +82,48 @@ local function ClassTag()
 end
 Store.ClassTag = ClassTag
 
-function Store.CurSpecID()
-    local idx = GetSpecialization and GetSpecialization()
-    if not idx then return nil end
-    local id = GetSpecializationInfo(idx)
-    return id
+-- Spec reads go through C_SpecializationInfo: the bare globals are deprecated
+-- aliases that exist only while a CVar keeps them. A starter spec (below
+-- level 10) sits past the class's spec count and no matrix box shows it, so it
+-- reads as no spec at all.
+local function SpecIndex()
+    local SI = C_SpecializationInfo
+    local idx = SI and SI.GetSpecialization and SI.GetSpecialization()
+    if type(idx) ~= "number" then return nil end
+    local n = GetNumSpecializations and GetNumSpecializations()
+    if type(n) == "number" and idx > n then return nil end
+    return idx
 end
 
--- Spec-less realms (WoW Forever) list no specializations. Load conditions there
--- are class checkboxes writing c.classes, and a c.specs gate from a retail
--- import is ignored, since one that can never pass would hide the record for
--- good. Class 1 (Warrior) exists on every client: its spec count is the probe.
-local speclessCache
+function Store.CurSpecID()
+    local idx = SpecIndex()
+    if not idx then return nil end
+    local id = C_SpecializationInfo.GetSpecializationInfo(idx)
+    return type(id) == "number" and id > 0 and id or nil
+end
+
+-- "TANK", "HEALER" or "DAMAGER" for the current spec; nil while unknown.
+function Store.CurSpecRole()
+    local idx = SpecIndex()
+    if not idx then return nil end
+    local _, _, _, _, role = C_SpecializationInfo.GetSpecializationInfo(idx)
+    return type(role) == "string" and role or nil
+end
+
+-- The active hero talent tree's subTreeID, or nil before one is chosen.
+function Store.CurHeroID()
+    local CT = C_ClassTalents
+    local id = CT and CT.GetActiveHeroTalentSpec and CT.GetActiveHeroTalentSpec()
+    return type(id) == "number" and id or nil
+end
+
+-- WoW Forever is spec-less: load conditions there are class checkboxes
+-- writing c.classes, and a retail record's spec, role and hero keys are
+-- ignored, since a gate that can never pass would hide the record for good.
+-- The flavor flag alone decides: Forever ships the spec API too, and it
+-- answers nothing useful there.
 local function Specless()
-    if speclessCache == nil then
-        speclessCache = NS.IsForever == true
-            or ((GetNumSpecializationsForClassID
-                and GetNumSpecializationsForClassID(1)) or 0) == 0
-    end
-    return speclessCache
+    return NS.IsForever == true
 end
 Store.Specless = Specless
 
@@ -413,6 +436,50 @@ local function CleanLayoutValues(rec)
     if next(rec.inh) == nil then rec.inh = nil end
 end
 
+-- A who-set kept usable: keys of one type (a whole positive number, or a
+-- string) with true as the value. An empty set stays: it means nowhere, like
+-- an empty class set.
+local function CleanSet(t, keyType)
+    if type(t) ~= "table" then return nil end
+    for k, v in pairs(t) do
+        local bad = type(k) ~= keyType or v ~= true
+        if not bad and keyType == "number" and (k <= 0 or k % 1 ~= 0) then bad = true end
+        if bad then t[k] = nil end
+    end
+    return t
+end
+
+-- The who keys, shape-checked on both flavors and never dropped by flavor: a
+-- retail record's spec, role and hero sets ride through a Forever save, and
+-- a Forever record's talent nodes through a retail one.
+local function CleanWho(rec)
+    local c = rec.c
+    c.classes = CleanSet(c.classes, "string")
+    c.specs = CleanSet(c.specs, "number")
+    c.roles = CleanSet(c.roles, "string")
+    c.heroes = CleanSet(c.heroes, "number")
+    c.talents = CleanSet(c.talents, "number")
+    c.talentsNot = CleanSet(c.talentsNot, "number")
+    -- talent sets never gate while empty, so an empty one is nothing
+    if c.talents and next(c.talents) == nil then c.talents = nil end
+    if c.talentsNot and next(c.talentsNot) == nil then c.talentsNot = nil end
+    -- a named choice belongs to a node in one of the two sets
+    if c.talentEntry ~= nil then
+        if type(c.talentEntry) ~= "table" then
+            c.talentEntry = nil
+        else
+            for k, v in pairs(c.talentEntry) do
+                local listed = (c.talents and c.talents[k]) or (c.talentsNot and c.talentsNot[k])
+                if not listed or type(v) ~= "number" or v <= 0 or v % 1 ~= 0 then
+                    c.talentEntry[k] = nil
+                end
+            end
+            if next(c.talentEntry) == nil then c.talentEntry = nil end
+        end
+    end
+    if c.talentMode ~= nil and c.talentMode ~= "any" then c.talentMode = nil end
+end
+
 -- Normalize enforces the schema: drops dangling member ids, clamps typed fields
 -- and discards overrides for unknown fields. Runs at login and after every
 -- import. The folds run before the unknown-field strip at the end of the loop,
@@ -489,10 +556,11 @@ function Store.Normalize()
                 and rec.barKind ~= "swing" and rec.barKind ~= "aura"
                 and rec.barKind ~= "resource" and rec.barKind ~= "health"
                 and rec.barKind ~= "cast" and rec.barKind ~= "enchant"
-                and rec.barKind ~= "range" then
+                and rec.barKind ~= "range" and rec.barKind ~= "text" then
                 rec.barKind = "cooldown"
             end
-            if rec.barKind == "cooldown" or rec.barKind == "aura" then
+            -- a timer (custom) bar fills with its timer or with its stacks
+            if rec.barKind == "cooldown" or rec.barKind == "aura" or rec.barKind == "timer" then
                 if rec.barMode ~= "stack" then rec.barMode = "duration" end
             else
                 rec.barMode = nil
@@ -501,6 +569,7 @@ function Store.Normalize()
             rec.pos.x = tonumber(rec.pos.x) or 0
             rec.pos.y = tonumber(rec.pos.y) or 0
             rec.driver = rec.driver or {}
+            if rec.barKind == "timer" then Store.CleanCustom(rec.driver, true) end
             -- A range bar: an unknown preset falls to the class default at
             -- runtime, its spell is a positive ID or nothing, and a custom
             -- preset keeps its own bands only while one is left.
@@ -538,6 +607,12 @@ function Store.Normalize()
                 end
                 if not ok then rec.driver.unit = "player" end
             end
+            -- a text element: its source and the fields that source reads
+            if rec.barKind == "text" then Store.CleanText(rec.driver) end
+        end
+        if rec.type == "icon" and rec.kind == "timer" then
+            rec.driver = rec.driver or {}
+            Store.CleanCustom(rec.driver, false)
         end
         -- gpos is an icon's persistent (row, col) in its group's static
         -- grid; anything malformed auto-places on the next render.
@@ -601,9 +676,15 @@ function Store.Normalize()
         FoldAuraLabels(rec)
         FoldDurationAbbrev(rec)
         FoldGCDSwipe(rec)
+        Schema.FoldUnitAuraCap(rec)
+        -- A record from before every offset default went to 0 keeps its
+        -- look: all of them once, then an import from an older string (it
+        -- carries its v; a new record has none until this stamp).
+        if (rec.v or 0) < 3 and (not DB.offsetsZero or rec.v ~= nil) then Store.KeepOldOffsets(rec) end
         -- Per-record schema version that versioned folds key off; a new one
         -- bumps it and runs before this stamp.
-        rec.v = 2
+        rec.v = 3
+        CleanWho(rec)
         if NS.Conditions then NS.Conditions.Normalize(rec) end
         -- Only a layout carries looks for the things inside it.
         if rec.type == "layout" then CleanLayoutValues(rec) else rec.inh = nil end
@@ -628,6 +709,17 @@ function Store.Normalize()
             end
         end
     end
+    -- a custom item's saved runtime state goes with its record
+    if type(DB.runtime) == "table" then
+        for _, perChar in pairs(DB.runtime) do
+            if type(perChar) == "table" then
+                for id in pairs(perChar) do
+                    if not DB.records[id] then perChar[id] = nil end
+                end
+            end
+        end
+    end
+    DB.offsetsZero = true
 end
 
 -- Identity
@@ -682,6 +774,37 @@ local function InhOf(rec)
     return inh and inh[FAMILY_OF_TYPE[rec.type]]
 end
 
+-- Writes each old offset default (Schema.OLD_OFFSETS) a record relied on as
+-- its own value, so it looks as it did. Not a bar text's X along an outer top
+-- or bottom edge: that old inset was the misalignment being fixed. An anchor
+-- offset only while anchored. A value set anywhere (the record, its layout, a
+-- saved default) is left alone.
+local OUTER_EDGE = { OUTERTOP = true, OUTERBOTTOM = true, OUTERTOPLEFT = true, OUTERTOPRIGHT = true,
+    OUTERBOTTOMLEFT = true, OUTERBOTTOMRIGHT = true }
+function Store.KeepOldOffsets(rec)
+    if rec.type ~= "icon" and rec.type ~= "bar" then return end
+    local family = Store.FamilyOf(rec)
+    local list, fam = Schema.OLD_OFFSETS[family], Schema[family]
+    if not (list and fam and rec.o) then return end
+    local inh, nd = InhOf(rec), DB.newDefaults and DB.newDefaults[FamilyKey(rec)]
+    local kind = Store.KindOf(rec)
+    for _, e in ipairs(list) do
+        local section, field = e[1], e[2]
+        local sec = fam[section]
+        local def = sec and sec.fields[field]
+        local own = rec.o[section]
+        local set = (own and own[field] ~= nil) or (inh and inh[section] and inh[section][field] ~= nil)
+            or (nd and nd[section] and nd[section][field] ~= nil)
+        local keep = def ~= nil and not set and Schema.Applies(def, sec, kind, rec.barMode)
+        if keep and e[4] and OUTER_EDGE[Store.Resolve(rec, section, e[4])] then keep = false end
+        if keep and e[5] and Store.Resolve(rec, section, e[5]) ~= true then keep = false end
+        if keep then
+            rec.o[section] = own or {}
+            rec.o[section][field] = e[3]
+        end
+    end
+end
+
 -- the layout whose looks `rec` follows (nil for a layout itself)
 function Store.LayoutOf(rec)
     if not rec or rec.type == "layout" or rec._adLayoutTier then return nil end
@@ -722,6 +845,13 @@ function Store.Resolve(rec, section, field)
         local v = def.dk[Store.KindOf(rec)]
         if v ~= nil then return v end
     end
+    -- Per-unit default (`du = { unit = value }`, on rec.driver.unit), same
+    -- place and rules as dk: a party member's health bar starts clickable.
+    if def and def.du then
+        local d = rec.driver
+        local v = d and d.unit and def.du[d.unit]
+        if v ~= nil then return v end
+    end
     return def and def.d
 end
 
@@ -730,6 +860,24 @@ function Store.SetOverride(rec, section, field, value)
     -- the value lands in the layout, for everything inside it
     if rec._adLayoutTier then
         Store.SetLayoutValue(rec._adLayout, rec._adFamily, section, field, value)
+        return
+    end
+    -- a multi proxy (Store.MultiProxy): the write lands on every record of
+    -- the selection the field applies to, each through its own SetOverride,
+    -- so records stay sparse and Dirty fires once per record; a table value
+    -- is copied per record, so no two records share one colour
+    if rec._adMulti then
+        for _, id in ipairs(rec._adIds) do
+            local r = DB.records[id]
+            if r and Store.MultiTakes(rec, r, section, field) then
+                local v = value
+                if type(v) == "table" then
+                    v = {}
+                    for k, x in pairs(value) do v[k] = x end
+                end
+                Store.SetOverride(r, section, field, v)
+            end
+        end
         return
     end
     rec.o[section] = rec.o[section] or {}
@@ -940,7 +1088,7 @@ end
 -- is one value for all of them (no per-kind default, no saved default for any
 -- kind). Storing exactly that changes nothing, so it stays unstored.
 local function LayoutBase(family, section, field, def)
-    if def.dk then return nil, false end
+    if def.dk or def.du then return nil, false end
     for key, bucket in pairs(DB.newDefaults) do
         if key == family or key:sub(1, #family + 1) == family .. ":" then
             local b = bucket[section]
@@ -1002,6 +1150,34 @@ function Store.LayoutProxy(layout, family)
     end
     px.o = layout.inh[family]
     return px
+end
+
+-- Editor proxy for several records at once (UI\AD_MultiSelect.lua's Edit
+-- together): reads are the first record's, a write lands on every record the
+-- field applies to (SetOverride). One table, its fields re-pointed on every
+-- call, so the rows' ctx() allocates nothing. applies(rec, section, field,
+-- def): the caller's row test; without one, the schema's kind gate.
+local multiProxy = { _adMulti = true }
+function Store.MultiProxy(ids, applies)
+    local first = ids and DB.records[ids[1]]
+    if not first then return nil end
+    local px = multiProxy
+    px._adIds, px._adApplies = ids, applies
+    px.type, px.kind, px.barKind, px.barMode = first.type, first.kind, first.barKind, first.barMode
+    px.groupKind, px.layoutId, px.groupId = first.groupKind, first.layoutId, first.groupId
+    px.o, px.c, px.driver = first.o, first.c, first.driver
+    return px
+end
+
+-- Whether record `r` takes a write of `field` made through a multi proxy.
+function Store.MultiTakes(px, r, section, field)
+    if Store.FamilyOf(r) ~= Store.FamilyOf(px) then return false end
+    local fam = Schema[Store.FamilyOf(r)]
+    local sec = fam and fam[section]
+    local def = sec and sec.fields[field]
+    if not def then return false end
+    if px._adApplies then return px._adApplies(r, section, field, def) == true end
+    return Schema.Applies(def, sec, Store.KindOf(r), r.barMode)
 end
 
 -- the rows of `fields` (nil = the whole section) the layout sets
@@ -1134,6 +1310,15 @@ end
 
 -- Load conditions (the sharing model)
 
+-- A required node is met when taken and, when the record names a choice, when
+-- that entry is the active one. Negated, the same test serves the excluded set.
+local function TalentMet(c, cat, nodeID)
+    if not cat.IsTaken(nodeID) then return false end
+    local want = c.talentEntry and c.talentEntry[nodeID]
+    if want and cat.ActiveEntry then return cat.ActiveEntry(nodeID) == want end
+    return true
+end
+
 function Store.IsLoaded(rec)
     local c = rec.c
     if c.classes then
@@ -1146,22 +1331,37 @@ function Store.IsLoaded(rec)
         local fac = NS.Conditions.PlayerFaction()
         if fac and not c.factions[fac] then return false end
     end
-    if c.specs and not Specless() then
-        local spec = Store.CurSpecID()
-        if not (spec and c.specs[spec]) then return false end
+    -- Spec, role and hero talent are retail's; a spec-less client ignores them.
+    -- All three change out of combat only, so releasing on a miss is safe.
+    if not Specless() then
+        if c.specs then
+            local spec = Store.CurSpecID()
+            if not (spec and c.specs[spec]) then return false end
+        end
+        if c.roles then
+            local role = Store.CurSpecRole()
+            if not (role and c.roles[role]) then return false end
+        end
+        if c.heroes then
+            local hero = Store.CurHeroID()
+            if not (hero and c.heroes[hero]) then return false end
+        end
     end
     -- Talents: the build-level gate, and the only one that means anything on
-    -- a spec-less client. "all" needs every listed talent taken, "any" needs
-    -- one. An empty set never gates.
-    if c.talents and next(c.talents) then
+    -- a spec-less client. "all" needs every required node taken and every
+    -- excluded one absent; "any" needs one of either. Empty sets never gate.
+    if (c.talents and next(c.talents)) or (c.talentsNot and next(c.talentsNot)) then
         local cat = NS.TalentCatalog
         if cat then
-            local anyTaken, allTaken = false, true
-            for nodeID in pairs(c.talents) do
-                if cat.IsTaken(nodeID) then anyTaken = true else allTaken = false end
+            local anyHit, allOK = false, true
+            for nodeID in pairs(c.talents or {}) do
+                if TalentMet(c, cat, nodeID) then anyHit = true else allOK = false end
             end
-            if (c.talentMode == "any" and not anyTaken)
-                or (c.talentMode ~= "any" and not allTaken) then
+            for nodeID in pairs(c.talentsNot or {}) do
+                if not TalentMet(c, cat, nodeID) then anyHit = true else allOK = false end
+            end
+            if (c.talentMode == "any" and not anyHit)
+                or (c.talentMode ~= "any" and not allOK) then
                 return false
             end
         end
@@ -1171,17 +1371,57 @@ end
 
 -- Talent conditions
 
-function Store.ToggleTalent(rec, nodeID)
+-- A node's state on a record: "req" (must have), "not" (must not have) or nil,
+-- plus the choice entry the record names for it, if any.
+function Store.TalentState(rec, nodeID)
     local c = rec.c
-    c.talents = c.talents or {}
-    if c.talents[nodeID] then c.talents[nodeID] = nil else c.talents[nodeID] = true end
-    if not next(c.talents) then c.talents = nil end
+    local entry = c.talentEntry and c.talentEntry[nodeID]
+    if c.talents and c.talents[nodeID] then return "req", entry end
+    if c.talentsNot and c.talentsNot[nodeID] then return "not", entry end
+    return nil, entry
+end
+
+local function SetWhoKey(c, list, nodeID, on)
+    local set = c[list]
+    if on then
+        set = set or {}
+        set[nodeID] = true
+    elseif set then
+        set[nodeID] = nil
+    end
+    if set and next(set) == nil then set = nil end
+    c[list] = set
+end
+
+-- Writes a node's state; a node is never in both sets. entryID (a choice
+-- node's option) rides along with a state and goes with it.
+function Store.SetTalentState(rec, nodeID, state, entryID)
+    local c = rec.c
+    SetWhoKey(c, "talents", nodeID, state == "req")
+    SetWhoKey(c, "talentsNot", nodeID, state == "not")
+    if state and entryID then
+        c.talentEntry = c.talentEntry or {}
+        c.talentEntry[nodeID] = entryID
+    elseif c.talentEntry then
+        c.talentEntry[nodeID] = nil
+        if next(c.talentEntry) == nil then c.talentEntry = nil end
+    end
     Store.Dirty("load")
 end
 
+function Store.RemoveTalent(rec, nodeID)
+    Store.SetTalentState(rec, nodeID, nil)
+end
+
+function Store.ToggleTalent(rec, nodeID)
+    local state = Store.TalentState(rec, nodeID)
+    Store.SetTalentState(rec, nodeID, (state ~= "req") and "req" or nil)
+end
+
 function Store.ClearTalents(rec)
-    if not rec.c.talents then return end
-    rec.c.talents = nil
+    local c = rec.c
+    if not (c.talents or c.talentsNot or c.talentEntry) then return end
+    c.talents, c.talentsNot, c.talentEntry = nil, nil, nil
     Store.Dirty("load")
 end
 
@@ -1190,22 +1430,89 @@ function Store.SetTalentMode(rec, mode)
     Store.Dirty("load")
 end
 
--- The chosen nodes, sorted by name, each with taken and known flags.
+-- The chosen nodes, sorted by name, each with taken and known flags; an
+-- excluded node carries excluded = true, a named choice its entry and name.
 function Store.TalentList(rec)
     local out = {}
     local cat = NS.TalentCatalog
-    for nodeID in pairs(rec.c.talents or {}) do
+    local c = rec.c
+    local function add(nodeID, excluded)
         local known = cat and cat.Known(nodeID)
+        local entry = c.talentEntry and c.talentEntry[nodeID]
+        local name = known and known.name or ("Talent " .. nodeID)
+        local icon = known and known.icon or 134400
+        local ei = entry and cat and cat.EntryInfo and cat.EntryInfo(nodeID, entry)
+        if ei then
+            if ei.name and ei.name ~= name then name = name .. ": " .. ei.name end
+            icon = ei.icon or icon
+        end
+        local taken = cat and cat.IsTaken(nodeID) or false
+        if taken and entry and cat.ActiveEntry then taken = cat.ActiveEntry(nodeID) == entry end
         out[#out + 1] = {
-            nodeID = nodeID,
-            name = known and known.name or ("Talent " .. nodeID),
-            icon = known and known.icon or 134400,
-            taken = cat and cat.IsTaken(nodeID) or false,
-            known = known ~= nil,
+            nodeID = nodeID, name = name, icon = icon, taken = taken,
+            known = known ~= nil, excluded = excluded or nil, entryID = entry,
         }
+    end
+    for nodeID in pairs(c.talents or {}) do add(nodeID, false) end
+    for nodeID in pairs(c.talentsNot or {}) do
+        if not (c.talents and c.talents[nodeID]) then add(nodeID, true) end
     end
     table.sort(out, function(a, b) return a.name < b.name end)
     return out
+end
+
+-- Role and hero talent conditions (retail). Both follow the matrix's rule:
+-- every box checked is no restriction, the set materializes on the first
+-- uncheck and collapses to nil when every box is back. An empty set is nowhere.
+
+Store.ROLES = { "TANK", "HEALER", "DAMAGER" }
+
+function Store.RoleOn(rec, role)
+    local set = rec and rec.c and rec.c.roles
+    if type(set) ~= "table" then return true end
+    return set[role] == true
+end
+
+function Store.ToggleRole(rec, role)
+    if not rec then return end
+    local set, full = {}, true
+    for _, r in ipairs(Store.ROLES) do
+        if Store.RoleOn(rec, r) then set[r] = true end
+    end
+    if set[role] then set[role] = nil else set[role] = true end
+    for _, r in ipairs(Store.ROLES) do
+        if not set[r] then full = false end
+    end
+    rec.c.roles = (not full) and set or nil
+    Store.Dirty("load")
+end
+
+-- The hero trees the set is measured against: the player's class's, from the
+-- talent catalog ({ id, name, ... } each); none before the trees are known.
+function Store.HeroTrees()
+    local cat = NS.TalentCatalog
+    return (cat and cat.HeroTrees and cat.HeroTrees()) or {}
+end
+
+function Store.HeroOn(rec, id)
+    local set = rec and rec.c and rec.c.heroes
+    if type(set) ~= "table" then return true end
+    return set[id] == true
+end
+
+function Store.ToggleHero(rec, id)
+    if not rec then return end
+    local trees = Store.HeroTrees()
+    local set, full = {}, true
+    for _, t in ipairs(trees) do
+        if Store.HeroOn(rec, t.id) then set[t.id] = true end
+    end
+    if set[id] then set[id] = nil else set[id] = true end
+    for _, t in ipairs(trees) do
+        if not set[t.id] then full = false end
+    end
+    rec.c.heroes = (not full) and set or nil
+    Store.Dirty("load")
 end
 
 -- Class/spec load matrix: every class and its specs, for the load-conditions
@@ -1233,8 +1540,12 @@ function Store.ClassSpecMatrix()
         local name, tag, classID = GetClassInfo(ci)
         if name and tag and classID then
             local specs = {}
-            local n = (GetNumSpecializationsForClassID
-                and GetNumSpecializationsForClassID(classID)) or 0
+            -- the flavor decides the matrix's shape, never a spec count probe
+            local SI = C_SpecializationInfo
+            local n = 0
+            if not Specless() and SI and SI.GetNumSpecializationsForClassID then
+                n = SI.GetNumSpecializationsForClassID(classID) or 0
+            end
             for si = 1, n do
                 local sid, sname = GetSpecializationInfoForClassID(classID, si)
                 if sid then
@@ -1299,14 +1610,18 @@ local function MaterializeSpecSet(rec)
 end
 
 local function WriteSpecSet(rec, set)
-    local full = true
-    for _, cls in ipairs(Store.ClassSpecMatrix()) do
+    -- with no class known there is no "every box" to be full of
+    local matrix = Store.ClassSpecMatrix()
+    local full = #matrix > 0
+    for _, cls in ipairs(matrix) do
         for _, sp in ipairs(cls.specs) do
             if not set[sp.id] then full = false end
         end
     end
     rec.c.classes = nil
-    rec.c.specs = full and nil or set
+    -- a full set is no restriction: stored, it would leave out any spec added
+    -- later and read as a list instead of Shared
+    if full then rec.c.specs = nil else rec.c.specs = set end
     Store.Dirty("load")
 end
 
@@ -1321,12 +1636,13 @@ local function MaterializeClassSet(rec)
 end
 
 local function WriteClassSet(rec, set)
-    local full = true
-    for _, cls in ipairs(Store.ClassSpecMatrix()) do
+    local matrix = Store.ClassSpecMatrix()
+    local full = #matrix > 0
+    for _, cls in ipairs(matrix) do
         if not set[cls.tag] then full = false end
     end
     rec.c.specs = nil
-    rec.c.classes = full and nil or set
+    if full then rec.c.classes = nil else rec.c.classes = set end
     Store.Dirty("load")
 end
 
@@ -1369,9 +1685,6 @@ end
 -- derived badge text: no conditions = Shared; else the spec names
 function Store.BadgeText(rec)
     local c = rec.c
-    if not c.specs and not c.chars and not c.classes and not c.factions then
-        return "Shared", false
-    end
     local parts = {}
     if c.classes then
         -- class sets are first-class on spec-less realms: name them
@@ -1403,11 +1716,43 @@ function Store.BadgeText(rec)
         elseif n > 4 then
             parts[#parts + 1] = n .. " specs"
         else
+            local names = {}
+            local byID = GetSpecializationInfoForSpecID or GetSpecializationInfoByID
             for specID in pairs(c.specs) do
-                local _, name = GetSpecializationInfoByID(specID)
-                parts[#parts + 1] = name or tostring(specID)
+                local name
+                if byID then
+                    local _, nm = byID(specID)
+                    name = nm
+                end
+                names[#names + 1] = name or tostring(specID)
             end
-            table.sort(parts)
+            table.sort(names)
+            for _, nm in ipairs(names) do parts[#parts + 1] = nm end
+        end
+    end
+    -- role and hero sets are ignored on a spec-less client, like the specs
+    if c.roles and not Specless() then
+        local words = { TANK = "Tank", HEALER = "Healer", DAMAGER = "Damage" }
+        local names = {}
+        for role in pairs(c.roles) do names[#names + 1] = words[role] or role end
+        table.sort(names)
+        parts[#parts + 1] = (#names == 0) and "nowhere" or table.concat(names, ", ")
+    end
+    if c.heroes and not Specless() then
+        local n, names = 0, {}
+        local cat = NS.TalentCatalog
+        for id in pairs(c.heroes) do
+            n = n + 1
+            local nm = cat and cat.HeroName and cat.HeroName(id)
+            names[#names + 1] = nm or ("hero " .. id)
+        end
+        if n == 0 then
+            parts[#parts + 1] = "nowhere"
+        elseif n > 2 then
+            parts[#parts + 1] = n .. " hero trees"
+        else
+            table.sort(names)
+            parts[#parts + 1] = table.concat(names, ", ")
         end
     end
     if c.chars then parts[#parts + 1] = "chars" end
@@ -1417,6 +1762,7 @@ function Store.BadgeText(rec)
         table.sort(list)
         parts[#parts + 1] = (#list == 0) and "nowhere" or table.concat(list, ", ")
     end
+    if #parts == 0 then return "Shared", false end
     return table.concat(parts, ", "), true
 end
 
@@ -1537,13 +1883,14 @@ end
 -- pass); the user widens it from Load Conditions. Groups and layouts stay
 -- shared: only the leaves are locked.
 local function ScopeToCreator(rec)
-    if Specless() then
-        local tag = ClassTag()
-        if tag then rec.c.classes = { [tag] = true } end
+    local spec = (not Specless()) and Store.CurSpecID() or nil
+    if spec then
+        rec.c.specs = { [spec] = true }
         return
     end
-    local spec = Store.CurSpecID()
-    if spec then rec.c.specs = { [spec] = true } end
+    -- spec-less realms, and a retail starter spec no matrix box shows
+    local tag = ClassTag()
+    if tag then rec.c.classes = { [tag] = true } end
 end
 
 -- A creation-template value: the record gets it unless a saved default or its
@@ -1601,12 +1948,20 @@ function Store.NewGroup(layoutId, name, groupKind)
     return rec
 end
 
--- Which icons a group takes: an aura group aura icons, a cooldown group any
--- (aura icons sit in it as solid slots), a reminder group none (its members
--- are reminders, made for it by Store.NewReminder).
+-- An aura group that shows every aura on one unit (Drivers\AD_DriverUnitAuras.lua)
+-- instead of its own aura icons; the icons it had stay its members, undrawn.
+function Store.ShowsAll(group)
+    return group ~= nil and group.type == "group" and group.groupKind == "aura"
+        and Store.Resolve(group, "unitAuras", "shows") == "unit"
+end
+
+-- Which icons a group takes: an aura group aura icons (none while it shows
+-- every aura on a unit), a cooldown group any (aura icons sit in it as solid
+-- slots), a reminder group none (its members are reminders, made for it by
+-- Store.NewReminder).
 function Store.GroupTakes(group, kind)
     if not group then return false end
-    if group.groupKind == "aura" then return kind == "aura" end
+    if group.groupKind == "aura" then return kind == "aura" and not Store.ShowsAll(group) end
     if group.groupKind == "reminder" then return false end
     return true
 end
@@ -1841,6 +2196,147 @@ function Store.CleanSwingColors(list)
     return out
 end
 
+-- A custom item's rules (rec.driver.rules on a timer icon or bar), cleaned: at
+-- most Schema.CUSTOM_MAX_RULES, each with a known trigger and action, every
+-- number in range. nil stays nil (a record that never had rules); an empty
+-- list stays a list, so a bar whose migrated rule was removed is not folded again.
+function Store.CleanRules(list)
+    if type(list) ~= "table" then return nil end
+    local whens = {}
+    for _, g in ipairs(Schema.CUSTOM_TRIGGER_GROUPS) do
+        for _, k in ipairs(g.list) do whens[k] = true end
+    end
+    for _, k in ipairs(Schema.CUSTOM_TARGET_TRIGGERS) do whens[k] = true end
+    local acts, modes = {}, {}
+    for _, v in ipairs(Schema.CUSTOM_ACTIONS) do acts[v] = true end
+    for _, v in ipairs(Schema.CUSTOM_START_MODES) do modes[v] = true end
+    local function Whole(v, lo, hi)
+        v = tonumber(v)
+        if not v then return nil end
+        v = math.floor(v)
+        if v < lo or v > hi then return nil end
+        return v
+    end
+    local function Num(v, lo, hi)
+        v = tonumber(v)
+        if not v then return nil end
+        if v < lo then v = lo elseif v > hi then v = hi end
+        return v
+    end
+    local function Str(v, max)
+        if type(v) ~= "string" or v == "" then return nil end
+        return v:sub(1, max)
+    end
+    local out = {}
+    for _, r in ipairs(list) do
+        if type(r) == "table" and #out < Schema.CUSTOM_MAX_RULES then
+            local c = {
+                when = whens[r.when] and r.when or "cast",
+                spellID = Whole(r.spellID, 1, 1e9),
+                pet = (r.pet == true) and true or nil,
+                ignoreCooldown = (r.ignoreCooldown == true) and true or nil,
+                slot = Whole(r.slot, 1, 4),
+                srcId = Whole(r.srcId, 1, 1e12),
+                combat = (r.combat == "in" or r.combat == "out") and r.combat or nil,
+                talent = Whole(r.talent, 1, 1e9),
+                spellReady = Whole(r.spellReady, 1, 1e9),
+                stacksMin = Whole(r.stacksMin, 0, 999),
+                stacksMax = Whole(r.stacksMax, 0, 999),
+                withinRule = Whole(r.withinRule, 1, Schema.CUSTOM_MAX_RULES),
+                timer = (r.timer == "running" or r.timer == "idle") and r.timer or nil,
+                act = acts[r.act] and r.act or "start",
+                secs = Num(r.secs, 0, 3600),
+                mode = modes[r.mode] and r.mode or nil,
+                n = Whole(r.n, 1, 999),
+                restartToo = (r.restartToo == true) and true or nil,
+                sound = Str(r.sound, 120),
+                text = Str(r.text, 200),
+            }
+            if c.withinRule then c.withinSecs = Num(r.withinSecs, 0.1, 600) or 1 end
+            out[#out + 1] = c
+        end
+    end
+    return out
+end
+
+-- A custom item's driver made usable: the art spell, how it shows, its default
+-- seconds, its stack cap, the clear-on-end switch and its rules. A bar from
+-- before the rule engine (a spell and seconds, its trigger "cast" or unset)
+-- becomes one rule that does the same; its aura triggers never worked and fold
+-- to nothing.
+function Store.CleanCustom(d, isBar)
+    local sid = tonumber(d.spellID)
+    d.spellID = (sid and sid > 0) and math.floor(sid) or nil
+    local dur = tonumber(d.duration)
+    d.duration = (dur and dur > 0) and math.min(dur, 3600) or nil
+    local ms = tonumber(d.maxStacks)
+    d.maxStacks = (ms and ms >= 1) and math.floor(math.min(ms, 999)) or nil
+    d.clearOnEnd = (d.clearOnEnd == true) and true or nil
+    local ok = false
+    for _, v in ipairs(Schema.CUSTOM_SHOW_WHILE) do
+        if d.showWhile == v then ok = true end
+    end
+    if not ok then d.showWhile = nil end
+    if isBar and d.rules == nil then
+        local trig = d.triggerType
+        if (trig == nil or trig == "cast") and d.spellID and d.duration then
+            d.rules = { { when = "cast", spellID = d.spellID, act = "start", secs = d.duration, mode = "restart" } }
+        elseif trig ~= nil then
+            d.rules = {}
+        end
+    end
+    d.triggerType = nil
+    d.rules = Store.CleanRules(d.rules)
+end
+
+-- A text element's driver made usable (Bars\AD_TextElement.lua): a known source
+-- (else the typed words), its value choice, whole positive ids, the aura shape
+-- the aura driver reads, and its own rules through CleanCustom when it has any.
+local TEXT_SOURCE_SET, TEXT_SHOW_SET, TEXT_UNIT_SET = {}, {}, { player = true, target = true, focus = true, pet = true }
+for _, s in ipairs(Schema.TEXT_SOURCES or {}) do TEXT_SOURCE_SET[s] = true end
+for _, s in ipairs(Schema.TEXT_SHOWS or {}) do TEXT_SHOW_SET[s] = true end
+for _, s in ipairs(Schema.TEXT_READOUTS or {}) do TEXT_SHOW_SET[s] = true end
+function Store.CleanText(d)
+    if not TEXT_SOURCE_SET[d.source] then d.source = "static" end
+    d.text = (type(d.text) == "string" and d.text ~= "") and d.text:sub(1, 120) or nil
+    local function Whole(v)
+        v = tonumber(v)
+        return (v and v > 0) and math.floor(v) or nil
+    end
+    -- mana is power 0, so the power keeps 0; nothing below 0 (the picker's Automatic)
+    local pt = tonumber(d.powerType)
+    d.powerType = (pt and pt >= 0) and math.floor(pt) or nil
+    if not TEXT_SHOW_SET[d.show] then d.show = nil end
+    if not TEXT_UNIT_SET[d.unit] then d.unit = nil end
+    d.spellID = Whole(d.spellID)
+    d.autoRank = (d.autoRank == true) and true or nil
+    -- the aura shape: a list only past one id, the primary in spellID
+    if type(d.spellIDs) == "table" then
+        local out, seen = {}, {}
+        for _, v in ipairs(d.spellIDs) do
+            local n = Whole(v)
+            if n and not seen[n] then
+                seen[n] = true
+                out[#out + 1] = n
+            end
+        end
+        if not d.spellID then d.spellID = out[1] end
+        d.spellIDs = (#out > 1) and out or nil
+    else
+        d.spellIDs = nil
+    end
+    if d.auraType ~= "buff" and d.auraType ~= "debuff" then d.auraType = nil end
+    if d.caster ~= "mine" and d.caster ~= "others" then d.caster = nil end
+    d.rangeFrom = Whole(d.rangeFrom)
+    d.srcId = Whole(d.srcId)
+    if d.source == "rules" or d.rules ~= nil then
+        if d.source == "rules" and type(d.rules) ~= "table" then d.rules = {} end
+        Store.CleanCustom(d, false)
+    else
+        d.duration, d.maxStacks, d.clearOnEnd, d.showWhile = nil, nil, nil, nil
+    end
+end
+
 -- Bars are always free layout children, never group members: group attachment
 -- is the anchor section. driver by kind: cooldown {spellID}, aura {spellID, auraType,
 -- unit, caster, maxStacks}, swing {swingType, swingAbilIDs, swingColors, rangeSpell},
@@ -1852,7 +2348,8 @@ function Store.NewBar(layoutId, barKind, driver, name, barMode)
     if not layout or layout.type ~= "layout" then return nil end
     if barKind ~= "timer" and barKind ~= "stack" and barKind ~= "swing"
         and barKind ~= "aura" and barKind ~= "resource" and barKind ~= "health"
-        and barKind ~= "cast" and barKind ~= "enchant" and barKind ~= "range" then
+        and barKind ~= "cast" and barKind ~= "enchant" and barKind ~= "range"
+        and barKind ~= "text" then
         barKind = "cooldown"
     end
     local id = NewId()
@@ -1862,7 +2359,7 @@ function Store.NewBar(layoutId, barKind, driver, name, barMode)
         layoutId = layoutId,
         driver = driver or {}, o = {}, c = {},
     }
-    if barKind == "cooldown" or barKind == "aura" then
+    if barKind == "cooldown" or barKind == "aura" or barKind == "timer" then
         rec.barMode = (barMode == "stack") and "stack" or "duration"
     end
     ScopeToCreator(rec)
@@ -1875,8 +2372,13 @@ function Store.NewBar(layoutId, barKind, driver, name, barMode)
     -- power or hand, and a player health bar's is your own, so it stays off
     -- there; other health bars show their unit's live name.
     local hpUnit = barKind == "health" and (rec.driver.unit or "player") or nil
-    if barKind ~= "resource" and barKind ~= "swing" and hpUnit ~= "player" then
+    if barKind ~= "resource" and barKind ~= "swing" and barKind ~= "text" and hpUnit ~= "player" then
         TemplateSet(rec, "text", "nameShow", true)
+    end
+    -- A text element is born as a small box; its look is the schema's (white, 14).
+    if barKind == "text" then
+        TemplateSet(rec, "size", "width", 140)
+        TemplateSet(rec, "size", "height", 24)
     end
     -- A health bar is born green with incoming heals and absorb shields on;
     -- both are one click off in Heals & Shields (the schema defaults stay off).
@@ -2091,6 +2593,38 @@ local function RemapAnchors(rec, map, keep)
     end
 end
 
+-- A custom item's "another item's timer ended" rules name a record by id: the
+-- same rule as anchors (a copied source re-points, an outside one is kept on a
+-- duplicate and dropped on an import).
+local function RemapRules(rec, map, keep)
+    local d = rec.driver
+    if type(d) ~= "table" then return end
+    local rules = d.rules
+    if type(rules) == "table" then
+        for _, r in ipairs(rules) do
+            if type(r) == "table" and r.when == "chain" then
+                local sid = tonumber(r.srcId)
+                if sid and map[sid] then
+                    r.srcId = map[sid]
+                elseif sid and not keep then
+                    r.srcId = nil
+                end
+            end
+        end
+    end
+    -- a text element pointing at a custom item or a range bar: the same rule
+    if rec.type == "bar" and rec.barKind == "text" then
+        for _, k in ipairs({ "srcId", "rangeFrom" }) do
+            local id = tonumber(d[k])
+            if id and map[id] then
+                d[k] = map[id]
+            elseif id and not keep then
+                d[k] = nil
+            end
+        end
+    end
+end
+
 -- deep copy under a fresh id; the caller wires parents and children
 local function CloneRecord(rec, map, made)
     local c = CopyDeep(rec)
@@ -2173,7 +2707,10 @@ function Store.Duplicate(id)
         return nil
     end
     DB.records[copy.id] = copy
-    for _, r in ipairs(made) do RemapAnchors(r, map, true) end
+    for _, r in ipairs(made) do
+        RemapAnchors(r, map, true)
+        RemapRules(r, map, true)
+    end
     Store.Dirty("tree")
     return copy
 end
@@ -2225,6 +2762,31 @@ function Store.MoveToLayout(id, layoutId)
         return true
     end
     return Store.PlaceInLayout(id, layoutId, nil)
+end
+
+-- Moves a selection at once (UI\AD_MultiSelect.lua): target = { layoutId }
+-- puts each record free in that layout as Move to does, { groupId } puts
+-- icons into that group (Store.GroupTakes decides). An icon whose group is in
+-- the set rides with its group and is not moved on its own; a layout or a
+-- reminder never moves. Returns the ids moved and the ids refused.
+function Store.MoveMany(ids, target)
+    local set, moved, refused = {}, {}, {}
+    for _, id in ipairs(ids or {}) do set[id] = true end
+    for _, id in ipairs(ids or {}) do
+        local rec = DB.records[id]
+        local ok = false
+        if rec and (rec.type == "group" or rec.type == "bar" or rec.type == "icon") then
+            if rec.type == "icon" and rec.groupId and set[rec.groupId] then
+                ok = nil
+            elseif target.groupId then
+                ok = Store.MoveIcon(id, target.groupId)
+            elseif target.layoutId then
+                ok = Store.MoveToLayout(id, target.layoutId)
+            end
+        end
+        if ok then moved[#moved + 1] = id elseif ok == false then refused[#refused + 1] = id end
+    end
+    return moved, refused
 end
 
 -- Grow arrows add or remove one row or column on a visual edge: "bottom",
@@ -2351,6 +2913,28 @@ function Store.MembersOf(layout)
 end
 
 function Store.UI() return DB.ui end
+
+-- A custom item's live state for this character (its timer's end and its
+-- stacks), kept so a /reload picks it up where it was. Written by
+-- Drivers\AD_DriverCustom.lua; plain numbers only.
+function Store.Runtime(recId)
+    local rt = DB.runtime
+    local perChar = rt and rt[CharKey()]
+    return perChar and perChar[recId] or nil
+end
+
+function Store.SetRuntime(recId, state)
+    if not recId then return end
+    DB.runtime = DB.runtime or {}
+    local key = CharKey()
+    local perChar = DB.runtime[key]
+    if not perChar then
+        if state == nil then return end
+        perChar = {}
+        DB.runtime[key] = perChar
+    end
+    perChar[recId] = state
+end
 
 -- iterate every record (drivers prebuild from this at ADDON_LOADED)
 function Store.EachRecord(fn)
@@ -2605,6 +3189,7 @@ function Store.Import(text, targetLayoutId, opts)
         if rec.groupId ~= nil then rec.groupId = map[rec.groupId] end
         if rec.layoutId ~= nil then rec.layoutId = map[rec.layoutId] end
         RemapAnchors(rec, map, false)
+        RemapRules(rec, map, false)
         if rec.type ~= "layout" and not rec.groupId and not rec.layoutId then
             -- a loose record (its parent is not in the string): a free
             -- child of the target layout rather than vanishing

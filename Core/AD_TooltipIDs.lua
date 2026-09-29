@@ -26,10 +26,11 @@ local function IsSecret(v)
     return (issecretvalue and issecretvalue(v)) and true or false
 end
 
--- A secret prints as "<secret>" and is never compared or formatted.
+-- A secret is never compared, formatted or printed: its line is left out
+-- until the combat-drop recheck can read it.
 local function Val(v)
     if v == nil then return nil end
-    if issecretvalue and issecretvalue(v) then return "<secret>" end
+    if issecretvalue and issecretvalue(v) then return nil end
     local t = type(v)
     if t == "number" or t == "string" or t == "boolean" then return tostring(v) end
     return nil
@@ -317,7 +318,7 @@ function T.Append(tooltip, data)
     tooltip._adIDGeneric = dedup
     tooltip._adIDDone = true
     local out, idIndex = {}, nil
-    if label and hasID and Part("Data") then
+    if label and hasID and Part("Data") and not idSecret then
         Push(out, label, Val(id))
         idIndex = #out
     end
@@ -391,6 +392,10 @@ local function RecheckOne(tooltip)
         local fs = name and _G[name .. "TextRight" .. line]
         ok = fs ~= nil and fs.SetText ~= nil
         if ok then fs:SetText(text) end
+    elseif ok and Part("Data") then
+        -- the id line was left out while the id was secret
+        BuildLabels()
+        AddLine(tooltip, (LABELS and LABELS[fresh.type]) or "ID", text)
     end
     if ok then
         -- The lines the secret id held back; the shown art printed already.

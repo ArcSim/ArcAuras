@@ -26,7 +26,6 @@ RB.YARDS = {
 -- in melee and false from there out, where interact 2 and 3 still read true.
 RB.MELEE_YD = 5
 
-local WING_CLIP, AUTO_SHOT = 2974, 75
 -- The Hunter bands' colours; orange and gold are colour-picker values (n / 255).
 local RED, GREEN, GREY = { 0.90, 0.22, 0.22, 1 }, { 0.30, 0.82, 0.36, 1 }, { 0.48, 0.50, 0.54, 1 }
 local ORANGE, GOLD = { 1, 131 / 255, 27 / 255, 1 }, { 209 / 255, 184 / 255, 42 / 255, 1 }
@@ -36,29 +35,68 @@ local CLEAR = { 0, 0, 0, 0 }
 local function Spell(id, want) return { kind = "spell", id = id, want = want } end
 local function Yards(yd, want) return { kind = "yd", yd = yd, want = want } end
 
--- Bands nearest first; the first whose checks all hold is the target's. Wing Clip
--- reaches melee range, Auto Shot 8 to 35 yards.
-RB.HUNTER = {
-    { text = "MELEE", color = RED, checks = { Spell(WING_CLIP, true) } },
-    { text = "DEAD", color = ORANGE, checks = { Spell(AUTO_SHOT, false), Yards(10, true) } },
-    { text = "8 - 20", color = GOLD, checks = { Spell(AUTO_SHOT, true), Yards(20, true) } },
-    { text = "20 - 40", color = GREEN, checks = { Spell(AUTO_SHOT, true), Yards(20, false) } },
-    { text = "OUT", color = GREY, checks = { Spell(AUTO_SHOT, false), Yards(10, false) } },
-}
 RB.PRESETS = { "hunter", "melee", "caster" }
 RB.PRESET_TEXT = { hunter = "Hunter bands", melee = "Melee: in or out of range",
     caster = "Caster: in or out of range", custom = "Custom bands" }
--- The spell a Caster bar checks when none is typed, by class (rank 1 IDs: the
--- rank the player knows is found by name); a Melee bar checks RB.MELEE_YD. The
--- swing bar's range dim still asks MELEE_SPELL first. A class with no
--- always-usable one has none.
-RB.MELEE_SPELL = { WARRIOR = 78, ROGUE = 1752, HUNTER = 2974 }
-RB.CASTER_SPELL = { MAGE = 133, WARLOCK = 686, PRIEST = 585, DRUID = 5176, SHAMAN = 403, HUNTER = 75 }
--- A harmful spell each class learns early, asked when every check is an item or
--- interact index: where UnitCanAttack reads secret, its range answer is what
--- tells the engine the target is hostile, and that starts the item pulse.
-RB.GATE_SPELL = { WARRIOR = 78, ROGUE = 1752, HUNTER = 75, PALADIN = 853, SHAMAN = 403,
-    PRIEST = 585, MAGE = 133, WARLOCK = 686, DRUID = 5176 }
+
+-- The class tables come in two versions, picked by the game version at load.
+-- Forever: rank 1 IDs (the rank the player knows is found by name) and the
+-- classic hunter dead zone. Retail: each class's base spell (a spec's
+-- replacement follows through its override), spec tables keyed by spec ID
+-- where the base spell is not that spec's, and no dead zone, since retail Auto
+-- Shot reaches from melee out to 40 yards. A class or spec with no entry has
+-- no default spell.
+if NS.IsForever == true then
+    -- Bands nearest first; the first whose checks all hold is the target's. Wing
+    -- Clip reaches melee range, Auto Shot 8 to 35 yards.
+    RB.HUNTER = {
+        { text = "MELEE", color = RED, checks = { Spell(2974, true) } },
+        { text = "DEAD", color = ORANGE, checks = { Spell(75, false), Yards(10, true) } },
+        { text = "8 - 20", color = GOLD, checks = { Spell(75, true), Yards(20, true) } },
+        { text = "20 - 40", color = GREEN, checks = { Spell(75, true), Yards(20, false) } },
+        { text = "OUT", color = GREY, checks = { Spell(75, false), Yards(10, false) } },
+    }
+    RB.HUNTER_TEXT = "Wing Clip for melee, then Auto Shot with the 10 and 20 yard checks."
+    -- The swing bar's range dim asks MELEE_SPELL; an untyped Melee bar checks
+    -- RB.MELEE_YD, the item proven in combat here (MELEE_DEFAULT stays nil).
+    RB.MELEE_SPELL = { WARRIOR = 78, ROGUE = 1752, HUNTER = 2974 }
+    -- The spell a Caster bar checks when none is typed; a class with no
+    -- always-usable one has none.
+    RB.CASTER_SPELL = { MAGE = 133, WARLOCK = 686, PRIEST = 585, DRUID = 5176, SHAMAN = 403, HUNTER = 75 }
+    -- A harmful spell each class learns early, asked when every check is an item or
+    -- interact index: where UnitCanAttack reads secret, its range answer is what
+    -- tells the engine the target is hostile, and that starts the item pulse.
+    RB.GATE_SPELL = { WARRIOR = 78, ROGUE = 1752, HUNTER = 75, PALADIN = 853, SHAMAN = 403,
+        PRIEST = 585, MAGE = 133, WARLOCK = 686, DRUID = 5176 }
+else
+    RB.HUNTER = {
+        { text = "MELEE", color = RED, checks = { Spell(195645, true) } },
+        { text = "5 - 20", color = GOLD, checks = { Spell(75, true), Yards(20, true) } },
+        { text = "20 - 40", color = GREEN, checks = { Spell(75, true), Yards(20, false) } },
+        { text = "OUT", color = GREY, checks = { Spell(75, false) } },
+    }
+    RB.HUNTER_TEXT = "Wing Clip for melee, then Auto Shot with the 20 yard check."
+    -- Survival fights in melee, so it starts on the Melee preset.
+    RB.PRESET_BY_SPEC = { [255] = "melee" }
+    RB.MELEE_SPELL = { WARRIOR = 1464, PALADIN = 35395, HUNTER = 195645, ROGUE = 1752,
+        DEATHKNIGHT = 316239, SHAMAN = 73899, MONK = 100780, DEMONHUNTER = 344859 }
+    -- The rogue builders and the druid forms' attacks; Devourer's Consume
+    -- reaches 25 yards, so that spec has none (false).
+    RB.MELEE_SPELL_SPEC = { [259] = 1329, [260] = 193315, [261] = 53, [103] = 5221, [104] = 33917,
+        [1480] = false }
+    -- An untyped Melee bar checks the class spell: spell range rides an event
+    -- on retail while the item pulse is unproven there. Evokers and the druid
+    -- caster specs fall back to RB.MELEE_YD.
+    RB.MELEE_DEFAULT = RB.MELEE_SPELL
+    RB.CASTER_SPELL = { MAGE = 116, WARLOCK = 686, PRIEST = 585, DRUID = 5176, SHAMAN = 188196,
+        HUNTER = 75, PALADIN = 20271, WARRIOR = 57755, DEATHKNIGHT = 47541, MONK = 117952,
+        DEMONHUNTER = 185123, EVOKER = 362969 }
+    -- Survival has no Auto Shot; each rogue spec throws its own.
+    RB.CASTER_SPELL_SPEC = { [255] = 185358, [259] = 185565, [260] = 185763, [261] = 114014 }
+    RB.GATE_SPELL = { WARRIOR = 1464, PALADIN = 20271, HUNTER = 185358, ROGUE = 1752, PRIEST = 585,
+        DEATHKNIGHT = 47541, SHAMAN = 188196, MAGE = 116, WARLOCK = 686, MONK = 117952, DRUID = 8921,
+        DEMONHUNTER = 185123, EVOKER = 362969 }
+end
 -- A check's four kinds, as the band editor names them.
 RB.CHOICES = { "spellin", "spellout", "within", "beyond" }
 RB.CHOICE_TEXT = { spellin = "Spell in range", spellout = "Spell out of range",
@@ -69,7 +107,35 @@ local function ClassTag()
     return tag
 end
 
+-- The player's spec ID, asked only where a spec table exists (retail); nil
+-- when the game gives none or a secret.
+local function SpecID()
+    local SI = C_SpecializationInfo
+    if not (SI and SI.GetSpecialization and SI.GetSpecializationInfo) then return nil end
+    local idx = SI.GetSpecialization()
+    if issecretvalue and issecretvalue(idx) then return nil end
+    if type(idx) ~= "number" then return nil end
+    local id = SI.GetSpecializationInfo(idx)
+    if issecretvalue and issecretvalue(id) then return nil end
+    if type(id) ~= "number" or id <= 0 then return nil end
+    return id
+end
+
+-- A class table's entry for the player: the spec's where a spec table names
+-- one (false = none for that spec), else the class's.
+local function ClassSpell(byClass, bySpec)
+    if bySpec then
+        local v = bySpec[SpecID() or 0]
+        if v == false then return nil end
+        if v then return v end
+    end
+    return byClass and byClass[ClassTag() or ""] or nil
+end
+
+-- Hunter bands on a hunter, else Melee; a spec may start elsewhere.
 function RB.DefaultPreset()
+    local p = RB.PRESET_BY_SPEC and RB.PRESET_BY_SPEC[SpecID() or 0]
+    if p then return p end
     return (ClassTag() == "HUNTER") and "hunter" or "melee"
 end
 
@@ -81,15 +147,22 @@ function RB.Preset(rec)
     return RB.DefaultPreset()
 end
 
--- The typed spell, else a Caster bar's class default; nil for the other
--- presets and for a Melee bar with none typed (it checks RB.MELEE_YD).
+-- A preset's class default when no spell is typed: a Caster bar's ranged spell,
+-- a Melee bar's melee spell where MELEE_DEFAULT names one; nil otherwise.
+function RB.DefaultSpell(preset)
+    if preset == "caster" then return ClassSpell(RB.CASTER_SPELL, RB.CASTER_SPELL_SPEC) end
+    if preset == "melee" then return ClassSpell(RB.MELEE_DEFAULT, RB.MELEE_SPELL_SPEC) end
+    return nil
+end
+
+-- The typed spell, else the preset's class default; nil for the other presets
+-- and for a Melee bar with none (it checks RB.MELEE_YD).
 function RB.SpellFor(rec, preset)
     preset = preset or RB.Preset(rec)
     if preset ~= "melee" and preset ~= "caster" then return nil end
     local id = tonumber(rec.driver and rec.driver.spellID)
     if id and id > 0 then return id end
-    if preset == "caster" then return RB.CASTER_SPELL[ClassTag() or ""] end
-    return nil
+    return RB.DefaultSpell(preset)
 end
 
 -- A preset's bands; Melee and Caster are in or out of range of their one spell,
@@ -215,9 +288,7 @@ end
 -- The Tracking tab's line: what the bands check.
 function RB.CheckText(rec)
     local preset = RB.Preset(rec)
-    if preset == "hunter" then
-        return "Wing Clip for melee, then Auto Shot with the 10 and 20 yard checks."
-    end
+    if preset == "hunter" then return RB.HUNTER_TEXT end
     if preset == "custom" then
         local n = #rec.driver.bands
         return ("Custom: %d band%s, nearest first."):format(n, n == 1 and "" or "s")
@@ -232,10 +303,11 @@ end
 
 -- What an empty Spell box stands for.
 function RB.SpellHint(rec)
-    if RB.Preset(rec) ~= "caster" then return "melee range (" .. RB.MELEE_YD .. " yd)" end
-    local sid = RB.CASTER_SPELL[ClassTag() or ""]
-    if not sid then return "type a spell" end
-    return SpellName(sid) .. " (" .. sid .. ")"
+    local preset = RB.Preset(rec)
+    local sid = RB.DefaultSpell(preset)
+    if sid then return SpellName(sid) .. " (" .. sid .. ")" end
+    if preset ~= "caster" then return "melee range (" .. RB.MELEE_YD .. " yd)" end
+    return "type a spell"
 end
 
 -- Editing: the first edit copies the preset into the bar's own bands, which then

@@ -240,7 +240,8 @@ local WARN_WORDS = { ammo = "your ammo runs low", petHealth = "your pet's health
     petMood = "your pet is not happy" }
 local AURA_WORDS = { always = "the aura is up", pandemic = "the last 30% of it", time = "little time is left" }
 ET.GLOW_WHEN = {
-    ready = "cooldown done",
+    ready = function(rec) return rec.kind == "special" and "a proc is still in the deck" or "cooldown done" end,
+    cooldown = function(rec) return rec.kind == "special" and "every proc is used, or the timer runs" or "the cooldown runs" end,
     active = function(rec) return rec.kind == "totem" and "the totem is out" or "the weapon has it" end,
     proc = "the proc glow is up",
     usable = "you can cast it now",
@@ -331,6 +332,14 @@ ET.STATES = {
     ammo = {
         { label = "In stock", when = "while you have ammo", alpha = READY.alpha },
         OUT_OF_STOCK,
+    },
+    -- a Special Aura: procs left in the deck, or every proc used (a timer's
+    -- internal cooldown running)
+    special = {
+        { label = "Procs left", when = "while a proc is still in the deck", alpha = READY.alpha, tint = READY.tint,
+          alphaTip = "0 hides it; the rules under the table can bring it back." },
+        { label = "All procs used", when = "while every proc is used, or its timer runs", alpha = COOLDOWN.alpha,
+          grey = COOLDOWN.grey, tint = COOLDOWN.tint },
     },
 }
 
@@ -933,14 +942,14 @@ for k, v in pairs(ET.BAR_TAB_HOME) do Options.RENAMED_BAR_TABS[k] = v[1] end
 
 -- New marks
 
--- The tabs and sub-tabs the regroup made, marked new for one version
--- (Options.NewBadge), by strip.
+-- New tabs and sub-tabs (the regroup's, an aura group's Tracking), marked new
+-- for one version (Options.NewBadge), by strip.
 ET.BADGES = {
     icon = { ["Show & Hide"] = "tab:showhide", Glows = "tab:glows", Sounds = "tab:sounds" },
     iconSub = { ["Labels & Keybind"] = "sub:labelskeybind" },
     bar = { ["Show & Hide"] = "bar:showhide" },
     barSub = { ["Size & Frame"] = "sub:sizeframe", ["Fill & Colors"] = "sub:fillcolors" },
-    group = { Appearance = "grp:appearance" },
+    group = { Appearance = "grp:appearance", Tracking = "grp:tracking" },
     reminder = { Appearance = "rem:appearance", Sounds = "rem:sounds" },
 }
 

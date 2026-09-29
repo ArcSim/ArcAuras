@@ -1038,6 +1038,8 @@ local function ApplyStyle(entry)
     if (entry.kind == "swing" or entry.kind == "timer") and Bars.Spark then Bars.Spark.Styled(entry) end
     -- a swing bar's out-of-range dim (Bars\AD_SwingRange.lua)
     if entry.kind == "swing" and Bars.SwingRange then Bars.SwingRange.Styled(entry) end
+    -- a health bar's click area (Bars\AD_ClickUnit.lua)
+    if entry.kind == "health" and Bars.ClickUnit then Bars.ClickUnit.Styled(entry) end
     -- a main-hand swing bar's next-swing ability markers (Bars\AD_SwingAbilities.lua),
     -- they ride the main fill as the two passes above left it
     if entry.kind == "swing" and Bars.SwingAbil then Bars.SwingAbil.Styled(entry) end
@@ -1996,6 +1998,23 @@ local POWER_ALL = {
     -- Target-bound on Forever, see ResourceCurrent.
     [4] = { token = "COMBO_POINTS", name = "Combo Points", color = { 1, 0.96, 0.41 }, frequent = true, classic = true },
     [6] = { token = "RUNIC_POWER", name = "Runic Power", color = { 0, 0.82, 1 },   frequent = true },
+    -- The retail powers, in Blizzard's PowerBarColor colours; their readers
+    -- and the per-class picker live in Bars\AD_ResourcePowers.lua. The point
+    -- powers ride UNIT_POWER_FREQUENT as Blizzard's class bars do. Pain is a
+    -- legacy type kept so an old record still renders; the picker skips it.
+    [5]  = { token = "RUNES",          name = "Runes",          color = { 0.5, 0.5, 0.5 } },
+    [7]  = { token = "SOUL_SHARDS",    name = "Soul Shards",    color = { 0.5, 0.32, 0.55 },     frequent = true },
+    [8]  = { token = "LUNAR_POWER",    name = "Astral Power",   color = { 0.3, 0.52, 0.9 },      frequent = true },
+    [9]  = { token = "HOLY_POWER",     name = "Holy Power",     color = { 0.95, 0.9, 0.6 },      frequent = true },
+    [11] = { token = "MAELSTROM",      name = "Maelstrom",      color = { 0, 0.5, 1 },           frequent = true },
+    [12] = { token = "CHI",            name = "Chi",            color = { 0.71, 1, 0.92 },       frequent = true },
+    [13] = { token = "INSANITY",       name = "Insanity",       color = { 0.4, 0, 0.8 },         frequent = true },
+    [16] = { token = "ARCANE_CHARGES", name = "Arcane Charges", color = { 0.1, 0.1, 0.98 },      frequent = true },
+    [17] = { token = "FURY",           name = "Fury",           color = { 0.788, 0.259, 0.992 }, frequent = true },
+    [18] = { token = "PAIN",           name = "Pain",           color = { 1, 0.61, 0 },          frequent = true, legacy = true },
+    [19] = { token = "ESSENCE",        name = "Essence",        color = { 0, 0.8, 0.8 },         frequent = true },
+    -- stagger: a pseudo id (no Enum.PowerType), read against the player's health
+    [100] = { token = "STAGGER",       name = "Stagger",        color = { 0.52, 1, 0.52 } },
 }
 Bars.POWER_ALL = POWER_ALL
 
@@ -2021,7 +2040,10 @@ function Bars.PlainMax(entry)
     if entry.isPreview and entry.lastMax then return entry.lastMax end
     local pt = entry.powerType
     local m = pt and cachedMax[pt]
-    if m == nil and pt == 4 then m = 5 end
+    if m == nil and pt then
+        -- every point power has a fallback count (Bars\AD_ResourcePowers.lua)
+        m = (Bars.ResPowers and Bars.ResPowers.FallbackMax(pt)) or (pt == 4 and 5) or nil
+    end
     return m
 end
 
@@ -2063,6 +2085,9 @@ local function TickUnit(entry)
         end
         return nil, false
     elseif kind == "timer" then
+        -- the custom engine knows the bar's unit (its seconds, or its stacks)
+        local CU = NS.DriverCustom
+        if CU and CU.BarTickUnit then return CU.BarTickUnit(entry) end
         return tonumber(rec.driver and rec.driver.duration), true
     elseif kind == "resource" then
         local range = Bars.PlainMax(entry)
@@ -2225,7 +2250,17 @@ local function LayoutTicks(entry)
     end
     local fill = shell.fill
     local W, H = fill:GetWidth() or 0, fill:GetHeight() or 0
-    if W <= 1 or H <= 1 then return end   -- not sized yet; the resize hook re-runs us
+    -- No rect yet (the resize hook re-runs us), or a bar too thin for its
+    -- border to leave a fill: hide the marks, or the last layout's would stand
+    -- at their old size on a one-pixel bar.
+    if W <= 0 or H <= 0 then
+        for _, t in ipairs(pool) do t:Hide() end
+        entry.tickCount = 0
+        if entry.kind == "aura" and entry.chromeOwned and AuraOwnChromeSync then
+            AuraOwnChromeSync(entry)
+        end
+        return
+    end
     local vertical = (R(rec, "fill", "orientation") or "HORIZONTAL") == "VERTICAL"
     local rev = R(rec, "fill", "reverseFill") == true
     local px = Px(shell)
@@ -2314,6 +2349,11 @@ local function PowerColorOf(rec, pt)
             return c[1], c[2], c[3], c[4] or 1
         end
         return BarColorOf(rec)
+    end
+    -- runes take the spec's colour
+    if Bars.ResPowers then
+        local rr, rg, rb = Bars.ResPowers.Color(pt)
+        if rr then return rr, rg, rb, 1 end
     end
     local info = POWER_ALL[pt]
     if info then
@@ -2428,7 +2468,14 @@ local function ResourceColor(entry)
     local r, g, b, a = PowerColorOf(rec, entry.powerType)
     local curve = ResourceCurve(entry)
     if curve then
-        local col = UnitPowerPercent("player", entry.powerType, false, curve)
+        local RP = Bars.ResPowers
+        local col
+        if RP and RP.Pseudo(entry.powerType) then
+            -- stagger: the curve takes the plain percent; no power API knows it
+            col = RP.CurveColor(entry.powerType, curve)
+        else
+            col = UnitPowerPercent("player", entry.powerType, false, curve)
+        end
         if col ~= nil and type(col) ~= "number" and col.GetRGBA then
             local cr, cg, cb, ca = col:GetRGBA()
             if cr ~= nil and not (issecretvalue and (issecretvalue(cr) or issecretvalue(ca))) then
@@ -2451,6 +2498,7 @@ end
 -- "47%": the client scales the value through a 0..100 curve first
 local pctCurve
 local function PercentText(pt)
+    if Bars.ResPowers and Bars.ResPowers.Pseudo(pt) then return Bars.ResPowers.PercentText(pt) end
     if not (UnitPowerPercent and C_CurveUtil and C_CurveUtil.CreateCurve) then return nil end
     if not pctCurve then
         pctCurve = C_CurveUtil.CreateCurve()
@@ -2518,6 +2566,8 @@ local function ResourceCurrent(pt)
     if pt == 4 and NS.IsForever == true and GetComboPoints then
         return GetComboPoints("player", "target")
     end
+    -- shards and stagger have their own reads (Bars\AD_ResourcePowers.lua)
+    if Bars.ResPowers and Bars.ResPowers.Owns(pt) then return Bars.ResPowers.Current(pt) end
     return UnitPower("player", pt)
 end
 
@@ -2530,6 +2580,7 @@ end
 -- lag a step (the width only moves at layout). Shapes: square, circle (portrait
 -- alpha mask), diamond (rotated 45 degrees at 1/sqrt(2)). No border styles.
 local PIP_CIRCLE_MASK = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
+Bars.PIP_CIRCLE_MASK = PIP_CIRCLE_MASK   -- the essence cells' filling layer wears the same mask
 
 local function EnsurePip(entry, i)
     entry.pips = entry.pips or {}
@@ -2760,7 +2811,10 @@ local function LayoutPips(entry)
             lt:AddMaskTexture(p.maskLit)
         end
         lt:SetRotation(rot)
-        lb:SetMinMaxValues(i - 0.5, i)
+        -- the cell's window in the fill's units (tenths for soul shards)
+        local wlo, whi = i - 0.5, i
+        if Bars.ResPowers then wlo, whi = Bars.ResPowers.PipWindow(entry.powerType, i) end
+        lb:SetMinMaxValues(wlo, whi)
         -- Masks: the circle mask on circles, else plain white oversized by a
         -- pixel each side, so a mask edge never sits on the texture's edge
         -- (that softens it). A bilinear mask fades its outer half texel across
@@ -2793,6 +2847,7 @@ local function LayoutPips(entry)
     for i = n + 1, #(entry.pips or {}) do entry.pips[i].f:Hide() end
     entry.pipCount = n
     PaintPips(entry)
+    if Bars.ResPowers then Bars.ResPowers.PipsLaid(entry) end   -- re-windowed rune cells feed again
 end
 
 -- The per-tick path: max, colour, value and text only; re-running visibility
@@ -2803,14 +2858,27 @@ local function ResourceRefresh(entry)
     local pt = entry.powerType
     if not pt then return end
 
-    local maxv = UnitPowerMax("player", pt)
-    if maxv ~= nil and not (issecretvalue and issecretvalue(maxv)) and maxv > 0 then
-        cachedMax[pt] = maxv
+    local RP = Bars.ResPowers
+    local maxv = RP and RP.Max(pt) or UnitPowerMax("player", pt)
+    local plainMax = (maxv ~= nil and not (issecretvalue and issecretvalue(maxv))) and maxv or nil
+    if plainMax and plainMax > 0 then
+        cachedMax[pt] = plainMax
+    end
+    -- a retail power this character lacks keeps the bar hidden (a secret max
+    -- decides nothing); the classic powers show their empty bar as before
+    if RP then
+        local miss = RP.Missing(pt, plainMax)
+        if miss ~= (entry.stateHidden == true) then
+            entry.stateHidden = miss
+            ApplyVisibility(entry)
+        end
     end
     local range = cachedMax[pt] or 100
+    -- the fill's units per point: tenths for soul shards
+    local scale = RP and RP.Scale(pt) or 1
     if entry.lastMax ~= range then
         entry.lastMax = range
-        shell.fill:SetMinMaxValues(0, range)
+        shell.fill:SetMinMaxValues(0, range * scale)
         -- No dividers on a resource bar: tick marks are its per-point marks,
         -- and a pips bar draws its own cells.
         if entry.segments ~= 1 then
@@ -2852,8 +2920,9 @@ local function ResourceRefresh(entry)
         local interp = (R(rec, "fill", "smoothing") ~= false) and INTERP_SMOOTH or INTERP_NONE
         if interp then shell.fill:SetValue(cur, interp) else shell.fill:SetValue(cur) end
     end
-    ResourceText(entry, cur, range)
-    if entry.pipsOn then
+    -- the readout may take another read of the same power (whole shards)
+    ResourceText(entry, (RP and RP.Owns(pt) and RP.TextValue(pt, cur)) or cur, range)
+    if entry.pipsOn and not (RP and RP.OwnsPips(entry)) then
         -- the value straight into every lit bar: the widget lights the cell
         -- whose window it falls in, nothing is read back
         for i = 1, entry.pipCount or 0 do
@@ -2882,6 +2951,7 @@ local function ResourceRefresh(entry)
             end)
         end
     end
+    if RP then RP.Refresh(entry) end   -- rune cells run their own timers
 end
 
 -- full (re)setup for one resource bar: type, range, segments, ticks, colour
@@ -2890,10 +2960,11 @@ local function ResourceEnsure(entry)
     entry.lastMax = nil      -- re-derive the range: segments, ticks, preview
     entry.cr, entry.cg, entry.cb = nil, nil, nil
     entry.pthCurve, entry.pthHash = nil, nil
+    entry.stateHidden = false     -- the refresh hides a power the character lacks
     ResourceRefresh(entry)
-    entry.stateHidden = false
     ApplyVisibility(entry)
     EnsurePredictEvents()
+    if Bars.ResPowers then Bars.ResPowers.Sync() end
 end
 
 local function ResourceIsFrequent(entry)
@@ -3506,6 +3577,27 @@ function HB.Overlays(entry)
     return o
 end
 
+-- The over-shield (healpred.absorbOver): the whole shield from the bar's far
+-- end, in a clip frame the size of the health fill, so only the part that does
+-- not fit shows, over the end of the health. Made the first time it is on.
+function HB.OverShield(entry)
+    local o = entry.hpOv
+    if o.over then return o.over end
+    local shell = entry.shell
+    local clip = CreateFrame("Frame", nil, shell)
+    clip:SetAllPoints(shell.fillTex)
+    clip:SetFrameLevel(shell.fill:GetFrameLevel() + 1)
+    clip:SetClipsChildren(true)
+    local b = CreateFrame("StatusBar", nil, clip)
+    b:SetFrameLevel(clip:GetFrameLevel() + 3)
+    HB.SetTex(b, WHITE)
+    b:SetMinMaxValues(0, 1)
+    b:SetValue(0)
+    o.overClip, o.over = clip, b
+    o.overStripes = b:CreateTexture(nil, "ARTWORK", nil, 2)
+    return b
+end
+
 -- which point of an overlay meets which point of the thing it follows:
 -- FWD = past the health edge (heals, shields), BACK = back into the health
 -- (heal absorbs); per orientation and fill direction
@@ -3554,6 +3646,14 @@ function HB.Layout(entry)
     HB.Place(o.healAbsorb, edge, back, vertical, not rev, W, H)
     o.stripes:ClearAllPoints()
     o.stripes:SetAllPoints(o.absorb:GetStatusBarTexture())
+    if o.over then
+        -- a texture swap makes a new fill texture: the clip follows it
+        o.overClip:ClearAllPoints()
+        o.overClip:SetAllPoints(edge)
+        HB.Place(o.over, fill, back, vertical, not rev, W, H)
+        o.overStripes:ClearAllPoints()
+        o.overStripes:SetAllPoints(o.over:GetStatusBarTexture())
+    end
     -- the glow straddles the bar's far end (Blizzard's 16px, 7 inside)
     local g = o.glow
     g:ClearAllPoints()
@@ -3593,6 +3693,7 @@ function HB.StyleOverlays(entry)
         if entry.hpOv then
             entry.hpOv.clip:Hide()
             entry.hpOv.glow:Hide()
+            if entry.hpOv.overClip then entry.hpOv.overClip:Hide() end
         end
         return
     end
@@ -3630,6 +3731,19 @@ function HB.StyleOverlays(entry)
     o.healAbsorb:SetStatusBarColor(hc[1], hc[2], hc[3], R(rec, "healpred", "healAbsorbAlpha") or 0.7)
     o.healAbsorb:SetShown(haOn)
     for _, b in ipairs({ o.all, o.mine, o.absorb, o.healAbsorb }) do b:SetRotatesTexture(rotate) end
+    o.overOn = absOn and R(rec, "healpred", "absorbOver") == true
+    if o.overOn then HB.OverShield(entry) end
+    if o.over then
+        HB.SetTex(o.over, stripes and HB.SHIELD_FILL or texPath)
+        o.over:SetStatusBarColor(ac[1], ac[2], ac[3], aa)
+        o.over:SetRotatesTexture(rotate)
+        o.overStripes:SetTexture(HB.SHIELD_STRIPES, "REPEAT", "REPEAT")
+        if o.overStripes.SetHorizTile then o.overStripes:SetHorizTile(true) end
+        if o.overStripes.SetVertTile then o.overStripes:SetVertTile(true) end
+        o.overStripes:SetVertexColor(ac[1], ac[2], ac[3], math.min(1, aa + 0.25))
+        o.overStripes:SetShown(stripes)
+        o.overClip:SetShown(o.overOn)
+    end
     o.clip:Show()
     HB.Layout(entry)
 end
@@ -3646,6 +3760,10 @@ function HB.Predict(entry, unit, preview)
         o.absorb:SetValue(o.healOn and 0.15 or 0.35)
         o.healAbsorb:SetValue(0.08)
         if o.glowOn then o.glow:SetAlpha(1) end
+        if o.overOn then
+            o.over:SetMinMaxValues(0, 1)
+            o.over:SetValue(0.45)
+        end
         return
     end
     local maxv = UnitHealthMax(unit)
@@ -3677,6 +3795,18 @@ function HB.Predict(entry, unit, preview)
     end
     if o.absOn then o.absorb:SetValue(absorb) end
     if o.haOn then o.healAbsorb:SetValue(healAbsorb) end
+    if o.overOn then
+        -- the uncapped total: the clip leaves only what does not fit
+        local total
+        if calc and calc.GetTotalDamageAbsorbs then
+            total = calc:GetTotalDamageAbsorbs()
+        elseif UnitGetTotalAbsorbs then
+            total = UnitGetTotalAbsorbs(unit)
+        end
+        if total == nil then total = 0 end
+        o.over:SetMinMaxValues(0, maxv)
+        o.over:SetValue(total)
+    end
     if o.glowOn then
         if clamped ~= nil and o.glow.SetAlphaFromBoolean then
             o.glow:SetAlphaFromBoolean(clamped, 1, 0)
@@ -4025,7 +4155,9 @@ local function TargetHostileNow(unit)
     if issecretvalue and issecretvalue(exists) then return nil end
     if exists ~= true then return false end
     if not UnitCanAssist then return true end
-    local assist = UnitCanAssist("player", unit)
+    -- immune and uninteractable friendlies count as friendly, as the
+    -- engine's own filter reads them
+    local assist = UnitCanAssist("player", unit, true, true)
     if issecretvalue and issecretvalue(assist) then return nil end
     return assist ~= true
 end
@@ -4708,15 +4840,16 @@ local function AuraBarEnsure(entry)
         -- a new composition cannot be created while the engine is absent or
         -- auras are secret-restricted: keep the old one running (a stale
         -- look beats a dead bar); the next rebuild swaps it
-        if not AuraEngineUp() or AuraSecretNow() then return true end
+        if not AuraEngineUp() or (AuraSecretNow() and not Bars.loadWindow) then return true end
         AuraSetParked(entry, true)
         sub.container:Hide()
         entry.auraSub = nil
     end
 
     if not AuraEngineUp() then return false end
-    -- Creation is blocked while auras are secret-restricted; rebuilds retry.
-    if AuraSecretNow() then return false end
+    -- Creation is blocked while auras are secret-restricted, except inside
+    -- the login window (Bars.loadWindow, AD_AuraBarPrebuild); rebuilds retry.
+    if AuraSecretNow() and not Bars.loadWindow then return false end
 
     if C_AddOns and C_AddOns.IsAddOnLoaded
         and not C_AddOns.IsAddOnLoaded("Blizzard_AuraContainer") then
@@ -4999,21 +5132,13 @@ local function EnsureSharedEvents()
         end)
     end)
     -- the player's own casts are non-secret even in combat: the cooldown
-    -- re-feed that SPELL_UPDATE_COOLDOWN misses inside a charge GCD, and the
-    -- timer bars' trigger
+    -- re-feed that SPELL_UPDATE_COOLDOWN misses inside a charge GCD (a timer
+    -- bar's casts are its rules', Drivers\AD_DriverCustom.lua)
     Events.On("UNIT_SPELLCAST_SUCCEEDED", "adbars", function(_, unit, _, spellID)
         if unit ~= "player" then return end
         if NS.DriverCooldown then NS.DriverCooldown.NoteCast(spellID) end
-        ForEach(nil, function(e)
-            local d = e.rec.driver
-            if e.rec.barKind == "cooldown" then
-                if SpellIDFor(e.rec) == spellID then CooldownRefresh(e) end
-            elseif e.rec.barKind == "timer" then
-                local trig = d and d.triggerType or "cast"
-                if trig == "cast" and d and d.spellID == spellID then
-                    TimerStart(e, d.duration)
-                end
-            end
+        ForEach("cooldown", function(e)
+            if SpellIDFor(e.rec) == spellID then CooldownRefresh(e) end
         end)
     end)
     -- aura-bar presence rides UNIT_AURA (vectors are non-secret to receive;
@@ -5153,7 +5278,7 @@ function Bars.EnsureBar(rec, holder)
     -- A kind or mode change is a different bar: tear down first (aura too,
     -- since the engine widget slots differ per mode).
     if e and (e.kind ~= rec.barKind
-        or ((rec.barKind == "cooldown" or rec.barKind == "aura")
+        or ((rec.barKind == "cooldown" or rec.barKind == "aura" or rec.barKind == "timer")
             and e.mode ~= (rec.barMode or "duration"))) then
         Bars.Release(rec.id)
         e = nil
@@ -5305,12 +5430,14 @@ function Bars.Release(barId)
     live[barId] = nil          -- out of `live` first: the aura release scans it
     AuraBarRelease(e)
     HB.Disarm()                -- the last health bar takes its events with it
+    if e.kind == "resource" and Bars.ResPowers then Bars.ResPowers.Release(e) end
     local KX = Bars.KINDS[e.kind]
     if KX and KX.Release then KX.Release(e) end
     if e.kind == "swing" and Bars.SwingOH then Bars.SwingOH.Release(e) end
     if e.kind == "swing" and Bars.SwingClose then Bars.SwingClose.Release(e) end
     if (e.kind == "swing" or e.kind == "timer") and Bars.Spark then Bars.Spark.Release(e) end
     if e.kind == "swing" and Bars.SwingRange then Bars.SwingRange.Release(e) end
+    if e.kind == "health" and Bars.ClickUnit then Bars.ClickUnit.Release(e) end
     if e.kind == "swing" and Bars.SwingAbil then Bars.SwingAbil.Release(e) end
     if e.kind == "swing" and Bars.SwingColor then Bars.SwingColor.Release(e) end
     ReleaseSharedEvents()
@@ -5400,13 +5527,14 @@ function PV.ResourceRange(e)
     local pt = e.powerType
     local m = pt and cachedMax[pt]
     if not m and pt and UnitPowerMax then
-        local v = UnitPowerMax("player", pt)
+        local RP = Bars.ResPowers
+        local v = RP and RP.Max(pt) or UnitPowerMax("player", pt)
         if v ~= nil and not (issecretvalue and issecretvalue(v)) and v > 0 then
             cachedMax[pt] = v      -- the same plain value ResourceRefresh keeps
             m = v
         end
     end
-    return m or ((pt == 4) and 5 or 100)
+    return m or (Bars.ResPowers and Bars.ResPowers.FallbackMax(pt)) or ((pt == 4) and 5 or 100)
 end
 
 -- the swing length a preview runs: the hand's plain speed, else 2.6 s
@@ -5822,7 +5950,7 @@ function PV.Build(rec, holder, screen)
         local sc = R(rec, "size", "scale") or 1
         local px = Px(holder)
         local function Snap(v) return math.max(px, math.floor(v / px + 0.5) * px) end
-        holder:SetSize(Snap(math.max(8, w * sc)), Snap(math.max(4, h * sc)))
+        holder:SetSize(Snap(math.max(1, w * sc)), Snap(math.max(1, h * sc)))
     end
     if not e then
         e = { holder = holder, kind = rec.barKind, mode = mode, isPreview = true }
@@ -6058,6 +6186,8 @@ SlashCmdList.ADBARS = function(msg)
                 tostring(e.hpCalc and true or false), tostring(o and o.healOn or false),
                 tostring(o and o.absOn or false), tostring(o and o.haOn or false),
                 tostring(o and o.glowOn or false), e.hpBandN or 0, tostring(e.hpPreview or false)))
+            local click = Bars.ClickUnit and Bars.ClickUnit.Diag(e)
+            if click then print("  " .. click) end
         elseif e.kind == "swing" and e.srange and Bars.SwingRange then
             print("  " .. Bars.SwingRange.Diag(e))
         elseif Bars.KINDS[e.kind] and Bars.KINDS[e.kind].Diag then
@@ -6074,8 +6204,17 @@ Bars.Kit = {
     SetRunText = SetRunText, StyleFont = StyleFont, PlaceText = PlaceText,
     LayoutTicks = LayoutTicks, BarColorOf = BarColorOf, BarRounding = BarRounding,
     FeedStatusBarTimer = FeedStatusBarTimer, SafeOn = SafeOn,
+    ResourceRefresh = ResourceRefresh, LayoutPips = LayoutPips,
     ResolveBarTexture = ResolveBarTexture, WHITE = WHITE,
     SwingHandExists = SwingHandExists, ApplySheen = ApplySheen, MakeShadow = MakeShadow,
+    -- the timer bars' plain GetTime fill, idle and bands (the custom engine
+    -- drives them), and the stack helpers its stack mode paints with
+    RunTimedFill = RunTimedFill, TimerStop = TimerStop, BuildPlainBands = BuildPlainBands,
+    LayoutDividers = LayoutDividers, StackCount = StackCount,
+    -- the text elements' readers (Bars\AD_TextElement.lua): the current power,
+    -- the health percent scale, the font probe and the aura engine's gates
+    ResourceCurrent = ResourceCurrent, HealthScale = HB.Scale, ProvenFontPath = ProvenFontPath,
+    AuraSecretNow = AuraSecretNow, AuraEngineUp = AuraEngineUp,
     -- a running swing's start, length and end (GetTime plus PLAYER_SWING's
     -- plain duration), or nil between swings
     SwingClock = function(e)
@@ -6084,3 +6223,6 @@ Bars.Kit = {
         return endT - dur, dur, endT
     end,
 }
+-- the timer (custom) bar kind: its engine loads before this file, so the host
+-- registers it here
+if NS.DriverCustom and NS.DriverCustom.BarKind then Bars.RegisterKind("timer", NS.DriverCustom.BarKind) end

@@ -61,10 +61,19 @@ local function SelGroup()
     if ui.selType == "group" then return Store.Get(ui.selId) end
 end
 
-local function SelIcon() return Store.Get(ui.selIconId) end
+-- The record the icon rows read: the multi proxy while Edit together is open
+-- on icons (UI\AD_MultiSelect.lua), else the selected icon. SelBar the same.
+local function SelIcon()
+    local M = Options.MultiSelect
+    local px = M and M.Proxy("icon")
+    if px then return px end
+    return Store.Get(ui.selIconId)
+end
 
 local function SelBar()
     if ui.selType == "bar" then return Store.Get(ui.selId) end
+    local M = Options.MultiSelect
+    return M and M.Proxy("bar") or nil
 end
 
 -- The layout engine draws the grow arrows on this group.
@@ -94,13 +103,15 @@ end
 -- out (IconTabsFor).
 local KIND_TABS = {
     spell   = { "Tracking", "Appearance", "Show & Hide", "Glows", "Sounds", "Text", "Position", "Load Conditions" },
-    aura    = { "Tracking", "Appearance", "Show & Hide", "Glows", "Text", "Position", "Load Conditions" },
+    aura    = { "Tracking", "Appearance", "Show & Hide", "Glows", "Sounds", "Text", "Position", "Load Conditions" },
     trinket = { "Tracking", "Appearance", "Show & Hide", "Glows", "Sounds", "Text", "Position", "Load Conditions" },
     item    = { "Tracking", "Appearance", "Show & Hide", "Glows", "Sounds", "Text", "Position", "Load Conditions" },
-    timer   = { "Tracking", "Appearance", "Show & Hide", "Glows", "Text", "Position", "Load Conditions" },
+    -- a Custom Icon: its rules on Triggers (UI\AD_CustomOptions.lua)
+    timer   = { "Tracking", "Triggers", "Appearance", "Show & Hide", "Glows", "Text", "Position", "Load Conditions" },
     totem   = { "Tracking", "Appearance", "Show & Hide", "Glows", "Text", "Position", "Load Conditions" },
     ammo    = { "Tracking", "Appearance", "Show & Hide", "Glows", "Text", "Position", "Load Conditions" },
     enchant = { "Tracking", "Appearance", "Show & Hide", "Glows", "Sounds", "Text", "Position", "Load Conditions" },
+    special = { "Tracking", "Appearance", "Show & Hide", "Glows", "Sounds", "Text", "Position", "Load Conditions" },
 }
 
 -- An aura-group icon is drawn by the group's engine rows, which cannot hide or
@@ -114,6 +125,8 @@ end
 -- Options.iconTabEmpty(rec, tab), set by the icon editor, drops a tab none of
 -- whose blocks apply (an ammo icon's Glows for a class with no warnings).
 local function IconTabsFor(rec)
+    -- several icons at once: the tabs every one of them has
+    if rec._adMulti and Options.MultiSelect then return Options.MultiSelect.IconTabs(rec) end
     local tabs = KIND_TABS[rec.kind] or KIND_TABS.spell
     local empty = Options.iconTabEmpty
     if not empty then return tabs end
@@ -134,7 +147,7 @@ local GREENC = { 0.482, 0.847, 0.561 }
 local BAR_TABS = {
     cooldown = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
     aura     = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
-    timer    = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
+    timer    = { "Tracking", "Triggers", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
     stack    = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
     swing    = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
     resource = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
@@ -142,6 +155,8 @@ local BAR_TABS = {
     cast     = { "Tracking", "Appearance", "Show & Hide", "Castbar", "Text", "Position", "Load Conditions" },
     enchant  = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
     range    = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
+    -- a Text element: one string, no text runs of its own (Bars\AD_TextElement.lua)
+    text     = { "Tracking", "Appearance", "Show & Hide", "Position", "Load Conditions" },
 }
 
 -- C_SwingTimer swing types; the API exists only on WoW Forever.
@@ -249,7 +264,7 @@ end
 local function BarPillText(barKind, barMode)
     local mode = (barMode == "stack") and "Stack" or "Duration"
     if barKind == "aura" then return "Aura " .. mode, PURPLE end
-    if barKind == "timer" then return "Timer Bar", COL.arc end
+    if barKind == "timer" then return "Custom Bar", COL.arc end
     if barKind == "stack" then return "Stack Bar", GREENC end
     if barKind == "swing" then return "Swing Bar", { 0.95, 0.62, 0.30 } end
     if barKind == "resource" then return "Resource", { 0.36, 0.62, 1 } end
@@ -258,6 +273,7 @@ local function BarPillText(barKind, barMode)
     -- the weapon enchant family's steel, as on its icon pill
     if barKind == "enchant" then return "Enchant Bar", Options.ICON_PILL_COLORS.enchant end
     if barKind == "range" then return "Range Bar", { 0.92, 0.34, 0.34 } end
+    if barKind == "text" then return "Text", { 0.93, 0.84, 0.58 } end
     return "CD " .. mode, YELLOW
 end
 
@@ -269,10 +285,11 @@ Options.ICON_PILL_COLORS = {
     totem   = { 0.70, 0.88, 0.36 },   -- lime
     ammo    = { 0.95, 0.52, 0.45 },   -- coral
     enchant = { 0.72, 0.80, 0.92 },   -- steel
+    special = { 0.98, 0.72, 0.22 },   -- amber
 }
-Options.ICON_PILL_WORDS = { spell = "CD Icon", aura = "Aura Icon", timer = "Timer Icon",
+Options.ICON_PILL_WORDS = { spell = "CD Icon", aura = "Aura Icon", timer = "Custom Icon",
     item = "Item Icon", trinket = "Trinket Icon", totem = "Totem Icon", ammo = "Ammo Icon",
-    enchant = "Enchant Icon" }
+    enchant = "Enchant Icon", special = "Special Icon" }
 function Options.IconPillText(kind)
     local text = Options.ICON_PILL_WORDS[kind]
     if not text then return "Icon", COL.dim end
@@ -492,19 +509,36 @@ local function PowerValue(v)
     if not v or v < 0 then return nil end
     return v
 end
-local function PowerItems()
+local function PowerItems(keep)
     local items = { { value = POWER_AUTO, text = "Automatic (current power)" } }
-    local info = NS.Bars and NS.Bars.POWER_INFO
+    local B = NS.Bars
+    local info = B and B.POWER_INFO
     if info then
-        local ids = {}
-        for id in pairs(info) do ids[#ids + 1] = id end
-        table.sort(ids)
+        -- retail: the powers this character has (Bars\AD_ResourcePowers.lua);
+        -- Forever keeps its client-filtered list
+        local ids = B.ResPowers and B.ResPowers.Offered and B.ResPowers.Offered()
+        if not ids then
+            ids = {}
+            for id in pairs(info) do ids[#ids + 1] = id end
+            table.sort(ids)
+        end
+        -- a record's power this character lacks stays listed, so its name shows
+        if keep ~= nil and keep >= 0 and NS.IsForever ~= true then
+            local listed = false
+            for _, id in ipairs(ids) do if id == keep then listed = true end end
+            if not listed then ids[#ids + 1] = keep end
+        end
+        local all = B.POWER_ALL or info
         for _, id in ipairs(ids) do
-            items[#items + 1] = { value = id, text = info[id].name or ("Power " .. id) }
+            local pi = all[id] or info[id]
+            items[#items + 1] = { value = id, text = (pi and pi.name) or ("Power " .. id) }
         end
     end
     return items
 end
+
+-- the Text element's power picker reads the same list (UI\AD_TextOptions.lua)
+Options.PowerItems = PowerItems
 
 local function BarPill(pill, barKind, barMode)
     local text, color = BarPillText(barKind, barMode)
@@ -711,10 +745,18 @@ local function PushBar(pg, ctx, section, visibleFn, fields)
         btn.fs:SetText(text)
         C_Timer.After(1.2, function() btn.fs:SetText(btn._label) end)
     end
-    Options.LayoutStatusRow(pg, ctx, Parts, visibleFn)
+    -- no push bar over several records at once (the multi proxy): a copy or a
+    -- default of the first one would not say what the others hold. The bar's
+    -- own vis stays the blockFields key.
+    local function vis()
+        local r = ctx()
+        if r and r._adMulti then return false end
+        return (not visibleFn) or visibleFn()
+    end
+    Options.LayoutStatusRow(pg, ctx, Parts, vis)
     -- The pick resets when another record is selected, so a stale target never
     -- gets a copy. w = nil: an auto-width dropdown (up to 300).
-    local row = AT.AddRow(pg, 24, visibleFn)
+    local row = AT.AddRow(pg, 24, vis)
     local lbl = AT.RowLabel(row, "Copy to")
     local sel, selRec = 0, nil
     local function Sel()
@@ -751,7 +793,7 @@ local function PushBar(pg, ctx, section, visibleFn, fields)
     end)
     AT.Tooltip(dd, "Copy to", "Where the rows of this sub-panel go: everything of this type, one layout, one group, one other thing, or every icon of this kind. Nothing happens until you press Copy.")
     AT.Tooltip(copy, "Copy", "Copies the rows of this sub-panel onto the chosen target. Copy semantics - no live link; the target keeps its own values from then on.")
-    local row2 = AT.AddRow(pg, 24, visibleFn)
+    local row2 = AT.AddRow(pg, 24, vis)
     row2._adPush = true
     local b2 = AT.MakeSmallButton(row2, "Save as Default", 112)
     b2:SetPoint("LEFT", 10, 0)
@@ -799,7 +841,7 @@ local function PushBar(pg, ctx, section, visibleFn, fields)
 end
 
 -- Stored by sound name ("" = none), never a file ID.
-function Options.SoundRow(pg, owner, label, section, field, ctx, visible)
+function Options.SoundRow(pg, owner, label, section, field, ctx, visible, filesOnly)
     local function get()
         local r = ctx()
         local v = r and Store.Resolve(r, section, field)
@@ -811,7 +853,7 @@ function Options.SoundRow(pg, owner, label, section, field, ctx, visible)
             if r then Store.SetOverride(r, section, field, type(v) == "string" and v or "") end
         end,
         function()
-            if NS.Sounds then return NS.Sounds.Items() end
+            if NS.Sounds then return NS.Sounds.Items(filesOnly) end
             return { { value = "", text = "None" } }
         end,
         visible)
@@ -928,6 +970,10 @@ end
 -- class, Forever only, group only and def.showIf. tier: the layout editor's
 -- rows, which show exactly what a layout can set, for any kind.
 function Options.FieldShows(rec, family, section, def, tier)
+    -- several records at once: the row shows only when it shows for every one
+    if rec._adMulti and Options.MultiSelect then
+        return Options.MultiSelect.FieldShows(rec, family, section, def, tier)
+    end
     local sec = Schema[family][section]
     if tier then
         if not Schema.Inherits(def, sec) then return false end
@@ -1191,7 +1237,7 @@ local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
                     return (r and def.hintFn(r)) or ""
                 end or def.hint)
         elseif def.t == "sound" then
-            row = Options.SoundRow(pg, win, label, section, field, ctx, visible)
+            row = Options.SoundRow(pg, win, label, section, field, ctx, visible, def.files == true)
         elseif def.t == "color" then
             -- def.alpha: the picker offers opacity only where the drawn thing
             -- honours the colour's alpha
@@ -1225,6 +1271,8 @@ local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
                 def = def, baseVis = baseVis, layoutTier = tier or nil }
             -- the search opens the fold before it flashes the row
             if isAdv[field] then row._adFold = fold end
+            -- "(mixed)" after the label while several records disagree
+            if Options.MultiSelect then Options.MultiSelect.MarkRow(row, ctx, section, field) end
             -- def.desc: the row's tooltip; a text box shows its own
             local box = (def.t == "text" and not def.media and not def.font)
                 or (def.t == "id" and not def.auraSpellPick)
@@ -1626,6 +1674,11 @@ local function TPBuild()
 end
 
 local function OpenTalentPicker(ctxFn)
+    -- retail's picker (class, hero and spec panels) lives in its own file
+    if NS.IsForever ~= true and Options.OpenRetailTalentPicker then
+        Options.OpenRetailTalentPicker(ctxFn)
+        return
+    end
     TPBuild()
     tpCtx = ctxFn
     tpQuery = ""
@@ -1638,6 +1691,7 @@ end
 -- The picker edits one record, so it closes with the panel that chose it.
 local function CloseTalentPicker()
     if tpWin and tpWin:IsShown() then tpWin:Hide() end
+    if Options.CloseRetailTalentPicker then Options.CloseRetailTalentPicker() end
 end
 
 -- Condition rows (Core\AD_Conditions.lua), shared by the Load Conditions and
@@ -1825,7 +1879,7 @@ local function ConditionRows(pg, ctx, tabVisible)
         if #cls.specs > 0 then anySpecs = true break end
     end
 
-    AT.Section(pg, "Classes",
+    AT.Section(pg, anySpecs and "Class and Spec" or "Classes",
         { collapsible = true, store = uiStore, visibleFn = tabVisible })
     AT.RowDesc(pg, "Every box checked = shows everywhere.", 18, tabVisible)
     -- Shortcuts: check all (loads everywhere) or clear all to pick a few.
@@ -1970,6 +2024,8 @@ local function ConditionRows(pg, ctx, tabVisible)
             end
         end
     end
+    -- retail only: the Role row and the Hero Talents section (UI\AD_RetailWho.lua)
+    if Options.RetailWhoRows then Options.RetailWhoRows(pg, ctx, tabVisible, uiStore) end
 
     -- Faction: like the classes, a record kept to one faction is released on the
     -- other. Both boxes checked (no restriction) is the default.
@@ -2087,17 +2143,25 @@ local function ConditionRows(pg, ctx, tabVisible)
     pickFs:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     pickRow._sync = function()
         local r = ctx()
-        local n = r and #Store.TalentList(r) or 0
-        pickFs:SetText(n == 0 and "nothing required - shows on any build"
-            or (n == 1 and "1 talent required" or (n .. " talents required")))
+        local req, exc = 0, 0
+        for _, e in ipairs(r and Store.TalentList(r) or {}) do
+            if e.excluded then exc = exc + 1 else req = req + 1 end
+        end
+        local text
+        if req + exc == 0 then
+            text = "nothing required - shows on any build"
+        elseif req > 0 then
+            text = (req == 1) and "1 talent required" or (req .. " talents required")
+            if exc > 0 then text = text .. ", " .. exc .. " excluded" end
+        else
+            text = (exc == 1) and "1 talent excluded" or (exc .. " talents excluded")
+        end
+        pickFs:SetText(text)
     end
 
     local haveMulti = function()
         local r = ctx()
-        if not (r and r.c.talents) then return false end
-        local n = 0
-        for _ in pairs(r.c.talents) do n = n + 1 if n > 1 then return true end end
-        return false
+        return r ~= nil and #Store.TalentList(r) > 1
     end
     AT.RowDropdown(pg, win, "Match",
         function()
@@ -2155,6 +2219,17 @@ local function ConditionRows(pg, ctx, tabVisible)
                 nameFs:SetTextColor(0.55, 0.65, 0.78)
                 stateFs:SetText("not in this tree")
                 stateFs:SetTextColor(0.55, 0.65, 0.78)
+            elseif e.excluded then
+                -- a must-not-have: met while the node is not taken
+                if e.taken then
+                    nameFs:SetTextColor(0.7, 0.78, 0.88)
+                    stateFs:SetText("excluded, taken")
+                    stateFs:SetTextColor(0.95, 0.62, 0.30)
+                else
+                    nameFs:SetTextColor(0.95, 0.97, 1)
+                    stateFs:SetText("excluded")
+                    stateFs:SetTextColor(0.48, 0.85, 0.56)
+                end
             elseif e.taken then
                 nameFs:SetTextColor(0.95, 0.97, 1)
                 stateFs:SetText("taken")
@@ -2166,7 +2241,7 @@ local function ConditionRows(pg, ctx, tabVisible)
             end
             del:SetScript("OnClick", function()
                 local rr = ctx()
-                if rr then Store.ToggleTalent(rr, e.nodeID) end
+                if rr then Store.RemoveTalent(rr, e.nodeID) end
                 AT.LayoutPage(pg)
                 RefreshAll()
             end)
@@ -2194,6 +2269,9 @@ local function ConditionRows(pg, ctx, tabVisible)
         end)
         CondMatchRow(pg, ctx, whenVis, "loadWhen")
         CondGrid(pg, ctx, whenVis, "loadWhen")
+        -- a checked row of the other game version is kept but decides nothing
+        AT.RowDesc(pg, "Some conditions here are for the other game version and are ignored.", 18,
+            function() return whenVis() and C.Foreign ~= nil and C.Foreign(ctx(), "loadWhen") > 0 end)
         AT.Section(pg, "Never Load When",
             { collapsible = true, store = uiStore, visibleFn = whenVis })
         CondStatusRow(pg, ctx, whenVis, "loadNever", function(_, n)
@@ -2201,6 +2279,10 @@ local function ConditionRows(pg, ctx, tabVisible)
             return "Stays unloaded while any checked condition is true. This wins over Load When."
         end)
         CondGrid(pg, ctx, whenVis, "loadNever")
+        AT.RowDesc(pg, "Some conditions here are for the other game version and are ignored.", 18,
+            function() return whenVis() and C.Foreign ~= nil and C.Foreign(ctx(), "loadNever") > 0 end)
+        -- the set-pieces load rule (retail; UI\AD_SpecialOptions.lua)
+        if Options.SetPiecesRows then Options.SetPiecesRows(pg, ctx, whenVis, uiStore, win) end
         AT.Section(pg, nil)
         AT.RowDesc(pg, "Set these on the icon's Aura Group: it cannot hide one member in combat.", 20,
             function() return tabVisible() and InAuraGroup(ctx()) end)
@@ -2612,9 +2694,12 @@ local function PaintRailRow(row, selected, style)
             edge, ink = COL.arcDeep, COL.ink
         end
     end
+    -- part of a multi-selection (UI\AD_MultiSelect.lua): outlined and worded
+    -- in the accent, the current row alone keeps the filled look
+    if row._multi and not selected then edge, ink = COL.arc, COL.arc end
     AT.Skin(row, fill, edge)
     row.name:SetTextColor(ink[1], ink[2], ink[3])
-    if row.accent then row.accent:SetShown(selected and true or false) end
+    if row.accent then row.accent:SetShown((selected or row._multi) and true or false) end
 end
 
 -- Hover and selected accent, shared by the tree rows and the ADDON rows.
@@ -3238,6 +3323,8 @@ local function RefreshRail()
         row._item = item
         row:SetScript("OnDragStart", nil)
         row:SetScript("OnDragStop", nil)
+        local MS = Options.MultiSelect
+        row._multi = (MS and item.rec and MS.Has(item.rec.id)) or nil
 
         if item.kind == "layout" then
             local rec = item.rec
@@ -3407,6 +3494,8 @@ local function RefreshRail()
             PaintRailRow(row, ui.selType == "newlayout", "addbtn")
             row:SetScript("OnClick", function() Options.Select("newlayout") end)
         end
+        -- Ctrl and Shift clicks select several rows (UI\AD_MultiSelect.lua)
+        if MS then MS.RailRow(row, item, i) end
     end
     for i = #list + 1, #railRows do railRows[i]:Hide() end
     Options.RailFit(-y + 6, #list)
@@ -3814,7 +3903,7 @@ function Options.FillLayoutTile(t, rec)
         th:SetBar(rec, 64, BarTexture(rec))
         th:SetPoint("TOP", 0, -20)
         th:Show()
-        kindLine = text:find("Bar") and text or (text .. " bar")
+        kindLine = (rec.barKind == "text") and "Text element" or (text:find("Bar") and text or (text .. " bar"))
         t._open = function() Options.Select("bar", rec.id) end
     end
     t.stripe:SetColorTexture(color[1], color[2], color[3], 0.85)
@@ -3993,6 +4082,8 @@ local function RefreshLayoutPane()
             or (ic.kind == "enchant" and ((d.hand == "off") and "off-hand enchant" or "main-hand enchant"))
             or (ic.kind == "ammo" and "equipped ammo")
             or (ic.kind == "aura" and d.spellID and Options.AuraSummary(d))
+            or (ic.kind == "timer" and Options.CustomWhat and Options.CustomWhat(ic))
+            or (ic.kind == "special" and Options.SpecialWhat and Options.SpecialWhat(ic))
             or (d.spellID and ("spell " .. d.spellID))
             or ic.kind or ""
         row.sub:SetText("Free icon  -  " .. what .. ", keeps its own position")
@@ -4011,7 +4102,8 @@ local function RefreshLayoutPane()
         if b.barKind == "stack" then
             row.sub:SetText("Stack bar  -  " .. PowerLabel(d.powerType or 0) .. " stacks")
         elseif b.barKind == "timer" then
-            row.sub:SetText("Timer bar  -  " .. tostring(d.duration or "?") .. "s")
+            row.sub:SetText(Options.CustomWhat and Options.CustomWhat(b)
+                or ("Timer bar  -  " .. tostring(d.duration or "?") .. "s"))
         elseif b.barKind == "swing" then
             row.sub:SetText("Swing bar  -  " .. SwingLabel(d.swingType or 0))
         elseif b.barKind == "aura" then
@@ -4029,6 +4121,8 @@ local function RefreshLayoutPane()
         elseif b.barKind == "range" then
             local RBm = NS.RangeBars
             row.sub:SetText("Range bar  -  " .. (RBm and RBm.Describe(b) or "target range"))
+        elseif b.barKind == "text" then
+            row.sub:SetText("Text  -  " .. (Options.TextWhat and Options.TextWhat(b) or "text"))
         else
             row.sub:SetText("Cooldown bar  -  " .. (b.barMode == "stack" and "charges" or "duration")
                 .. " of spell " .. tostring(d.spellID or "?"))
@@ -4945,9 +5039,7 @@ local function IconTabVisible(tabName)
         if ui.icoTab ~= tabName then return false end
         local rec = SelIcon()
         if not rec then return false end
-        local empty = Options.iconTabEmpty
-        if empty and empty(rec, tabName) then return false end
-        for _, t in ipairs(KIND_TABS[rec.kind] or KIND_TABS.spell) do
+        for _, t in ipairs(IconTabsFor(rec)) do
             if t == tabName then return true end
         end
         return false
@@ -5001,6 +5093,7 @@ local function PreviewGlowLane(rec)
     if R("readyGlow") == true then return "ready" end
     if R("procGlow") == true then return "proc" end
     if R("usableGlow") == true then return "usable" end
+    if R("cooldownGlow") == true then return "cooldown" end
     if R("warnGlow") == true then return "warn" end
     return "ready"
 end
@@ -5620,6 +5713,9 @@ local function BuildIconEditor(parent)
     head._sync = function()
         local rec = SelIcon()
         if not rec then return end
+        -- several icons at once: their count and kinds, no actions
+        local MS = Options.MultiSelect
+        if MS and MS.Band(head, rec, "icon") then return end
         head._icon.tex:SetTexture(Factory.GetTexture(rec))
         head._name:SetText("Editing:  " .. rec.name)
         head._pill:Set(Options.IconPillText(rec.kind))
@@ -5666,6 +5762,8 @@ local function BuildIconEditor(parent)
     -- renders plain. A tab whose blocks name none (Glows, Sounds) stacks them.
     local SEC_LISTS = {}   -- [tabName] = ordered block defs
     local function BlockApplies(rec, def)
+        -- several icons at once: a block they all have, never a per-item pane
+        if rec._adMulti then return Options.MultiSelect.BlockApplies(rec, def, BlockApplies) end
         -- a pane of bespoke rows (Fade When, Anchor) answers for itself
         if def.applies then return def.applies(rec) == true end
         local sec = Schema.icon[def.section]
@@ -5766,7 +5864,7 @@ local function BuildIconEditor(parent)
         end,
         function()
             local r = SelIcon()
-            return trackVis() and r ~= nil and (r.kind == "spell" or r.kind == "timer")
+            return trackVis() and r ~= nil and r.kind == "spell"
         end,
         "The tracked spell. Retargeting re-keys the driver and keeps every setting and position.")
     -- Aura tracking: every ID rides the icon's one engine button and the game
@@ -6145,6 +6243,13 @@ local function BuildIconEditor(parent)
     AT.Tooltip(ovCasterRow, "Cast by",
         "Me: only your own copy of the aura shows on this icon (the usual choice - another player's copy is not your cooldown). Anyone: any copy. Anyone but me: only copies other players put up.")
 
+    -- a Custom Icon's tracking rows and its Triggers tab (UI\AD_CustomOptions.lua)
+    if Options.CustomIconRows then
+        Options.CustomIconRows(pg, SelIcon, IconTabVisible("Tracking"), IconTabVisible("Triggers"), win)
+    end
+    -- a Special Aura's tracking rows (UI\AD_SpecialOptions.lua)
+    if Options.SpecialIconRows then Options.SpecialIconRows(pg, SelIcon, IconTabVisible("Tracking"), win) end
+
     ConditionRows(pg, SelIcon, IconTabVisible("Load Conditions"))
 
     -- Icon blocks: titled sections of schema rows, each on a tab and a sub-tab
@@ -6400,12 +6505,14 @@ local function BuildIconEditor(parent)
             return Block("Glows", nil, title, section, fields, o)
         end
         Card("When ready", "states", "readyGlow", nil, "Glow when ready", W.ready,
-            { kindOnly = { spell = true, item = true, trinket = true, timer = true } })
+            { kindOnly = { spell = true, item = true, trinket = true, timer = true, special = true } })
         -- a totem or an enchant is up or gone: the same glow, worded so
         Card("While active", "states", "readyGlow", nil, "Glow while active", W.active,
             { kindOnly = { totem = true, enchant = true }, noLook = true })
         Card("On proc", "states", "procGlow", nil, "Proc glow", W.proc, {})
         Card("When usable", "states", "usableGlow", nil, "Glow when usable", W.usable, {})
+        Card("While on cooldown", "states", "cooldownGlow", nil, "Glow while on cooldown", W.cooldown,
+            { kindOnly = { spell = true, item = true, trinket = true, timer = true, special = true } })
         -- ammo and pet warnings (Drivers\AD_DriverWarn.lua), for the classes
         -- with ammo or a pet
         Card("Warning", "states", "warnGlow", nil, "Warning glow", W.warn, { noLook = true,
@@ -6433,7 +6540,12 @@ local function BuildIconEditor(parent)
     -- Sounds: the channel, then one card per moment a sound can play. A
     -- weapon enchant's two mark it going on and falling off (NS.DriverEnchant
     -- plays them on a real change only).
-    Block("Sounds", nil, "Channel", "alerts", { "soundChannel" })
+    local chDef = Block("Sounds", nil, "Channel", "alerts", { "soundChannel" })
+    AT.RowDesc(pg, "The game plays aura sounds itself, so they work in combat, for anyone's copy of the aura.", 20,
+        function()
+            local r = SelIcon()
+            return chDef.vis() and r ~= nil and r.kind == "aura"
+        end)
     if ET then
         local CD_SOUNDS = { spell = true, item = true, trinket = true, timer = true }
         for _, s in ipairs({
@@ -6444,6 +6556,11 @@ local function BuildIconEditor(parent)
             { "When usable", "usableSound", CD_SOUNDS },
             { "When it goes on", "readySound", "enchant" },
             { "When it falls off", "cooldownSound", "enchant" },
+            { "On proc", "procSound", "special" },
+            { "When the next draw is guaranteed", "sureSound", "special" },
+            { "When the aura appears", "auraGainSound", "aura" },
+            { "When it gains a stack", "auraStackSound", "aura" },
+            { "When the aura drops", "auraLostSound", "aura" },
         }) do
             local en = s[2] .. "Enabled"
             Block("Sounds", nil, s[1], "alerts", { en, s[2] }, { kindOnly = s[3], noLook = true,
@@ -6498,6 +6615,7 @@ local function BuildIconEditor(parent)
         local r = SelIcon()
         return ammoDef.vis() and r ~= nil and Schema.AmmoCountShown(r)
     end })
+    if Options.SpecialTextBlocks then Options.SpecialTextBlocks(Block, "Stacks", pg, SelIcon) end
     SubPush("Text", "Stacks")
 
     -- Text > Labels & Keybind: texts on the icon, each short until used.
@@ -6519,6 +6637,7 @@ local function BuildIconEditor(parent)
     })
     AT.RowDesc(pg, "Match by spell name finds this spell's key at any rank on your bars.", 20,
         function() return kbDef.vis() and NS.IsForever == true end)
+    if Options.SpecialTextBlocks then Options.SpecialTextBlocks(Block, "Labels & Keybind", pg, SelIcon) end
     SubPush("Text", "Labels & Keybind")
 
     -- Position > Position: a free icon's screen spot (a group member's cell
@@ -6584,6 +6703,8 @@ local function RefreshGroupStrip()
     for i = #icons + 1, #stripPool do stripPool[i]:Hide() end
     groupStrip.add:ClearAllPoints()
     groupStrip.add:SetPoint("LEFT", 8 + #icons * 37, 0)
+    -- a group showing every aura on a unit takes no icons
+    groupStrip.add:SetShown(not Store.ShowsAll(group))
 end
 
 local function RefreshGroupPane()
@@ -6600,6 +6721,9 @@ local function RefreshGroupPane()
     local addB = groupHeader._btns[2]
     addB.fs:SetText(rem and "+ Add Reminder" or "+ Add Icon")
     addB:SetWidth(rem and 108 or 82)
+    addB:SetShown(not Store.ShowsAll(group))
+    -- an aura or reminder group never takes a spell/item icon either way
+    groupHeader.fillBtn:SetShown(Store.GroupTakes(group, "spell") == true)
     Options.FitHeader(groupHeader)
     if rem then
         Options.RefreshReminderPane(group)
@@ -6659,7 +6783,17 @@ local function BuildGroupPane()
     local del = AT.MakeSmallButton(groupPane, "Delete", 56)
     del:SetPoint("RIGHT", addIcon, "LEFT", -5, 0)
     del:SetScript("OnClick", function() Options.ConfirmDelete(SelGroup()) end)
-    groupHeader._btns = { del, addIcon }
+    -- cooldown groups only (Store.GroupTakes): RefreshGroupPane shows/hides it
+    local fillBtn = AT.MakeSmallButton(groupPane, "+ From Action Bars", 150)
+    fillBtn:SetPoint("RIGHT", del, "LEFT", -5, 0)
+    fillBtn:SetScript("OnClick", function()
+        local group = SelGroup()
+        if group and Options.BarImport then Options.BarImport.OpenForGroup(group) end
+    end)
+    AT.Tooltip(fillBtn, "From your action bars",
+        "Finds the spells and items on your action bars and lets you pick which become icons in this group. Out of combat only.")
+    groupHeader.fillBtn = fillBtn
+    groupHeader._btns = { del, addIcon, fillBtn }
 
     groupStrip = CreateFrame("Frame", nil, groupPane, "BackdropTemplate")
     groupStrip:SetPoint("TOPLEFT", 0, -36)
@@ -6710,8 +6844,11 @@ local function BuildGroupPane()
     local tabs = { "Appearance", "Position", "Load Conditions" }
     -- a Reminder group has tabs of its own (UI\AD_ReminderOptions.lua)
     local function GroupTabs(g)
-        if Options.GroupTabsFor then return Options.GroupTabsFor(g, tabs) end
-        return tabs
+        local list = tabs
+        if Options.GroupTabsFor then list = Options.GroupTabsFor(g, list) end
+        -- an aura group opens on what it shows (UI\AD_UnitAuraOptions.lua)
+        if Options.UnitAuraTabsFor then list = Options.UnitAuraTabsFor(g, list) end
+        return list
     end
     local tabRow = AT.AddRow(pg, 30)
     tabRow._strip = AT.TabRow(tabRow)
@@ -6816,7 +6953,7 @@ local function BuildGroupPane()
         return AT.RowDropdown(pg, win, "Alignment",
             function()
                 local g = SelGroup()
-                return g and Engine.EffectiveAlignment(g) or "center"
+                return g and (Options.GroupAlignment or Engine.EffectiveAlignment)(g) or "center"
             end,
             function(v)
                 local g = SelGroup()
@@ -6825,7 +6962,7 @@ local function BuildGroupPane()
             function()
                 local g = SelGroup()
                 local shape = "horizontal"
-                if g then shape = select(2, Engine.EffectiveAlignment(g)) end
+                if g then shape = select(2, (Options.GroupAlignment or Engine.EffectiveAlignment)(g)) end
                 local items = {}
                 for _, v in ipairs(ALIGN_ORDER[shape]) do
                     items[#items + 1] = { value = v, text = ALIGN_TEXT[v] }
@@ -6839,6 +6976,12 @@ local function BuildGroupPane()
         return g and select(2, Engine.EffectiveAlignment(g)) or "horizontal"
     end
 
+    -- Tracking: what an aura group shows (UI\AD_UnitAuraOptions.lua)
+    if Options.UnitAuraGroupRows then
+        Options.UnitAuraGroupRows(pg, SelGroup, function() return ui.grpTab end,
+            { SectionRows = SectionRows })
+    end
+
     -- Appearance > Grid: the cells, then Dynamic (both live in the one
     -- `arrangement` section, so the push bar carries its own field list).
     local GRID_FIELDS = { "rows", "cols", "growthH", "growthV", "lockGridSize", "containerPadding" }
@@ -6848,11 +6991,17 @@ local function BuildGroupPane()
     local gridVis = GrpSec("Grid")
     AT.Section(pg, "Grid", { visibleFn = gridVis })
     SectionRows(pg, "iconGroup", "arrangement", SelGroup, gridVis, GRID_FIELDS)
+    -- A group showing every aura on a unit is always live, so its pin sits
+    -- with the grid; a plate row stays on its plate's edge.
+    AlignmentRow(function()
+        local g = SelGroup()
+        return gridVis() and Store.ShowsAll(g) and Store.Resolve(g, "unitAuras", "unit") ~= "nameplate"
+    end)
     Options.LookBlock("iconGroup", "Appearance", "Grid", "arrangement", GRID_FIELDS)
     -- Dynamic: its switch first; its rows fold away while it is off. Alignment
     -- sits here, not with the grid: it pins the live row, which exists only
-    -- while Dynamic is on.
-    local dynVis = gridVis
+    -- while Dynamic is on. A group showing every aura on a unit is always live.
+    local dynVis = function() return gridVis() and not Store.ShowsAll(SelGroup()) end
     AT.Section(pg, "Dynamic", { visibleFn = dynVis })
     local dynOn = function()
         local g = SelGroup()
@@ -6945,7 +7094,8 @@ local function BuildGroupPane()
     end
 
     -- Position > Position: where it sits, its frame, and (not on a Reminder
-    -- group, whose pulses never take the mouse) the group tier of the
+    -- group, whose pulses never take the mouse, nor on one the game draws
+    -- every aura for, whose buttons never do) the group tier of the
     -- click-through and tooltip chain.
     local grpPosVis = GrpPos("Position")
     AT.Section(pg, "Position", { visibleFn = grpPosVis })
@@ -6958,7 +7108,7 @@ local function BuildGroupPane()
     SectionRows(pg, "iconGroup", "frame", SelGroup, grpPosVis)
     local grpMouseVis = function()
         local g = SelGroup()
-        return grpPosVis() and g ~= nil and g.groupKind ~= "reminder"
+        return grpPosVis() and g ~= nil and g.groupKind ~= "reminder" and not Store.ShowsAll(g)
     end
     AT.Section(pg, "Mouse", { visibleFn = grpMouseVis })
     AT.RowDesc(pg, "Applies to every icon in this group; an icon can override it.", 20, grpMouseVis)
@@ -7339,8 +7489,8 @@ end
 -- the slider, out from under the cursor during a drag.
 function barPrev.StageFor(rec)
     local sc = Store.Resolve(rec, "size", "scale") or 1
-    local w = math.max(8, (Store.Resolve(rec, "size", "width") or 220) * sc)
-    local h = math.max(4, (Store.Resolve(rec, "size", "height") or 16) * sc)
+    local w = math.max(1, (Store.Resolve(rec, "size", "width") or 220) * sc)
+    local h = math.max(1, (Store.Resolve(rec, "size", "height") or 16) * sc)
     local _, ih = barPrev.IconReach(rec, w, h)
     return (h + ih + 20 <= barPrev.MIN) and barPrev.MIN or barPrev.TALL
 end
@@ -7502,7 +7652,11 @@ function barPrev.Attach(parent, y)
 end
 Options._barPrev = barPrev   -- offline harness access
 -- the editor tabs a bar kind gets (offline harness access)
-function Options._barTabsFor(rec) return BAR_TABS[rec.barKind] or BAR_TABS.cooldown end
+function Options._barTabsFor(rec)
+    -- several bars at once: the tabs every one of them has
+    if rec._adMulti and Options.MultiSelect then return Options.MultiSelect.BarTabs(rec) end
+    return BAR_TABS[rec.barKind] or BAR_TABS.cooldown
+end
 
 local function BarTabVisible(tabName)
     return function()
@@ -7510,7 +7664,7 @@ local function BarTabVisible(tabName)
         if ui.barTab ~= tabName then return false end
         local rec = SelBar()
         if not rec then return false end
-        for _, t in ipairs(BAR_TABS[rec.barKind] or BAR_TABS.cooldown) do
+        for _, t in ipairs(Options._barTabsFor(rec)) do
             if t == tabName then return true end
         end
         return false
@@ -7521,6 +7675,8 @@ local function RefreshBarPane()
     local rec = SelBar()
     if not rec then return end
     local layout = Store.Get(rec.layoutId)
+    -- back from the multi-selection pane, which hosts the page for its bars
+    barEditorPage:SetParent(barPane)
     barHeader.name:SetText(rec.name)
     local btext, restricted = Store.BadgeText(rec)
     barHeader.chip1:Set(btext, restricted and PURPLE or SHR)
@@ -7574,6 +7730,9 @@ local function BuildBarPane()
     BandActions(hbg, hd._fs, SelBar, { hide = { hd._chip }, row = hd })
     hd._sync = function()
         local rec = SelBar()
+        -- several bars at once: their count and kinds, no actions
+        local MS = Options.MultiSelect
+        if MS and MS.Band(hbg, rec, "bar") then return end
         hd._fs:SetText("Editing:  " .. ((rec and rec.name) or ""))
         if rec then BarPill(hd._chip, rec.barKind, rec.barMode) end
         Options.FitBand(hbg._adBand)
@@ -7587,7 +7746,7 @@ local function BuildBarPane()
     tabRow._sync = function()
         local rec = SelBar()
         if not rec then return end
-        local tabs = BAR_TABS[rec.barKind] or BAR_TABS.cooldown
+        local tabs = Options._barTabsFor(rec)
         -- an old tab or sub-tab pick moves to where its rows went
         local ET = Options.EditorTabs
         if ET then ET.FixPicks("bar", ui, rec, "barTab", "barSec") end
@@ -7626,7 +7785,7 @@ local function BuildBarPane()
         end,
         function()
             local r = SelBar()
-            return trackVis() and r ~= nil and (r.barKind == "cooldown" or r.barKind == "timer")
+            return trackVis() and r ~= nil and r.barKind == "cooldown"
         end,
         "The tracked spell. Retargeting re-keys the driver and keeps every setting and position.")
     -- ranked realms (WoW Forever): resolve by name each feed so the bar
@@ -7662,41 +7821,6 @@ local function BuildBarPane()
         local r = SelBar()
         return trackVis() and r ~= nil and r.barKind == "cooldown"
     end, { "gcdMode" })
-    AT.RowInput(pg, "Timer duration (s)",
-        function()
-            local r = SelBar()
-            return r and r.driver.duration and tostring(r.driver.duration) or ""
-        end,
-        function(v)
-            local r = SelBar()
-            local dur = tonumber(v)
-            if r and dur and dur > 0 then
-                r.driver.duration = dur
-                Store.Dirty("style", r.id)
-            end
-        end,
-        function()
-            local r = SelBar()
-            return trackVis() and r ~= nil and r.barKind == "timer"
-        end,
-        "How long the timer runs once triggered.")
-    AT.RowDropdown(pg, win, "Trigger",
-        function() local r = SelBar() return r and (r.driver.triggerType or "cast") end,
-        function(v)
-            local r = SelBar()
-            if r then r.driver.triggerType = v Store.Dirty("style", r.id) end
-        end,
-        function()
-            return {
-                { value = "cast", text = "On spell cast" },
-                { value = "auraGained", text = "On aura gained" },
-                { value = "auraLost", text = "On aura lost" },
-            }
-        end,
-        function()
-            local r = SelBar()
-            return trackVis() and r ~= nil and r.barKind == "timer"
-        end)
     AT.RowDropdown(pg, win, "Power type",
         function() local r = SelBar() return r and (r.driver.powerType or 0) end,
         function(v)
@@ -7877,7 +8001,10 @@ local function BuildBarPane()
                 Store.Dirty("style", r.id)
             end
         end,
-        PowerItems,
+        function()
+            local r = SelBar()
+            return PowerItems(r and r.driver and r.driver.powerType)
+        end,
         function()
             local r = SelBar()
             return trackVis() and r ~= nil and r.barKind == "resource"
@@ -7910,6 +8037,41 @@ local function BuildBarPane()
             local r = SelBar()
             return trackVis() and r ~= nil and r.barKind == "health"
         end)
+    -- A health bar's click area (Bars\AD_ClickUnit.lua): the switch, then one
+    -- line on which of the bar's conditions the game can follow in combat.
+    SectionRows(pg, "bar", "behavior", SelBar, function()
+        local r = SelBar()
+        return trackVis() and r ~= nil and r.barKind == "health"
+    end, { "clickable" })
+    do
+        local row = AT.AddRow(pg, 24, function()
+            local r = SelBar()
+            return trackVis() and r ~= nil and r.barKind == "health" and not r._adMulti
+                and NS.Bars ~= nil and NS.Bars.ClickUnit ~= nil
+                and Store.Resolve(r, "behavior", "clickable") == true
+        end)
+        local fs = row:CreateFontString(nil, "OVERLAY")
+        fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+        fs:SetPoint("TOPLEFT", 10, -4)
+        fs:SetJustifyH("LEFT")
+        fs:SetJustifyV("TOP")
+        fs:SetWordWrap(true)
+        fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+        row._sync = function()
+            local r = SelBar()
+            local CU = NS.Bars and NS.Bars.ClickUnit
+            if not (r and CU) then return end
+            fs:SetText(CU.Note(r))
+            local w = row:GetWidth() or 0
+            if w < 90 then w = (pg:GetWidth() or 0) - 24 end
+            if w > 90 then fs:SetWidth(w - 20) end
+            local want = math.max(24, math.floor((fs:GetStringHeight() or 12) + 10))
+            if row._h ~= want then
+                row._h = want
+                row:SetHeight(want)
+            end
+        end
+    end
     -- Castbars: whose casts.
     AT.RowDropdown(pg, win, "Unit",
         function()
@@ -8097,6 +8259,14 @@ local function BuildBarPane()
         -- own data, so no push bar
         if Options.RangeBandRows then Options.RangeBandRows(pg, SelBar, rangeVis, win) end
     end
+    -- a Custom Bar's tracking rows and its Triggers tab (UI\AD_CustomOptions.lua)
+    if Options.CustomBarRows then
+        Options.CustomBarRows(pg, SelBar, BarTabVisible("Tracking"), BarTabVisible("Triggers"), win)
+    end
+    -- a Text element's source rows and Format block (UI\AD_TextOptions.lua)
+    if Options.TextTrackRows then
+        Options.TextTrackRows(pg, SelBar, BarTabVisible("Tracking"), win, { SectionRows = SectionRows })
+    end
 
     ConditionRows(pg, SelBar, BarTabVisible("Load Conditions"))
 
@@ -8107,6 +8277,8 @@ local function BuildBarPane()
     local SEC_LISTS = {}
     local DEF_OF = {}   -- a block's vis -> its def
     local function BlockApplies(rec, def)
+        -- several bars at once: a block they all have, never a per-item pane
+        if rec._adMulti then return Options.MultiSelect.BlockApplies(rec, def, BlockApplies) end
         -- a pane of bespoke rows (Position, Anchor, Fade When) always applies
         if def.pane then return true end
         local sec = Schema.bar[def.section]
@@ -8283,7 +8455,8 @@ local function BuildBarPane()
     do
         local function Anchored()
             local r = SelBar()
-            if not (r and sizeVis() and NS.Anchor and NS.Anchor.IsEnabled(r)) then return false end
+            -- an anchor is per bar: not over several at once
+            if not (r and not r._adMulti and sizeVis() and NS.Anchor and NS.Anchor.IsEnabled(r)) then return false end
             local k = Store.Resolve(r, "anchor", "anchorTargetKind") or "group"
             return k ~= "nameplate" and k ~= "mouse"
         end
@@ -8431,7 +8604,9 @@ local function BuildBarPane()
             function(v) local r = SelBar() if r then Store.SetBarStanding(r, v) end end,
             function()
                 local r = SelBar()
-                return orientVis() and r ~= nil and Store.Resolve(r, "fill", "orientation") == "VERTICAL"
+                -- a swap of one bar's own width and height: not over several
+                return orientVis() and r ~= nil and not r._adMulti
+                    and Store.Resolve(r, "fill", "orientation") == "VERTICAL"
             end,
             "A quarter turn: width and height swap so the bar is tall and thin, a side icon moves to the bar's end, and the texture and gradient turn with it. Switching the orientation back to Horizontal lays the bar down again.")
         -- The search walks one sample bar per kind, mostly flat ones: hand it
@@ -8467,7 +8642,7 @@ local function BuildBarPane()
     -- above (pips style), and a continuous fill has no per-point cells
     local scVis = BarBlock("Stack Colors", "stackcolors", "Appearance", {
         "scEnabled", "sc2Value", "sc2Color", "sc3Value", "sc3Color",
-        "sc4Value", "sc4Color", "scCount", "maxColorEnabled", "maxColor",
+        "sc4Value", "sc4Color", "scCount", "maxColorEnabled", "maxColor", "scPosition",
     }, function(r)
         return r.barKind ~= "resource"
     end, FC)
@@ -8499,6 +8674,7 @@ local function BuildBarPane()
     -- after its cast. The rules are the bar's own (rec.driver.swingColors),
     -- drawn by UI\AD_SwingColorOptions.lua; not pushable.
     local abcVis = BarBlock("Ability Colors", "abilcolors", "Appearance", { "abilColorsOn" }, nil, FC)
+    DEF_OF[abcVis].perItem = true   -- the rules are one bar's own: never over several
     if Options.SwingColorRows then Options.SwingColorRows(pg, SelBar, abcVis, win) end
     -- Resource bars: the cost of the spell being cast, against the fill edge.
     BarBlock("Cost Preview", "predict", "Appearance", {
@@ -8574,7 +8750,9 @@ local function BuildBarPane()
             end,
             function()
                 local r = SelBar()
-                return abilVis() and r ~= nil and Store.Resolve(r, "fill", "swingAbilities") == true
+                -- the IDs are one bar's own: not over several at once
+                return abilVis() and r ~= nil and not r._adMulti
+                    and Store.Resolve(r, "fill", "swingAbilities") == true
             end,
             "Spell IDs of your next-swing abilities, separated by commas or spaces: Raptor Strike 2973, Heroic Strike 78, Cleave 845, Maul 6807. Any rank works; the marker follows the rank you know.",
             "e.g. 2973, 78")
@@ -8600,6 +8778,14 @@ local function BuildBarPane()
         "tickChannelOnly", "tickColor", "tickThickness", "tickHeight", "tickHeightAnchor",
     })
     SubPush("Appearance", "Ticks")
+
+    -- Appearance > Text (text elements): the one string's font, size and
+    -- colour, then its box background (Bars\AD_TextElement.lua).
+    local txVis = BarBlock("Text", "textel", "Appearance", {
+        "font", "size", "outline", "shadow", "color", "justifyH", "justifyV",
+    }, nil, "Text")
+    BarSub(txVis, "Box", "textel", { "bgShow", "bgColor" })
+    SubPush("Appearance", "Text")
 
     -- Text: the bar's one font first, then one chip per text run.
     local textTabVis = BarTabVisible("Text")
@@ -8659,13 +8845,16 @@ local function BuildBarPane()
         "stkShow", "stkShowMax", "stkSize", "stkOutline", "stkShadow", "stkColor",
         "stkAnchor", "stkOffsetX", "stkOffsetY", "stkHideAtZero",
     }, StackTextExists))
-    -- Resource and health texts: text 1 plus a count, texts 2 and 3 in their
-    -- own boxes. Their rows gate on their schema deps (show and count) and the
-    -- theme hides a box whose rows are all hidden. Keep the count out of a box
-    -- visibleFn: the settings search skips hidden boxes.
+    -- Resource and health texts: text 1, texts 2 and 3 in their own boxes,
+    -- then the count as "+ Add" / "Remove last" buttons (the schema's adds)
+    -- under the last box, in the untitled section that keeps the push bar out
+    -- of that box; the count joins the block's push list by hand, since it is
+    -- drawn outside the block. Their rows gate on their schema deps (show and
+    -- count) and the theme hides a box whose rows are all hidden. Keep the
+    -- count out of a box visibleFn: the settings search skips hidden boxes.
     do
         local resTextVis = BarBlock("Resource", "text", "Text", {
-            "resShow", "resFormat", "resCount", "resSize", "resOutline", "resShadow", "resColor",
+            "resShow", "resFormat", "resSize", "resOutline", "resShadow", "resColor",
             "resAnchor", "resOffsetX", "resOffsetY",
         })
         BarSub(resTextVis, "Resource text 2", "text",
@@ -8673,9 +8862,12 @@ local function BuildBarPane()
         BarSub(resTextVis, "Resource text 3", "text",
             { "res3Format", "res3Size", "res3Color", "res3Anchor", "res3OffsetX", "res3OffsetY" })
         AT.Section(pg, nil, { visibleFn = resTextVis })   -- push bar below the subs (BarSub)
+        SectionRows(pg, "bar", "text", SelBar, resTextVis, { "resCount" })
+        local resList = Options.blockFields[resTextVis]
+        if resList then resList[#resList + 1] = "resCount" end
         PushBar(pg, SelBar, "text", resTextVis)
         local hpTextVis = BarBlock("Health", "text", "Text", {
-            "hpShow", "hpFormat", "hpCount", "hpSize", "hpOutline", "hpShadow", "hpColor",
+            "hpShow", "hpFormat", "hpSize", "hpOutline", "hpShadow", "hpColor",
             "hpAnchor", "hpOffsetX", "hpOffsetY",
         })
         BarSub(hpTextVis, "Health text 2", "text",
@@ -8683,6 +8875,9 @@ local function BuildBarPane()
         BarSub(hpTextVis, "Health text 3", "text",
             { "hp3Format", "hp3Size", "hp3Color", "hp3Anchor", "hp3OffsetX", "hp3OffsetY" })
         AT.Section(pg, nil, { visibleFn = hpTextVis })   -- push bar below the subs (BarSub)
+        SectionRows(pg, "bar", "text", SelBar, hpTextVis, { "hpCount" })
+        local hpList = Options.blockFields[hpTextVis]
+        if hpList then hpList[#hpList + 1] = "hpCount" end
         PushBar(pg, SelBar, "text", hpTextVis)
     end
     -- nameSource: a health bar's name text shows its unit's name or a custom
@@ -8741,7 +8936,8 @@ local function BuildBarPane()
             end,
             function()
                 local r = SelBar()
-                return inactiveVis() and r ~= nil and r.barKind == "swing"
+                -- the spell is one bar's own: not over several at once
+                return inactiveVis() and r ~= nil and r.barKind == "swing" and not r._adMulti
                     and Store.Resolve(r, "behavior", "rangeDim") == true
             end,
             "The spell whose range to your target decides the dim: a spell ID, or the name of a spell you know; the rank you know is checked. Empty: your class's usual one for this hand (a melee ability, Auto Shot or the wand's Shoot). No target, or a target the spell cannot check, never dims.",
@@ -8767,7 +8963,7 @@ local function BuildBarPane()
         "healShow", "healMyColor", "healOtherColor", "healAlpha",
     }, nil, false)
     BarBlock("Absorb Shields", "healpred", "Heals & Shields", {
-        "absorbShow", "absorbStyle", "absorbColor", "absorbAlpha", "absorbOverflow",
+        "absorbShow", "absorbStyle", "absorbColor", "absorbAlpha", "absorbOverflow", "absorbOver",
     }, nil, false)
     local healAbsorbVis = BarBlock("Heal Absorbs", "healpred", "Heals & Shields", {
         "healAbsorbShow", "healAbsorbColor", "healAbsorbAlpha",
@@ -8843,6 +9039,18 @@ function Options.BuildNewLayoutPane()
     local h = MakeHeader(pane)
     h.name:SetText("New Layout")
     if NS.NewLayout then NS.NewLayout.Fill(pane) end
+end
+
+-- The "N selected" pane of a multi-selection: the pane and its header are the
+-- host's; UI\AD_MultiSelect.lua fills it and hosts the icon or bar editor
+-- page under its actions.
+function Options.BuildMultiPane()
+    local pane = CreateFrame("Frame", nil, content)
+    pane:SetAllPoints()
+    panes.multi = pane
+    local h = MakeHeader(pane)
+    local MS = Options.MultiSelect
+    if MS then MS.Fill(pane, h, win, { icon = iconEditorPage, bar = barEditorPage }) end
 end
 
 -- A layout just made from the New Layout page: unfold it and open it.
@@ -8990,7 +9198,7 @@ local function AddDestItems()
     local groups = Store.ChildrenOf(layout)
     for _, g in ipairs(groups) do
         -- kind filter: aura groups take aura icons, reminder groups none
-        if Store.GroupTakes(g, addState.iconKind or "spell") then
+        if Store.GroupTakes(g, (addState.cat == "Special") and "special" or (addState.iconKind or "spell")) then
             items[#items + 1] = { value = g.id, text = g.name }
         end
     end
@@ -9014,6 +9222,9 @@ local function BuildAddWindow()
     addWin._pg = pg
 
     local TABS = { "Icon", "Bar", "Group" }
+    -- a Text element's tab (UI\AD_TextOptions.lua)
+    if Options.TextAddRows then TABS[#TABS + 1] = "Text" end
+    if Options.SpecialAddTab then Options.SpecialAddTab(TABS) end
     -- Opened for a Reminder group it makes a reminder: one tab, and the icon
     -- form's spell and item rows (addState.remGroupId).
     local REM_TABS = { "Reminder" }
@@ -9024,7 +9235,13 @@ local function BuildAddWindow()
     tabRow._strip:SetPoint("BOTTOMRIGHT", -8, 2)
     tabRow._sync = function()
         local rem = addState.remGroupId ~= nil
-        local h = tabRow._strip:Set(rem and REM_TABS or TABS, rem and "Reminder" or addState.cat, function(name)
+        -- opened from a group's "+": icons into that group, nothing else
+        local tabs = rem and REM_TABS or TABS
+        if addState.groupOnly and not rem then
+            tabs = { "Icon" }
+            for _, t in ipairs(TABS) do if t == "Special" then tabs[#tabs + 1] = t end end
+        end
+        local h = tabRow._strip:Set(tabs, rem and "Reminder" or addState.cat, function(name)
             if rem then return end
             addState.cat = name
             AT.LayoutPage(pg)
@@ -9052,7 +9269,7 @@ local function BuildAddWindow()
             AT.LayoutPage(pg)
         end,
         function()
-            return {
+            local items = {
                 { value = "spell", text = "Spell Cooldown" },
                 { value = "aura", text = "Aura (buff / debuff)" },
                 { value = "item", text = "Item" },
@@ -9061,8 +9278,32 @@ local function BuildAddWindow()
                 { value = "ammo", text = "Ammo" },
                 { value = "enchant", text = "Weapon Enchant" },
             }
+            -- a Custom Icon: rules on plain events drive it (its engine loads first)
+            if NS.DriverCustom then items[#items + 1] = { value = "timer", text = "Custom Icon" } end
+            -- opened from a group's "+": only the kinds that group takes
+            local g = addState.groupOnly and addState.destGroupId and Store.Get(addState.destGroupId)
+            if g then
+                local kept = {}
+                for _, it in ipairs(items) do
+                    if Store.GroupTakes(g, it.value) then kept[#kept + 1] = it end
+                end
+                items = kept
+            end
+            return items
         end,
         function() return addState.cat == "Icon" and not addState.remGroupId end)
+    -- a cooldown group's "+" also fills it from the action bars
+    AT.RowButton(pg, "From my action bars", function()
+        local g = addState.destGroupId and Store.Get(addState.destGroupId)
+        local BI = Options.BarImport
+        if not (g and BI and BI.OpenForGroup) then return end
+        addWin:Hide()
+        BI.OpenForGroup(g)
+    end, function()
+        local g = addState.groupOnly and addState.destGroupId and Store.Get(addState.destGroupId)
+        return addState.cat == "Icon" and g ~= nil and Options.BarImport ~= nil
+            and Store.GroupTakes(g, "spell") == true
+    end, 170)
     local remVis = function() return addState.remGroupId ~= nil end
     AT.RowDropdown(pg, addWin, "Remind me of",
         function()
@@ -9156,6 +9397,10 @@ local function BuildAddWindow()
         function() return addState.itemID or "" end,
         function(v) addState.itemID = v if UpdateCreate then UpdateCreate() end end,
         isIcon("item"), "The numeric item ID.", "e.g. 5512", true)
+    -- a Custom Icon's name and art (UI\AD_CustomOptions.lua)
+    if Options.CustomAddRows then Options.CustomAddRows(pg, addWin, addState, "Icon") end
+    -- the Special tab's tracker list (UI\AD_SpecialOptions.lua)
+    if Options.SpecialAddRows then Options.SpecialAddRows(pg, addWin, addState) end
 
     -- Bar: category, then mode (Duration / Stack) for cooldown and aura bars.
     -- Timer and power-stack bars cannot be created here; existing ones still
@@ -9183,6 +9428,8 @@ local function BuildAddWindow()
             if C_Spell and C_Spell.IsSpellInRange then
                 items[#items + 1] = { value = "range", text = "Range Bar" }
             end
+            -- a Custom Bar: rules on plain events drive it (its engine loads first)
+            if NS.DriverCustom then items[#items + 1] = { value = "timer", text = "Custom Bar" } end
             return items
         end,
         isCat("Bar"))
@@ -9247,9 +9494,11 @@ local function BuildAddWindow()
         end,
         function()
             local bk = addState.barKind or "cooldown"
-            return addState.cat == "Bar" and (bk == "cooldown" or bk == "aura")
+            return addState.cat == "Bar" and (bk == "cooldown" or bk == "aura" or bk == "timer")
         end,
         function() AT.LayoutPage(pg) end)
+    -- a Custom Bar's name and art (UI\AD_CustomOptions.lua)
+    if Options.CustomAddRows then Options.CustomAddRows(pg, addWin, addState, "Bar") end
     -- The spellbook autocomplete is for cooldowns only: the catalog holds
     -- castables, so aura fields use the name search instead.
     local barUsesSpell = function()
@@ -9508,13 +9757,19 @@ local function BuildAddWindow()
         isCat("Group"))
     AT.RowDesc(pg, "A spot mid-screen where your cooldowns pulse as they come back.", 20,
         function() return addState.cat == "Group" and addState.groupKind == "reminder" end)
+    AT.RowToggle(pg, "Fill it from my action bars",
+        function() return addState.fillFromBars == true end,
+        function(v) addState.fillFromBars = v end,
+        function() return addState.cat == "Group" and (addState.groupKind or "cooldown") == "cooldown" end,
+        "Opens a picker for this group's spells and items right after Create. Out of combat only.")
+    if Options.TextAddRows then Options.TextAddRows(pg, addWin, addState) end
 
     -- only icons pick a destination: bars are always free, groups have none
     AT.RowDropdown(pg, addWin, "Add to",
         function() return addState.destGroupId or 0 end,
         function(v) addState.destGroupId = v ~= 0 and v or nil AT.LayoutPage(pg) end,
         AddDestItems,
-        function() return addState.cat == "Icon" and not addState.remGroupId end)
+        function() return (addState.cat == "Icon" or addState.cat == "Special") and not addState.remGroupId end)
     -- The Dynamic aura-group play-mode limit, said before the icon is made.
     AT.RowDesc(pg, "A Dynamic aura group only tracks you, your pet and your target.", 20,
         function()
@@ -9540,11 +9795,13 @@ local function BuildAddWindow()
     -- takes no click or hover, so the dim look holds.
     local function CanCreate()
         if not Store.Get(addState.layoutId) then return false end
+        if addState.cat == "Special" then return Options.SpecialCanCreate ~= nil and Options.SpecialCanCreate(addState) end
         if addState.cat == "Icon" then
             local ik = addState.iconKind or "spell"
             if ik == "spell" then return (addState.spellID or "") ~= "" end
             if ik == "aura" then return #Options.ParseSpellIDs(addState.auraID) > 0 end
             if ik == "item" then return tonumber(addState.itemID) ~= nil end
+            if ik == "timer" then return Options.CustomCreate ~= nil end
             return true
         elseif addState.cat == "Bar" then
             local bk = addState.barKind or "cooldown"
@@ -9561,8 +9818,12 @@ local function BuildAddWindow()
                 return true
             elseif bk == "cooldown" then
                 return (addState.barSpell or "") ~= ""
+            elseif bk == "timer" then
+                return Options.CustomBarDriver ~= nil
             end
             return true
+        elseif addState.cat == "Text" then
+            return Options.TextCreate ~= nil
         end
         return true
     end
@@ -9670,6 +9931,12 @@ local function BuildAddWindow()
             local rec = Store.NewIcon("enchant", { hand = hand }, dest, layoutId,
                 (hand == "off" and "Off Hand" or "Main Hand") .. " Enchant")
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
+        elseif iconKind == "timer" then
+            local rec = Options.CustomCreate and Options.CustomCreate(addState, dest, layoutId)
+            if rec then addWin:Hide() Options.SelectIconHome(rec) end
+        elseif addState.cat == "Special" then
+            local rec = Options.SpecialCreate and Options.SpecialCreate(addState, dest, layoutId)
+            if rec then addWin:Hide() Options.SelectIconHome(rec) end
         elseif addState.cat == "Bar" then
             -- Creatable: cooldown and aura (duration or stack), swing where
             -- probed, resource, health and cast. Not timer or power-stack bars.
@@ -9709,6 +9976,9 @@ local function BuildAddWindow()
                 driver = { preset = RBm and RBm.DefaultPreset() or "melee" }
                 name = "Target Range"
                 mode = nil
+            elseif bk == "timer" then
+                if not Options.CustomBarDriver then return end
+                driver, name = Options.CustomBarDriver(addState)
             elseif bk == "aura" then
                 -- the field holds the ID by now (a picked name fills it in)
                 local sid = tonumber(addState.barAuraID)
@@ -9740,6 +10010,13 @@ local function BuildAddWindow()
                 ExpandedSet()[layoutId] = true
                 Options.Select("bar", rec.id)
             end
+        elseif addState.cat == "Text" then
+            local rec = Options.TextCreate and Options.TextCreate(addState, layoutId)
+            if rec then
+                addWin:Hide()
+                ExpandedSet()[layoutId] = true
+                Options.Select("bar", rec.id)
+            end
         elseif addState.cat == "Group" then
             local rec = Store.NewGroup(layoutId, addState.groupName ~= "" and addState.groupName or nil,
                 addState.groupKind or "cooldown")
@@ -9747,6 +10024,9 @@ local function BuildAddWindow()
                 addWin:Hide()
                 ExpandedSet()[layoutId] = true
                 Options.Select("group", rec.id)
+                if addState.fillFromBars and Options.BarImport then
+                    Options.BarImport.OpenForGroup(rec)
+                end
             end
         end
     end)
@@ -9758,11 +10038,17 @@ function Options.OpenAdd(layoutId, destGroupId, forceFree)
     addState.destGroupId = destGroupId
     addState.forceFree = forceFree and true or false
     addState.remGroupId = nil
+    addState.groupOnly = destGroupId ~= nil
     if destGroupId then
         -- adding into a group = adding an icon; aura groups preselect aura
         addState.cat = "Icon"
         local g = Store.Get(destGroupId)
         if g and g.groupKind == "aura" then addState.iconKind = "aura" end
+        -- a kind this group does not take falls back to the first it does (a
+        -- Reminder group takes no icons: its own branch below picks)
+        if g and g.groupKind ~= "reminder" and not Store.GroupTakes(g, addState.iconKind or "spell") then
+            addState.iconKind = Store.GroupTakes(g, "aura") and "aura" or "spell"
+        end
         -- a Reminder group's add makes a reminder, of a spell, an item or an enchant
         if g and g.groupKind == "reminder" then
             addState.remGroupId = g.id
@@ -9849,7 +10135,9 @@ local function BuildSettingsPane()
         end
     end
     local scaleRow = AT.RowSlider(pg, "Panel scale",
-        function() return Store.GetSetting("uiScale") or 1 end,
+        -- unsaved = the scale the window really runs at (AT.uiScale, 0.85),
+        -- so the first nudge steps from what is on screen
+        function() return Store.GetSetting("uiScale") or AT.uiScale or 1 end,
         function(v)
             Store.SetSetting("uiScale", v)
             scalePending = v
@@ -9907,6 +10195,21 @@ local function BuildSettingsPane()
         function() return Store.GetSetting("groupNames") ~= false end,   -- on by default
         function(v) Store.SetSetting("groupNames", v and true or false) end,
         nil, "While this window is open, each group shows its name on its top edge, which is what you drag the group by. Off: a small green handle stays there instead; hover it to see the name.")
+    -- Which kinds keep their Edit chips: read through Factory.EditChipsOn
+    -- (nil = all). The rebuild the setting's dirty queues re-places every chip.
+    local chipRow = AT.RowDropdown(pg, win, "Edit buttons on screen",
+        function() return Store.GetSetting("editButtons") or "all" end,
+        function(v) Store.SetSetting("editButtons", (v ~= "all") and v or nil) end,
+        function()
+            return {
+                { value = "all", text = "All" },
+                { value = "icons", text = "Icons only" },
+                { value = "bars", text = "Bars only" },
+                { value = "none", text = "None" },
+            }
+        end)
+    AT.Tooltip(chipRow, "Edit buttons on screen",
+        "While this window is open, icons and bars carry a small Edit button that opens them here. Icons only or Bars only hides the other kind's buttons, None hides them all; the sidebar and the search still open every item. The buttons come back when you pick All.")
     AT.Section(pg, "Icon Mouse")
     AT.RowToggle(pg, "Show tooltips",
         function() return Store.GetSetting("showTooltips") ~= false end,
@@ -10581,6 +10884,8 @@ function Options.Select(selType, id)
         L.Then(function() Options.Select(selType, id) end)
         return
     end
+    -- a single pick ends a multi-selection (UI\AD_MultiSelect.lua)
+    if Options.MultiSelect then Options.MultiSelect.OnSelect(selType) end
     -- Play on screen belongs to the bar being edited
     local B = NS.Bars
     if B and B.PreviewScreenOn and B.PreviewScreenOn()
@@ -10616,7 +10921,8 @@ function Options.Select(selType, id)
         ExpandedSet()[id] = true
     end
     ShowPane(selType == "layout" and "layout" or selType == "group" and "group"
-        or selType == "free" and "free" or selType == "bar" and "bar" or "empty")
+        or selType == "free" and "free" or selType == "bar" and "bar"
+        or selType == "multi" and "multi" or "empty")
     RefreshAll()
 end
 
@@ -10631,6 +10937,8 @@ local function RefreshPane()
     elseif ui.selType == "group" then RefreshGroupPane()
     elseif ui.selType == "free" then RefreshFreePane()
     elseif ui.selType == "bar" then RefreshBarPane()
+    elseif ui.selType == "multi" then
+        if Options.MultiSelect then Options.MultiSelect.Refresh() end
     elseif ui.selType == "settings" then settingsPage:Refresh()
     elseif ui.selType == "modules" then
         if Options.Modules then Options.Modules.Refresh() end
@@ -10667,11 +10975,12 @@ Options.Search = {
     FAM_RANK = { icon = 1, group = 2, bar = 3, layout = 4, settings = 5, modules = 6 },
     KIND_WORD = {
         icon = { spell = "spell icons", aura = "aura icons", trinket = "trinket icons",
-            item = "item icons", timer = "timer icons", totem = "totem icons",
+            item = "item icons", timer = "custom icons", totem = "totem icons",
             ammo = "ammo icons", enchant = "enchant icons" },
-        bar = { cooldown = "cooldown bars", aura = "aura bars", timer = "timer bars",
+        bar = { cooldown = "cooldown bars", aura = "aura bars", timer = "custom bars",
             stack = "stack bars", swing = "swing bars", resource = "resource bars",
-            health = "health bars", enchant = "enchant bars", range = "range bars" },
+            health = "health bars", enchant = "enchant bars", range = "range bars",
+            text = "text elements" },
         group = { aura = "aura groups", cooldown = "CD groups", reminder = "reminder groups" },
     },
     -- the ui fields a sample walk moves (put back by RestoreUI)
@@ -10810,7 +11119,11 @@ function Options.Search.OpenFor(fam)
         if ui.selType == "group" or ui.selType == "free" then return SelIcon() end
         return nil
     end
-    if fam == "bar" then return SelBar() end
+    if fam == "bar" then
+        -- never the multi proxy: a jump lands on one bar
+        local b = SelBar()
+        return (b and not b._adMulti) and b or nil
+    end
 end
 
 -- the open editor's family (ranks its options first)
@@ -11199,7 +11512,7 @@ function Options.Search.ShowSelPane()
     -- an old QOL pick is the Modules page now
     if ui.selType == "qol" then ui.selType, ui.selId = "modules", nil end
     local t = ui.selType
-    if t == "layout" or t == "group" or t == "free" or t == "bar"
+    if t == "layout" or t == "group" or t == "free" or t == "bar" or t == "multi"
         or t == "ie" or t == "settings" or t == "modules" then
         ShowPane(t)
     else
@@ -11742,6 +12055,8 @@ local function Build()
     -- The panes in build order; each is one step of the loading bar.
     local steps = {
         BuildEmptyPane, Options.BuildNewLayoutPane, BuildLayoutPane, BuildGroupPane, BuildFreePane, BuildBarPane,
+        -- after both editors: the multi-selection pane hosts their pages
+        Options.BuildMultiPane,
         -- after the editors: the layout's look tabs mirror their blocks
         Options.BuildLayoutLooks,
         BuildSettingsPane, Options.BuildModulesPane, BuildIEPane,

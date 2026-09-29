@@ -1,4 +1,5 @@
--- AD_DriverRange: how far the target is, for range bars and the Visibility rule "target in range of a spell".
+-- AD_DriverRange: how far the target is, for range bars, the Visibility rule "target in range of a spell"
+-- and spell icons' range tint (DR.WantSpellRange).
 -- Spell checks ride SPELL_RANGE_CHECK_UPDATE; item and interact checks have no event, so a 0.2 s pulse reads
 -- them only while a consumer needs one and the target is attackable and alive. A secret answer keeps the last state.
 local ADDON, NS = ...
@@ -20,8 +21,13 @@ DR.want = { spell = {}, item = {}, interact = {} }
 -- true = in range, false = out of range, nil = no answer.
 DR.state = { spell = {}, item = {}, interact = {} }
 DR.changed = { spell = {}, item = {}, interact = {} }
--- The spell checks this file turned on; it turns off only these.
+-- The spell checks the owners want, held in DR.refs under the engine's own key.
 DR.enabled = {}
+-- Every want of a spell check, by numeric ID: refs[sid] = { [key] = true }. This file turns on
+-- and off only these, so one consumer letting go never switches off another's check.
+DR.refs = {}
+-- fn(sid) of consumers outside the owner list, after a pass that moved sid's answer.
+DR.listeners = {}
 DR.resolved = {}
 DR.harmful = {}
 -- bySpell: UnitCanAttack read secret, so a harmful spell's answer decided it.
@@ -68,6 +74,9 @@ local function Notify()
         local o = DR.owners[key]
         if o and o.fn then o.fn(key) end
     end
+    for _, fn in pairs(DR.listeners) do
+        for sid in pairs(ch.spell) do fn(sid) end
+    end
 end
 DR.Notify = Notify
 
@@ -81,6 +90,8 @@ local function Known(sid)
 end
 
 -- Ranks are separate spell IDs on ranked realms: the spell's name finds the rank the player knows.
+-- Retail has no ranks; there a spec's replacement (Mutilate for Sinister Strike) is the spell
+-- whose range answers, and GetOverrideSpell names it, or the spell itself with none.
 function DR.Resolve(id)
     if IsSecret(id) then return nil end
     local sid = tonumber(id)
@@ -90,10 +101,15 @@ function DR.Resolve(id)
     if r then return r end
     r = sid
     local CS = C_Spell
-    local nm = CS and CS.GetSpellName and CS.GetSpellName(sid)
-    if not IsSecret(nm) and type(nm) == "string" and nm ~= "" and CS.GetSpellIDForSpellIdentifier then
-        local rid = CS.GetSpellIDForSpellIdentifier(nm)
-        if not IsSecret(rid) and type(rid) == "number" and rid > 0 and Known(rid) then r = rid end
+    if NS.IsForever == true then
+        local nm = CS and CS.GetSpellName and CS.GetSpellName(sid)
+        if not IsSecret(nm) and type(nm) == "string" and nm ~= "" and CS.GetSpellIDForSpellIdentifier then
+            local rid = CS.GetSpellIDForSpellIdentifier(nm)
+            if not IsSecret(rid) and type(rid) == "number" and rid > 0 and Known(rid) then r = rid end
+        end
+    elseif CS and CS.GetOverrideSpell then
+        local ov = CS.GetOverrideSpell(sid)
+        if not IsSecret(ov) and type(ov) == "number" and ov > 0 then r = ov end
     end
     DR.resolved[sid] = r
     return r
@@ -122,6 +138,30 @@ local function ReadSpell(sid)
     if IsSecret(v) then return nil, true end
     if v == true or v == false then return v, false end
     return nil, false
+end
+
+-- The first want of an ID turns its check on and reads it once; the last release turns it off
+-- and forgets the answer.
+local function Want(key, sid, on)
+    local refs = DR.refs[sid]
+    local CS = C_Spell
+    if on then
+        if refs then
+            refs[key] = true
+            return
+        end
+        DR.refs[sid] = { [key] = true }
+        if CS and CS.EnableSpellRangeCheck then CS.EnableSpellRangeCheck(sid, true) end
+        local v, secret = ReadSpell(sid)
+        if not secret then Put("spell", sid, v) end
+        return
+    end
+    if not (refs and refs[key]) then return end
+    refs[key] = nil
+    if next(refs) ~= nil then return end
+    DR.refs[sid] = nil
+    if CS and CS.EnableSpellRangeCheck then CS.EnableSpellRangeCheck(sid, false) end
+    Put("spell", sid, nil)
 end
 
 local function Harmful(sid)
@@ -220,7 +260,7 @@ end
 -- Every change of target sends SPELL_RANGE_CHECK_UPDATE too; reading here as well
 -- leaves no moment on the old target's answers, whatever order they arrive in.
 local function OnTarget()
-    for sid in pairs(DR.want.spell) do
+    for sid in pairs(DR.refs) do
         local v, secret = ReadSpell(sid)
         if not secret then Put("spell", sid, v) end
     end
@@ -235,12 +275,12 @@ local function OnRange(_, ident, inRange, checksRange)
     if IsSecret(ident) or IsSecret(inRange) or IsSecret(checksRange) then return end
     -- The payload names the spell by its numeric ID.
     local sid = tonumber(ident)
-    if not (sid and DR.want.spell[sid]) then return end
+    if not (sid and DR.refs[sid]) then return end
     -- isInRange is a leftover whenever checksRange is false.
     local v = nil
     if checksRange == true then v = inRange == true end
     Put("spell", sid, v)
-    if DR.target.bySpell then
+    if DR.target.bySpell and DR.want.spell[sid] then
         DR.ReadGate()
         DR.SyncPulse()
     end
@@ -321,21 +361,16 @@ function DR.Sync()
         if o.gate then gate = true end
     end
     DR.want = want
-    local CS = C_Spell
-    local canEnable = CS and CS.EnableSpellRangeCheck
     for sid in pairs(DR.enabled) do
         if not want.spell[sid] then
             DR.enabled[sid] = nil
-            if canEnable then CS.EnableSpellRangeCheck(sid, false) end
-            Put("spell", sid, nil)
+            Want(DR.KEY, sid, false)
         end
     end
     for sid in pairs(want.spell) do
         if not DR.enabled[sid] then
             DR.enabled[sid] = true
-            if canEnable then CS.EnableSpellRangeCheck(sid, true) end
-            local v, secret = ReadSpell(sid)
-            if not secret then Put("spell", sid, v) end
+            Want(DR.KEY, sid, true)
         end
     end
     for id in pairs(DR.state.item) do
@@ -345,7 +380,7 @@ function DR.Sync()
         if not want.interact[i] then Put("interact", i, nil) end
     end
     local any = next(DR.owners) ~= nil
-    DR.Arm(any)
+    DR.Arm(any or next(DR.refs) ~= nil)
     DR.ArmUnit(any and (gate or next(want.item) ~= nil or next(want.interact) ~= nil))
     DR.ReadGate()
     -- a running pulse reads a newly wanted check now, not a tick later
@@ -409,6 +444,27 @@ function DR.Spell(id)
     if not sid then return nil end
     if DR.want.spell[sid] then return DR.state.spell[sid] end
     return (ReadSpell(sid))
+end
+
+-- For consumers outside the owner list (the cooldown driver's range tint): key is the
+-- caller's own name, sid a numeric spell ID taken as given, with no rank or override resolve.
+function DR.WantSpellRange(key, sid, on)
+    if IsSecret(sid) or type(sid) ~= "number" or sid <= 0 then return end
+    Want(key, sid, on == true)
+    DR.Arm(next(DR.owners) ~= nil or next(DR.refs) ~= nil)
+    Notify()
+end
+
+-- A wanted ID's last plain answer: true out of range, false in range, nil unknown.
+function DR.SpellOut(sid)
+    local v = DR.state.spell[sid]
+    if v == nil then return nil end
+    return v == false
+end
+
+-- fn(sid) runs after a pass that moved a wanted ID's answer; fn nil removes key's listener.
+function DR.OnSpellRange(key, fn)
+    DR.listeners[key] = fn
 end
 
 function DR.Item(id) return DR.state.item[id] end

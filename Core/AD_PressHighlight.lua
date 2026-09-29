@@ -32,7 +32,16 @@ local function Setting(k, d)
     return v
 end
 
-function PH.Enabled() return Setting("pressHighlight", false) == true end
+-- Asked on every button press, so read once per settings change: every
+-- settings write fires AD_DIRTY.
+local enabled
+function PH.Enabled()
+    if enabled == nil then enabled = Setting("pressHighlight", false) == true end
+    return enabled
+end
+if NS.Events and NS.Events.OnMessage then
+    NS.Events.OnMessage("AD_DIRTY", "adpress_on", function() enabled = nil end)
+end
 
 local function Secret(v) return issecretvalue ~= nil and issecretvalue(v) end
 
@@ -41,10 +50,12 @@ local slotCache = {}          -- [slot] = { kind, id } from the last plain read
 local slotDirty = true
 
 local function ReadSlot(slot)
-    local kind, id = GetActionInfo(slot)
-    if Secret(kind) or Secret(id) then return nil end
-    -- A macro: what it would cast or use (GetActionInfo returns the macro index here).
+    local kind, id, sub = GetActionInfo(slot)
+    if Secret(kind) or Secret(id) or Secret(sub) then return nil end
+    -- A macro: the client reports what it would cast or use as the id, with
+    -- the third return naming the kind; an older one gives the macro index.
     if kind == "macro" and type(id) == "number" then
+        if sub == "spell" or sub == "item" then return sub, id end
         local sid = GetMacroSpell and GetMacroSpell(id)
         if sid and not Secret(sid) then return "spell", sid end
         local _, link = nil, nil

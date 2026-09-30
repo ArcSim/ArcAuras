@@ -51,8 +51,9 @@ local Fold = {}
 Fold.__index = Fold
 
 -- A fold row, "More <word> options" and a count, in the section open on pg.
--- The rows the caller adds after it show while it is open; it opens by itself
--- while one of them holds a changed value, so a value you set never hides.
+-- The rows the caller adds after it show while it is open. A plain fold: it
+-- opens and shuts on a click (the search opens it for a hit), and a changed
+-- value inside only shows in its tooltip.
 function ET.NewFold(pg, key, word, ctx)
     local f = setmetatable({ key = key, ctx = ctx, items = {}, pg = pg }, Fold)
     local title = "More " .. ((type(word) == "string" and word ~= "") and (word .. " ") or "") .. "options"
@@ -100,7 +101,7 @@ function ET.NewFold(pg, key, word, ctx)
     row:SetScript("OnEnter", function() f.hot = true Paint() end)
     row:SetScript("OnLeave", function() f.hot = nil Paint() end)
     AT.Tooltip(row, title, function()
-        if f:Changed() then return "Stays open while one of these differs from its default." end
+        if f:Changed() then return "Fine-tuning for the rows above; some differ from their default. Click to show or hide it." end
         return "Fine-tuning for the rows above. Click to show or hide it."
     end)
     return f
@@ -134,7 +135,7 @@ function Fold:Changed()
 end
 
 function Fold:IsOpen()
-    return ET.ShowAll() or ET.FoldState()[self.key] == true or self:Changed()
+    return ET.ShowAll() or ET.FoldState()[self.key] == true
 end
 
 -- With Show every option on, the rows show inline and the fold row goes.
@@ -142,10 +143,10 @@ function Fold:HeadShown()
     return not ET.ShowAll() and self:Count() > 0
 end
 
--- A fold held open (a changed value, Show every option) ignores the click.
+-- Show every option holds every fold open, so the click does nothing then.
 function Fold:Toggle()
     AT.CloseDropdown()
-    if ET.ShowAll() or self:Changed() then return end
+    if ET.ShowAll() then return end
     local st = ET.FoldState()
     local open = st[self.key] ~= true
     st[self.key] = open or nil
@@ -230,15 +231,16 @@ local GLOW_WORDS = { Type = "Style", Color = "Color", CombatOnly = "Only in comb
     Speed = "Speed", Lines = "Lines", Thickness = "Thickness", Length = "Line length (0 = auto)",
     Particles = "Particles", Intensity = "Intensity", Scale = "Size", XOffset = "X offset",
     YOffset = "Y offset", MoveX = "Move X", MoveY = "Move Y", Strata = "Strata", Level = "Frame level" }
--- switch, look, gates, then the tuning (the tuning folds away)
-local GLOW_ORDER = { "Type", "Color", "CombatOnly", "For", "When", "TimeUnit", "TimePct", "TimeSec",
-    "AuraLength", "Speed", "Lines", "Thickness", "Length", "Particles", "Intensity", "Scale", "XOffset",
-    "YOffset", "MoveX", "MoveY", "Strata", "Level" }
+-- switch, when it fires, look, gates, then the tuning (the tuning folds away)
+local GLOW_ORDER = { "When", "TimeUnit", "TimePct", "TimeSec", "AuraLength", "Type", "Color",
+    "CombatOnly", "For", "Speed", "Lines", "Thickness", "Length", "Particles", "Intensity", "Scale",
+    "XOffset", "YOffset", "MoveX", "MoveY", "Strata", "Level" }
 
 -- When each glow card fires, in plain words for its header.
 local WARN_WORDS = { ammo = "your ammo runs low", petHealth = "your pet's health is low",
     petMood = "your pet is not happy" }
-local AURA_WORDS = { always = "the aura is up", pandemic = "the last 30% of it", time = "little time is left" }
+local AURA_WORDS = { always = "the aura is up", pandemic = "the last 30% of it", time = "little time is left",
+    missing = "the aura is missing", both = "always" }
 ET.GLOW_WHEN = {
     ready = function(rec) return rec.kind == "special" and "a proc is still in the deck" or "cooldown done" end,
     cooldown = function(rec) return rec.kind == "special" and "every proc is used, or the timer runs" or "the cooldown runs" end,
@@ -340,6 +342,12 @@ ET.STATES = {
           alphaTip = "0 hides it; the rules under the table can bring it back." },
         { label = "All procs used", when = "while every proc is used, or its timer runs", alpha = COOLDOWN.alpha,
           grey = COOLDOWN.grey, tint = COOLDOWN.tint },
+    },
+    -- a Group Buff: its count read between pulls (in combat it steps aside)
+    groupbuff = {
+        { label = "Someone lacks it", when = "while anyone in your group lacks the buff", alpha = READY.alpha },
+        { label = "Everyone has it", when = "while everyone has the buff", alpha = COOLDOWN.alpha,
+          grey = COOLDOWN.grey, alphaTip = "0 hides it (the default): it shows only while someone lacks the buff." },
     },
 }
 
@@ -838,9 +846,10 @@ local ICON_SUB = {
         Visibility = { "Show & Hide", "Fade When" } },
     Position = { Mouse = { "Position", "Position" } },
     Text = { ["Duration Text"] = { "Text", "Duration" }, ["Stack & Charges"] = { "Text", "Stacks" },
-        ["Ammo Stack Text"] = { "Text", "Stacks" }, Keybind = { "Text", "Labels & Keybind" },
-        ["Label 1"] = { "Text", "Labels & Keybind" }, ["Label 2"] = { "Text", "Labels & Keybind" },
-        ["Label 3"] = { "Text", "Labels & Keybind" } },
+        ["Ammo Stack Text"] = { "Text", "Stacks" }, Keybind = { "Text", "Custom Text & Keybind" },
+        ["Label 1"] = { "Text", "Custom Text & Keybind" }, ["Label 2"] = { "Text", "Custom Text & Keybind" },
+        ["Label 3"] = { "Text", "Custom Text & Keybind" },
+        ["Labels & Keybind"] = { "Text", "Custom Text & Keybind" } },
 }
 -- a bar tab that went away: its rows' new tab and sub-tab
 ET.BAR_TAB_HOME = { Thresholds = { "Appearance", "Fill & Colors" }, ["Color Changes"] = { "Appearance", "Fill & Colors" },
@@ -946,7 +955,7 @@ for k, v in pairs(ET.BAR_TAB_HOME) do Options.RENAMED_BAR_TABS[k] = v[1] end
 -- for one version (Options.NewBadge), by strip.
 ET.BADGES = {
     icon = { ["Show & Hide"] = "tab:showhide", Glows = "tab:glows", Sounds = "tab:sounds" },
-    iconSub = { ["Labels & Keybind"] = "sub:labelskeybind" },
+    iconSub = { ["Custom Text & Keybind"] = "sub:labelskeybind" },
     bar = { ["Show & Hide"] = "bar:showhide" },
     barSub = { ["Size & Frame"] = "sub:sizeframe", ["Fill & Colors"] = "sub:fillcolors" },
     group = { Appearance = "grp:appearance", Tracking = "grp:tracking" },

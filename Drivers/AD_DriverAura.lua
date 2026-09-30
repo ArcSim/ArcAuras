@@ -16,8 +16,9 @@ NS.DriverAura = Driver
 -- retail 12.1.5) has the AuraContainer engine under a lower build number.
 local IS_121 = ((select(4, GetBuildInfo()) or 0) >= 120100)
     or (C_Secrets and C_Secrets.ShouldAurasBeSecret ~= nil)
+local FB_OK = UIParent.SetIsFrameBuffer ~= nil and UIParent.SetFlattensRenderLayers ~= nil
 
-local entries = {}        -- [iconId] = { rec, holder, subs={ {unit,key,container,harmful,frame} }, glows={ same }, parked, gen }
+local entries = {}        -- [iconId] = { rec, holder, subs={ {unit,key,container,harmful,frame,inStage} }, glows={ same }, parked, gen, stage, staged, erase, fbOn }
 local allContainers = {}  -- { {unit=, frame=} } for target-swap refresh
 local pendingCreate = {}  -- [iconId] = true, deferred while auras are secret
 local combatQueue = {}    -- [entry] = parked flag, filter edits queued in combat
@@ -48,12 +49,22 @@ local function HolderPx(entry)
     return px
 end
 
--- True when a visible missing look sits under the button, which decides the
--- plate; the editor preview uses it too. Raw settings, so the preview's alpha
--- floor cannot add a plate the live icon would not have.
+-- True when a visible missing look sits under the button; raw settings, so no preview alpha floor.
 function Driver.GhostShown(rec)
     return rec ~= nil and Store.Resolve(rec, "auraMissing", "showWhileMissing") ~= false
         and (Store.Resolve(rec, "auraMissing", "missingAlpha") or 1) > 0
+end
+
+function Driver.EraserAvailable() return FB_OK and IS_121 end
+
+-- True when the icon needs the eraser: only such an icon pays for a frame buffer.
+function Driver.NeedsEraser(rec)
+    if not (FB_OK and IS_121 and rec and rec.kind == "aura") then return false end
+    if not Driver.GhostShown(rec) then return false end
+    if Store.Resolve(rec, "appearance", "forceHideIcon") == true then return true end
+    if (Store.Resolve(rec, "auraActive", "activeAlpha") or 1) < 1 then return true end
+    -- a Missing glow or custom text can sit past the art, which covers only itself
+    return Factory.HasMissingGlow(rec) or Factory.HasMissingText(rec)
 end
 
 local function AuraButtonOpts(entry)
@@ -65,7 +76,7 @@ local function AuraButtonOpts(entry)
     -- a spell icon's overlay always has its cooldown under it: the plate
     -- keeps a dimmed aura look from showing the cooldown through
     local ghost = (rec ~= nil and rec.kind ~= "aura") or Driver.GhostShown(rec)
-    return { w = w, h = px, ghost = ghost }
+    return { w = w, h = px, ghost = ghost, erase = (entry and entry.erase) == true }
 end
 
 -- Tracking shape and filters
@@ -197,6 +208,21 @@ function Driver.GlowLaneOK(rec)
     return true
 end
 
+-- "While the aura is missing" needs the eraser and an aura icon with its own button.
+function Driver.MissingGlowOK(rec)
+    return FB_OK and Driver.GlowLaneOK(rec)
+end
+
+function Driver.InCombat() return inCombat end
+
+-- With the options window open, glows that wait for combat show, as the
+-- preview does, so they can be seen while editing.
+local function GlowsForCombat()
+    if inCombat then return true end
+    local E = NS.LayoutEngine
+    return E ~= nil and E.IsEditMode ~= nil and E.IsEditMode() == true
+end
+
 -- How many glows an aura icon has (glow 1 plus the numbered ones).
 local function GlowSlots()
     return (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1
@@ -211,6 +237,9 @@ local function GlowIDs(rec, slot)
     local suf = (slot > 1) and tostring(slot) or ""
     local R = function(k) return Store.Resolve(rec, "auraActive", k .. suf) end
     if R("activeGlow") ~= true then return nil end
+    -- a Missing or Always glow is the holder's, not a button's
+    local when = R("activeGlowWhen")
+    if when == "missing" or when == "both" then return nil end
     local ids = SpellIDList(rec.driver)
     local m, n = {}, 0
     local pick = tonumber(R("activeGlowFor")) or 0
@@ -331,12 +360,12 @@ local function ArmTargetSwapRefresh()
     end)
 end
 
-local function CreateIconContainer(unit)
+local function CreateIconContainer(unit, parent)
     if not IS_121 then return nil end
     if C_AddOns and C_AddOns.IsAddOnLoaded and not C_AddOns.IsAddOnLoaded("Blizzard_AuraContainer") then
         C_AddOns.LoadAddOn("Blizzard_AuraContainer")
     end
-    local c = CreateFrame("AuraContainer", nil, UIParent, "CustomAuraContainerTemplate")
+    local c = CreateFrame("AuraContainer", nil, parent or UIParent, "CustomAuraContainerTemplate")
     if not c or type(c.AddAuraSlot) ~= "function" then return nil end
     c:SetSize(1, 1)
     c:SetPoint("TOP", UIParent, "TOP", 0, -80)
@@ -347,6 +376,8 @@ local function CreateIconContainer(unit)
     if unit ~= "player" then ArmTargetSwapRefresh() end
     return c
 end
+-- Exported: a group buff's layers hold one per member (Drivers\AD_DriverGroupBuff.lua).
+Driver.CreateIconContainer = CreateIconContainer
 
 -- Button wiring. Runs from initializeFrame, the always-legal write window.
 -- The engine creates a slot's button once and keeps it, so an edit made while
@@ -355,6 +386,13 @@ end
 local function WireButton(btn)
     if btn._adWired then return end
     btn._adWired = true
+
+    -- Shown only while the stage buffers (StyleAuraButton, opts.erase).
+    local eraser = btn:CreateTexture(nil, "BACKGROUND", nil, -8)
+    eraser:SetColorTexture(0, 0, 0, 0)
+    eraser:SetBlendMode("DISABLE")
+    eraser:Hide()
+    btn._adEraser = eraser
 
     -- Opaque plate: a dimmed active icon reads dimmed, not blended with the
     -- ghost. It follows parent alpha, since the container carries the icon's
@@ -418,7 +456,8 @@ end
 -- Exported: aura group rows wire their engine buttons with the same recipe.
 Driver.WireButton = WireButton
 
--- Ladder over the holder (its border is +2): button +3, swipe +4, texts +5.
+-- Ladder over the holder (Factory.AURA_LADDER: the missing look's border and
+-- labels +1, its glows +2): button +3, swipe +4, texts +5.
 -- Anchored two-point, never reparented; re-asserted because holder levels move
 -- on reparenting and children do not follow a parent's SetFrameLevel. `lift`
 -- adds one for a spell overlay, leaving +3 for the spell's charge count.
@@ -426,7 +465,7 @@ local function AnchorButton(b, holder, lift)
     b:ClearAllPoints()
     b:SetPoint("TOPLEFT", holder, "TOPLEFT", 0, 0)
     b:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", 0, 0)
-    local lvl = holder:GetFrameLevel() + 3 + (lift or 0)
+    local lvl = holder:GetFrameLevel() + Factory.AURA_LADDER.button + (lift or 0)
     b:SetFrameStrata(holder:GetFrameStrata())
     b:SetFrameLevel(lvl)
     -- A plain copy for the glow host's level: a read off the button can be
@@ -437,6 +476,80 @@ local function AnchorButton(b, holder, lift)
 end
 -- Exported: the editor preview's stand-in button takes the same ladder.
 Driver.AnchorButton = AnchorButton
+
+-- The stage
+-- Containers are born in the stage: the game will not move one while auras are secret.
+
+local function StageLocked(st)
+    if not InCombatLockdown() then return false end
+    local prot = st.IsProtected and st:IsProtected()
+    if issecretvalue and issecretvalue(prot) then return true end
+    return prot == true
+end
+
+local function EnsureStage(entry, rec)
+    if entry.stage then return entry.stage end
+    if not (FB_OK and rec and rec.kind == "aura") then return nil end
+    local st = CreateFrame("Frame", nil, UIParent)
+    st:SetSize(1, 1)
+    st:SetPoint("TOP", UIParent, "TOP", 0, -80)
+    st:SetFlattensRenderLayers(true)
+    -- empty until an attach puts the missing look on it
+    st:SetAlpha(0)
+    entry.stage = st
+    return st
+end
+
+local function AnchorStage(entry)
+    local st, holder = entry.stage, entry.holder
+    if not (st and holder) then return true end
+    if StageLocked(st) then return false end
+    st:ClearAllPoints()
+    st:SetPoint("TOPLEFT", holder, "TOPLEFT", 0, 0)
+    st:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", 0, 0)
+    st:SetFrameStrata(holder:GetFrameStrata())
+    st:SetFrameLevel(holder:GetFrameLevel())
+    return true
+end
+
+-- Attached, the missing look rides the stage; detached, it goes home for the editor preview.
+local function StageLook(entry, on)
+    local f = entry.holder
+    if not (f and entry.stage) then return end
+    if on and not entry.staged and entry.rec and entry.rec.kind == "aura" then
+        Factory.StageMissingLook(f, entry.stage)
+        entry.staged = true
+    elseif not on and entry.staged then
+        Factory.StageMissingLook(f, nil)
+        entry.staged = false
+    end
+end
+
+-- Buffer on before any eraser shows, off only after every button dropped it (DropBuffer).
+local function BufferFor(entry, want)
+    local st = entry.stage
+    if want and not entry.fbOn and not StageLocked(st) then
+        st:SetIsFrameBuffer(true)
+        entry.fbOn = true
+    end
+    entry.erase = want and entry.fbOn == true
+end
+
+local function SyncEraser(entry)
+    if not (entry.stage and entry.staged) then
+        entry.erase = false
+        return
+    end
+    BufferFor(entry, Driver.NeedsEraser(entry.rec))
+end
+
+local function DropBuffer(entry)
+    if entry.fbOn and not entry.erase
+        and entry.stage and not StageLocked(entry.stage) then
+        entry.stage:SetIsFrameBuffer(false)
+        entry.fbOn = false
+    end
+end
 
 -- Slots
 -- One container per icon and lane, each given one AddAuraSlot at creation,
@@ -516,8 +629,11 @@ local function EnsureSlots(iconId, rec, startParked)
     if AnyGlowWanted(rec) then EnsureGlowSlots(iconId, entry, startParked) end
 
     local d = ShapeFor(rec) or {}
+    -- Buttons know at birth whether they erase: in an instance they are never restyled.
+    local stage = (rec.kind == "aura") and EnsureStage(entry, rec) or nil
+    if stage then BufferFor(entry, Driver.NeedsEraser(rec)) end
     for _, lane in ipairs(LanesFor(d)) do
-        local c = CreateIconContainer(lane.unit)
+        local c = CreateIconContainer(lane.unit, stage)
         if c then
             -- generation-suffixed key: slots can never be removed; a rewire
             -- parks the old keys and adds fresh ones
@@ -526,7 +642,7 @@ local function EnsureSlots(iconId, rec, startParked)
             -- Parked creation bakes in the never-matching id.
             local ids = startParked and { [0] = true } or IncludeMap(d)
             local sub = { unit = lane.unit, key = key, container = c, harmful = lane.harmful,
-                filterSig = FilterSig(ids) }
+                filterSig = FilterSig(ids), inStage = stage ~= nil }
             entry.subs[#entry.subs + 1] = sub
             c:AddAuraSlot(key, FilterForLane(d, lane), {
                 maxFrameCount = 1,
@@ -606,21 +722,30 @@ local function IsAccessible(b)
 end
 Driver.IsAccessible = IsAccessible
 
--- Alpha mirror: the engine button is parented to its container, not the
--- holder it is anchored to, so holder, group and layout fades never reach it.
--- The container is ours: it takes the holder's effective alpha.
+-- The button hangs off its container, not the holder, so the container mirrors the holder's alpha.
 local function SyncEntryAlpha(entry)
     local holder = entry.holder
     if not holder then return end
-    local a = holder.GetEffectiveAlpha and holder:GetEffectiveAlpha() or holder:GetAlpha() or 1
+    local ea = holder.GetEffectiveAlpha and holder:GetEffectiveAlpha() or holder:GetAlpha() or 1
     -- A secret alpha reads as 1: Detach zeroes the container, so skipping here
     -- would strand it invisible.
-    if issecretvalue and issecretvalue(a) then a = 1 end
+    if issecretvalue and issecretvalue(ea) then ea = 1 end
     -- Play on screen draws a copy over this icon; the real button stays out.
+    local a = ea
     local scr = NS.IconScreen
     if scr and entry.rec and scr.On(entry.rec.id) then a = 0 end
+    if entry.stage then
+        -- not a holder child: a hidden holder hides its missing look here
+        local vis = holder:IsVisible()
+        if issecretvalue and issecretvalue(vis) then vis = true end
+        entry.stage:SetAlpha((vis and entry.staged) and ea or 0)
+    end
     for _, sub in ipairs(entry.subs) do
-        sub.container:SetAlpha(a)
+        if sub.inStage then
+            sub.container:SetAlpha(a > 0 and 1 or 0)
+        else
+            sub.container:SetAlpha(a)
+        end
     end
     -- the glow lanes: the icon's alpha while their glow wants them, and a
     -- combat-only glow also waits for combat
@@ -630,7 +755,7 @@ local function SyncEntryAlpha(entry)
         local ga = a
         if not GlowIDs(rec, g.slot) then
             ga = 0
-        elseif not inCombat
+        elseif not GlowsForCombat()
             and Store.Resolve(rec, "auraActive", "activeGlowCombatOnly" .. suf) == true then
             ga = 0
         end
@@ -648,9 +773,25 @@ end
 
 -- Re-style live buttons where accessible; new ones style in initializeFrame.
 local function RestyleEntry(entry)
+    -- locked: something this pass could not reach, so the buffer stays on
+    local locked = false
+    if entry.stage then
+        if AnchorStage(entry) then
+            StageLook(entry, true)
+        else
+            entry.stylePending = true
+            locked = true
+        end
+        SyncEraser(entry)
+    end
     local px = HolderPx(entry)
     local opts = AuraButtonOpts(entry)
     opts.glowElsewhere = GlowMoved(entry)
+    -- the Missing and Always glows are the holder's: our frames, never locked
+    if entry.holder and entry.rec and entry.rec.kind == "aura" then
+        Factory.ApplyMissingGlows(entry.holder, entry.rec, opts.w, opts.h, GlowsForCombat())
+        Factory.ApplyAlwaysGlows(entry.holder, entry.rec, opts.w, opts.h, GlowsForCombat())
+    end
     for _, sub in ipairs(entry.subs) do
         local b = sub.frame
         if b then
@@ -659,6 +800,7 @@ local function RestyleEntry(entry)
                 Factory.StyleAuraButton(b, entry.rec, px, opts)
             else
                 entry.stylePending = true
+                locked = true
             end
         end
     end
@@ -673,6 +815,21 @@ local function RestyleEntry(entry)
             end
         end
     end
+    if not locked then DropBuffer(entry) end
+end
+
+-- A hidden holder hides the missing look it lent the stage; shown again, it takes its fade back.
+local function HookHolder(f)
+    if f._adStageHooked then return end
+    f._adStageHooked = true
+    f:HookScript("OnHide", function(self)
+        local e = entries[self._adRecId]
+        if e and e.stage and e.holder == self then e.stage:SetAlpha(0) end
+    end)
+    f:HookScript("OnShow", function(self)
+        local e = entries[self._adRecId]
+        if e and e.stage and e.holder == self and not e.off then SyncEntryAlpha(e) end
+    end)
 end
 
 -- Driver API, reached through NS.DriverCooldown's Attach and Detach
@@ -684,6 +841,8 @@ local function AttachEntry(rec, f, d)
         entry = { rec = rec, subs = {}, parked = false, gen = 0 }
         entries[rec.id] = entry
     end
+    -- a new holder for this record: the old one takes its missing look back
+    if entry.holder and entry.holder ~= f then StageLook(entry, false) end
     entry.rec = rec
     entry.holder = f
     entry.off = nil
@@ -716,9 +875,22 @@ local function AttachEntry(rec, f, d)
         end
     end
 
-    if #entry.subs == 0 then
-        EnsureSlots(rec.id, rec, false)
-    else
+    local fresh = #entry.subs == 0
+    if fresh then EnsureSlots(rec.id, rec, false) end
+    -- Our own frames, so this runs in combat too.
+    if entry.stage and rec.kind == "aura" then
+        HookHolder(f)
+        if AnchorStage(entry) then
+            StageLook(entry, true)
+        else
+            entry.stylePending = true
+        end
+        SyncEraser(entry)
+    elseif entry.staged then
+        StageLook(entry, false)
+    end
+
+    if not fresh then
         -- a glow set after the slots were made gets its lane now
         if AnyGlowWanted(rec) then EnsureGlowSlots(rec.id, entry, false) end
         -- retarget/reuse: re-push filters (spell ID and caster edits are pure
@@ -769,6 +941,9 @@ function Driver.Detach(id)
         for _, sub in ipairs(entry.subs) do sub.container:SetAlpha(0) end
         for _, g in ipairs(entry.glows or {}) do g.container:SetAlpha(0) end
     end
+    -- the missing look goes home for the editor preview; the stage empties
+    StageLook(entry, false)
+    if entry.stage then entry.stage:SetAlpha(0) end
     if entry.holder then Factory.StopAuraGlow(entry.holder) end
 end
 
@@ -854,6 +1029,12 @@ local function OnCombatEdge(state)
         if entry.glows and #entry.glows > 0 and entry.holder and not entry.off
             and entry.holder:IsShown() then
             SyncEntryAlpha(entry)
+        end
+        -- the holder's glows are our own frames: they follow here directly
+        if entry.holder and not entry.off and entry.rec and entry.rec.kind == "aura" then
+            local o = AuraButtonOpts(entry)
+            Factory.ApplyMissingGlows(entry.holder, entry.rec, o.w, o.h, GlowsForCombat())
+            Factory.ApplyAlwaysGlows(entry.holder, entry.rec, o.w, o.h, GlowsForCombat())
         end
     end
 end

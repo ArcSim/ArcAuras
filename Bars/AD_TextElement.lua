@@ -1,8 +1,9 @@
 -- Text elements (barKind "text"): one line of text in a box, fed by the source
 -- the player picks (words, power, health, combo points, ammo, pet happiness,
 -- the target's range band, the clock, a spell's cooldown or charges, an aura's
--- time or stacks on a unit, rules of its own, another custom item's value), on
--- the bars runtime's shell through Bars.RegisterKind and Bars.Kit.
+-- time or stacks on a unit, rules of its own, another custom item's value, or
+-- custom words on a spell's or an aura's state), on the bars runtime's shell
+-- through Bars.RegisterKind and Bars.Kit.
 -- Every value the game keeps secret goes straight into a text sink (SetText,
 -- SetFormattedText, C_StringUtil's joins, a Cooldown's own countdown, an aura
 -- button's text bindings); nothing here reads, compares or converts one.
@@ -24,6 +25,8 @@ TX.TICK = 0.1
 -- driver's fallback: the GCD spell's own numbers are dead on Forever)
 TX.GCD_RETRY = 0.3
 TX.MOOD = { [1] = "Unhappy", [2] = "Content", [3] = "Happy" }
+-- the missing words' eraser reaches this far past the box (outline, shadow)
+TX.ERASE_PAD = 4
 TX.UNITS = { "player", "target", "focus", "pet" }
 TX.fonts = {}      -- [name] = Font, one per element
 TX.armed = {}      -- [event] = true while registered under TX.KEY
@@ -36,6 +39,11 @@ local COUNTED = { combo = true, ammo = true, spellCharges = true }
 local TIMED = { spellCd = true, auraTime = true }
 local AURA = { auraTime = true, auraStacks = true }
 local CUSTOM = { rules = true, custom = true }
+-- words, not a value: typed, or custom words on a spell's or an aura's state
+local WORDS = { static = true, spellText = true, auraText = true }
+local SPELL_WHEN, AURA_WHEN = {}, {}
+for _, w in ipairs(Schema.TEXT_SPELL_WHEN or {}) do SPELL_WHEN[w] = true end
+for _, w in ipairs(Schema.TEXT_AURA_WHEN or {}) do AURA_WHEN[w] = true end
 
 local function IsSecret(v)
     return issecretvalue ~= nil and issecretvalue(v)
@@ -70,6 +78,59 @@ end
 
 function TX.AuraSource(rec)
     return AURA[TX.Source(rec)] == true
+end
+
+-- The prefix and suffix rows: every source but a spell's or an aura's own
+-- words (typed words keep them, as they always had them).
+function TX.ValueSource(rec)
+    local s = TX.Source(rec)
+    return s ~= "spellText" and s ~= "auraText"
+end
+
+function TX.Words(rec)
+    return rec.driver.text or ""
+end
+
+-- The state custom words show on: the states the icons glow on. A spell's
+-- defaults to ready, an aura's to while it is up.
+function TX.When(rec)
+    local s, w = TX.Source(rec), rec.driver.when
+    if s == "spellText" then return SPELL_WHEN[w] and w or "ready" end
+    if s == "auraText" then return AURA_WHEN[w] and w or "up" end
+    return nil
+end
+
+-- How an aura's words show; "none" where missing words could not hide and would mislead.
+function TX.AuraWordsMode(rec)
+    local w = TX.When(rec)
+    if w == "missing" then
+        local DA = NS.DriverAura
+        return (DA and DA.EraserAvailable and DA.EraserAvailable()) and "missing" or "none"
+    end
+    return w
+end
+
+-- True when the element needs an aura slot: an aura's time or stacks, or its
+-- words on any state but Always.
+function TX.SlotSource(rec)
+    local s = TX.Source(rec)
+    if AURA[s] then return true end
+    if s ~= "auraText" then return false end
+    local m = TX.AuraWordsMode(rec)
+    return m == "up" or m == "time" or m == "missing"
+end
+
+-- The share of the aura's time left the words show under, as the aura glows
+-- reckon it: a percent, or seconds against the aura's length typed in (nil =
+-- no length, so no gate: the words show while the aura is up).
+function TX.GateFrac(rec)
+    local d = rec.driver
+    if d.timeUnit == "sec" then
+        local len = tonumber(d.auraLen)
+        if not (len and len > 0) then return nil end
+        return math.min(1, (tonumber(d.timeSec) or 5) / len)
+    end
+    return (tonumber(d.timePct) or 30) / 100
 end
 
 -- Text style
@@ -428,7 +489,12 @@ function TX.RetryAfterGCD(e)
         local cur = K.live[id]
         if not cur then return end
         cur.txGcdQueued = nil
-        if TX.Source(cur.rec) == "spellCd" then TX.FeedCooldown(cur) end
+        local s = TX.Source(cur.rec)
+        if s == "spellCd" then
+            TX.FeedCooldown(cur)
+        elseif s == "spellText" then
+            TX.PaintSpellText(cur)
+        end
     end)
 end
 
@@ -479,6 +545,113 @@ function TX.PaintCharges(e)
     TX.Number(e, ch.currentCharges)
 end
 
+-- A spell's words on one of its states. Every read is plain in combat: a
+-- hidden cooldown's IsShown (the GCD kept out, a charge spell on cooldown only
+-- with no charge left), IsSpellUsable, and the proc overlay's events.
+function TX.EnsureShadow(e)
+    if e.txShadow then return e.txShadow end
+    local sh = K.MakeShadow()
+    local id = e.rec.id
+    sh:SetScript("OnCooldownDone", function()
+        local cur = K.live[id]
+        if not (cur and TX.Source(cur.rec) == "spellText") then return end
+        if TX.When(cur.rec) == "usable" then TX.ReadUsable(cur) end
+        TX.SyncHidden(cur)
+    end)
+    e.txShadow = sh
+    return sh
+end
+
+function TX.FeedShadow(e)
+    local sh = TX.EnsureShadow(e)
+    local sid = TX.EffSpell(e.rec)
+    if not (sid and C_Spell and C_Spell.GetSpellCooldownDuration) then
+        sh:Clear()
+        return
+    end
+    local info = C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(sid)
+    local onGcd = info and info.isOnGCD
+    if IsSecret(onGcd) then onGcd = nil end
+    local en = info and info.isEnabled
+    if IsSecret(en) then en = nil end
+    local DC = NS.DriverCooldown
+    local wandLock = DC ~= nil and DC.WandLocked ~= nil and DC.WandLocked() and not DC.IsWandShot(sid)
+    if wandLock and sh:IsShown() == true then return end
+    local dur = C_Spell.GetSpellCooldownDuration(sid, true)
+    if dur and onGcd ~= true and not wandLock and en ~= false then
+        sh:SetCooldownFromDurationObject(dur, true)
+    else
+        sh:Clear()
+    end
+    if onGcd == true and not wandLock then TX.RetryAfterGCD(e) end
+end
+
+-- A secret answer keeps the last one.
+function TX.ReadUsable(e)
+    local sid = TX.EffSpell(e.rec)
+    if not (sid and C_Spell and C_Spell.IsSpellUsable) then return end
+    local u = C_Spell.IsSpellUsable(sid)
+    if IsSecret(u) then return end
+    e.txUsable = (u == true)
+end
+
+-- The tracked spell, the rank or form it resolves to, or another rank of it
+-- (the same name): a proc overlay can name any of them.
+function TX.SameSpell(rec, sid)
+    if type(sid) ~= "number" then return false end
+    local d = rec.driver
+    if sid == d.spellID or sid == TX.EffSpell(rec) then return true end
+    if not (d.spellID and C_Spell and C_Spell.GetSpellName) then return false end
+    local a, b = C_Spell.GetSpellName(sid), C_Spell.GetSpellName(d.spellID)
+    if IsSecret(a) or IsSecret(b) then return false end
+    return type(a) == "string" and a ~= "" and a == b
+end
+
+-- The first answer; the overlay events keep it after.
+function TX.ReadProc(e)
+    local O = C_SpellActivationOverlay
+    if not (O and O.IsSpellOverlayed) then return end
+    local on = false
+    local eff, base = TX.EffSpell(e.rec), tonumber(e.rec.driver.spellID)
+    for _, sid in ipairs({ eff or base, base or eff }) do
+        local v = O.IsSpellOverlayed(sid)
+        if not IsSecret(v) and v == true then on = true end
+    end
+    e.txProc = on
+end
+
+function TX.OnProc(sid, on)
+    if IsSecret(sid) then return end
+    K.ForEach("text", function(e)
+        local rec = e.rec
+        if TX.Source(rec) == "spellText" and TX.When(rec) == "proc" and TX.SameSpell(rec, sid) then
+            e.txProc = on
+            TX.SyncHidden(e)
+        end
+    end)
+end
+
+-- Usable is the usable glow's: castable, the resources there and the real
+-- cooldown back.
+function TX.SpellOn(e)
+    local w = TX.When(e.rec)
+    if w == "always" then return true end
+    if w == "proc" then return e.txProc == true end
+    local cd = e.txShadow ~= nil and e.txShadow:IsShown() == true
+    if w == "cooldown" then return cd end
+    if w == "usable" then return e.txUsable == true and not cd end
+    return not cd
+end
+
+function TX.PaintSpellText(e)
+    local w = TX.When(e.rec)
+    if w ~= "always" and w ~= "proc" then TX.FeedShadow(e) end
+    if w == "usable" then TX.ReadUsable(e) end
+    if w == "proc" and e.txProc == nil then TX.ReadProc(e) end
+    e.txFS:SetText(TX.Words(e.rec))
+    TX.SyncHidden(e)
+end
+
 -- A rule-driven value: this element's own state in the custom engine, or the
 -- custom item it points at. Timers are our own GetTime numbers.
 function TX.CustomState(e)
@@ -487,6 +660,39 @@ function TX.CustomState(e)
     local rec = e.rec
     local id = (TX.Source(rec) == "rules") and rec.id or rec.driver.srcId
     return id and CU.Get(id) or nil
+end
+
+-- Its own triggers (the rules on its Triggers tab) decide when it shows, per
+-- its Show while. Always, the default, shows it all the time, and so does a
+-- text with no rules yet.
+function TX.HasRules(rec)
+    local r = rec and rec.driver and rec.driver.rules
+    return type(r) == "table" and #r > 0
+end
+
+function TX.TriggerHidden(e)
+    local rec = e.rec
+    local w = rec.driver.showWhile
+    if w == nil or w == "always" or not TX.HasRules(rec) then return false end
+    local CU = NS.DriverCustom
+    local st = CU and CU.Get(rec.id)
+    if not st then return false end
+    return not CU.Active(st)
+end
+
+-- Hidden by state: a spell's words off their state, or its own triggers. Aura words need no flag.
+function TX.StateHidden(e)
+    local rec = e.rec
+    if TX.Source(rec) == "spellText" and TX.EffSpell(rec) and not TX.SpellOn(e) then return true end
+    return TX.TriggerHidden(e)
+end
+
+function TX.SyncHidden(e)
+    local h = TX.StateHidden(e)
+    if (e.stateHidden == true) ~= h then
+        e.stateHidden = h
+        K.ApplyVisibility(e)
+    end
 end
 
 function TX.PaintCustom(e)
@@ -539,6 +745,7 @@ end
 function TX.OnCustomPaint(st)
     K.ForEach("text", function(e)
         if CUSTOM[TX.Source(e.rec)] and TX.CustomState(e) == st then TX.PaintCustom(e) end
+        if e.rec.id == st.id then TX.SyncHidden(e) end
     end)
     TX.SyncTicker()
 end
@@ -548,14 +755,23 @@ end
 -- count never reach Lua. The recipe is the aura bars' (Bars\AD_Bars.lua).
 function TX.AuraSig(e)
     local DA = NS.DriverAura
-    local d = e.rec.driver
+    local rec = e.rec
+    local d = rec.driver
     local unit, harmful = DA.ShapeOf(d)
     local filter = DA.FilterForLane(d, { harmful = harmful })
     local ids = DA.IncludeMap(d)
-    local which = TX.Source(e.rec)
-    local fmt = (which == "auraTime") and TX.TimerFormatter(e, "down") or TX.CountFormatter(e)
-    -- the ids stay out: they are data an edit re-pushes on the live slot
-    local sig = table.concat({ unit, tostring(harmful), filter, which, tostring(fmt) }, "|")
+    local which = TX.Source(rec)
+    local fmt, how
+    if which == "auraTime" then
+        fmt = TX.TimerFormatter(e, "down")
+    elseif which == "auraStacks" then
+        fmt = TX.CountFormatter(e)
+    else
+        how = TX.AuraWordsMode(rec)
+    end
+    -- the ids, the words and the gate's share stay out: an edit reaches the
+    -- live slot with them
+    local sig = table.concat({ unit, tostring(harmful), filter, which, tostring(fmt), tostring(how) }, "|")
     return sig, unit, filter, ids, fmt
 end
 
@@ -564,6 +780,75 @@ function TX.ParkAura(sub)
         sub.container:SetAuraSlotCandidateFilters(sub.key, { includeSpellIDs = { [0] = true } })
     end
     sub.container:Hide()
+    -- missing words with no eraser running would stay up
+    if sub.stage then sub.stage:Hide() end
+end
+
+-- The box in plain numbers: the record's size, never a read of the shell.
+function TX.BoxSize(rec)
+    local sc = R(rec, "size", "scale") or 1
+    return (R(rec, "size", "width") or 140) * sc, (R(rec, "size", "height") or 24) * sc
+end
+
+-- Words under a share of the aura's time left: a clip frame on the fill of a
+-- hidden bar the engine fills with the time gone, the aura glows' gate
+-- (Core\AD_Factory.lua ApplyTimeGate), so the time never reaches Lua. The fill
+-- stays short of the words until the share is crossed, then covers them.
+function TX.GateClip(b, th)
+    local gb = CreateFrame("StatusBar", nil, b)
+    gb:SetStatusBarTexture(K.WHITE)
+    gb:SetStatusBarColor(1, 1, 1, 0)
+    gb:EnableMouse(false)
+    b:SetDurationBar(gb, {
+        interpolation = Enum.StatusBarInterpolation.Immediate,
+        direction = Enum.StatusBarTimerDirection.ElapsedTime,
+    })
+    local fill = gb:GetStatusBarTexture()
+    local clip = CreateFrame("Frame", nil, th)
+    clip:SetClipsChildren(true)
+    clip:SetPoint("TOPLEFT", fill, "TOPLEFT", 0, 0)
+    clip:SetPoint("BOTTOMRIGHT", fill, "BOTTOMRIGHT", 0, 0)
+    return gb, clip
+end
+
+-- The gate's geometry for the share now set (an edit moves it on the live
+-- slot, never a new one). The range g .. g + 0.0002 flips the fill; with
+-- L = gw / 0.0005 and the -g * L shift, a range the engine resets to 0 .. 1
+-- still crosses the words within 0.05% of the aura's life. No length typed in
+-- for seconds: open at once, the words show while the aura is up.
+function TX.PlaceGate(sub, rec)
+    local gb, b = sub.gateBar, sub.button
+    if not (gb and b) then return end
+    local W, H = TX.BoxSize(rec)
+    local E = math.max(W, H)
+    local gw, gh = W + 2 * E, H + 2 * E
+    local L = math.min(120000, gw / 0.0005)
+    local g = 1 - (TX.GateFrac(rec) or 1)
+    gb:ClearAllPoints()
+    gb:SetSize(L, gh)
+    gb:SetPoint("LEFT", b, "CENTER", -gw / 2 - g * L, 0)
+    gb:SetMinMaxValues(g, g + 0.0002)
+end
+
+local function GateReady(b)
+    return b.SetDurationBar ~= nil and Enum ~= nil and Enum.StatusBarTimerDirection ~= nil
+        and Enum.StatusBarInterpolation ~= nil
+end
+
+-- The button's string is written on an accessible pass only; the next one catches up.
+function TX.PaintAuraText(e)
+    local rec = e.rec
+    local words = TX.Words(rec)
+    if not TX.SlotSource(rec) then
+        e.txFS:SetText((TX.AuraWordsMode(rec) == "always") and words or "")
+        return
+    end
+    e.txFS:SetText("")
+    local sub = e.txAura
+    if not sub then return end
+    if sub.missFS then sub.missFS:SetText(words) end
+    local DA = NS.DriverAura
+    if sub.fs and (not (DA and DA.IsAccessible) or DA.IsAccessible(sub.button)) then sub.fs:SetText(words) end
 end
 
 -- Creates the slot once per recipe; false means retry on a later rebuild
@@ -595,10 +880,28 @@ function TX.EnsureAura(e)
         C_AddOns.LoadAddOn("Blizzard_AuraContainer")
     end
     local shell = e.shell
+    local which = TX.Source(rec)
+    local mode = (which == "auraText") and TX.AuraWordsMode(rec) or nil
     -- parented to the shell: the holder's opacity and conditions reach the
     -- engine-drawn text through it
-    local c = CreateFrame("AuraContainer", nil, shell, "CustomAuraContainerTemplate")
-    if not c or type(c.AddAuraSlot) ~= "function" then return false end
+    local parent, stage, missFS = shell, nil, nil
+    if mode == "missing" then
+        -- words and container share one stage, so the button's eraser reaches the words
+        stage = CreateFrame("Frame", nil, shell)
+        stage:SetAllPoints(shell)
+        stage:SetFrameLevel(shell.overlay:GetFrameLevel() + 2)
+        stage:SetFlattensRenderLayers(true)
+        stage:SetIsFrameBuffer(true)
+        missFS = stage:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        missFS:SetWordWrap(false)
+        missFS:SetAllPoints(shell)
+        parent = stage
+    end
+    local c = CreateFrame("AuraContainer", nil, parent, "CustomAuraContainerTemplate")
+    if not c or type(c.AddAuraSlot) ~= "function" then
+        if stage then stage:Hide() end
+        return false
+    end
     c:SetSize(1, 1)
     c:SetPoint("TOPLEFT", shell, "TOPLEFT", 0, 0)
     c:SetUnit(unit)
@@ -606,8 +909,14 @@ function TX.EnsureAura(e)
     c:Show()
     e.txAuraGen = (e.txAuraGen or 0) + 1
     local key = "adtext" .. rec.id .. "_g" .. e.txAuraGen
-    sub = { container = c, key = key, sig = sig, unit = unit, which = TX.Source(rec), filterSig = DA.FilterSig(ids) }
+    sub = { container = c, key = key, sig = sig, unit = unit, which = which, mode = mode,
+        stage = stage, missFS = missFS, filterSig = DA.FilterSig(ids) }
     e.txAura = sub
+    if missFS then
+        TX.StyleText(e, missFS)
+        missFS:SetText(TX.Words(rec))
+        if TX.StandIn(e) then stage:SetAlpha(0) end
+    end
     local id = rec.id
     c:AddAuraSlot(key, filter, {
         maxFrameCount = 1,
@@ -617,23 +926,44 @@ function TX.EnsureAura(e)
             b:EnableMouse(false)
             b:ClearAllPoints()
             b:SetAllPoints(cur.shell)
+            sub.button = b
+            if sub.mode == "missing" then
+                -- born erasing: an engine button takes no restyle in an instance
+                local pad = TX.ERASE_PAD
+                local er = b:CreateTexture(nil, "BACKGROUND", nil, -8)
+                er:SetColorTexture(0, 0, 0, 0)
+                er:SetBlendMode("DISABLE")
+                er:SetPoint("TOPLEFT", cur.shell, "TOPLEFT", -pad, pad)
+                er:SetPoint("BOTTOMRIGHT", cur.shell, "BOTTOMRIGHT", pad, -pad)
+                return
+            end
             -- the string rides a host on the button (the engine takes only a
             -- descendant of it), above the shell's overlay
             local th = CreateFrame("Frame", nil, b)
             th:SetAllPoints(cur.shell)
             th:SetFrameLevel(cur.shell.overlay:GetFrameLevel() + 2)
-            local fs = th:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            sub.host = th
+            -- born put away while a sample stands in (edit mode)
+            if TX.StandIn(cur) then th:SetAlpha(0) end
+            local holder = th
+            if sub.mode == "time" and GateReady(b) then
+                sub.gateBar, holder = TX.GateClip(b, th)
+                TX.PlaceGate(sub, cur.rec)
+            end
+            local fs = holder:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
             fs:SetWordWrap(false)
             fs:SetAllPoints(th)
-            sub.button, sub.fs = b, fs
+            sub.fs = fs
             -- the font before the binding: the binding writes text at once
             TX.StyleText(cur, fs)
             if sub.which == "auraTime" then
                 b:SetDurationText(fs, fmt and { textFormatter = fmt } or {})
-            else
+            elseif sub.which == "auraStacks" then
                 local o = { minApplications = 1 }
                 if fmt then o.formatter = fmt end
                 b:SetApplicationCount(fs, o)
+            else
+                fs:SetText(TX.Words(cur.rec))
             end
         end,
         candidateFilters = { includeSpellIDs = ids },
@@ -657,13 +987,35 @@ TX.PAINT = {
     static = TX.PaintStatic, power = TX.PaintPower, health = TX.PaintHealth, combo = TX.PaintCombo,
     ammo = TX.PaintAmmo, petMood = TX.PaintMood, range = TX.PaintRange, clock = TX.PaintClock,
     spellCd = TX.FeedCooldown, spellCharges = TX.PaintCharges, rules = TX.PaintCustom,
-    custom = TX.PaintCustom,
+    custom = TX.PaintCustom, spellText = TX.PaintSpellText, auraText = TX.PaintAuraText,
 }
+
+-- While the options are open a text never vanishes: a sample stands in for live values and words.
+local STAND_VALUE = { spellCd = true, spellCharges = true, auraTime = true, auraStacks = true }
+function TX.StandIn(e)
+    if e.isPreview or not K.IsEditMode() then return false end
+    local rec = e.rec
+    local s = TX.Source(rec)
+    if STAND_VALUE[s] or TX.SlotSource(rec) then return true end
+    if s == "spellText" or s == "auraText" then
+        return TX.Words(rec) == "" or TX.AuraWordsMode(rec) == "none"
+    end
+    return false
+end
 
 function TX.Paint(e)
     if e.isPreview then return end
+    if TX.StandIn(e) then
+        TX.PreviewApply(e)
+        return
+    end
     local fn = TX.PAINT[TX.Source(e.rec)]
     if fn then fn(e) end
+    -- a plain value that came out blank (no ammo, no target) stands in too
+    if K.IsEditMode() and e.txFS:IsShown() then
+        local t = e.txFS:GetText()
+        if not IsSecret(t) and (t == nil or t == "") then TX.PreviewApply(e) end
+    end
 end
 
 -- Events: each source arms only what it needs, while an element with that
@@ -698,6 +1050,16 @@ local function HealthPred(unit)
     end
 end
 
+-- the sources that read a spell's cooldown
+local SPELL_READ = { spellCd = true, spellCharges = true, spellText = true }
+local function SpellPred(e)
+    return SPELL_READ[TX.Source(e.rec)] == true
+end
+
+local function UsablePred(e)
+    return TX.Source(e.rec) == "spellText" and TX.When(e.rec) == "usable"
+end
+
 TX.HANDLERS = {
     UNIT_POWER_FREQUENT = function(_, unit, token)
         if unit ~= "player" then return end
@@ -729,7 +1091,7 @@ TX.HANDLERS = {
     PLAYER_TARGET_CHANGED = function()
         PaintWhere("target", function(e)
             local s = TX.Source(e.rec)
-            return (s == "health" and (e.rec.driver.unit or "player") == "target") or s == "combo"
+            return (s == "health" and (e.rec.driver.unit or "player") == "target") or s == "combo" or UsablePred(e)
         end)
         TX.NudgeAuras("target")
     end,
@@ -752,26 +1114,28 @@ TX.HANDLERS = {
     end,
     BAG_UPDATE_DELAYED = function() PaintWhere("ammo", SourceIs("ammo")) end,
     PLAYER_EQUIPMENT_CHANGED = function() PaintWhere("ammo", SourceIs("ammo")) end,
-    SPELL_UPDATE_COOLDOWN = function() PaintWhere("spell", function(e)
-        local s = TX.Source(e.rec)
-        return s == "spellCd" or s == "spellCharges"
-    end) end,
+    SPELL_UPDATE_COOLDOWN = function() PaintWhere("spell", SpellPred) end,
     -- a charge spell's countdown rides its recharge: both sources re-read
-    SPELL_UPDATE_CHARGES = function() PaintWhere("spell", function(e)
-        local s = TX.Source(e.rec)
-        return s == "spellCd" or s == "spellCharges"
-    end) end,
-    SPELLS_CHANGED = function() PaintWhere("spell", function(e)
-        local s = TX.Source(e.rec)
-        return s == "spellCd" or s == "spellCharges"
-    end) end,
+    SPELL_UPDATE_CHARGES = function() PaintWhere("spell", SpellPred) end,
+    SPELLS_CHANGED = function() PaintWhere("spell", SpellPred) end,
+    -- usability news comes in bursts: a frame at a time
+    SPELL_UPDATE_USABLE = function() PaintWhere("usable", UsablePred) end,
+    SPELL_ACTIVATION_OVERLAY_GLOW_SHOW = function(_, sid) TX.OnProc(sid, true) end,
+    SPELL_ACTIVATION_OVERLAY_GLOW_HIDE = function(_, sid) TX.OnProc(sid, false) end,
     -- your own cast lands its cooldown before SPELL_UPDATE_COOLDOWN inside a
     -- charge GCD: the elements on that spell re-read now
     UNIT_SPELLCAST_SUCCEEDED = function(_, unit, _, spellID)
-        if unit ~= "player" or IsSecret(spellID) then return end
+        if unit ~= "player" then return end
+        -- Forever: the first point on a new mob can come with no power event
+        -- (the count stays the same), and the cast fires before the count
+        -- updates: paint a frame later, and again for a late server update
+        if TX.comboCast then
+            PaintWhere("combo", SourceIs("combo"))
+            C_Timer.After(Bars.COMBO_LATE, function() PaintWhere("combo", SourceIs("combo")) end)
+        end
+        if IsSecret(spellID) then return end
         K.ForEach("text", function(e)
-            local s = TX.Source(e.rec)
-            if (s == "spellCd" or s == "spellCharges") and (e.rec.driver.spellID == spellID or TX.EffSpell(e.rec) == spellID) then
+            if SpellPred(e) and (e.rec.driver.spellID == spellID or TX.EffSpell(e.rec) == spellID) then
                 TX.Paint(e)
             end
         end)
@@ -793,7 +1157,9 @@ function TX.Needs()
             end
         elseif s == "combo" then
             n.UNIT_POWER_FREQUENT, n.UNIT_MAXPOWER = true, true
-            if NS.IsForever == true then n.PLAYER_TARGET_CHANGED = true end
+            if NS.IsForever == true then
+                n.PLAYER_TARGET_CHANGED, n.UNIT_SPELLCAST_SUCCEEDED, n.comboCast = true, true, true
+            end
         elseif s == "health" then
             n.UNIT_HEALTH, n.UNIT_MAXHEALTH = true, true
             local u = rec.driver.unit or "player"
@@ -804,10 +1170,15 @@ function TX.Needs()
             n.UNIT_INVENTORY_CHANGED, n.BAG_UPDATE_DELAYED, n.PLAYER_EQUIPMENT_CHANGED = true, true, true
         elseif s == "petMood" then
             n.UNIT_HAPPINESS, n.UNIT_PET = true, true
-        elseif s == "spellCd" or s == "spellCharges" then
+        elseif s == "spellCd" or s == "spellCharges" or (s == "spellText" and TX.When(rec) ~= "always") then
             n.SPELL_UPDATE_COOLDOWN, n.SPELL_UPDATE_CHARGES, n.SPELLS_CHANGED = true, true, true
             n.UNIT_SPELLCAST_SUCCEEDED = true
-        elseif AURA[s] then
+            local w = TX.When(rec)
+            if w == "usable" then n.SPELL_UPDATE_USABLE, n.PLAYER_TARGET_CHANGED = true, true end
+            if w == "proc" then
+                n.SPELL_ACTIVATION_OVERLAY_GLOW_SHOW, n.SPELL_ACTIVATION_OVERLAY_GLOW_HIDE = true, true
+            end
+        elseif TX.SlotSource(rec) then
             local u = e.txAura and e.txAura.unit or NS.DriverAura and NS.DriverAura.ShapeOf(rec.driver)
             if u == "target" then n.PLAYER_TARGET_CHANGED = true
             elseif u == "focus" then n.PLAYER_FOCUS_CHANGED = true
@@ -817,6 +1188,7 @@ function TX.Needs()
         elseif CUSTOM[s] then
             n.custom = true
         end
+        if TX.HasRules(rec) then n.custom = true end
     end)
     return n
 end
@@ -831,6 +1203,7 @@ end
 -- ensure and release.
 function TX.Sync()
     local n = TX.Needs()
+    TX.comboCast = n.comboCast == true
     for ev, fn in pairs(TX.HANDLERS) do
         if n[ev] and not TX.armed[ev] then
             TX.armed[ev] = true
@@ -884,13 +1257,18 @@ function TX.DropOthers(e, keep)
     local id = e.rec.id
     if keep ~= "range" and NS.DriverRange then NS.DriverRange.Drop(TX.RANGE_OWNER .. id) end
     if keep ~= "rules" and NS.DriverCustom and NS.DriverCustom.DetachText then NS.DriverCustom.DetachText(id) end
-    if not AURA[keep] and e.txAura then
+    -- an aura's words on Always keep no slot: parked, its missing words go too
+    if e.txAura and not (keep and TX.SlotSource(e.rec)) then
         TX.ParkAura(e.txAura)
         e.txAura = nil
     end
     if keep ~= "spellCd" and e.txCD then
         e.txCD:Clear()
         e.txCdOn = nil
+    end
+    if keep ~= "spellText" then
+        if e.txShadow then e.txShadow:Clear() end
+        e.txProc, e.txUsable = nil, nil
     end
 end
 
@@ -899,23 +1277,23 @@ function TX.Ensure(e)
     TX.DropOthers(e, s)
     if s == "range" then
         TX.WatchRange(e)
-    elseif AURA[s] then
+    elseif TX.SlotSource(e.rec) then
         TX.EnsureAura(e)
     end
     TX.Sync()
     -- the sink attaches after the watcher is armed: its first paint reaches us
-    if s == "rules" and NS.DriverCustom and NS.DriverCustom.AttachText then
+    if (s == "rules" or TX.HasRules(e.rec)) and NS.DriverCustom and NS.DriverCustom.AttachText then
         NS.DriverCustom.AttachText(e.rec, e)
     end
     TX.Paint(e)
     if CUSTOM[s] then TX.SyncTicker() end
-    e.stateHidden = false
+    e.stateHidden = TX.StateHidden(e)
     K.ApplyVisibility(e)
 end
 
 function TX.Refresh(e)
     TX.Paint(e)
-    e.stateHidden = false
+    e.stateHidden = TX.StateHidden(e)
     K.ApplyVisibility(e)
 end
 
@@ -935,11 +1313,21 @@ function TX.Styled(e)
     if shell.borderF then shell.borderF:Hide() end
     shell.sheen:Hide()
     local s = TX.Source(rec)
+    local slot = TX.SlotSource(rec)
+    local stand = TX.StandIn(e)
     TX.StyleText(e, e.txFS)
-    e.txFS:SetShown(e.isPreview or not AURA[s])
+    e.txFS:SetShown(e.isPreview or stand or not slot)
     -- a countdown the game draws leaves the own string blank, whatever the
     -- last source wrote on it (the preview paints its sample after this)
-    if AURA[s] or s == "spellCd" then e.txFS:SetText("") end
+    if (slot or s == "spellCd") and not stand then e.txFS:SetText("") end
+    -- the live strings step aside while a sample stands in
+    if e.txCD then e.txCD:SetAlpha(stand and 0 or 1) end
+    local live = e.txAura
+    if live and live.stage then live.stage:SetAlpha(stand and 0 or 1) end
+    if live and live.host then
+        local DA = NS.DriverAura
+        if not (DA and DA.IsAccessible) or DA.IsAccessible(live.button) then live.host:SetAlpha(stand and 0 or 1) end
+    end
     local bg = e.txBG
     if R(rec, "textel", "bgShow") == true then
         local c = R(rec, "textel", "bgColor") or { 0, 0, 0, 0.5 }
@@ -952,15 +1340,21 @@ function TX.Styled(e)
     local sub = e.txAura
     if sub and sub.fs then
         local DA = NS.DriverAura
-        if not (DA and DA.IsAccessible) or DA.IsAccessible(sub.button) then TX.StyleText(e, sub.fs) end
+        if not (DA and DA.IsAccessible) or DA.IsAccessible(sub.button) then
+            TX.StyleText(e, sub.fs)
+            TX.PlaceGate(sub, rec)
+        end
     end
+    -- the missing words are ours, on our frame buffer: always styled
+    if sub and sub.missFS then TX.StyleText(e, sub.missFS) end
 end
 
 function TX.Diag(e)
     local t = e.txFS and e.txFS.GetText and e.txFS:GetText()
     if IsSecret(t) then t = "<secret>" end
-    return ("%s [text %s] value=%s aura=%s cd=%s"):format(tostring(e.rec.name), TX.Source(e.rec),
-        tostring(t), tostring(e.txAura ~= nil), tostring(e.txCdOn == true))
+    return ("%s [text %s] value=%s aura=%s cd=%s when=%s hidden=%s"):format(tostring(e.rec.name),
+        TX.Source(e.rec), tostring(t), tostring(e.txAura ~= nil), tostring(e.txCdOn == true),
+        tostring(TX.When(e.rec)), tostring(e.stateHidden == true))
 end
 
 -- Editor preview: the text with a sample value in its font and box.
@@ -974,6 +1368,7 @@ function TX.SampleText(e)
     local s = TX.Source(rec)
     local show = rec.driver.show
     if s == "static" then return rec.driver.text or "Text", false end
+    if WORDS[s] then return rec.driver.text or "Custom text", false end
     if s == "power" then
         if show == "percent" then return "62%", false end
         return (show == "max") and 5000 or 3100, true
@@ -1000,6 +1395,12 @@ end
 
 function TX.PreviewApply(e)
     local v, count = TX.SampleText(e)
+    -- a spell's or an aura's words are written as they are, as they paint live
+    local s = TX.Source(e.rec)
+    if s == "spellText" or s == "auraText" then
+        e.txFS:SetText(v)
+        return
+    end
     if count then
         TX.Write(e, TX.CountText(e, v), false)
     else
@@ -1012,6 +1413,15 @@ function TX.Describe(rec)
     local s = TX.Source(rec)
     local d = rec.driver or {}
     if s == "static" then return (d.text and d.text ~= "") and ('"' .. d.text .. '"') or "words" end
+    if s == "spellText" or s == "auraText" then
+        local nm = d.spellID and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(d.spellID)
+        if IsSecret(nm) or type(nm) ~= "string" then nm = nil end
+        local what = nm or (d.spellID and tostring(d.spellID)) or ((s == "spellText") and "no spell" or "no aura")
+        local WL = (s == "spellText") and Schema.TEXT_SPELL_WHEN_LABELS or Schema.TEXT_AURA_WHEN_LABELS
+        local when = ((WL and WL[TX.When(rec)]) or ""):lower()
+        local words = (d.text and d.text ~= "") and ('"' .. d.text .. '"') or "no words yet"
+        return words .. " (" .. what .. ", " .. when .. ")"
+    end
     local L = Schema.TEXT_SOURCE_LABELS or {}
     local base = L[s] or s
     if s == "power" or s == "health" then

@@ -1,5 +1,5 @@
 -- AD_DriverReminders: the Reminder group's runtime, ArcUI v1's Cooldown Reminder: what fires each reminder, and how its pulse shows and sounds.
--- The engine hands it every Reminder group to place (Engine.RegisterGroupKind); reminders are their own records (Store.NewReminder).
+-- The engine hands it every Reminder group to place (Engine.RegisterGroupKind); reminders are their own records (Store.NewReminder), aura reminders are aura icons it only places (RM.PlaceAuras).
 -- Every trigger reads a value that stays plain in combat: a cooldown shadow's IsShown, your own cast's spell ID, a proc overlay's spell ID, a weapon enchant's time left and charges (NS.DriverEnchant), C_Spell.IsSpellUsable.
 local ADDON, NS = ...
 local Store = NS.Store
@@ -1322,7 +1322,43 @@ function RM.Place(g, gf, editMode)
     ph.tex:SetTexture(first and NS.Factory.GetTexture(first) or RM.PLACEHOLDER)
     ph:SetAlpha(0.5)
     RM.PaintMarker(g.id)
+    RM.PlaceAuras(g, gf, math.max(w, size), size)
     RM.QueueSync()
+end
+
+-- Aura reminders: the group's aura icons, a slot each in a row beside the
+-- pulse area (pw x ph) on pulse.auraSide. The game shows each only while its
+-- aura is missing (Active opacity 0, Drivers\AD_DriverAura.lua), in combat
+-- too: nothing here reads an aura, and the pulse queue never waits on one.
+function RM.PlaceAuras(g, gf, pw, ph)
+    local E = NS.LayoutEngine
+    if not (E and E.PlaceKindIcon and E.Shows) then return end
+    local all = Store.IconsOf(g)
+    if #all == 0 then return end
+    local size = math.max(8, R(g, "pulse", "auraSize") or 40)
+    local sp = math.max(0, R(g, "pulse", "auraSpacing") or 4)
+    local side = R(g, "pulse", "auraSide") or "below"
+    local n = 0
+    for _, rec in ipairs(all) do
+        if E.Shows(rec) then n = n + 1 end
+    end
+    local i = 0
+    for _, rec in ipairs(all) do
+        local x, y = 0, 0
+        if E.Shows(rec) then
+            i = i + 1
+            if side == "left" or side == "right" then
+                local d = pw / 2 + sp + size / 2 + (i - 1) * (size + sp)
+                x = (side == "left") and -d or d
+            else
+                x = -(n * size + (n - 1) * sp) / 2 + size / 2 + (i - 1) * (size + sp)
+                y = ph / 2 + sp + size / 2
+                if side ~= "above" then y = -y end
+            end
+        end
+        -- one not drawn here is released by the same call
+        E.PlaceKindIcon(rec, gf, x, y, size, size)
+    end
 end
 
 -- Not drawn (unloaded, hidden, its layout off): nothing pulses or watches.

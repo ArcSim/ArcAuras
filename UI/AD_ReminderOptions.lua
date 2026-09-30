@@ -19,7 +19,9 @@ RP.GROUP_SECS = { "Pulse", "Container", "Visibility" }
 RP.PULSE = { "iconEnabled", "cancelOnCast", "hideMarker", "queueMode", "stackDirection", "stackSpacing",
     "replaceGuard", "queueMaxLen", "queueInterDelay", "pulseDuration", "size", "iconOpacity",
     "animStyle", "animFadeSmoothing", "animFlashSpeed", "animZoomStart", "animZoomPeak",
-    "animZoomPopTime", "animZoomSettleTime" }
+    "animZoomPopTime", "animZoomSettleTime", "auraSide", "auraSize", "auraSpacing" }
+-- The aura reminders' row (Drivers\AD_DriverReminders.lua, RM.PlaceAuras).
+RP.AURA_ROW = { "auraSide", "auraSize", "auraSpacing" }
 RP.TUNING = { "animFadeSmoothing", "animFlashSpeed", "animZoomStart", "animZoomPeak",
     "animZoomPopTime", "animZoomSettleTime" }
 RP.AUDIO = { "soundEnabled", "soundChannel", "soundName", "cutoffPreviousSound", "cutoffFadeTime",
@@ -103,6 +105,39 @@ function RP.Summary(r)
     local R = NS.Reminders
     if R and not R.Loaded(r) then s = s .. "  -  not loaded here" end
     return s
+end
+
+-- An aura reminder (an aura icon in the group's row) in a few words.
+function RP.AuraSummary(r)
+    local Store = NS.Store
+    local a = Store.Resolve(r, "auraActive", "activeAlpha") or 1
+    local s = (a <= 0) and "Shows while the aura is missing" or "An aura icon: its Active opacity is above 0"
+    if not Store.IsLoaded(r) then s = s .. "  -  not loaded here" end
+    return s
+end
+
+-- The member the Reminder tab names and opens: the one open now, else one this
+-- group had open (a reminder first), else its first; nil when it has none.
+function RP.Current(g)
+    local ui, Store = Options.ui, NS.Store
+    local ic = ui.selIconId and Store.Get(ui.selIconId)
+    if not (ic and ic.type == "icon" and ic.groupId == g.id) then ic = nil end
+    local r = RP.Rec()
+    if r and r.groupId ~= g.id then r = nil end
+    if ui.grpMode == "ico" and ic then return ic end
+    if ui.grpMode == "rem" and r then return r end
+    return r or ic or Store.GroupMembers(g)[1]
+end
+
+-- Opens a member in the pane: a reminder in its own editor, an aura reminder
+-- in the icon editor.
+function RP.Open(rec)
+    local ui = Options.ui
+    if rec.type == "icon" then
+        ui.selIconId, ui.grpMode = rec.id, "ico"
+    else
+        ui.selRemId, ui.grpMode = rec.id, "rem"
+    end
 end
 
 local function Trim(v)
@@ -192,14 +227,23 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
         return onLook() and ((not kit.subFn) or kit.subFn() == "Pulse")
     end
     local remVis, audVis = On("Reminders"), On("Sounds")
+    -- the reminders that pulse, and every member (aura reminders are icons)
     local function Count()
         local g = G()
         return g and #Store.RemindersOf(g) or 0
     end
+    local function Members()
+        local g = G()
+        return g and #Store.GroupMembers(g) or 0
+    end
+    local function Auras()
+        local g = G()
+        return g and #Store.IconsOf(g) or 0
+    end
 
     AT.Section(pg, "Reminders", { visibleFn = remVis })
     AT.RowDesc(pg, "No reminders yet: pick a spell below, add one by ID, or press + Add Reminder.", 20,
-        function() return remVis() and Count() == 0 end)
+        function() return remVis() and Members() == 0 end)
     local act = AT.AddRow(pg, 28, remVis)
     local test = AT.MakeSmallButton(act, "Test Alert", 90)
     test:SetPoint("LEFT", 10, 0)
@@ -217,7 +261,7 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
         local g = G()
         if g then Options.OpenAdd(g.layoutId, g.id) end
     end)
-    AT.Tooltip(add, "+ Add Reminder", "Opens the Add window for a spell or an item to be reminded of.")
+    AT.Tooltip(add, "+ Add Reminder", "Opens the Add window for a spell, an item, a weapon enchant or a missing aura to be reminded of.")
     act.button = test
 
     -- Spell Catalog: your spellbook as a grid, as in the Add window. A click
@@ -434,8 +478,9 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
     end)
     AT.Tooltip(encAdd, "Add", "Makes a reminder of the enchant on that weapon (an imbue, a poison, an oil or a stone), or opens the one it has.")
 
-    -- Active Reminders: each with its triggers in words; Edit opens it.
-    local listVis = function() return remVis() and Count() > 0 end
+    -- Active Reminders: each with its triggers in words (an aura reminder
+    -- with when it shows); Edit opens it.
+    local listVis = function() return remVis() and Members() > 0 end
     AT.Section(pg, "Active Reminders", { visibleFn = listVis })
     local LINE = 36
     local list = AT.AddRow(pg, LINE, listVis)
@@ -471,7 +516,7 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
     list._lines = lines
     list._sync = function()
         local g = G()
-        local recs = g and Store.RemindersOf(g) or {}
+        local recs = g and Store.GroupMembers(g) or {}
         for i, r in ipairs(recs) do
             local L = Line(i)
             L:ClearAllPoints()
@@ -479,7 +524,7 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
             L:SetPoint("TOPRIGHT", 0, -(i - 1) * LINE)
             L.tex:SetTexture(NS.Factory.GetTexture(r))
             L.name:SetText(r.name or "?")
-            L.sub:SetText(RP.Summary(r))
+            L.sub:SetText((r.type == "icon") and RP.AuraSummary(r) or RP.Summary(r))
             L.edit:SetScript("OnClick", function()
                 AT.CloseDropdown()
                 Options.SelectIconHome(r)
@@ -529,6 +574,11 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
         local g = G()
         return lookVis() and Store.Resolve(g, "pulse", "animStyle") ~= "no_fade"
     end, 70, "Reset animation tuning", true)
+    -- the aura reminders' row, once the group has one
+    local rowVis = function() return lookVis() and Auras() > 0 end
+    AT.Section(pg, "Aura Reminders", { visibleFn = rowVis })
+    AT.RowDesc(pg, "Each shows in its own slot while its aura is missing; the pulse keeps its spot.", 20, rowVis)
+    kit.SectionRows(pg, "iconGroup", "pulse", ctx, rowVis, RP.AURA_ROW)
     AT.Section(pg, nil, { visibleFn = lookVis })
     kit.PushBar(pg, ctx, "pulse", lookVis, RP.PULSE)
 
@@ -1059,19 +1109,25 @@ function RP.Build(kit)
     return pg
 end
 
--- The group pane for a Reminder group: its reminders on the strip, Group
--- Settings | Reminder, and the page for the one open. Icon parts stay hidden.
+-- The group pane for a Reminder group: its reminders and aura reminders on the
+-- strip, Group Settings | Reminder, and the page for the one open: a
+-- reminder's own editor, or the icon editor for an aura reminder.
 function Options.RefreshReminderPane(group)
     local kit, ui = Options.GroupPaneKit, Options.ui
     if not (kit and ui and group) then return end
     local AT, Store = NS.AT, NS.Store
-    local list = Store.RemindersOf(group)
-    if ui.grpMode == "ico" then ui.grpMode = "grp" end
+    local list = Store.GroupMembers(group)
+    -- the open aura reminder must be this group's, else the group
+    if ui.grpMode == "ico" then
+        local ic = ui.selIconId and Store.Get(ui.selIconId)
+        if not (ic and ic.type == "icon" and ic.groupId == group.id) then ui.grpMode = "grp" end
+    end
     -- the open reminder must be this group's: else its first, else the group
     if ui.grpMode == "rem" then
         local r = RP.Rec()
         if not (r and r.groupId == group.id) then
-            ui.selRemId = list[1] and list[1].id or nil
+            local first = Store.RemindersOf(group)[1]
+            ui.selRemId = first and first.id or nil
             if not ui.selRemId then ui.grpMode = "grp" end
         end
     end
@@ -1085,10 +1141,11 @@ function Options.RefreshReminderPane(group)
         b:ClearAllPoints()
         b:SetPoint("LEFT", 8 + (i - 1) * 37, 0)
         b.tex:SetTexture(NS.Factory.GetTexture(r))
-        b:SetSelected(ui.grpMode == "rem" and ui.selRemId == r.id)
-        local id = r.id
+        local icon = r.type == "icon"
+        b:SetSelected((icon and ui.grpMode == "ico" and ui.selIconId == r.id)
+            or (not icon and ui.grpMode == "rem" and ui.selRemId == r.id))
         b:SetScript("OnClick", function()
-            ui.selRemId, ui.grpMode = id, "rem"
+            RP.Open(r)
             Options.RefreshAll()
         end)
         b:Show()
@@ -1096,27 +1153,30 @@ function Options.RefreshReminderPane(group)
     for i = #list + 1, #RP.pool do RP.pool[i]:Hide() end
     kit.strip.add:ClearAllPoints()
     kit.strip.add:SetPoint("LEFT", 8 + #list * 37, 0)
-    local cur = RP.Rec()
-    if cur and cur.groupId ~= group.id then cur = nil end
+    local cur = RP.Current(group)
     local remTab = cur and ("Reminder: " .. (cur.name or "?")) or "Reminder: none"
-    kit.switch:Set({ "Group Settings", remTab }, (ui.grpMode == "rem") and remTab or "Group Settings",
+    kit.switch:Set({ "Group Settings", remTab }, (ui.grpMode == "grp") and "Group Settings" or remTab,
         function(tab)
             if tab == "Group Settings" then
                 ui.grpMode = "grp"
             else
-                local r = RP.Rec()
-                if not (r and r.groupId == group.id) then
-                    local first = Store.RemindersOf(group)[1]
-                    ui.selRemId = first and first.id or nil
-                end
-                if ui.selRemId then ui.grpMode = "rem" end
+                local c = RP.Current(group)
+                if c then RP.Open(c) end
             end
             Options.RefreshAll()
         end, 11)
-    kit.iconPage:Hide()
-    kit.AttachPreview(kit.pane, -116, false)
-    local rem = ui.grpMode == "rem"
-    kit.groupPage:SetShown(not rem)
+    local rem, ico = ui.grpMode == "rem", ui.grpMode == "ico"
+    -- an aura reminder edits in the icon editor, under its preview, as in any group
+    local iconPage = kit.iconPage
+    iconPage:SetShown(ico)
+    local prevH = kit.AttachPreview(kit.pane, -116, ico)
+    if ico then
+        iconPage:SetParent(kit.pane)
+        iconPage:ClearAllPoints()
+        iconPage:SetPoint("TOPLEFT", 0, -116 - (prevH or 0))
+        iconPage:SetPoint("BOTTOMRIGHT", 0, 0)
+    end
+    kit.groupPage:SetShown(not (rem or ico))
     if rem and not RP.page then RP.Build(kit) end
     if RP.page then
         RP.page:ClearAllPoints()
@@ -1124,7 +1184,7 @@ function Options.RefreshReminderPane(group)
         RP.page:SetPoint("BOTTOMRIGHT", 0, 0)
         RP.page:SetShown(rem)
     end
-    AT.LayoutPage(rem and RP.page or kit.groupPage)
+    AT.LayoutPage((rem and RP.page) or (ico and iconPage) or kit.groupPage)
 end
 
 -- Another group kind is open: none of this shows.

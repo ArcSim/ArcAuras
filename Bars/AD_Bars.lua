@@ -2017,6 +2017,8 @@ local POWER_ALL = {
     [100] = { token = "STAGGER",       name = "Stagger",        color = { 0.52, 1, 0.52 } },
 }
 Bars.POWER_ALL = POWER_ALL
+-- seconds after your cast for the second combo point read (a late server update)
+Bars.COMBO_LATE = 0.3
 
 -- POWER_INFO is what the options panel may offer on this client; Classic has
 -- only a handful (druids switch with form: the picker's Automatic entry). Runic
@@ -5211,6 +5213,21 @@ local function EnsureSharedEvents()
                 if e.powerType == 4 then ResourceRefresh(e) end
             end)
         end)
+        -- The first point on a new mob moves the points there; with the count
+        -- unchanged (1 left on the last mob) no power event fires, and
+        -- COMBO_TARGET_CHANGED never does. Your cast fires before the count
+        -- updates, so read a frame later, and again for a late server update.
+        Events.On("UNIT_SPELLCAST_SUCCEEDED", "adbarsres", function(_, unit)
+            if unit ~= "player" then return end
+            ForEach("resource", function(e)
+                if e.powerType ~= 4 then return end
+                local function Reread()
+                    if live[e.rec.id] == e then ResourceRefresh(e) end
+                end
+                Events.Coalesce("adbars_cp_" .. tostring(e.rec.id), Reread)
+                C_Timer.After(Bars.COMBO_LATE, Reread)
+            end)
+        end)
     end
 end
 
@@ -5228,6 +5245,7 @@ local function ReleaseSharedEvents()
         Events.Off(ev, "adbars")
     end
     Events.Off("PLAYER_TARGET_CHANGED", "adbarsres")
+    Events.Off("UNIT_SPELLCAST_SUCCEEDED", "adbarsres")
 end
 
 -- Engine seam

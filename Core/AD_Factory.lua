@@ -209,7 +209,7 @@ local function KindTexture(rec)
     local kind = rec.kind
     if kind == "spell" then
         return SpellArt(d, Store.Resolve(rec, "appearance", "activeArt") ~= false)
-    elseif kind == "aura" or kind == "timer" then
+    elseif kind == "aura" or kind == "timer" or kind == "groupbuff" then
         local tex = d.spellID and C_Spell.GetSpellTexture(d.spellID)
         return tex or QUESTION_MARK
     elseif kind == "trinket" then
@@ -682,6 +682,7 @@ function Factory.CreatePreview(parent)
     local f = BuildFrame({})
     f:SetParent(parent)
     f:EnableMouse(false)
+    f._adPreview = true
     return f
 end
 
@@ -735,20 +736,25 @@ local function PaintText(fs, ta)
     end
 end
 
--- The one writer for every dim (cooldown, aura missing, out of stock). Each
--- caller resolves preserveText from its own option.
-local function ApplyStateAlpha(f, a, preserveText)
-    -- f._adStateAlpha keeps the real value for the dynamic-group signature.
-    -- With the options panel open, a dimmer icon shows at the preview opacity
-    -- so it can be edited; closing rebuilds. Later writers on the same art
-    -- (tint, swipe) must use f._adShownAlpha; a raw 0 would undo the preview.
-    f._adStateAlpha = a
-    local shown = a
+-- With the options panel open, a dimmer look shows at the preview opacity so
+-- it can be edited; closing rebuilds.
+local function EditFloor(a)
     if NS.LayoutEngine and NS.LayoutEngine.IsEditMode and NS.LayoutEngine.IsEditMode() then
         local pv = Store.GetSetting("previewAlpha")
         if pv == nil then pv = 0.35 end
-        if shown < pv then shown = pv end
+        if a < pv then return pv end
     end
+    return a
+end
+
+-- The one writer for every dim (cooldown, aura missing, out of stock). Each
+-- caller resolves preserveText from its own option.
+local function ApplyStateAlpha(f, a, preserveText)
+    -- f._adStateAlpha keeps the real value for the dynamic-group signature;
+    -- the shown one has the editing floor. Later writers on the same art
+    -- (tint, swipe) must use f._adShownAlpha; a raw 0 would undo the preview.
+    f._adStateAlpha = a
+    local shown = EditFloor(a)
     f._adShownAlpha = shown
     a = shown
     f.icon:SetAlpha(a)
@@ -760,6 +766,7 @@ local function ApplyStateAlpha(f, a, preserveText)
     if f.textHost then f.textHost:SetAlpha(ta) end
     -- Labels kept to the aura's absence live under the button, not on the host.
     if f._adMissClip then f._adMissClip:SetAlpha(ta) end
+    if f._adMissGlow then f._adMissGlow:SetAlpha(a) end
     -- The charge count's low host (aura overlay) dims like the text host.
     if f._adLowText then f._adLowText:SetAlpha(ta) end
     if f.stackText then PaintText(f.stackText, ta) end
@@ -818,6 +825,8 @@ local function PaintBorderEdges(edges, anchor, rec, alpha, geometryOnly)
     end
     return off + th   -- the strips' inside edge, where a swipe stops
 end
+-- Exported: a group buff's combat layers wear the icon's border.
+Factory.PaintBorderEdges = PaintBorderEdges
 
 -- The live aura button's own border, on the engine button so it shows and
 -- hides with the aura and never carries the missing alpha (the button has no
@@ -941,6 +950,8 @@ local function ApplyShadow(host, key, art, rec, w, h, alpha, show)
     t:SetAlpha(alpha or 1)
     t:Show()
 end
+-- Exported: a group buff's combat layers wear the icon's shadow.
+Factory.ApplyShadow = ApplyShadow
 
 -- Icon fonts by name ("" = the default face) through the bars' resolver, which
 -- loads after this file and is only reached at call time. A font an LSM addon
@@ -988,8 +999,9 @@ function Factory.ApplyBorder(f, rec, bump, forceHide)
                     bias = v
                 end
             end
-            local host = CreateFrame("Frame", nil, f)
-            host:SetAllPoints()
+            -- on an aura icon's stage while the missing look is there
+            local host = CreateFrame("Frame", nil, f._adStage or f)
+            host:SetAllPoints(f)
             f._adBorderHost = host
             for _, k in ipairs(BORDER_KEYS) do
                 local t = host:CreateTexture(nil, "OVERLAY", nil, 7)
@@ -1065,6 +1077,8 @@ local function IconTexCoords(rec)
     end
     return L, Rt, T, B
 end
+-- Exported: a group buff's combat layers crop their art the same way.
+Factory.IconTexCoords = IconTexCoords
 
 -- Countdown and stack text styling for the holder and the aura button. kS =
 -- the base-36 scale factor from a plain size; anchorTo = the text's anchor.
@@ -1158,6 +1172,23 @@ function Factory.ApplyFrameAlpha(f, rec)
     f:SetAlpha(a)
 end
 
+-- One custom text's look (suf "", "2" or "3") on fs, anchored to anchorTo:
+-- the holder's, and the copies a group buff's combat layers carry.
+local function StyleLabel(fs, rec, suf, kS, anchorTo)
+    local R = function(section, field) return Store.Resolve(rec, section, field) end
+    fs:SetFont(IconFont(R("label", "labelFont")),
+        math.max(6, math.floor((R("label", "labelSize" .. suf) or 12) * kS + 0.5)), "OUTLINE")
+    local lc = R("label", "labelColor" .. suf) or { 1, 1, 1, 1 }
+    fs:SetTextColor(lc[1], lc[2], lc[3], lc[4] or 1)
+    local an = R("label", "labelAnchor" .. suf) or "CENTER"
+    fs:ClearAllPoints()
+    fs:SetPoint(an, anchorTo, an,
+        (R("label", "labelX" .. suf) or 0) * kS,
+        (R("label", "labelY" .. suf) or 0) * kS)
+    fs:SetText(R("label", "labelText" .. suf))
+end
+Factory.StyleLabel = StyleLabel
+
 -- The one style writer; drivers never call widget style methods.
 function Factory.ApplyStyle(f, rec)
     local R = function(section, field) return Store.Resolve(rec, section, field) end
@@ -1176,15 +1207,16 @@ function Factory.ApplyStyle(f, rec)
     f.icon:SetTexCoord(L, Rt, T, B)
     Factory.ApplyFrameAlpha(f, rec)
 
-    -- An aura icon's holder border is the missing look's: at +2 it sits under
-    -- the engine button (+3), which covers it while the aura is up and draws
-    -- its own. Above the button it would show at the missing alpha over the
-    -- live icon. Any other icon's border sits at +1, under the swipe (+2), so
-    -- the swipe's own countdown number draws above it; a spell icon's aura
-    -- overlay (the button at +4) covers both.
+    -- An aura icon's holder border is the missing look's: on its ladder
+    -- (AURA_LADDER) it sits under the missing look's glows and the engine
+    -- button, which covers it while the aura is up and draws its own. Above
+    -- the button it would show at the missing alpha over the live icon. Any
+    -- other icon's border sits at +1, under the swipe (+2), so the swipe's own
+    -- countdown number draws above it; a spell icon's aura overlay (the button
+    -- at +4) covers both.
     local overlay = NS.DriverAura ~= nil and NS.DriverAura.OverlayOn ~= nil
         and NS.DriverAura.OverlayOn(rec) == true
-    Factory.ApplyBorder(f, rec, rec.kind == "aura" and 2 or 1, forceHide)
+    Factory.ApplyBorder(f, rec, rec.kind == "aura" and Factory.AURA_LADDER.border or 1, forceHide)
     -- The text host sits above the border and any anchored engine button,
     -- which would otherwise hide the labels. Set each pass (children don't
     -- follow SetFrameLevel), skipped when the level reads secret.
@@ -1222,6 +1254,15 @@ function Factory.ApplyStyle(f, rec)
             math.max(1, (fwS or 36) - 2 * pad), math.max(1, (fhS or 36) - 2 * pad),
             f._adShownAlpha or f._adStateAlpha or 1,
             R("appearance", "shadowEnabled") == true and not forceHide and rec.kind ~= "aura")
+    end
+    -- Missing glows ride the missing look, Always glows the holder; a preview
+    -- and the options window show those that wait for combat
+    if rec.kind == "aura" or f._adMissGlow or f._adAlwaysGlow then
+        local D = NS.DriverAura
+        local combat = (D ~= nil and D.InCombat ~= nil and D.InCombat()) or f._adPreview == true
+            or (NS.LayoutEngine ~= nil and NS.LayoutEngine.IsEditMode ~= nil and NS.LayoutEngine.IsEditMode())
+        Factory.ApplyMissingGlows(f, rec, fwS, fhS, combat)
+        Factory.ApplyAlwaysGlows(f, rec, fwS, fhS, combat)
     end
 
     -- Padding insets the art; the border stays at the frame edge.
@@ -1330,20 +1371,17 @@ function Factory.ApplyStyle(f, rec)
         st.fs = fs
         st.ready = R("label", "labelShowReady" .. suf) ~= false
         st.cd = R("label", "labelShowCooldown" .. suf) ~= false
+        -- a group buff's pick: its ready state is "someone lacks it", its
+        -- cooldown state "everyone has it"
+        if rec.kind == "groupbuff" then
+            local when = R("label", "labelWhen" .. suf)
+            st.ready, st.cd = when ~= "has", when ~= "lacks"
+        end
         st.activeOnly = rec.kind == "aura" and R("label", "labelActiveOnly" .. suf) == true
         st.missingOnly = rec.kind == "aura" and R("label", "labelMissingOnly" .. suf) == true
         local ltext = R("label", "labelText" .. suf)
         if fs and ltext and ltext ~= "" then
-            fs:SetFont(IconFont(R("label", "labelFont")),
-                math.max(6, math.floor((R("label", "labelSize" .. suf) or 12) * kS + 0.5)), "OUTLINE")
-            local lc = R("label", "labelColor" .. suf) or { 1, 1, 1, 1 }
-            fs:SetTextColor(lc[1], lc[2], lc[3], lc[4] or 1)
-            local an = R("label", "labelAnchor" .. suf) or "CENTER"
-            fs:ClearAllPoints()
-            fs:SetPoint(an, f, an,
-                (R("label", "labelX" .. suf) or 0) * kS,
-                (R("label", "labelY" .. suf) or 0) * kS)
-            fs:SetText(ltext)
+            StyleLabel(fs, rec, suf, kS, f)
             st.has = true
         elseif fs then
             fs:SetText("")
@@ -1378,20 +1416,16 @@ function Factory.ApplyStyle(f, rec)
     if rec.kind == "special" and NS.SpecialIcon then NS.SpecialIcon.Restyle(f, rec) end
 end
 
--- A label "only while the aura is missing" can only work where the live
--- button's opaque plate covers it: never with the art hidden, as then nothing
--- would hide the label while the aura is up.
+-- A label kept to the aura's absence needs solid live art over it, or the eraser (NeedsEraser).
 function Factory.MissingLabelsOK(rec)
-    return rec ~= nil and rec.kind == "aura"
-        and Store.Resolve(rec, "appearance", "forceHideIcon") ~= true
+    if not (rec ~= nil and rec.kind == "aura") then return false end
+    local D = NS.DriverAura
+    if D and D.EraserAvailable and D.EraserAvailable() then return true end
+    return Store.Resolve(rec, "appearance", "forceHideIcon") ~= true
         and (Store.Resolve(rec, "auraActive", "activeAlpha") or 1) > 0
 end
 
--- Those labels sit on the holder UNDER the engine button (+1: over the ghost
--- art, under its border and the button), clipped to the plate's rect (the
--- holder inset by the padding). The game shows the button exactly while the
--- aura is up, so it hides them then, in combat too, with no presence read.
--- Their alpha follows the other texts' (ApplyStateAlpha).
+-- Those labels sit under the engine button, which hides them while the aura is up, in combat too.
 function Factory.ApplyMissingLabels(f, rec, kS)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
     local ok = Factory.MissingLabelsOK(rec)
@@ -1402,7 +1436,7 @@ function Factory.ApplyMissingLabels(f, rec, kS)
         local want = ok and R("label", "labelMissingOnly" .. suf) == true
             and ltext ~= nil and ltext ~= ""
         if want and not clip then
-            clip = CreateFrame("Frame", nil, f)
+            clip = CreateFrame("Frame", nil, f._adStage or f)
             clip:SetClipsChildren(true)
             clip._fs = {}
             f._adMissClip = clip
@@ -1432,34 +1466,68 @@ function Factory.ApplyMissingLabels(f, rec, kS)
     end
     if not clip then return end
     if any then
-        local padPx = (R("appearance", "padding") or 0) * kS
+        local D = NS.DriverAura
+        local erasing = D ~= nil and D.EraserAvailable ~= nil and D.EraserAvailable()
+        local padPx = erasing and 0 or ((R("appearance", "padding") or 0) * kS)
+        clip:SetClipsChildren(not erasing)
         clip:ClearAllPoints()
         clip:SetPoint("TOPLEFT", f, "TOPLEFT", padPx, -padPx)
         clip:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -padPx, padPx)
         clip:SetFrameStrata(f:GetFrameStrata())
-        clip:SetFrameLevel(f:GetFrameLevel() + 1)
+        clip:SetFrameLevel(f:GetFrameLevel() + Factory.AURA_LADDER.missLabels)
         clip:Show()
     else
         clip:Hide()
     end
 end
 
--- Styles an aura engine button, the live icon (single aura icons and aura-group
--- slots). The engine shows the button exactly while the aura is up, so every
--- Aura Active option is drawn on it with no presence read, which would fail
--- closed in combat while auras read secret. The holder under it is the Aura
--- Missing look. Active alpha goes on each piece, not the button, so the plate
--- stays opaque and still follows the container's fade. Nothing is read off the
--- button (engine rects are secret): px = its height from a plain source,
--- opts.w/h = the glow's plain size, opts.ghost = a visible missing look below.
+-- Aura icon ladder over the holder: glows above borders, the live button above every missing piece.
+Factory.AURA_LADDER = { border = 1, missLabels = 1, missGlow = 2, button = 3 }
+
+-- Moves the missing look onto the stage, each piece keeping its level; nil brings it home.
+function Factory.StageMissingLook(f, stage)
+    local p = stage or f
+    f._adStage = stage
+    f.icon:SetParent(p)
+    if f._adShadow then f._adShadow:SetParent(p) end
+    for _, k in ipairs({ "_adBorderHost", "_adMissClip", "_adMissGlow" }) do
+        local fr = f[k]
+        if fr then
+            local lvl = fr:GetFrameLevel()
+            fr:SetParent(p)
+            if type(lvl) == "number" and not (issecretvalue and issecretvalue(lvl)) then
+                fr:SetFrameLevel(lvl)
+            end
+        end
+    end
+end
+
+-- The editor preview hides the missing look itself while its stand-in shows the aura up.
+function Factory.HideMissingLook(f)
+    f.icon:SetAlpha(0)
+    if f._adShadow then f._adShadow:SetAlpha(0) end
+    if f._adBorderHost then f._adBorderHost:SetAlpha(0) end
+    if f._adMissClip then f._adMissClip:SetAlpha(0) end
+    if f._adMissGlow then f._adMissGlow:SetAlpha(0) end
+end
+
+-- The Active look's alpha, with the editing floor the Missing look gets too
+-- (the engine button restyles on an accessible pass, so closing the window
+-- mid-fight keeps the floor until the fight ends).
+function Factory.AuraActiveAlpha(rec)
+    local aA = Store.Resolve(rec, "auraActive", "activeAlpha") or 1
+    if aA < 0 then aA = 0 elseif aA > 1 then aA = 1 end
+    return EditFloor(aA)
+end
+
+-- The live engine button shows exactly while the aura is up: no presence read, nothing read off it.
 function Factory.StyleAuraButton(b, rec, px, opts)
     if not (b and rec) then return end
     opts = opts or {}
     local R = function(s, k) return Store.Resolve(rec, s, k) end
     local kS = (px and px > 0) and (px / 36) or 1
     local forceHide = R("appearance", "forceHideIcon") == true
-    local aA = R("auraActive", "activeAlpha") or 1
-    if aA < 0 then aA = 0 elseif aA > 1 then aA = 1 end
+    local aA = Factory.AuraActiveAlpha(rec)
     -- "Hide icon art": art, swipe, border and glow go; texts keep full alpha.
     local artA = forceHide and 0 or aA
     local textA = forceHide and 1 or aA
@@ -1506,9 +1574,20 @@ function Factory.StyleAuraButton(b, rec, px, opts)
             ic:SetVertexColor(1, 1, 1, artA)
         end
     end
-    -- The plate: opaque black under the art, so a dimmed active icon doesn't
-    -- show the missing look through it. Only with visible active art over a
-    -- visible missing look (opts.ghost), laid on the art's rect (padding open).
+    -- Shown only while the stage buffers (opts.erase), sized to the missing look's reach.
+    local er = b._adEraser
+    if er then
+        if opts.erase == true then
+            local m = math.max((px and px > 0) and px or 36, Factory.MissingTextReach(rec, kS))
+            er:ClearAllPoints()
+            er:SetPoint("TOPLEFT", b, "TOPLEFT", -m, m)
+            er:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", m, -m)
+            er:Show()
+        else
+            er:Hide()
+        end
+    end
+    -- The plate keeps a dimmed active icon from showing the missing look; the eraser replaces it.
     local plate = b._adPlate
     if plate then
         if plate.SetIgnoreParentAlpha then plate:SetIgnoreParentAlpha(false) end
@@ -1519,7 +1598,7 @@ function Factory.StyleAuraButton(b, rec, px, opts)
         else
             plate:SetAllPoints(b)
         end
-        plate:SetShown(artA > 0 and opts.ghost == true)
+        plate:SetShown(artA > 0 and opts.ghost == true and opts.erase ~= true)
     end
     local sw = b._adSwipe
     if sw then
@@ -1617,13 +1696,15 @@ function Factory.StyleAuraButton(b, rec, px, opts)
     end
     -- opts.glowElsewhere: a glow gate moved the glow onto its own button
     Factory.SetAuraButtonGlow(b, rec, (not forceHide) and not opts.glowElsewhere
-        and R("auraActive", "activeGlow") == true, opts.w or px, opts.h or px, aA)
+        and R("auraActive", "activeGlow") == true and not Factory.HolderGlowOn(rec, 1),
+        opts.w or px, opts.h or px, aA)
     -- Glows 2-4 ride their own buttons in play; the editor preview's one
     -- stand-in draws them all (opts.previewGlows) and drops them otherwise,
     -- as it also serves spell icons.
     for k = 2, (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1 do
         Factory.SetAuraButtonGlow(b, rec, opts.previewGlows == true and (not forceHide)
-            and R("auraActive", "activeGlow" .. k) == true, opts.w or px, opts.h or px, aA, k)
+            and R("auraActive", "activeGlow" .. k) == true and not Factory.HolderGlowOn(rec, k),
+            opts.w or px, opts.h or px, aA, k)
     end
 end
 
@@ -2151,8 +2232,10 @@ end
 
 -- On/off plus the recipe from the Aura Active glow fields. w, h = the plain
 -- button size; alphaMul = Active alpha; slot 2+ = a numbered glow (its own
--- fields and host). Accessible passes only.
-function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot)
+-- fields and host); levelTo = an exact level (a Missing glow, which must stay
+-- under the live button), else the glow's own level over b. Accessible
+-- passes only.
+function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo)
     if not b then return end
     local suf = (slot and slot > 1) and tostring(slot) or ""
     local hostKey, sigKey = "_adGlowHost" .. suf, "_adGlowSig" .. suf
@@ -2182,6 +2265,8 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot)
     local scale = R("auraActive", "activeGlowScale") or 1
     local lvl = R("auraActive", "activeGlowLevel") or GLOW_LEVEL
     local strata = R("auraActive", "activeGlowStrata") or "inherit"
+    -- a Missing glow keeps the missing look's strata, under the button
+    if levelTo then strata = "inherit" end
     -- Pixel dash length (0 = automatic) and the move.
     local dash = R("auraActive", "activeGlowLength") or 0
     local mx = R("auraActive", "activeGlowMoveX") or 0
@@ -2208,7 +2293,7 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot)
     end
     local sig = table.concat({ gtype, w, h, c[1], c[2], c[3], a, speed, xo, yo,
         lines, th, parts, scale, lvl, strata, base or -1,
-        frac or -1, dash, mx, my }, ":")
+        frac or -1, dash, mx, my, levelTo or -1 }, ":")
     if not host then
         host = CreateFrame("Frame", nil, b)
         host:EnableMouse(false)
@@ -2232,7 +2317,8 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot)
     end
     if W < 1 then W = 1 end
     if H < 1 then H = 1 end
-    if base then host:SetFrameLevel(base + lvl) end
+    local glowLvl = levelTo or (base and (base + lvl))
+    if glowLvl then host:SetFrameLevel(glowLvl) end
     if strata ~= "inherit" then
         host:SetFrameStrata(strata)
         host._adStrata = strata
@@ -2263,10 +2349,128 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot)
     else
         GlowButton(host, W, H, r, g, bl, a, speed)
     end
-    if base then LevelStyleFrames(host, base + lvl) end
+    -- an exact level holds the style frames on it too, so nothing of the glow
+    -- reaches the next rung; otherwise they sit one over the host
+    if levelTo then
+        LevelStyleFrames(host, levelTo - 1)
+    elseif glowLvl then
+        LevelStyleFrames(host, glowLvl)
+    end
     ApplyTimeGate(b, host, frac, W, H, mx, my)
     host:Show()
     host._adOn = true
+end
+
+-- A glow set to "While the aura is missing" (an aura icon's glow `slot`).
+function Factory.MissingGlowOn(rec, slot)
+    if not (rec and rec.kind == "aura") then return false end
+    local suf = (slot and slot > 1) and tostring(slot) or ""
+    return Store.Resolve(rec, "auraActive", "activeGlow" .. suf) == true
+        and Store.Resolve(rec, "auraActive", "activeGlowWhen" .. suf) == "missing"
+end
+
+function Factory.HasMissingGlow(rec)
+    for k = 1, (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1 do
+        if Factory.MissingGlowOn(rec, k) then return true end
+    end
+    return false
+end
+
+-- A glow set to "Always" (an aura icon's glow `slot`).
+function Factory.AlwaysGlowOn(rec, slot)
+    if not (rec and rec.kind == "aura") then return false end
+    local suf = (slot and slot > 1) and tostring(slot) or ""
+    return Store.Resolve(rec, "auraActive", "activeGlow" .. suf) == true
+        and Store.Resolve(rec, "auraActive", "activeGlowWhen" .. suf) == "both"
+end
+
+-- A glow the holder draws (Missing or Always), never the live button.
+function Factory.HolderGlowOn(rec, slot)
+    return Factory.MissingGlowOn(rec, slot) or Factory.AlwaysGlowOn(rec, slot)
+end
+
+-- An aura icon's custom texts kept to the aura's absence.
+function Factory.HasMissingText(rec)
+    if not (rec and rec.kind == "aura") then return false end
+    for _, suf in ipairs({ "", "2", "3" }) do
+        local t = Store.Resolve(rec, "label", "labelText" .. suf)
+        if Store.Resolve(rec, "label", "labelMissingOnly" .. suf) == true and t ~= nil and t ~= "" then
+            return true
+        end
+    end
+    return false
+end
+
+-- Pixels past the icon those texts can reach (offsets plus a generous width), for the eraser.
+function Factory.MissingTextReach(rec, kS)
+    if not Factory.HasMissingText(rec) then return 0 end
+    kS = kS or 1
+    local reach = 0
+    for _, suf in ipairs({ "", "2", "3" }) do
+        local t = Store.Resolve(rec, "label", "labelText" .. suf)
+        if Store.Resolve(rec, "label", "labelMissingOnly" .. suf) == true and t ~= nil and t ~= "" then
+            local size = (Store.Resolve(rec, "label", "labelSize" .. suf) or 12) * kS
+            local x = math.abs(Store.Resolve(rec, "label", "labelX" .. suf) or 0) * kS
+            local y = math.abs(Store.Resolve(rec, "label", "labelY" .. suf) or 0) * kS
+            reach = math.max(reach, math.max(x, y) + math.max(#t * size * 0.7, size))
+        end
+    end
+    return math.ceil(reach)
+end
+
+-- Always glows: on the holder itself, never on the stage, so they show in both states.
+function Factory.ApplyAlwaysGlows(f, rec, w, h, combat)
+    local host = f._adAlwaysGlow
+    local D = NS.DriverAura
+    local ok = rec ~= nil and rec.kind == "aura" and D ~= nil and D.GlowLaneOK ~= nil
+        and D.GlowLaneOK(rec) and Store.Resolve(rec, "appearance", "forceHideIcon") ~= true
+    if not ok and not host then return end
+    local lvl = f:GetFrameLevel()
+    if type(lvl) ~= "number" or (issecretvalue and issecretvalue(lvl)) then lvl = nil end
+    for k = 1, (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1 do
+        local suf = (k > 1) and tostring(k) or ""
+        local want = ok and Factory.AlwaysGlowOn(rec, k)
+            and (combat == true or Store.Resolve(rec, "auraActive", "activeGlowCombatOnly" .. suf) ~= true)
+        if want and not host then
+            host = CreateFrame("Frame", nil, f)
+            host:SetAllPoints(f)
+            host:EnableMouse(false)
+            f._adAlwaysGlow = host
+        end
+        if host then
+            -- the live button's own glow level: over the button and the holder's texts
+            host._adLevel = lvl and (lvl + Factory.AURA_LADDER.button)
+            Factory.SetAuraButtonGlow(host, rec, want, w, h, 1, k)
+        end
+    end
+end
+
+-- Missing glows ride the missing look: its parent frame, their rung of AURA_LADDER, its alpha.
+function Factory.ApplyMissingGlows(f, rec, w, h, combat)
+    local host = f._adMissGlow
+    local D = NS.DriverAura
+    local ok = rec ~= nil and rec.kind == "aura" and D ~= nil and D.MissingGlowOK ~= nil
+        and D.MissingGlowOK(rec) and Store.Resolve(rec, "appearance", "forceHideIcon") ~= true
+    if not ok and not host then return end
+    local lvl = f:GetFrameLevel()
+    if type(lvl) ~= "number" or (issecretvalue and issecretvalue(lvl)) then lvl = nil end
+    local rung = lvl and (lvl + Factory.AURA_LADDER.missGlow)
+    for k = 1, (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1 do
+        local suf = (k > 1) and tostring(k) or ""
+        local want = ok and Factory.MissingGlowOn(rec, k)
+            and (combat == true or Store.Resolve(rec, "auraActive", "activeGlowCombatOnly" .. suf) ~= true)
+        if want and not host then
+            host = CreateFrame("Frame", nil, f._adStage or f)
+            host:SetAllPoints(f)
+            host:EnableMouse(false)
+            f._adMissGlow = host
+        end
+        if host then
+            if rung then host:SetFrameLevel(rung) end
+            host:SetAlpha(f._adShownAlpha or f._adStateAlpha or 1)
+            Factory.SetAuraButtonGlow(host, rec, want, w, h, 1, k, rung)
+        end
+    end
 end
 
 -- A glow lane's button (DriverAura's glow lanes): it carries one glow alone,
@@ -2277,8 +2481,7 @@ function Factory.StyleAuraGlowButton(b, rec, px, opts)
     opts = opts or {}
     local slot = opts.glowSlot or 1
     local R = function(s, k) return Store.Resolve(rec, s, k) end
-    local aA = R("auraActive", "activeAlpha") or 1
-    if aA < 0 then aA = 0 elseif aA > 1 then aA = 1 end
+    local aA = Factory.AuraActiveAlpha(rec)
     b:SetAlpha(1)
     Factory.SetAuraButtonGlow(b, rec, opts.glowOn == true
         and R("appearance", "forceHideIcon") ~= true
@@ -2346,6 +2549,9 @@ function Factory.SetState(f, rec, onCooldown, desatState)
             f._adStateAlpha = math.min(f._adStateAlpha, R("states", "resourceAlpha") or 1)
         end
     end
+    -- A group buff in combat: nobody's buffs can be read, so its count and
+    -- icon step aside (its driver's layers show instead, when switched on).
+    if rec.kind == "groupbuff" and f._adGBHidden then f._adStateAlpha = 0 end
     -- procOverride: a lit proc forces full opacity, over the usability dim too.
     if f._adProcOn and R("states", "procOverride") == true then
         f._adStateAlpha = 1
@@ -3019,6 +3225,10 @@ function Factory.ShowTooltip(f, rec)
         GameTooltip:SetInventoryItem("player", NS.DriverEnchant and NS.DriverEnchant.InvSlot(rec) or 16)
     elseif kind == "special" and NS.SpecialIcon then
         NS.SpecialIcon.Tooltip(rec)
+    elseif kind == "groupbuff" and NS.DriverGroupBuff then
+        -- the buff, then who lacks it at the last count (read between pulls)
+        GameTooltip:SetText(rec.name or "Group Buff")
+        NS.DriverGroupBuff.TooltipLines(rec)
     else
         GameTooltip:SetText(rec.name or "Arc Auras")
     end

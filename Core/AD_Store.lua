@@ -14,7 +14,8 @@
 --           inh = { [family] = { [section] = { [field] = value } } }
 --           (the layout tier: looks its icons, groups and bars follow)
 --   group:  layoutId, groupKind="cooldown"|"aura"|"reminder", pos={x,y},
---           members={iconId,...} (a reminder group's are reminder ids)
+--           members={iconId,...} (a reminder group's are reminder ids and
+--           its aura reminders' icon ids)
 --   icon:   kind, driver={...}, and groupId + gpos={row,col} in a group,
 --           or layoutId + pos={x,y} when free
 --   reminder: groupId (a reminder group), kind="spell"|"item"|"enchant",
@@ -478,12 +479,100 @@ local function CleanWho(rec)
         end
     end
     if c.talentMode ~= nil and c.talentMode ~= "any" then c.talentMode = nil end
+    -- the Known Spell rule: a mode, a whole positive spell ID, the rank switch
+    if c.knownMode ~= "known" and c.knownMode ~= "unknown" then c.knownMode = nil end
+    local ks = tonumber(c.knownSpell)
+    c.knownSpell = (ks and ks > 0) and math.floor(ks) or nil
+    if c.knownRank ~= true then c.knownRank = nil end
 end
 
 -- Normalize enforces the schema: drops dangling member ids, clamps typed fields
 -- and discards overrides for unknown fields. Runs at login and after every
 -- import. The folds run before the unknown-field strip at the end of the loop,
 -- which would otherwise drop the retired keys they carry.
+-- Permanent item IDs (rec.uid): kept for life and carried in exports, so a
+-- later string can find the items an earlier one made. 12 random characters
+-- (62^12 values), redrawn when this account already has the draw.
+local UID_CHARS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+local function ValidUid(u)
+    return type(u) == "string" and #u >= 8 and #u <= 24 and u:find("^[0-9A-Za-z]+$") ~= nil
+end
+
+local function UidSet()
+    local s = {}
+    for _, r in pairs(DB.records) do
+        if ValidUid(r.uid) then s[r.uid] = true end
+    end
+    return s
+end
+
+local function NewUid(taken)
+    taken = taken or UidSet()
+    while true do
+        local t = {}
+        for i = 1, 12 do
+            local n = math.random(1, 62)
+            t[i] = UID_CHARS:sub(n, n)
+        end
+        local u = table.concat(t)
+        if not taken[u] then
+            taken[u] = true
+            return u
+        end
+    end
+end
+
+-- Every record has one and no two share one: the oldest record keeps a shared
+-- ID, the others and any malformed one get fresh ones.
+local function EnsureUids()
+    local ids = {}
+    for id in pairs(DB.records) do ids[#ids + 1] = id end
+    table.sort(ids, function(a, b) return (tonumber(a) or 0) < (tonumber(b) or 0) end)
+    local taken = {}
+    for _, id in ipairs(ids) do
+        local r = DB.records[id]
+        if ValidUid(r.uid) and not taken[r.uid] then taken[r.uid] = true else r.uid = nil end
+        -- the export time of the string it came in with (0: an older string)
+        local imp = tonumber(r.imported)
+        r.imported = (imp and imp >= 0) and imp or nil
+    end
+    for _, id in ipairs(ids) do
+        local r = DB.records[id]
+        if not r.uid then r.uid = NewUid(taken) end
+    end
+end
+Store.ValidUid = ValidUid
+
+-- The share format this version writes and reads: a string that needs more is
+-- refused by name. Raise it only when an older version would import a new
+-- string wrongly, never for new settings an older one can simply skip.
+Store.FORMAT = 1
+
+function Store.AddonVersion()
+    local G = C_AddOns and C_AddOns.GetAddOnMetadata
+    local v = G and G(ADDON, "Version")
+    return (type(v) == "string" and v:find("^%d") ~= nil) and v or nil
+end
+
+local function VersionNums(v)
+    if type(v) ~= "string" then return nil end
+    local t = {}
+    for n in v:gmatch("%d+") do t[#t + 1] = tonumber(n) end
+    return #t > 0 and t or nil
+end
+
+-- The version that made a string, when it is newer than this one: what this
+-- version does not know yet is left out of an import.
+function Store.NewerMaker(made)
+    local a, b = VersionNums(made), VersionNums(Store.AddonVersion())
+    if not (a and b) then return nil end
+    for i = 1, math.max(#a, #b) do
+        local x, y = a[i] or 0, b[i] or 0
+        if x ~= y then return (x > y) and made or nil end
+    end
+    return nil
+end
+
 function Store.Normalize()
     -- Save-as-Default buckets are not records, so the loop below never sees
     -- them: their one retired key is folded here.
@@ -496,8 +585,9 @@ function Store.Normalize()
         end
     end
     -- A reminder lives only in a reminder group, and a reminder group holds
-    -- reminders only: an orphaned reminder goes, and an icon found in one (an
-    -- early build filled them with icons) becomes a free icon of its layout.
+    -- reminders and aura reminders (aura icons, Store.NewAuraReminder) only:
+    -- an orphaned reminder goes, and any other icon found in one (an early
+    -- build filled them with icons) becomes a free icon of its layout.
     for id, rec in pairs(DB.records) do
         if rec.type == "reminder" then
             local g = DB.records[rec.groupId]
@@ -510,7 +600,7 @@ function Store.Normalize()
             for i = #g.members, 1, -1 do
                 local mid = g.members[i]
                 local m = DB.records[mid]
-                if m and m.type == "icon" then
+                if m and m.type == "icon" and m.kind ~= "aura" then
                     table.remove(g.members, i)
                     if lay and type(lay.members) == "table" then
                         m.groupId, m.gpos, m.layoutId = nil, nil, lay.id
@@ -556,7 +646,8 @@ function Store.Normalize()
                 and rec.barKind ~= "swing" and rec.barKind ~= "aura"
                 and rec.barKind ~= "resource" and rec.barKind ~= "health"
                 and rec.barKind ~= "cast" and rec.barKind ~= "enchant"
-                and rec.barKind ~= "range" and rec.barKind ~= "text" then
+                and rec.barKind ~= "range" and rec.barKind ~= "text"
+                and rec.barKind ~= "texture" then
                 rec.barKind = "cooldown"
             end
             -- a timer (custom) bar fills with its timer or with its stacks
@@ -609,6 +700,7 @@ function Store.Normalize()
             end
             -- a text element: its source and the fields that source reads
             if rec.barKind == "text" then Store.CleanText(rec.driver) end
+            if rec.barKind == "texture" then Store.CleanTexture(rec.driver) end
         end
         if rec.type == "icon" and rec.kind == "timer" then
             rec.driver = rec.driver or {}
@@ -720,6 +812,7 @@ function Store.Normalize()
         end
     end
     DB.offsetsZero = true
+    EnsureUids()
 end
 
 -- Identity
@@ -728,6 +821,7 @@ local function NewId()
     DB.nextId = DB.nextId + 1
     return DB.nextId
 end
+
 
 function Store.Get(id) return id and DB.records[id] or nil end
 
@@ -1319,6 +1413,105 @@ local function TalentMet(c, cat, nodeID)
     return true
 end
 
+-- Known-spell gates: "Only load once learned" (driver.onlyKnown, a Tracking
+-- toggle) and the Known Spell rule (c.knownMode / knownSpell / knownRank, Load
+-- Conditions). One spellbook read: true / false, or nil when the answer is
+-- secret. The spellbook API carries no secret return on either client; the
+-- pet's book counts too.
+local function BookHas(id)
+    local function Answer(v)
+        if issecretvalue and issecretvalue(v) then return nil end
+        return v == true
+    end
+    local SB = C_SpellBook
+    if not (SB and SB.IsSpellKnown) then
+        if IsPlayerSpell then return Answer(IsPlayerSpell(id)) end
+        return true
+    end
+    local bank = Enum and Enum.SpellBookSpellBank
+    local a = Answer(SB.IsSpellKnown(id, bank and bank.Player))
+    if a ~= false then return a end
+    if SB.IsSpellInSpellBook then
+        a = Answer(SB.IsSpellInSpellBook(id, bank and bank.Player, true))
+        if a ~= false then return a end
+    end
+    if bank and bank.Pet then return Answer(SB.IsSpellKnown(id, bank.Pet)) end
+    return false
+end
+
+local function PlainNum(v)
+    if issecretvalue and issecretvalue(v) then return nil end
+    return type(v) == "number" and v or nil
+end
+
+-- Whether the player knows a spell: true / false, or nil when it cannot be
+-- told (a secret or malformed ID, a secret read never answered before), which
+-- never gates. On ranked realms any rank counts, found by its name, unless
+-- `exact` (this rank: this spell ID); a replacement form counts through its
+-- base. The last answer per spell is kept: a secret read reuses it, and
+-- Store.KnownChanged compares with it.
+Store.knownSeen, Store.knownExactSeen = {}, {}
+function Store.KnowsSpell(sid, exact)
+    sid = PlainNum(sid)
+    if not sid then return nil end
+    local known = BookHas(sid)
+    local CS = C_Spell
+    if known == false and not exact then
+        if NS.IsForever == true and CS and CS.GetSpellName and CS.GetSpellIDForSpellIdentifier then
+            local nm = CS.GetSpellName(sid)
+            if not (issecretvalue and issecretvalue(nm)) and type(nm) == "string" and nm ~= "" then
+                local rid = PlainNum(CS.GetSpellIDForSpellIdentifier(nm))
+                if rid and rid ~= sid then known = BookHas(rid) end
+            end
+        end
+        if known == false and CS and CS.GetBaseSpell then
+            local base = PlainNum(CS.GetBaseSpell(sid))
+            if base and base ~= sid then known = BookHas(base) end
+        end
+    end
+    local seen = exact and Store.knownExactSeen or Store.knownSeen
+    if known == nil then return seen[sid] end
+    seen[sid] = known
+    return known
+end
+
+-- SPELLS_CHANGED (AD_Conditions): true when a spell some record waits on has a
+-- new answer, so the load pass runs again. Re-reading refreshes the answers.
+function Store.KnownChanged()
+    local changed = false
+    for sid, was in pairs(Store.knownSeen) do
+        if Store.KnowsSpell(sid) ~= was then changed = true end
+    end
+    for sid, was in pairs(Store.knownExactSeen) do
+        if Store.KnowsSpell(sid, true) ~= was then changed = true end
+    end
+    return changed
+end
+
+-- The Known Spell rule's setters: "known" / "unknown" / nil, the spell, the
+-- exact-rank switch. Each is a load pass.
+function Store.SetKnownMode(rec, mode)
+    if mode ~= "known" and mode ~= "unknown" then mode = nil end
+    if rec.c.knownMode == mode then return end
+    rec.c.knownMode = mode
+    Store.Dirty("load")
+end
+
+function Store.SetKnownSpell(rec, id)
+    id = tonumber(id)
+    id = (id and id > 0) and math.floor(id) or nil
+    if rec.c.knownSpell == id then return end
+    rec.c.knownSpell = id
+    Store.Dirty("load")
+end
+
+function Store.SetKnownRank(rec, on)
+    on = (on == true) or nil
+    if rec.c.knownRank == on then return end
+    rec.c.knownRank = on
+    Store.Dirty("load")
+end
+
 function Store.IsLoaded(rec)
     local c = rec.c
     if c.classes then
@@ -1365,6 +1558,18 @@ function Store.IsLoaded(rec)
                 return false
             end
         end
+    end
+    -- Known spells: the Tracking toggle, then the Known Spell rule (any record).
+    -- An answer that cannot be told never gates.
+    local d = rec.driver
+    if d and d.onlyKnown == true and d.spellID
+        and Store.KnowsSpell(d.spellID, d.knownExact == true) == false then
+        return false
+    end
+    local km = c.knownMode
+    if (km == "known" or km == "unknown") and c.knownSpell then
+        local has = Store.KnowsSpell(c.knownSpell, c.knownRank == true)
+        if has ~= nil and has ~= (km == "known") then return false end
     end
     return true
 end
@@ -1794,11 +1999,11 @@ end
 -- Where a new thing appears: the screen centre in its parent's coordinates (a
 -- layout's pos is from the screen centre; a group's, free icon's or bar's from
 -- its layout's centre). No engine frame carries its own scale, so GetCenter
--- units match. A spot a sibling holds steps down by `step`; a layout frame with
--- no rect yet falls back to the layout's own centre.
-local function CenterSpot(layoutId, step)
+-- units match. Always the centre, even on top of another item: a new item
+-- must be found where the player looks, never stepped down the screen. A
+-- layout frame with no rect yet falls back to the layout's own centre.
+local function CenterSpot(layoutId)
     local x, y = 0, 0
-    local taken = {}
     if layoutId then
         local LE = NS.LayoutEngine
         local lf = LE and LE.GetLayoutFrame and LE.GetLayoutFrame(layoutId)
@@ -1810,35 +2015,13 @@ local function CenterSpot(layoutId, step)
                 y = math.floor(uy - ly + 0.5)
             end
         end
-        local layout = DB.records[layoutId]
-        for _, mid in ipairs(layout and layout.members or {}) do
-            local m = DB.records[mid]
-            if m and type(m.pos) == "table" then taken[#taken + 1] = m.pos end
-        end
-    else
-        for _, r in pairs(DB.records) do
-            if r.type == "layout" and type(r.pos) == "table" then taken[#taken + 1] = r.pos end
-        end
-    end
-    local guard = 0
-    while guard < 50 do
-        local hit = false
-        for _, p in ipairs(taken) do
-            if math.abs((tonumber(p.x) or 0) - x) < 4 and math.abs((tonumber(p.y) or 0) - y) < 4 then
-                hit = true
-                break
-            end
-        end
-        if not hit then break end
-        y = y - step
-        guard = guard + 1
     end
     return x, y
 end
 
 function Store.NewLayout(name)
     local id = NewId()
-    local sx, sy = CenterSpot(nil, 60)
+    local sx, sy = CenterSpot(nil)
     DB.records[id] = {
         id = id, type = "layout",
         name = name or ("Layout " .. id),
@@ -1930,7 +2113,7 @@ function Store.NewGroup(layoutId, name, groupKind)
     if kind == "reminder" then
         sx, sy = PulseSpot(layoutId)
     else
-        sx, sy = CenterSpot(layoutId, 40)
+        sx, sy = CenterSpot(layoutId)
     end
     local rec = {
         id = id, type = "group",
@@ -1957,8 +2140,9 @@ end
 
 -- Which icons a group takes: an aura group aura icons (none while it shows
 -- every aura on a unit), a cooldown group any (aura icons sit in it as solid
--- slots), a reminder group none (its members are reminders, made for it by
--- Store.NewReminder).
+-- slots), a reminder group none (its members are made for it: reminders by
+-- Store.NewReminder, aura reminders by Store.NewAuraReminder; its row is no
+-- grid, so nothing drags or moves in).
 function Store.GroupTakes(group, kind)
     if not group then return false end
     if group.groupKind == "aura" then return kind == "aura" and not Store.ShowsAll(group) end
@@ -2014,6 +2198,27 @@ function Store.NewReminder(groupId, kind, id, name)
     ScopeToCreator(rec)
     g.members[#g.members + 1] = rid
     DB.records[rid] = rec
+    Store.Dirty("tree")
+    return rec
+end
+
+-- An aura reminder: an aura icon made for a reminder group, in the row beside
+-- its pulse (Drivers\AD_DriverReminders.lua), showing only while its aura is
+-- missing (Active opacity 0). Store.GroupTakes lets nothing else into a
+-- reminder group, so this is the only way in. driver: an aura icon's.
+function Store.NewAuraReminder(groupId, driver, name)
+    local g = Store.Get(groupId)
+    if not (g and g.type == "group" and g.groupKind == "reminder") then return nil end
+    local id = NewId()
+    local rec = {
+        id = id, type = "icon", kind = "aura", groupId = groupId,
+        name = name or ("Icon " .. id),
+        driver = driver or {}, o = {}, c = {},
+    }
+    ScopeToCreator(rec)
+    g.members[#g.members + 1] = id
+    DB.records[id] = rec
+    Store.SetOverride(rec, "auraActive", "activeAlpha", 0)
     Store.Dirty("tree")
     return rec
 end
@@ -2109,7 +2314,7 @@ function Store.NewIcon(kind, driver, destGroupId, layoutId, name)
         local layout = Store.Get(layoutId)
         if not layout or layout.type ~= "layout" then return nil end
         rec.layoutId = layoutId
-        local sx, sy = CenterSpot(layoutId, 42)
+        local sx, sy = CenterSpot(layoutId)
         rec.pos = { x = sx, y = sy }
         layout.members[#layout.members + 1] = id
     end
@@ -2118,6 +2323,8 @@ function Store.NewIcon(kind, driver, destGroupId, layoutId, name)
     if kind == "totem" or kind == "enchant" or kind == "timer" then
         TemplateSet(rec, "swipe", "reverse", true)
     end
+    -- an ammo count is the icon's number: a new one starts in the centre
+    if kind == "ammo" then TemplateSet(rec, "text", "stackAnchor", "CENTER") end
     DB.records[id] = rec
     Store.Dirty("tree")
     return rec
@@ -2296,9 +2503,24 @@ local TEXT_SOURCE_SET, TEXT_SHOW_SET, TEXT_UNIT_SET = {}, {}, { player = true, t
 for _, s in ipairs(Schema.TEXT_SOURCES or {}) do TEXT_SOURCE_SET[s] = true end
 for _, s in ipairs(Schema.TEXT_SHOWS or {}) do TEXT_SHOW_SET[s] = true end
 for _, s in ipairs(Schema.TEXT_READOUTS or {}) do TEXT_SHOW_SET[s] = true end
+-- the states custom words show on, per source (nil = the first: ready, up)
+local TEXT_WHEN_SET = { spellText = {}, auraText = {} }
+for _, w in ipairs(Schema.TEXT_SPELL_WHEN or {}) do TEXT_WHEN_SET.spellText[w] = true end
+for _, w in ipairs(Schema.TEXT_AURA_WHEN or {}) do TEXT_WHEN_SET.auraText[w] = true end
 function Store.CleanText(d)
     if not TEXT_SOURCE_SET[d.source] then d.source = "static" end
     d.text = (type(d.text) == "string" and d.text ~= "") and d.text:sub(1, 120) or nil
+    local whenSet = TEXT_WHEN_SET[d.source]
+    if not (whenSet and whenSet[d.when]) then d.when = nil end
+    -- "When little time is left": a share of the aura (1-99%), or seconds
+    -- against the aura's length typed in
+    if d.timeUnit ~= "sec" then d.timeUnit = nil end
+    local pct = tonumber(d.timePct)
+    d.timePct = (pct and pct >= 1 and pct <= 99) and math.floor(pct) or nil
+    local sec = tonumber(d.timeSec)
+    d.timeSec = (sec and sec > 0) and math.min(3600, sec) or nil
+    local len = tonumber(d.auraLen)
+    d.auraLen = (len and len > 0) and math.min(36000, len) or nil
     local function Whole(v)
         v = tonumber(v)
         return (v and v > 0) and math.floor(v) or nil
@@ -2337,6 +2559,47 @@ function Store.CleanText(d)
     end
 end
 
+-- A texture's driver made usable (Bars\AD_TextureElement.lua): a known source,
+-- whole positive ids, the aura shape the aura driver reads, the cooldown's
+-- active state, and its own rules through CleanCustom when it has any.
+local TEXTURE_SOURCE_SET = {}
+for _, s in ipairs(Schema.TEXTURE_SOURCES or {}) do TEXTURE_SOURCE_SET[s] = true end
+local TEXTURE_UNIT_SET = { player = true, target = true, focus = true, pet = true,
+    party1 = true, party2 = true, party3 = true, party4 = true }
+function Store.CleanTexture(d)
+    if not TEXTURE_SOURCE_SET[d.source] then d.source = "aura" end
+    local function Whole(v)
+        v = tonumber(v)
+        return (v and v > 0) and math.floor(v) or nil
+    end
+    d.spellID = Whole(d.spellID)
+    d.autoRank = (d.autoRank == true) and true or nil
+    if type(d.spellIDs) == "table" then
+        local out, seen = {}, {}
+        for _, v in ipairs(d.spellIDs) do
+            local n = Whole(v)
+            if n and not seen[n] then
+                seen[n] = true
+                out[#out + 1] = n
+            end
+        end
+        if not d.spellID then d.spellID = out[1] end
+        d.spellIDs = (#out > 1) and out or nil
+    else
+        d.spellIDs = nil
+    end
+    if d.auraType ~= "buff" and d.auraType ~= "debuff" then d.auraType = nil end
+    if not TEXTURE_UNIT_SET[d.unit] then d.unit = nil end
+    if d.caster ~= "mine" and d.caster ~= "others" then d.caster = nil end
+    if d.cdActive ~= "cooldown" then d.cdActive = nil end
+    if d.source == "rules" or d.rules ~= nil then
+        if d.source == "rules" and type(d.rules) ~= "table" then d.rules = {} end
+        Store.CleanCustom(d, false)
+    else
+        d.duration, d.maxStacks, d.clearOnEnd, d.showWhile = nil, nil, nil, nil
+    end
+end
+
 -- Bars are always free layout children, never group members: group attachment
 -- is the anchor section. driver by kind: cooldown {spellID}, aura {spellID, auraType,
 -- unit, caster, maxStacks}, swing {swingType, swingAbilIDs, swingColors, rangeSpell},
@@ -2349,7 +2612,7 @@ function Store.NewBar(layoutId, barKind, driver, name, barMode)
     if barKind ~= "timer" and barKind ~= "stack" and barKind ~= "swing"
         and barKind ~= "aura" and barKind ~= "resource" and barKind ~= "health"
         and barKind ~= "cast" and barKind ~= "enchant" and barKind ~= "range"
-        and barKind ~= "text" then
+        and barKind ~= "text" and barKind ~= "texture" then
         barKind = "cooldown"
     end
     local id = NewId()
@@ -2372,13 +2635,19 @@ function Store.NewBar(layoutId, barKind, driver, name, barMode)
     -- power or hand, and a player health bar's is your own, so it stays off
     -- there; other health bars show their unit's live name.
     local hpUnit = barKind == "health" and (rec.driver.unit or "player") or nil
-    if barKind ~= "resource" and barKind ~= "swing" and barKind ~= "text" and hpUnit ~= "player" then
+    if barKind ~= "resource" and barKind ~= "swing" and barKind ~= "text" and barKind ~= "texture"
+        and hpUnit ~= "player" then
         TemplateSet(rec, "text", "nameShow", true)
     end
     -- A text element is born as a small box; its look is the schema's (white, 14).
     if barKind == "text" then
         TemplateSet(rec, "size", "width", 140)
         TemplateSet(rec, "size", "height", 24)
+    end
+    -- A texture is born as a square picture.
+    if barKind == "texture" then
+        TemplateSet(rec, "size", "width", 64)
+        TemplateSet(rec, "size", "height", 64)
     end
     -- A health bar is born green with incoming heals and absorb shields on;
     -- both are one click off in Heals & Shields (the schema defaults stay off).
@@ -2431,7 +2700,7 @@ function Store.NewBar(layoutId, barKind, driver, name, barMode)
     end
     -- at the screen centre; a bar already there pushes the new one down
     -- one row (24px bar + the name above it + a gap = 42)
-    local sx, sy = CenterSpot(layoutId, 42)
+    local sx, sy = CenterSpot(layoutId)
     rec.pos = { x = sx, y = sy }
     layout.members[#layout.members + 1] = id
     DB.records[id] = rec
@@ -2629,6 +2898,9 @@ end
 local function CloneRecord(rec, map, made)
     local c = CopyDeep(rec)
     c.id = NewId()
+    -- a copy is the player's own new item: its own ID, from no pack
+    c.uid = NewUid()
+    c.imported = nil
     map[rec.id] = c.id
     made[#made + 1] = c
     return c
@@ -2898,6 +3170,17 @@ function Store.IconsOf(group)
     return out
 end
 
+-- A group's icons and reminders in its member order: what the panel lists
+-- under it (a reminder group holds both, its aura reminders being icons).
+function Store.GroupMembers(group)
+    local out = {}
+    for _, mid in ipairs(group.members or {}) do
+        local rec = DB.records[mid]
+        if rec and (rec.type == "icon" or rec.type == "reminder") then out[#out + 1] = rec end
+    end
+    return out
+end
+
 -- A layout's children in its own member order, kinds mixed: the panel's order
 -- (rail, layout page, export picker), which the rail drag rearranges. The
 -- engine reads ChildrenOf, split by kind, so drawing never depends on it.
@@ -3029,6 +3312,37 @@ end
 -- An item exported without its layout must look the same wherever it lands, so
 -- the copy takes the layout's value for every row that applies to its kind and
 -- that it does not set itself. `orig` is the live record it was copied from.
+-- A character list names the maker's characters: never anyone else's.
+local function DropPersonal(rec)
+    if type(rec.c) == "table" then rec.c.chars = nil end
+end
+
+-- The maker's Save as Default looks (newDefaults) sit under every record's own
+-- and its layout's, and no string carries them: an exported record takes the
+-- ones it follows. `lay`: its layout when that travels too (its looks win).
+local function BakeDefaults(copy, orig, lay)
+    local nd = DB.newDefaults and DB.newDefaults[FamilyKey(orig)]
+    if type(nd) ~= "table" then return end
+    local fam = Schema[Store.FamilyOf(orig)]
+    local famKey = FAMILY_OF_TYPE[orig.type]
+    local linh = lay and type(lay.inh) == "table" and famKey and lay.inh[famKey] or nil
+    copy.o = copy.o or {}
+    for section, vals in pairs(nd) do
+        local sec = fam and fam[section]
+        if sec and type(vals) == "table" then
+            for field, v in pairs(vals) do
+                local def = sec.fields[field]
+                local byLayout = linh and linh[section] and linh[section][field] ~= nil
+                if def and not byLayout and Schema.Applies(def, sec, Store.KindOf(orig), orig.barMode) then
+                    local o = copy.o[section] or {}
+                    if o[field] == nil then o[field] = CopyDeep(v) end
+                    copy.o[section] = o
+                end
+            end
+        end
+    end
+end
+
 local function BakeLook(copy, orig)
     local fi = InhOf(orig)
     if not fi then return end
@@ -3061,10 +3375,17 @@ function Store.Export(ids, keep)
     local LD = GetDeflate()
     if not LD then return nil, "LibDeflate did not load" end
     local seen, recs = {}, {}
+    local taken
     local function add(rec)
         if not rec or seen[rec.id] then return end
         if keep and not keep(rec) then return end
         seen[rec.id] = true
+        -- the ID is saved on the item itself, so every later export of it
+        -- carries the same one
+        if not ValidUid(rec.uid) then
+            taken = taken or UidSet()
+            rec.uid = NewUid(taken)
+        end
         recs[#recs + 1] = CopyDeep(rec)
         if rec.type == "group" then
             for _, mid in ipairs(rec.members or {}) do add(DB.records[mid]) end
@@ -3086,9 +3407,15 @@ function Store.Export(ids, keep)
             local orig = DB.records[rec.id]
             local lay = orig and Store.LayoutOf(orig)
             if lay and not seen[lay.id] then BakeLook(rec, orig) end
+            -- so do the maker's own saved defaults, which no string carries
+            if orig then BakeDefaults(rec, orig, lay and seen[lay.id] and lay or nil) end
         end
+        DropPersonal(rec)
     end
-    local payload = { v = 1, kind = "adlayout", records = recs }
+    -- at: when it was made, so a later string can tell newer from older;
+    -- made / need: the version that made it and the format it needs
+    local payload = { v = 1, kind = "adlayout", records = recs, at = time and time() or 0,
+        made = Store.AddonVersion(), need = Store.FORMAT }
     local out = {}
     SerVal(payload, out)
     local comp = LD:CompressDeflate(table.concat(out))
@@ -3114,7 +3441,11 @@ end
 -- Returns { layouts, items, target, dropped = icons and reminders left out,
 -- reminders, reminderGroup, refused = names of reminders the group had }, or
 -- nil and a reason.
-function Store.Import(text, targetLayoutId, opts)
+-- The string's payload, or nil and a reason. A string that needs a newer
+-- format than this version reads (payload.need) is refused by name; one
+-- made by a newer version still imports, what this one does not know left
+-- out (Store.NewerMaker says so).
+local function DecodeString(text)
     text = tostring(text or ""):gsub("%s+", "")
     if text == "" then return nil, "paste an export string first" end
     local body
@@ -3136,6 +3467,17 @@ function Store.Import(text, targetLayoutId, opts)
         or payload.kind ~= "adlayout" or type(payload.records) ~= "table" then
         return nil, err or "corrupt string (bad payload)"
     end
+    local need = tonumber(payload.need)
+    if need and need > Store.FORMAT then
+        return nil, ("this string was made with Arc Auras %s and needs a newer version: update Arc Auras to import it")
+            :format(tostring(payload.made or "(newer)"))
+    end
+    return payload
+end
+
+function Store.Import(text, targetLayoutId, opts)
+    local payload, err = DecodeString(text)
+    if not payload then return nil, err end
 
     local VALID = { layout = true, group = true, icon = true, bar = true, reminder = true }
     -- opts.emptyGroups: a group in the string arrives without its icons (an
@@ -3149,6 +3491,26 @@ function Store.Import(text, targetLayoutId, opts)
         end
     end
     local map, newRecs, layouts, dropped = {}, {}, {}, 0
+    -- An item keeps the ID it came with, so a later version of the string
+    -- can find it; one this account already has (the same string twice, or
+    -- a player's own export back) comes in as a copy with a fresh ID, and
+    -- opts.asCopy gives every item a fresh one (a copy linked to no pack).
+    local taken = UidSet()
+    local at = tonumber(payload.at)
+    at = (at and at >= 0) and math.floor(at) or 0
+    local copied = {}
+    for _, rec in ipairs(payload.records) do
+        if type(rec) == "table" then
+            if ValidUid(rec.uid) and not taken[rec.uid] and not (opts and opts.asCopy) then
+                taken[rec.uid] = true
+            else
+                rec.uid = NewUid(taken)
+                copied[rec] = true
+            end
+            rec.imported = at
+            DropPersonal(rec)
+        end
+    end
     for _, rec in ipairs(payload.records) do
         if type(rec) == "table" and rec.id ~= nil and VALID[rec.type] then
             if (rec.type == "icon" or rec.type == "reminder") and rec.groupId ~= nil and dropIn[rec.groupId] then
@@ -3166,13 +3528,19 @@ function Store.Import(text, targetLayoutId, opts)
     end
     if #newRecs == 0 and #lone == 0 then return nil, "string holds nothing to import" end
 
-    -- layouts first, so loose records have somewhere to land
+    -- layouts first, so loose records have somewhere to land. A first import
+    -- is the pack as its maker left it (a later update compares against it);
+    -- a copy of one already here is named so and nudged off it.
     for _, rec in ipairs(layouts) do
         if type(rec.members) ~= "table" then rec.members = {} end
-        rec.name = tostring(rec.name or "Layout") .. " (import)"
         rec.pos = type(rec.pos) == "table" and rec.pos or {}
-        rec.pos.x = (tonumber(rec.pos.x) or 0) + 24
-        rec.pos.y = (tonumber(rec.pos.y) or 0) - 24
+        if copied[rec] then
+            rec.name = tostring(rec.name or "Layout") .. " (import)"
+            rec.pos.x = (tonumber(rec.pos.x) or 0) + 24
+            rec.pos.y = (tonumber(rec.pos.y) or 0) - 24
+        elseif rec.name == nil then
+            rec.name = "Layout"
+        end
         DB.records[rec.id] = rec
     end
     local target = Store.Get(targetLayoutId)
@@ -3260,4 +3628,485 @@ function Store.ImportLayout(text)
     local res, err = Store.Import(text)
     if not res then return nil, err end
     return res.layouts[1] or res.target
+end
+
+-- Pack updates: a string's items find the ones an earlier version of it made
+-- (rec.uid). The player updates the chosen parts of each in place, adds what
+-- is new and removes pack items the string no longer has, or imports a copy.
+-- The parts follow the editor tabs; Size & Position (placement, anchors,
+-- sizes, strata, mouse) starts off, so the player's own placement stays.
+Store.UPDATE_PARTS = { "tracking", "appearance", "showhide", "glows", "sounds", "text", "load", "names",
+    "arrange", "position" }
+Store.UPDATE_PART_LABELS = { tracking = "Tracking", appearance = "Appearance", showhide = "Show & Hide",
+    glows = "Glows", sounds = "Sounds", text = "Text", load = "Load Conditions", names = "Names",
+    arrange = "Group layout", position = "Size & Position" }
+Store.UPDATE_PART_OFF = { position = true }
+
+-- Every settings section's part, by family; t_adupdate fails on a section
+-- missing here, so no setting is ever skipped by an update.
+local PART_OF_SECTION = {
+    icon = { alerts = "sounds", anchor = "position", appearance = "appearance", auraActive = "showhide",
+        auraMissing = "showhide", auraSwipe = "appearance", groupBuff = "tracking", keybind = "text",
+        label = "text", mouse = "position", outOfStock = "showhide", position = "position",
+        pulse = "appearance", special = "appearance", states = "showhide", swipe = "appearance",
+        text = "text", trinket = "tracking" },
+    bar = { abilcolors = "appearance", anchor = "position", behavior = "showhide", cast = "appearance",
+        fill = "appearance", frame = "position", healpred = "appearance", healththresholds = "appearance",
+        icon = "appearance", look = "appearance", powerthresholds = "appearance", predict = "appearance",
+        range = "appearance", resource = "appearance", segments = "appearance", size = "position",
+        stackcolors = "appearance", texlook = "appearance", text = "text", textel = "text",
+        thresholds = "appearance", ticks = "appearance" },
+    iconGroup = { anchor = "position", arrangement = "arrange", audio = "sounds", frame = "position",
+        keybind = "text", look = "appearance", mouse = "position", pulse = "appearance",
+        unitAuras = "tracking" },
+    layout = { mouse = "position" },
+    reminder = { pulse = "appearance" },
+}
+-- fields whose part is not their section's
+local PART_OF_FIELD = {
+    ["bar.size.opacity"] = "appearance", ["bar.behavior.clickable"] = "position",
+    ["bar.behavior.gcdMode"] = "tracking", ["iconGroup.arrangement.iconSize"] = "position",
+    ["iconGroup.arrangement.iconWidth"] = "position", ["iconGroup.arrangement.iconHeight"] = "position",
+    ["iconGroup.pulse.size"] = "position", ["reminder.pulse.size"] = "position",
+}
+Store.PART_OF_SECTION = PART_OF_SECTION
+
+-- nil: a section no part knows (kept as the player has it)
+function Store.PartOf(family, section, field)
+    local p = field and PART_OF_FIELD[family .. "." .. section .. "." .. field]
+    if p then return p end
+    if type(field) == "string" then
+        if field:find("Glow", 1, true) then return "glows" end
+        if field:find("[Ss]ound") or field:find("^tts") then return "sounds" end
+    end
+    local fam = PART_OF_SECTION[family]
+    return fam and fam[section] or nil
+end
+
+-- the record's own keys; placement (pos, gpos, groupId, layoutId) and the
+-- member order are handled apart
+local PART_OF_KEY = { name = "names", driver = "tracking", triggers = "tracking", kind = "tracking",
+    barKind = "tracking", barMode = "tracking", groupKind = "tracking" }
+
+-- conditions: the fade and show rules are Show & Hide, the rest is Load;
+-- a character list is the player's own (nil: never updated)
+local function CondPart(key)
+    if key == "chars" then return nil end
+    if key:find("^fade") or key:find("^showWhen") or key:find("^range") then return "showhide" end
+    return "load"
+end
+
+local function SameData(a, b)
+    if type(a) ~= type(b) then return false end
+    if type(a) ~= "table" then return a == b end
+    for k, v in pairs(a) do
+        if not SameData(v, b[k]) then return false end
+    end
+    for k in pairs(b) do
+        if a[k] == nil then return false end
+    end
+    return true
+end
+
+-- One part of a record as flat keys, for telling what an update changes.
+-- uidOf: a member id's uid, so a member order reads the same on both sides.
+local function PartSlice(rec, part, uidOf)
+    local fam = Store.FamilyOf(rec)
+    local out = {}
+    for k, p in pairs(PART_OF_KEY) do
+        if p == part and rec[k] ~= nil then out["." .. k] = rec[k] end
+    end
+    for s, vals in pairs(type(rec.o) == "table" and rec.o or {}) do
+        if type(vals) == "table" then
+            for f, v in pairs(vals) do
+                if Store.PartOf(fam, s, f) == part then out[s .. "." .. f] = v end
+            end
+        end
+    end
+    for k, v in pairs(type(rec.c) == "table" and rec.c or {}) do
+        if CondPart(k) == part then out["c." .. k] = v end
+    end
+    if rec.type == "layout" and type(rec.inh) == "table" then
+        for fk, secs in pairs(rec.inh) do
+            for s, vals in pairs(type(secs) == "table" and secs or {}) do
+                for f, v in pairs(type(vals) == "table" and vals or {}) do
+                    if Store.PartOf(fk, s, f) == part then out["inh." .. fk .. "." .. s .. "." .. f] = v end
+                end
+            end
+        end
+    end
+    if part == "position" then
+        out[".pos"], out[".gpos"] = rec.pos, rec.gpos
+        out[".groupId"], out[".layoutId"] = rec.groupId, rec.layoutId
+    elseif part == "arrange" and type(rec.members) == "table" then
+        -- the order of the members both sides have (uidOf skips the rest):
+        -- items added or dropped are Add / Remove, never a change of order
+        local m = {}
+        for _, mid in ipairs(rec.members) do
+            local u = uidOf(mid)
+            if u then m[#m + 1] = u end
+        end
+        out[".members"] = m
+    end
+    return out
+end
+
+-- A copy of an incoming record whose links read as local ids: anchors, rules,
+-- its container (one not in the string reads as the player's own, since an
+-- update cannot move it there), members through their uids.
+local function LocalView(inc, loc, map)
+    local v = CopyDeep(inc)
+    DropPersonal(v)
+    RemapAnchors(v, map, false)
+    RemapRules(v, map, false)
+    for _, k in ipairs({ "groupId", "layoutId" }) do
+        if v[k] ~= nil then v[k] = map[v[k]] end
+    end
+    if v.groupId == nil and v.layoutId == nil and inc.groupId == nil and inc.layoutId == nil then
+        v.groupId, v.layoutId = loc.groupId, loc.layoutId
+    elseif (inc.groupId ~= nil and v.groupId == nil) or (inc.layoutId ~= nil and v.layoutId == nil) then
+        v.groupId, v.layoutId = loc.groupId, loc.layoutId
+    end
+    return v
+end
+
+local SHARE_TYPES = { layout = true, group = true, icon = true, bar = true, reminder = true }
+
+-- What a string would do here, without doing it: nil and a reason for a bad
+-- string, else { items = { { inc, loc, status = new / changed / same, parts }
+-- }, gone = records, counts, relation = new / same / older / update, at,
+-- localAt, made, newer }. relation "new": nothing of it is here (a plain
+-- import); "older": made before the copy here was.
+function Store.PlanUpdate(text)
+    local payload, err = DecodeString(text)
+    if not payload then return nil, err end
+    local byUid = {}
+    for _, r in pairs(DB.records) do
+        if ValidUid(r.uid) then byUid[r.uid] = r end
+    end
+    local inc, inUids = {}, {}
+    for _, r in ipairs(payload.records) do
+        if type(r) == "table" and r.id ~= nil and SHARE_TYPES[r.type] then
+            inc[#inc + 1] = r
+            if ValidUid(r.uid) then inUids[r.uid] = true end
+        end
+    end
+    -- incoming id -> local id; a new record reads as a mark of its own, so a
+    -- link to it always differs from the player's
+    local map, incUid = {}, {}
+    for _, r in ipairs(inc) do
+        local loc = ValidUid(r.uid) and byUid[r.uid] or nil
+        map[r.id] = (loc and loc.type == r.type) and loc.id or ("new:" .. tostring(r.id))
+        incUid[r.id] = r.uid
+    end
+    local at = tonumber(payload.at)
+    local plan = { payload = payload, items = {}, gone = {}, map = map,
+        at = (at and at >= 0) and math.floor(at) or 0, made = payload.made,
+        newer = Store.NewerMaker(payload.made), matched = 0, changed = 0, new = 0, same = 0 }
+    local localAt
+    -- the layouts here that the string carries: an item under one of them was
+    -- exported with its looks inherited, any other with them baked in
+    local layIn = {}
+    for _, r in ipairs(inc) do
+        if r.type == "layout" and type(map[r.id]) == "number" then layIn[map[r.id]] = true end
+    end
+    for _, r in ipairs(inc) do
+        local lid = map[r.id]
+        local loc = type(lid) == "number" and DB.records[lid] or nil
+        local item = { inc = r, loc = loc, name = r.name, type = r.type, parts = {} }
+        if loc then
+            plan.matched = plan.matched + 1
+            local view = LocalView(r, loc, map)
+            -- the local side read as an export of it would read (the maker's
+            -- own items inherit what their string carries baked in)
+            local mine = loc
+            if loc.type ~= "layout" then
+                mine = CopyDeep(loc)
+                local lay = Store.LayoutOf(loc)
+                local carried = lay and layIn[lay.id]
+                if lay and not carried then BakeLook(mine, loc) end
+                BakeDefaults(mine, loc, carried and lay or nil)
+            end
+            -- a container's order counts only the members it holds on both
+            -- sides (one kept elsewhere by the player is not a change)
+            local here, there = {}, {}
+            for _, mid in ipairs(type(loc.members) == "table" and loc.members or {}) do
+                local m = DB.records[mid]
+                if m and m.uid then here[m.uid] = true end
+            end
+            for _, mid in ipairs(type(r.members) == "table" and r.members or {}) do
+                if incUid[mid] then there[incUid[mid]] = true end
+            end
+            local localUid = function(mid)
+                local m = DB.records[mid]
+                local u = m and m.uid
+                return (u and there[u]) and u or nil
+            end
+            local viewUid = function(mid)
+                local u = incUid[mid]
+                return (u and here[u]) and u or nil
+            end
+            local any = false
+            for _, p in ipairs(Store.UPDATE_PARTS) do
+                if not SameData(PartSlice(mine, p, localUid), PartSlice(view, p, viewUid)) then
+                    item.parts[p] = true
+                    any = true
+                end
+            end
+            item.status = any and "changed" or "same"
+            if any then plan.changed = plan.changed + 1 else plan.same = plan.same + 1 end
+            local la = tonumber(loc.imported)
+            if la and la > 0 and (not localAt or la > localAt) then localAt = la end
+        else
+            item.status = "new"
+            plan.new = plan.new + 1
+        end
+        plan.items[#plan.items + 1] = item
+    end
+    -- the pack's own items the string no longer has, inside what it matched
+    local seen = {}
+    for _, item in ipairs(plan.items) do
+        local loc = item.loc
+        if loc and (loc.type == "layout" or loc.type == "group") then
+            for _, mid in ipairs(loc.members or {}) do
+                local m = DB.records[mid]
+                if m and not seen[mid] and m.imported ~= nil and not inUids[m.uid] then
+                    seen[mid] = true
+                    plan.gone[#plan.gone + 1] = m
+                end
+            end
+        end
+    end
+    plan.localAt = localAt
+    if plan.matched == 0 then
+        plan.relation = "new"
+    elseif plan.changed == 0 and plan.new == 0 and #plan.gone == 0 then
+        plan.relation = "same"
+    elseif localAt and plan.at > 0 and plan.at < localAt then
+        plan.relation = "older"
+    else
+        plan.relation = "update"
+    end
+    return plan
+end
+
+local function Contains(list, id)
+    for _, v in ipairs(list or {}) do
+        if v == id then return true end
+    end
+    return false
+end
+
+-- Size & Position's placement: the container the string puts it in (when
+-- that container is in the string) and its spot there.
+local function Place(loc, view)
+    if loc.type == "icon" then
+        if view.groupId ~= nil and view.groupId ~= loc.groupId then
+            if not Store.MoveIcon(loc.id, view.groupId, nil, nil, view.gpos) then return end
+        elseif view.groupId == nil and view.layoutId ~= nil and (loc.groupId ~= nil or loc.layoutId ~= view.layoutId) then
+            if not Store.MoveIcon(loc.id, nil, view.layoutId, view.pos) then return end
+        end
+    elseif (loc.type == "bar" or loc.type == "group") and view.layoutId ~= nil and view.layoutId ~= loc.layoutId then
+        Store.MoveToLayout(loc.id, view.layoutId)
+    end
+    if loc.groupId ~= nil then
+        loc.gpos = CopyDeep(view.gpos)
+    else
+        loc.pos = CopyDeep(view.pos)
+    end
+end
+
+-- One part of a matched record, from its local view.
+local function ApplyPart(loc, view, part, map)
+    local fam = Store.FamilyOf(loc)
+    for k, p in pairs(PART_OF_KEY) do
+        if p == part then loc[k] = CopyDeep(view[k]) end
+    end
+    local secs = {}
+    for s in pairs(type(loc.o) == "table" and loc.o or {}) do secs[s] = true end
+    for s in pairs(type(view.o) == "table" and view.o or {}) do secs[s] = true end
+    for s in pairs(secs) do
+        local lo, vo = loc.o and loc.o[s], view.o and view.o[s]
+        local fields = {}
+        for f in pairs(type(lo) == "table" and lo or {}) do fields[f] = true end
+        for f in pairs(type(vo) == "table" and vo or {}) do fields[f] = true end
+        for f in pairs(fields) do
+            if Store.PartOf(fam, s, f) == part then
+                local v = type(vo) == "table" and vo[f] or nil
+                loc.o = loc.o or {}
+                if v == nil then
+                    if type(loc.o[s]) == "table" then loc.o[s][f] = nil end
+                else
+                    loc.o[s] = type(loc.o[s]) == "table" and loc.o[s] or {}
+                    loc.o[s][f] = CopyDeep(v)
+                end
+            end
+        end
+        if loc.o and type(loc.o[s]) == "table" and next(loc.o[s]) == nil then loc.o[s] = nil end
+    end
+    local keys = {}
+    for k in pairs(type(loc.c) == "table" and loc.c or {}) do keys[k] = true end
+    for k in pairs(type(view.c) == "table" and view.c or {}) do keys[k] = true end
+    for k in pairs(keys) do
+        if CondPart(k) == part then
+            loc.c = loc.c or {}
+            loc.c[k] = CopyDeep(view.c and view.c[k])
+        end
+    end
+    if loc.type == "layout" then
+        local fks = {}
+        for fk in pairs(type(loc.inh) == "table" and loc.inh or {}) do fks[fk] = true end
+        for fk in pairs(type(view.inh) == "table" and view.inh or {}) do fks[fk] = true end
+        for fk in pairs(fks) do
+            local ls = loc.inh and loc.inh[fk] or {}
+            local vs = view.inh and view.inh[fk] or {}
+            local ss = {}
+            for s in pairs(ls) do ss[s] = true end
+            for s in pairs(vs) do ss[s] = true end
+            for s in pairs(ss) do
+                local fields = {}
+                for f in pairs(type(ls[s]) == "table" and ls[s] or {}) do fields[f] = true end
+                for f in pairs(type(vs[s]) == "table" and vs[s] or {}) do fields[f] = true end
+                for f in pairs(fields) do
+                    if Store.PartOf(fk, s, f) == part then
+                        local v = type(vs[s]) == "table" and vs[s][f] or nil
+                        loc.inh = loc.inh or {}
+                        loc.inh[fk] = loc.inh[fk] or {}
+                        loc.inh[fk][s] = loc.inh[fk][s] or {}
+                        loc.inh[fk][s][f] = CopyDeep(v)
+                    end
+                end
+            end
+        end
+    end
+    if part == "position" then
+        Place(loc, view)
+    elseif part == "arrange" and type(loc.members) == "table" then
+        -- the string's order for members in both, the player's own after them
+        local order, set = {}, {}
+        for _, iid in ipairs(type(view.members) == "table" and view.members or {}) do
+            local lid = map[iid]
+            if type(lid) == "number" and Contains(loc.members, lid) and not set[lid] then
+                order[#order + 1] = lid
+                set[lid] = true
+            end
+        end
+        for _, id in ipairs(loc.members) do
+            if not set[id] then order[#order + 1] = id end
+        end
+        loc.members = order
+    end
+end
+
+-- Applies a plan. opts: parts = { [part] = true } (default: every part but
+-- Size & Position), add (new items, default on), remove (the pack items the
+-- string dropped, default on), skip = { [uid] = true } (items left alone),
+-- targetLayoutId (where new loose items land). A group that holds the
+-- player's own items is never removed. Returns { updated, added, removed,
+-- target }.
+function Store.ApplyUpdate(plan, opts)
+    opts = opts or {}
+    local parts = opts.parts
+    if not parts then
+        parts = {}
+        for _, p in ipairs(Store.UPDATE_PARTS) do
+            if not Store.UPDATE_PART_OFF[p] then parts[p] = true end
+        end
+    end
+    local map = {}
+    for _, item in ipairs(plan.items) do
+        if item.loc then map[item.inc.id] = item.loc.id end
+    end
+    local adds = {}
+    if opts.add ~= false then
+        for i, item in ipairs(plan.items) do
+            if item.status == "new" then
+                map[item.inc.id] = NewId()
+                adds[#adds + 1] = { item = item, i = i }
+            end
+        end
+    end
+    local RANK = { layout = 1, group = 2 }
+    table.sort(adds, function(a, b)
+        local ra, rb = RANK[a.item.type] or 3, RANK[b.item.type] or 3
+        if ra ~= rb then return ra < rb end
+        return a.i < b.i
+    end)
+    local target = Store.Get(opts.targetLayoutId)
+    if target and target.type ~= "layout" then target = nil end
+    if not target then
+        for _, item in ipairs(plan.items) do
+            if item.loc and item.loc.type == "layout" then target = item.loc break end
+        end
+    end
+    local taken = UidSet()
+    local res = { updated = 0, added = 0, removed = 0 }
+    for _, a in ipairs(adds) do
+        local rec = CopyDeep(a.item.inc)
+        rec.id = map[a.item.inc.id]
+        if ValidUid(rec.uid) and not taken[rec.uid] then taken[rec.uid] = true else rec.uid = NewUid(taken) end
+        rec.imported = plan.at
+        DropPersonal(rec)
+        RemapAnchors(rec, map, false)
+        RemapRules(rec, map, false)
+        -- a new container fills as its items arrive; matched ones join it
+        -- only through Size & Position
+        if type(rec.members) == "table" then rec.members = {} end
+        rec.groupId = rec.groupId ~= nil and map[rec.groupId] or nil
+        rec.layoutId = rec.layoutId ~= nil and map[rec.layoutId] or nil
+        DB.records[rec.id] = rec
+        if rec.type ~= "layout" then
+            local parent = (rec.groupId and DB.records[rec.groupId]) or (rec.layoutId and DB.records[rec.layoutId])
+            if not parent then
+                target = target or Store.NewLayout("Imported")
+                if type(target.members) ~= "table" then target.members = {} end
+                rec.groupId, rec.gpos, rec.layoutId = nil, nil, target.id
+                if type(rec.pos) ~= "table" then rec.pos = { x = 0, y = -60 } end
+                parent = target
+            end
+            parent.members = type(parent.members) == "table" and parent.members or {}
+            if not Contains(parent.members, rec.id) then parent.members[#parent.members + 1] = rec.id end
+        end
+        res.added = res.added + 1
+    end
+    for _, item in ipairs(plan.items) do
+        local loc = item.loc
+        if loc and DB.records[loc.id] == loc then
+            if item.status == "changed" and not (opts.skip and opts.skip[item.inc.uid]) then
+                local view = LocalView(item.inc, loc, map)
+                local touched = false
+                for _, p in ipairs(Store.UPDATE_PARTS) do
+                    if parts[p] and item.parts[p] then
+                        ApplyPart(loc, view, p, map)
+                        touched = true
+                    end
+                end
+                if touched then res.updated = res.updated + 1 end
+            end
+            loc.imported = plan.at
+        end
+    end
+    if opts.remove ~= false then
+        for _, m in ipairs(plan.gone) do
+            local keep = false
+            if m.type == "group" then
+                for _, mid in ipairs(m.members or {}) do
+                    local r = DB.records[mid]
+                    if r and r.imported == nil then keep = true end
+                end
+            end
+            if not keep and m.type ~= "layout" and DB.records[m.id] == m then
+                Store.Delete(m.id)
+                res.removed = res.removed + 1
+            elseif keep then
+                -- the pack let it go and the player's own items live in it:
+                -- it is theirs now, never offered for removal again
+                m.imported = nil
+            end
+        end
+    end
+    res.target = target
+    Store.Normalize()
+    Store.Dirty("tree")
+    return res
 end

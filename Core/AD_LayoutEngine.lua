@@ -141,7 +141,11 @@ end
 function Engine.IconSize(rec)
     local bw, bh = 36, 36
     local g = rec and rec.groupId and Store.Get(rec.groupId)
-    if g then
+    if g and g.groupKind == "reminder" then
+        -- an aura reminder: the row's size (Drivers\AD_DriverReminders.lua)
+        bw = Snap(math.floor((Store.Resolve(g, "pulse", "auraSize") or 40) + 0.5))
+        bh = bw
+    elseif g then
         local R = function(field) return Store.Resolve(g, "arrangement", field) end
         local scale = math.floor((R("iconSize") or 36) + 0.5) / 36
         bw = Snap(math.floor((R("iconWidth") or 36) * scale + 0.5))
@@ -1394,6 +1398,35 @@ function Engine.HandlerFor(group)
     for _, h in ipairs(Engine.GROUP_CLAIMS) do
         if h.claims(group) then return h end
     end
+end
+
+-- Drawn by this rebuild: loaded, or previewed while editing (ShowsRec).
+Engine.Shows = ShowsRec
+
+-- An icon a group kind places itself (the Reminder group's aura reminders):
+-- a grid member's wiring at the handler's spot (CENTER offsets on parent, a
+-- w x h cell), never dragged, as the handler owns the layout. Returns the
+-- frame, or nil (released) when it is not drawn here.
+function Engine.PlaceKindIcon(rec, parent, cx, cy, w, h)
+    if not ShowsRec(rec) then
+        Factory.Release(rec.id)
+        NS.DriverCooldown.Detach(rec.id)
+        return nil
+    end
+    local f = Factory.Ensure(rec)
+    f:SetParent(parent)
+    f:ClearAllPoints()
+    dynAnims[f] = nil
+    f._adDynParent = nil
+    ApplyIconPosition(f, rec, parent, cx, cy, w, h)
+    Factory.ApplyStyle(f, rec)
+    NS.DriverCooldown.Attach(rec, f)
+    f:SetMovable(false)
+    Factory.ApplyMouse(f, editMode, rec)
+    Factory.SetEditMode(f, rec, editMode)
+    GhostTag(f, rec)
+    ShowIcon(f, rec)
+    return f
 end
 
 -- The container's own look (Arrangement > Container), off by default; the

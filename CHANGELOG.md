@@ -1,5 +1,41 @@
 # Arc Auras
 
+## 1.8.0
+
+Missing-only aura icons and glows, textures, group buff counts, texts for spells and auras, updates for shared setups and known spells.
+
+### New Features
+
+- **Missing-only aura icons** - Set an aura icon's Active opacity to 0% and it shows only while the aura is missing.
+- **Missing glows** - Aura glows can show only while the aura is missing.
+- **Aura reminders** - Reminder groups can remind you of a missing buff or debuff.
+- **Group Buff icons** - Count who in your party or raid has a buff, show it while anyone lacks it, and hover to see who is missing.
+- **Textures** - Show a picture with an aura or a cooldown, or let it fill and drain like a bar. Pick from 170 pictures or use your own.
+- **Update shared setups** - Import a newer version of a string you already have and update your copy instead of adding a second one. Works with strings made with 1.8.0 or later.
+- **Known spells** - Spell icons and cooldown bars can wait until you learn their spell, and anything can load only while you know a spell.
+
+### Improvements
+
+- **Texts for spells and auras** - A text can follow a spell or an aura: its cooldown, charges, time left or stacks, or your own words for its state.
+- **Text editing** - Texts take their spell's or aura's name, have their own Appearance page, and show a sample while you edit.
+- **Custom text** - Labels are now Custom text. On aura icons each one shows always, while the aura is up, or while it is missing.
+- **Aura icon opacity** - Active and Missing opacity are fully separate, and a dimmed icon fades instead of turning dark.
+- **Glow cards** - Glow when sits at the top of each card.
+- **Option folds** - More options folds open and close freely, even when they hold a changed setting.
+- **While editing** - Combat-only aura glows and faint aura icons stay visible while the options window is open.
+- **Ammo icons** - The count has its own Count tab and the preview shows your real count. The Duration tab is gone.
+- **Version check** - A string from a newer Arc Auras tells you to update.
+- **First imports** - Strings made with 1.8.0 or later keep their name and place. Only a second copy gets (import).
+
+### Bug Fixes
+
+- **New items** - Appear in the middle of the screen instead of further down each time.
+- **Combo points** - The first point on a new target always shows.
+- **Aura sounds** - No longer play twice after a reload.
+- **Aura sounds in combat** - Changing one mid-fight no longer risks a blocked-action error.
+- **Shared looks** - Items from a setup that uses Save as Default look the same for everyone who imports them.
+- **Character-only items** - An item set to load only on its maker's character now loads for whoever imports it.
+
 ## 1.7.0
 
 Aura groups for any aura or nameplate, text elements, clickable party bars, aura sounds, over-shields and less CPU.

@@ -30,10 +30,12 @@ function Bars.PreBuildAura()
     if not (DA and DA.IsAvailable and DA.IsAvailable() == true) then return end
     Bars.loadWindow = true
     Store.EachRecord(function(id, rec)
-        -- a text element reading an aura's time or stacks draws through a slot too
-        local T = NS.TextElements
+        -- a text element reading an aura's time or stacks draws through a slot
+        -- too, and so does a texture driven by an aura
+        local T, TP = NS.TextElements, NS.TextureElements
         if rec.type == "bar" and (rec.barKind == "aura"
-            or (rec.barKind == "text" and T and T.AuraSource(rec))) and Loads(rec) then
+            or (rec.barKind == "text" and T and (T.SlotSource or T.AuraSource)(rec))
+            or (rec.barKind == "texture" and TP and TP.Source(rec) == "aura")) and Loads(rec) then
             local h = holders[id]
             if not h then
                 h = CreateFrame("Frame", nil, UIParent)

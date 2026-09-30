@@ -1163,6 +1163,9 @@ function Driver.Attach(rec, f)
         elseif rec.kind == "special" and NS.SpecialIcon then
             -- a Special Aura: its tracker feeds it (Core\AD_SpecialIcon.lua)
             NS.SpecialIcon.Attach(rec, f)
+        elseif rec.kind == "groupbuff" and NS.DriverGroupBuff then
+            -- a Group Buff: who in the group has it (Drivers\AD_DriverGroupBuff.lua)
+            NS.DriverGroupBuff.Attach(rec, f)
         else
             Factory.SetState(f, rec, false)
         end
@@ -1219,6 +1222,7 @@ function Driver.Detach(id)
     if NS.DriverEnchant then NS.DriverEnchant.Detach(id) end
     if NS.DriverCustom then NS.DriverCustom.Detach(id) end
     if NS.SpecialIcon then NS.SpecialIcon.Detach(id) end
+    if NS.DriverGroupBuff then NS.DriverGroupBuff.Detach(id) end
     local a = attached[id]
     if a then
         SetRangeWant(a, nil)
@@ -1248,4 +1252,5 @@ function Driver.Refeed(id)
     if NS.DriverEnchant then NS.DriverEnchant.Refeed(id) end
     if NS.DriverCustom then NS.DriverCustom.Refeed(id) end
     if NS.SpecialIcon then NS.SpecialIcon.Refeed(id) end
+    if NS.DriverGroupBuff then NS.DriverGroupBuff.Refeed(id) end
 end

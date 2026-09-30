@@ -11,7 +11,7 @@ NS.Schema = Schema
 
 Schema.VERSION = 1
 
-Schema.ICON_KINDS = { "spell", "item", "trinket", "timer", "totem", "aura", "ammo", "enchant", "special" }
+Schema.ICON_KINDS = { "spell", "item", "trinket", "timer", "totem", "aura", "ammo", "enchant", "special", "groupbuff" }
 -- A reminder group (Drivers\AD_DriverReminders.lua) is a pulse window: its
 -- members are reminder records, never icons.
 Schema.GROUP_KINDS = { "cooldown", "aura", "reminder" }
@@ -19,22 +19,41 @@ Schema.GROUP_KINDS = { "cooldown", "aura", "reminder" }
 -- "stack"). The create UI hides swing where C_SwingTimer is missing, but the
 -- kind stays valid everywhere, so sync never rewrites a record. Legacy "timer"
 -- and "stack" (power) bars stay legal but cannot be created.
-Schema.BAR_KINDS = { "cooldown", "aura", "swing", "resource", "health", "cast", "enchant", "range", "text" }
+Schema.BAR_KINDS = { "cooldown", "aura", "swing", "resource", "health", "cast", "enchant", "range", "text", "texture" }
 -- A text element's sources (rec.driver.source, Bars\AD_TextElement.lua): each
 -- reads plain in combat or reaches the screen through a text sink only.
 Schema.TEXT_SOURCES = { "static", "power", "health", "combo", "ammo", "petMood", "range", "clock",
-    "spellCd", "spellCharges", "auraTime", "auraStacks", "rules", "custom" }
+    "spellCd", "spellCharges", "auraTime", "auraStacks", "rules", "custom", "spellText", "auraText" }
 Schema.TEXT_SOURCE_LABELS = { static = "Words you type", power = "Your power", health = "Health",
     combo = "Combo points", ammo = "Ammo count", petMood = "Pet happiness", range = "Target range band",
     clock = "Time of day", spellCd = "A spell's cooldown", spellCharges = "A spell's charges",
     auraTime = "An aura's time left", auraStacks = "An aura's stacks", rules = "Custom rules",
-    custom = "A Custom Icon or Bar's value" }
+    custom = "A Custom Icon or Bar's value", spellText = "A spell's custom text",
+    auraText = "An aura's custom text" }
+-- A text is for a spell or an aura: its value, or custom words shown on one
+-- of its states, the states its icon glows on (rec.driver.when).
+Schema.TEXT_SPELL_SOURCES = { "spellCd", "spellCharges", "spellText" }
+Schema.TEXT_AURA_SOURCES = { "auraTime", "auraStacks", "auraText" }
+Schema.TEXT_SPELL_WHEN = { "ready", "cooldown", "usable", "proc", "always" }
+Schema.TEXT_SPELL_WHEN_LABELS = { ready = "When ready", cooldown = "While on cooldown", usable = "When usable",
+    proc = "While its proc is up", always = "Always" }
+Schema.TEXT_AURA_WHEN = { "up", "time", "missing", "always" }
+Schema.TEXT_AURA_WHEN_LABELS = { up = "While the aura is up", time = "When little time is left",
+    missing = "While the aura is missing", always = "Always" }
 -- What a numeric source shows (power, health): the value, its maximum or the
 -- percent; a rule-driven one: the stacks, the time left or both.
 Schema.TEXT_SHOWS = { "current", "max", "percent" }
 Schema.TEXT_SHOW_LABELS = { current = "Current value", max = "Maximum", percent = "Percent" }
 Schema.TEXT_READOUTS = { "stacks", "left", "both" }
 Schema.TEXT_READOUT_LABELS = { stacks = "The stacks", left = "The time left", both = "Both: stacks (time left)" }
+-- A texture's sources (rec.driver.source, Bars\AD_TextureElement.lua): what
+-- makes the picture active, and what a fill runs with. An aura's picture is
+-- drawn by the game's aura engine, so it follows the aura in combat.
+Schema.TEXTURE_SOURCES = { "aura", "spellCd", "rules" }
+Schema.TEXTURE_SOURCE_LABELS = { aura = "An aura", spellCd = "A spell's cooldown", rules = "Custom triggers" }
+-- a cooldown picture's active state (rec.driver.cdActive, nil = ready)
+Schema.TEXTURE_CD_ACTIVE = { "ready", "cooldown" }
+Schema.TEXTURE_CD_ACTIVE_LABELS = { ready = "The spell is ready", cooldown = "The spell is on cooldown" }
 -- Units a castbar can follow (rec.driver.unit): the three that fire cast events
 -- and a change event of their own.
 Schema.CAST_UNITS = { "player", "target", "focus" }
@@ -166,13 +185,26 @@ local NA  = { spell = true, item = true, trinket = true, timer = true, totem = t
     enchant = true, special = true }
 -- Stack text: only kinds something writes a count for (spell charges, item and
 -- ammo bag counts, aura applications, timer stacks, enchant charges, a deck's
--- position). Trinkets have none.
-local STK = { spell = true, item = true, timer = true, aura = true, ammo = true, enchant = true, special = true }
+-- position, a group buff's have / total). Trinkets have none.
+local STK = { spell = true, item = true, timer = true, aura = true, ammo = true, enchant = true, special = true,
+    groupbuff = true }
+-- The two-state dim: the cooldown kinds, and a group buff (someone lacks it /
+-- everyone has it, Drivers\AD_DriverGroupBuff.lua).
+local CDGB = { spell = true, item = true, trinket = true, timer = true, totem = true, enchant = true, special = true,
+    groupbuff = true }
+-- The duration text: kinds with a time to count down (not ammo, not a group
+-- buff: their text is a count).
+local DUR = { spell = true, item = true, trinket = true, timer = true, totem = true, enchant = true, special = true,
+    aura = true }
 -- The "while on cooldown" glow: the kinds whose cooldown look means a real
 -- cooldown (a totem's or enchant's is "missing", worded apart).
 local CDG = { spell = true, item = true, trinket = true, timer = true, special = true }
 -- An ammo count: the ammo icon's stack text, a spell icon's ammo text.
 local AMMO_CT = { ammo = true, spell = true }
+-- A group buff's custom texts: which of its two states shows each.
+local GBK = { groupbuff = true }
+local GB_WHEN = { "always", "lacks", "has" }
+local GB_WHEN_LABELS = { always = "Always", lacks = "While someone lacks it", has = "While everyone has it" }
 -- "Minutes and seconds" cutoffs in seconds, for icons and bars alike.
 local ABBREV_VALUES = { 0, 120, 300, 600, 3600 }
 local ABBREV_LABELS = { [0] = "Off", [120] = "Under 2 minutes", [300] = "Under 5 minutes",
@@ -290,9 +322,11 @@ Schema.icon = {
     } },
     states = { push = true, inherit = true, fields = {
         readyAlpha    = { d = 1.0,  t = "num", min = 0, max = 1, label = "Ready alpha" },
-        -- Not on ammo icons: they never have a cooldown.
-        cooldownAlpha = { d = 1.0,  t = "num", min = 0, max = 1, kinds = CD, label = "On cooldown alpha" },
-        cooldownDesaturate = { d = true, t = "bool", kinds = CD, label = "Desaturate on cooldown" },
+        -- Not on ammo icons: they never have a cooldown. A group buff's is
+        -- "everyone has it", hidden until the user shows it.
+        cooldownAlpha = { d = 1.0, dk = { groupbuff = 0 }, t = "num", min = 0, max = 1, kinds = CDGB,
+            label = "On cooldown alpha" },
+        cooldownDesaturate = { d = true, t = "bool", kinds = CDGB, label = "Desaturate on cooldown" },
         -- On: duration, stack and label texts stay bright while the icon dims.
         -- Off: they follow the state alpha.
         preserveDurationText = { d = true, t = "bool", label = "Keep texts bright while dimmed" },
@@ -503,55 +537,60 @@ Schema.icon = {
     } },
     -- Up to three custom texts per icon, each shown or hidden by state.
     label = { push = true, inherit = true, fields = {
-        labelText = { inherit = false, d = "", t = "text", label = "Label text" },
+        labelText = { inherit = false, d = "", t = "text", label = "Custom text" },
         -- One font for all three labels.
-        labelFont = { d = "", t = "text", font = true, label = "Label font",
+        labelFont = { d = "", t = "text", font = true, label = "Custom text font",
             dep = { field = "labelText", nonempty = true } },
-        labelSize = { d = 12, t = "int", min = 6, max = 32, label = "Label size", dep = { field = "labelText", nonempty = true } },
-        labelColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Label color", dep = { field = "labelText", nonempty = true } },
+        labelSize = { d = 12, t = "int", min = 6, max = 32, label = "Custom text size", dep = { field = "labelText", nonempty = true } },
+        labelColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Custom text color", dep = { field = "labelText", nonempty = true } },
         labelAnchor = { d = "CENTER", t = "enum",
             values = { "CENTER", "TOP", "BOTTOM", "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" },
-            label = "Label anchor", dep = { field = "labelText", nonempty = true } },
-        labelX = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Label X", dep = { field = "labelText", nonempty = true } },
-        labelY = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Label Y", dep = { field = "labelText", nonempty = true } },
-        labelShowReady = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label when ready", dep = { field = "labelText", nonempty = true } },
-        labelShowCooldown = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label on cooldown", dep = { field = "labelText", nonempty = true } },
-        -- Aura icons: drawn on the engine button, which the game shows exactly
-        -- while the aura is up, so it holds in combat with no presence read.
-        -- The missing twin sits under that button, clipped to the area it
-        -- covers, so the live button hides it while the aura is up.
-        labelActiveOnly = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label only while the aura is up",
-            dep = { { field = "labelText", nonempty = true }, { field = "labelMissingOnly", notValue = true } } },
-        labelMissingOnly = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label only while the aura is missing",
-            dep = { { field = "labelText", nonempty = true }, { field = "labelActiveOnly", notValue = true } } },
-        labelText2 = { inherit = false, d = "", t = "text", label = "Label 2 text" },
-        labelSize2 = { d = 12, t = "int", min = 6, max = 32, label = "Label 2 size", dep = { field = "labelText2", nonempty = true } },
-        labelColor2 = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Label 2 color", dep = { field = "labelText2", nonempty = true } },
+            label = "Custom text anchor", dep = { field = "labelText", nonempty = true } },
+        labelX = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text X", dep = { field = "labelText", nonempty = true } },
+        labelY = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text Y", dep = { field = "labelText", nonempty = true } },
+        labelShowReady = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show custom text when ready", dep = { field = "labelText", nonempty = true } },
+        labelShowCooldown = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show custom text on cooldown", dep = { field = "labelText", nonempty = true } },
+        -- Drawn on the engine button, so it holds in combat. One dropdown writes both (showPick).
+        labelActiveOnly = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show custom text",
+            showPick = "labelMissingOnly", dep = { field = "labelText", nonempty = true } },
+        labelMissingOnly = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show custom text only while the aura is missing",
+            pickedBy = "labelActiveOnly", dep = { field = "labelText", nonempty = true } },
+        -- A group buff: its combat layers carry the texts shown while someone
+        -- lacks it (Drivers\AD_DriverGroupBuff.lua).
+        labelWhen = { inherit = false, d = "always", t = "enum", kinds = GBK, values = GB_WHEN, labels = GB_WHEN_LABELS,
+            label = "Show custom text", dep = { field = "labelText", nonempty = true } },
+        labelText2 = { inherit = false, d = "", t = "text", label = "Custom text 2" },
+        labelSize2 = { d = 12, t = "int", min = 6, max = 32, label = "Custom text 2 size", dep = { field = "labelText2", nonempty = true } },
+        labelColor2 = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Custom text 2 color", dep = { field = "labelText2", nonempty = true } },
         labelAnchor2 = { d = "TOP", t = "enum",
             values = { "CENTER", "TOP", "BOTTOM", "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" },
-            label = "Label 2 anchor", dep = { field = "labelText2", nonempty = true } },
-        labelX2 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Label 2 X", dep = { field = "labelText2", nonempty = true } },
-        labelY2 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Label 2 Y", dep = { field = "labelText2", nonempty = true } },
-        labelShowReady2 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label 2 when ready", dep = { field = "labelText2", nonempty = true } },
-        labelShowCooldown2 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label 2 on cooldown", dep = { field = "labelText2", nonempty = true } },
-        labelActiveOnly2 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label 2 only while the aura is up",
-            dep = { { field = "labelText2", nonempty = true }, { field = "labelMissingOnly2", notValue = true } } },
-        labelMissingOnly2 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label 2 only while the aura is missing",
-            dep = { { field = "labelText2", nonempty = true }, { field = "labelActiveOnly2", notValue = true } } },
-        labelText3 = { inherit = false, d = "", t = "text", label = "Label 3 text" },
-        labelSize3 = { d = 12, t = "int", min = 6, max = 32, label = "Label 3 size", dep = { field = "labelText3", nonempty = true } },
-        labelColor3 = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Label 3 color", dep = { field = "labelText3", nonempty = true } },
+            label = "Custom text 2 anchor", dep = { field = "labelText2", nonempty = true } },
+        labelX2 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text 2 X", dep = { field = "labelText2", nonempty = true } },
+        labelY2 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text 2 Y", dep = { field = "labelText2", nonempty = true } },
+        labelShowReady2 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show custom text 2 when ready", dep = { field = "labelText2", nonempty = true } },
+        labelShowCooldown2 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show custom text 2 on cooldown", dep = { field = "labelText2", nonempty = true } },
+        labelActiveOnly2 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show custom text 2",
+            showPick = "labelMissingOnly2", dep = { field = "labelText2", nonempty = true } },
+        labelMissingOnly2 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show custom text 2 only while the aura is missing",
+            pickedBy = "labelActiveOnly2", dep = { field = "labelText2", nonempty = true } },
+        labelWhen2 = { inherit = false, d = "always", t = "enum", kinds = GBK, values = GB_WHEN, labels = GB_WHEN_LABELS,
+            label = "Show custom text 2", dep = { field = "labelText2", nonempty = true } },
+        labelText3 = { inherit = false, d = "", t = "text", label = "Custom text 3" },
+        labelSize3 = { d = 12, t = "int", min = 6, max = 32, label = "Custom text 3 size", dep = { field = "labelText3", nonempty = true } },
+        labelColor3 = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Custom text 3 color", dep = { field = "labelText3", nonempty = true } },
         labelAnchor3 = { d = "BOTTOM", t = "enum",
             values = { "CENTER", "TOP", "BOTTOM", "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" },
-            label = "Label 3 anchor", dep = { field = "labelText3", nonempty = true } },
-        labelX3 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Label 3 X", dep = { field = "labelText3", nonempty = true } },
-        labelY3 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Label 3 Y", dep = { field = "labelText3", nonempty = true } },
-        labelShowReady3 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label 3 when ready", dep = { field = "labelText3", nonempty = true } },
-        labelShowCooldown3 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show label 3 on cooldown", dep = { field = "labelText3", nonempty = true } },
-        labelActiveOnly3 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label 3 only while the aura is up",
-            dep = { { field = "labelText3", nonempty = true }, { field = "labelMissingOnly3", notValue = true } } },
-        labelMissingOnly3 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show label 3 only while the aura is missing",
-            dep = { { field = "labelText3", nonempty = true }, { field = "labelActiveOnly3", notValue = true } } },
+            label = "Custom text 3 anchor", dep = { field = "labelText3", nonempty = true } },
+        labelX3 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text 3 X", dep = { field = "labelText3", nonempty = true } },
+        labelY3 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text 3 Y", dep = { field = "labelText3", nonempty = true } },
+        labelShowReady3 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show custom text 3 when ready", dep = { field = "labelText3", nonempty = true } },
+        labelShowCooldown3 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show custom text 3 on cooldown", dep = { field = "labelText3", nonempty = true } },
+        labelActiveOnly3 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show custom text 3",
+            showPick = "labelMissingOnly3", dep = { field = "labelText3", nonempty = true } },
+        labelMissingOnly3 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show custom text 3 only while the aura is missing",
+            pickedBy = "labelActiveOnly3", dep = { field = "labelText3", nonempty = true } },
+        labelWhen3 = { inherit = false, d = "always", t = "enum", kinds = GBK, values = GB_WHEN, labels = GB_WHEN_LABELS,
+            label = "Show custom text 3", dep = { field = "labelText3", nonempty = true } },
     } },
     -- Transition sounds. A sound cannot be unplayed, so the driver fires only
     -- on verified transitions. Each trigger is a toggle plus a t = "sound"
@@ -625,6 +664,15 @@ Schema.icon = {
     -- spell) hides and gives up its cell in a dynamic group, as a missing one.
     trinket = { push = true, kinds = { trinket = true }, fields = {
         onlyOnUse = { d = false, t = "bool", label = "Only on-use trinkets (hide passive ones)" },
+    } },
+    -- A group buff (Drivers\AD_DriverGroupBuff.lua): counted between pulls, secret in combat.
+    groupBuff = { push = true, kinds = { groupbuff = true }, fields = {
+        combatShow = { d = false, t = "bool", label = "Show in combat while anyone lacks it",
+            desc = "In combat the game hides buffs, so the count stops; this shows the icon, without a count, while anyone lacks the buff." },
+        -- the count text's words: have / total, how many lack it, or have
+        countShows = { d = "haveTotal", t = "enum", values = { "haveTotal", "missing", "have" },
+            labels = { haveTotal = "Have / total (3/5)", missing = "Missing (2)", have = "Have (3)" },
+            label = "Count shows", dep = { section = "text", field = "stackText" } },
     } },
     -- A totem's pulse: a bar under the art that refills at every pulse,
     -- counted from when the totem went down (NS.DriverTotem).
@@ -752,7 +800,8 @@ Schema.icon = {
                 return DA ~= nil and DA.GlowLaneOK(rec) and #DA.GlowSpellGroups(rec.driver) > 1
             end,
             desc = "Any of the icon's spells, or only one of them (its ranks together). Works in combat.",
-            dep = { field = "activeGlow" } },
+            dep = { { field = "activeGlow" }, { field = "activeGlowWhen", notValue = "missing" },
+                { field = "activeGlowWhen", notValue = "both" } } },
         activeGlowCombatOnly = { d = false, t = "bool", kinds = AU,
             label = "Glow only in combat",
             showIf = function(rec)
@@ -761,16 +810,20 @@ Schema.icon = {
             end,
             desc = "The glow waits for combat; out of combat the icon shows without it.",
             dep = { field = "activeGlow" } },
-        -- Engine-driven, no reads: always while the aura is up, or under a
-        -- time-left threshold, gated by a hidden duration bar the engine fills.
-        -- Forever keeps no leftover time on a refresh, so the game opens no
-        -- pandemic window: a saved "pandemic" draws the last 30%, and the list
-        -- no longer offers it.
-        activeGlowWhen = { d = "always", t = "enum", values = { "always", "pandemic", "time" },
-            labels = { always = "The whole time", pandemic = "In the last 30%",
-                time = "When little time is left" },
-            valueIf = { pandemic = function() return false end },
-            desc = "The whole time: while the aura is up. When little time is left: once the time left drops under the amount below. Both work in combat.",
+        -- Engine-driven, no reads. Forever opens no pandemic window: "pandemic" draws the last 30%.
+        activeGlowWhen = { d = "always", t = "enum", values = { "always", "pandemic", "time", "missing", "both" },
+            labels = { always = "While the aura is up", pandemic = "In the last 30%",
+                time = "When little time is left", missing = "While the aura is missing", both = "Always" },
+            valueIf = { pandemic = function() return false end,
+                missing = function(r)
+                    local DA = NS.DriverAura
+                    return DA ~= nil and DA.MissingGlowOK ~= nil and DA.MissingGlowOK(r)
+                end,
+                both = function(r)
+                    local DA = NS.DriverAura
+                    return DA ~= nil and DA.GlowLaneOK ~= nil and DA.GlowLaneOK(r)
+                end },
+            desc = "While the aura is up, only once little time is left, only while the aura is missing, or always. Works in combat.",
             label = "Glow when", dep = { field = "activeGlow" } },
         -- Percent is exact for any aura; seconds need the aura's length typed
         -- in, as the engine's bar runs over a duration addons cannot read.
@@ -813,10 +866,12 @@ Schema.icon = {
             dep = { field = "activeGlow" } },
         activeGlowMoveY = { adv = "glow", d = 0, t = "int", min = -20, max = 20, label = "Active glow move Y",
             dep = { field = "activeGlow" } },
+        -- a Missing glow keeps its place on the aura icon's ladder: these two
+        -- do not apply to it
         activeGlowStrata = { adv = "glow", d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }, label = "Active glow strata",
-            dep = { field = "activeGlow" } },
+            dep = { { field = "activeGlow" }, { field = "activeGlowWhen", notValue = "missing" } } },
         activeGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, label = "Active glow frame level",
-            dep = { field = "activeGlow" } },
+            dep = { { field = "activeGlow" }, { field = "activeGlowWhen", notValue = "missing" } } },
     } },
     -- The engine button's swipe is our own Cooldown widget, so its look is
     -- plain writes; spell icons with the aura overlay use it too.
@@ -838,56 +893,56 @@ Schema.icon = {
         swipeBling = { d = false, t = "bool", label = "Aura finish flash" },
     } },
     text = { push = true, inherit = true, fields = {
-        durationText = { d = true, t = "bool", label = "Duration text" },
+        durationText = { kinds = DUR, d = true, t = "bool", label = "Duration text" },
         -- "global" follows Settings > Timers.
-        durationRounding = { d = "global", t = "enum", values = { "global", "up", "down" },
+        durationRounding = { kinds = DUR, d = "global", t = "enum", values = { "global", "up", "down" },
             labels = { global = "Same as Settings", up = "Round up", down = "Round down" },
             label = "Round timer numbers", dep = { field = "durationText" } },
-        durationSize = { d = 14, t = "int", min = 6, max = 32, label = "Duration text size", dep = { field = "durationText" } },
-        durationColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Duration text color", dep = { field = "durationText" } },
+        durationSize = { kinds = DUR, d = 14, t = "int", min = 6, max = 32, label = "Duration text size", dep = { field = "durationText" } },
+        durationColor = { kinds = DUR, d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Duration text color", dep = { field = "durationText" } },
         -- A baked NumericRuleFormatter renders the countdown from the real
         -- remaining time, so it works on secret durations with no ticker. M:SS
         -- ("1:30") from 60 s up to this many seconds, "12 m" above; 0 = off.
-        durationAbbrev = { d = 600, t = "enum", values = ABBREV_VALUES, labels = ABBREV_LABELS,
+        durationAbbrev = { kinds = DUR, d = 600, t = "enum", values = ABBREV_VALUES, labels = ABBREV_LABELS,
             label = "Minutes and seconds (1:30)", dep = { field = "durationText" } },
-        durationShadow = { adv = "text", d = false, t = "bool", label = "Duration text shadow", dep = { field = "durationText" } },
-        durationDecimals = { d = false, t = "bool", label = "Decimal seconds", dep = { field = "durationText" } },
-        durationDecimalThreshold = { d = 10, t = "int", min = 2, max = 60, label = "Decimals under (seconds)",
+        durationShadow = { kinds = DUR, adv = "text", d = false, t = "bool", label = "Duration text shadow", dep = { field = "durationText" } },
+        durationDecimals = { kinds = DUR, d = false, t = "bool", label = "Decimal seconds", dep = { field = "durationText" } },
+        durationDecimalThreshold = { kinds = DUR, d = 10, t = "int", min = 2, max = 60, label = "Decimals under (seconds)",
             dep = { { field = "durationText" }, { field = "durationDecimals" } } },
-        durationOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" },
+        durationOutline = { kinds = DUR, adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" },
             label = "Duration text outline", dep = { field = "durationText" } },
-        durationFont = { d = "", t = "text", font = true, label = "Duration text font", dep = { field = "durationText" } },
-        durationAnchor = { d = "CENTER", t = "enum",
+        durationFont = { kinds = DUR, d = "", t = "text", font = true, label = "Duration text font", dep = { field = "durationText" } },
+        durationAnchor = { kinds = DUR, d = "CENTER", t = "enum",
             values = { "CENTER", "TOP", "BOTTOM", "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" },
             label = "Duration text anchor", dep = { field = "durationText" } },
-        durationX = { adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Duration text X", dep = { field = "durationText" } },
-        durationY = { adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Duration text Y", dep = { field = "durationText" } },
+        durationX = { kinds = DUR, adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Duration text X", dep = { field = "durationText" } },
+        durationY = { kinds = DUR, adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Duration text Y", dep = { field = "durationText" } },
         -- Whether a charge is left comes from the shadow.
         hideDurWithCharges = { d = false, t = "bool", kinds = SP, label = "Hide duration while charges remain",
             dep = { field = "durationText" } },
         -- Bands bake into the countdown formatter as color escapes, so the
         -- engine colors the text from the real remaining time. A band colors
         -- values under its seconds (0 = off); above them, the plain color.
-        durationColorBands = { d = false, t = "bool", label = "Color by remaining time",
+        durationColorBands = { kinds = DUR, d = false, t = "bool", label = "Color by remaining time",
             dep = { field = "durationText" } },
-        durBand1Sec = { d = 5, t = "int", min = 0, max = 3600, label = "Band 1: under (seconds)",
+        durBand1Sec = { kinds = DUR, d = 5, t = "int", min = 0, max = 3600, label = "Band 1: under (seconds)",
             dep = { { field = "durationText" }, { field = "durationColorBands" } } },
-        durBand1Color = { d = { 0.9, 0.15, 0.15, 1 }, t = "color", label = "Band 1 color",
+        durBand1Color = { kinds = DUR, d = { 0.9, 0.15, 0.15, 1 }, t = "color", label = "Band 1 color",
             dep = { { field = "durationText" }, { field = "durationColorBands" } } },
-        durBand2Sec = { d = 60, t = "int", min = 0, max = 3600, label = "Band 2: under (seconds)",
+        durBand2Sec = { kinds = DUR, d = 60, t = "int", min = 0, max = 3600, label = "Band 2: under (seconds)",
             dep = { { field = "durationText" }, { field = "durationColorBands" } } },
-        durBand2Color = { d = { 0.95, 0.75, 0.2, 1 }, t = "color", label = "Band 2 color",
+        durBand2Color = { kinds = DUR, d = { 0.95, 0.75, 0.2, 1 }, t = "color", label = "Band 2 color",
             dep = { { field = "durationText" }, { field = "durationColorBands" } } },
-        durBand3Sec = { d = 0, t = "int", min = 0, max = 3600, label = "Band 3: under (seconds)",
+        durBand3Sec = { kinds = DUR, d = 0, t = "int", min = 0, max = 3600, label = "Band 3: under (seconds)",
             dep = { { field = "durationText" }, { field = "durationColorBands" } } },
-        durBand3Color = { d = { 1, 1, 1, 1 }, t = "color", label = "Band 3 color",
+        durBand3Color = { kinds = DUR, d = { 1, 1, 1, 1 }, t = "color", label = "Band 3 color",
             dep = { { field = "durationText" }, { field = "durationColorBands" } } },
         stackText = { d = true, t = "bool", kinds = STK, label = "Stack text" },
         stackSize = { d = 14, t = "int", min = 6, max = 32, kinds = STK, label = "Stack text size", dep = { field = "stackText" } },
         stackColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, kinds = STK, label = "Stack text color", dep = { field = "stackText" } },
         stackOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = STK, label = "Stack text outline", dep = { field = "stackText" } },
         stackFont = { d = "", t = "text", font = true, kinds = STK, label = "Stack text font", dep = { field = "stackText" } },
-        stackAnchor = { d = "BOTTOMRIGHT", t = "enum",
+        stackAnchor = { d = "BOTTOMRIGHT", dk = { groupbuff = "CENTER" }, t = "enum",
             values = { "BOTTOMRIGHT", "BOTTOMLEFT", "TOPRIGHT", "TOPLEFT", "TOP", "BOTTOM", "CENTER" },
             kinds = STK, label = "Stack text anchor", dep = { field = "stackText" } },
         stackX = { adv = "text", d = 0, t = "int", min = -200, max = 200, kinds = STK, label = "Stack text X", dep = { field = "stackText" } },
@@ -1300,6 +1355,15 @@ Schema.iconGroup = {
             label = "Zoom Pop Speed", dep = { field = "animStyle", value = "zoom" } },
         animZoomSettleTime = { d = 0.08, t = "num", min = 0.02, max = 0.30, step = 0.01, fmt = "%.2f",
             label = "Zoom Settle Speed", dep = { field = "animStyle", value = "zoom" } },
+        -- Aura reminders (aura icons made for the group) sit in a row beside
+        -- the pulse area, each shown by the game while its aura is missing;
+        -- the pulse keeps its own spot. The spacing also parts row and pulse.
+        auraSide = { d = "below", t = "enum", values = { "below", "above", "left", "right" },
+            labels = { below = "Below the pulse", above = "Above the pulse", left = "Left of the pulse",
+                right = "Right of the pulse" },
+            label = "Aura reminders sit" },
+        auraSize = { d = 40, t = "int", min = 16, max = 128, label = "Aura reminder size" },
+        auraSpacing = { d = 4, t = "int", min = 0, max = 40, label = "Aura reminder spacing" },
     } },
     -- A reminder group's sounds and speech. The default sound is v1's Default
     -- (the Drumroll Ding kit); a trigger plays it only once its sound is on.
@@ -1479,6 +1543,7 @@ end
 Schema.TextNumeric = TextSourceIs("NumericSource")
 Schema.TextCounted = TextSourceIs("CountedSource")
 Schema.TextTimed = TextSourceIs("TimedSource")
+Schema.TextValue = TextSourceIs("ValueSource")
 
 local READOUT_VALUES = { "value", "abbreviated", "valuemax", "percent", "none" }
 local READOUT_LABELS = { value = "Value", abbreviated = "Short value (5.2k)", valuemax = "Value / max",
@@ -2136,9 +2201,9 @@ Schema.bar = {
             dep = { field = "bgShow" } },
         -- The words around the value: this element's own, never a layout look.
         -- A countdown the game draws itself (a spell's or an aura's time) has none.
-        prefix = { inherit = false, d = "", t = "text", label = "Prefix",
+        prefix = { inherit = false, d = "", t = "text", label = "Prefix", showIf = Schema.TextValue,
             desc = "Words before the value. Not on a countdown the game draws (a spell's time left, an aura's)." },
-        suffix = { inherit = false, d = "", t = "text", label = "Suffix",
+        suffix = { inherit = false, d = "", t = "text", label = "Suffix", showIf = Schema.TextValue,
             desc = "Words after the value. Not on a countdown the game draws (a spell's time left, an aura's)." },
         numFormat = { d = "plain", t = "enum", values = { "plain", "abbreviated" },
             labels = { plain = "As is", abbreviated = "Short (5.2k)" }, label = "Number format",
@@ -2153,6 +2218,34 @@ Schema.bar = {
         rounding = { d = "global", t = "enum", values = { "global", "up", "down" },
             labels = { global = "Same as Settings", up = "Round up", down = "Round down" },
             label = "Rounding", showIf = Schema.TextTimed },
+    } },
+    -- A texture's picture (Bars\AD_TextureElement.lua): the whole picture while
+    -- it is active, or a fill that runs like a bar. Turning, flipping and zoom
+    -- reach the whole picture only: a fill's picture stays upright.
+    texlook = { push = true, inherit = true, kinds = { texture = true }, fields = {
+        -- "" = the tracked spell's icon; else a FileDataID or a file path
+        image = { inherit = false, d = "", t = "text", picture = true, label = "Picture" },
+        color = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Picture color" },
+        blend = { d = "BLEND", t = "enum", values = { "BLEND", "ADD" },
+            labels = { BLEND = "Normal", ADD = "Glow (brightens what is behind)" }, label = "Picture blend" },
+        desat = { d = false, t = "bool", label = "Grey out the picture" },
+        mode = { d = "show", t = "enum", values = { "show", "fill" },
+            labels = { show = "The whole picture", fill = "A fill, like a bar" }, label = "Picture shows as" },
+        fillDir = { d = "RIGHT", t = "enum", values = { "RIGHT", "LEFT", "UP", "DOWN" },
+            labels = { RIGHT = "Left to right", LEFT = "Right to left", UP = "Bottom to top", DOWN = "Top to bottom" },
+            label = "Fill direction of the picture", dep = { field = "mode", value = "fill" } },
+        fillMode = { d = "drain", t = "enum", values = { "drain", "fill" },
+            labels = { drain = "Drain: the time left", fill = "Fill up: the time passed" },
+            label = "Picture fill follows", dep = { field = "mode", value = "fill" } },
+        bgShow = { d = false, t = "bool", label = "Dim copy behind",
+            desc = "The picture again, dimmed, behind it: the empty part of a fill, and all that shows while it is not active." },
+        bgAlpha = { d = 0.3, t = "num", min = 0, max = 1, label = "Dim copy opacity", dep = { field = "bgShow" } },
+        bgDesat = { d = false, t = "bool", label = "Grey the dim copy", dep = { field = "bgShow" } },
+        rotation = { d = 0, t = "int", min = -180, max = 180, label = "Turn the picture (degrees)",
+            dep = { field = "mode", value = "show" } },
+        flipH = { d = false, t = "bool", label = "Flip the picture left to right", dep = { field = "mode", value = "show" } },
+        flipV = { d = false, t = "bool", label = "Flip the picture upside down", dep = { field = "mode", value = "show" } },
+        zoom = { d = 0, t = "int", min = 0, max = 45, label = "Picture zoom (%)", dep = { field = "mode", value = "show" } },
     } },
     -- Not pushable, like conditions. hiddenAlpha is the opacity for the state
     -- hides below; every kind it lists must honor it.

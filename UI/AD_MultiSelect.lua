@@ -439,8 +439,9 @@ function M.SetMark(row, fs, on)
 end
 
 -- Wraps a schema row's sync (SectionRows): the mark while Edit together is
--- open and the records disagree on the field. Costs one boolean otherwise.
-function M.MarkRow(row, ctx, section, field)
+-- open and the records disagree on the field (or on `also`, the second
+-- field a showPick dropdown writes). Costs one boolean otherwise.
+function M.MarkRow(row, ctx, section, field, also)
     local sync = row._sync
     row._sync = function()
         if sync then sync() end
@@ -449,7 +450,8 @@ function M.MarkRow(row, ctx, section, field)
             return
         end
         local r = ctx()
-        M.SetMark(row, row._colLabel, r ~= nil and r._adMulti == true and M.Mixed(r, section, field))
+        M.SetMark(row, row._colLabel, r ~= nil and r._adMulti == true
+            and (M.Mixed(r, section, field) or (also ~= nil and M.Mixed(r, section, also))))
     end
 end
 

@@ -3,8 +3,10 @@
 -- sound in combat with nothing read; this file only registers them: one per
 -- tracked spell ID and moment, on the icon's unit, while the icon is attached.
 -- The game takes sound files only (no built-in kit) and has no caster filter,
--- so any caster's copy of the aura counts. It refuses a registration during a
--- boss encounter and in combat in a keystone: those wait, removing never does.
+-- so any caster's copy of the aura counts. Registering waits for the end of
+-- combat (in an instance the game blocks it) and of an encounter; removing
+-- never waits. The game keeps registrations through a /reload, so ours all go
+-- at logout.
 local ADDON, NS = ...
 local Store = NS.Store
 local Events = NS.Events
@@ -48,6 +50,7 @@ local function Active(name)
 end
 
 function AS.CanAdd()
+    if InCombatLockdown() then return false end
     return not (Active("Encounter") or (Active("Combat") and Active("ChallengeMode")))
 end
 
@@ -162,3 +165,9 @@ end
 Events.OnMessage("AD_DIRTY", AS.KEY, function()
     if next(AS.live) or next(AS.reg) then AS.Queue() end
 end)
+
+-- a reload fires this too, and would otherwise register every sound again
+function AS.DropAll()
+    for id in pairs(AS.reg) do AS.SyncOne(id, {}, false) end
+end
+Events.On("PLAYER_LOGOUT", AS.KEY, AS.DropAll)

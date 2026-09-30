@@ -337,7 +337,7 @@ function Options.SpecialIconRows(pg, ctx, trackVis, owner)
 end
 
 -- The special icon's Text blocks, through the icon editor's Block: the stack
--- template on Text > Stacks, the proc and chance colours on Labels & Keybind.
+-- template on Text > Stacks, the proc and chance colours on Custom Text & Keybind.
 function Options.SpecialTextBlocks(Block, sub, pg, ctx)
     local AT, COL = NS.AT, NS.AT.COL
     if sub == "Stacks" then
@@ -346,8 +346,8 @@ function Options.SpecialTextBlocks(Block, sub, pg, ctx)
         AT.RowDesc(pg, "Tokens: {left} {drawn} {size} {procs} {procsLeft} {max} {chance} {viol} {count}.", 20, def.vis)
         return def
     end
-    if sub == "Labels & Keybind" then
-        local def = Block("Text", "Labels & Keybind", "Proc and chance colors", "special", {
+    if sub == "Custom Text & Keybind" then
+        local def = Block("Text", "Custom Text & Keybind", "Proc and chance colors", "special", {
             "procColorMode", "procEmptyColor", "procHalfColor", "procFullColor",
             "chanceDecimals", "chanceColorMode", "chanceLowPct", "chanceHighPct",
             "chanceColdColor", "chanceMidColor", "chanceHotColor",

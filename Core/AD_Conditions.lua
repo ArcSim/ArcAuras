@@ -1216,4 +1216,11 @@ function Conditions.Init()
             Store.Dirty("load")
         end)
     end
+    -- A spell learned (or unlearned): "Only load once learned" is a "who"
+    -- gate too, so a changed answer is a full load pass.
+    if EventValid("SPELLS_CHANGED") and Store.KnownChanged then
+        Events.On("SPELLS_CHANGED", "adcond_base", function()
+            if Store.KnownChanged() then Store.Dirty("load") end
+        end)
+    end
 end

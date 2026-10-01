@@ -116,6 +116,40 @@ local function GroupKind()
     return g
 end
 
+-- Another member of your party or raid has this class. A member's class
+-- reads secret while the game restricts unit identity; the last plain answer
+-- holds until it reads again (a roster rarely changes in a fight).
+local function ClassInGroup(tag)
+    local key = "class" .. tag
+    local kind = GroupKind()
+    if kind == "solo" then
+        lastPlain[key] = false
+        return false
+    end
+    local units = {}
+    if kind == "raid" then
+        local n = GetNumGroupMembers and GetNumGroupMembers() or 0
+        if IsSecret(n) then return lastPlain[key] == true end
+        for i = 1, math.min(40, n) do units[i] = "raid" .. i end
+    else
+        for i = 1, 4 do units[i] = "party" .. i end
+    end
+    local found = 0
+    for _, u in ipairs(units) do
+        local _, c = UnitClass(u)
+        if IsSecret(c) then return lastPlain[key] == true end
+        if c == tag then found = found + 1 end
+    end
+    -- a raid lists you among its members
+    if kind == "raid" then
+        local _, mine = UnitClass("player")
+        if IsSecret(mine) then return lastPlain[key] == true end
+        if mine == tag then found = found - 1 end
+    end
+    lastPlain[key] = found > 0
+    return found > 0
+end
+
 -- SecretWhenUnitSpellCastRestricted: the returns are only nil-tested, which a
 -- secret allows (the first return is a string, not a boolean).
 local function Casting()
@@ -338,6 +372,8 @@ local VOCAB = {
         read = function() return GroupKind() == "party" end },
     { key = "raid", cat = "group", text = "In a raid group", ev = GROUP_EV,
         read = function() return GroupKind() == "raid" end },
+    { key = "shamanInGroup", cat = "group", text = "Shaman in my group", ev = GROUP_EV,
+        read = function() return ClassInGroup("SHAMAN") end },
     { key = "roleTank", cat = "group", text = "Tank role", avail = Retail, ev = ROLE_EV,
         read = RoleIs("TANK") },
     { key = "roleHealer", cat = "group", text = "Healer role", avail = Retail, ev = ROLE_EV,

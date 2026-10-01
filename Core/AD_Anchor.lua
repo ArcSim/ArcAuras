@@ -394,6 +394,16 @@ local function SnapSize(frame, v)
     return math.floor(v * ppu + 0.5) / ppu
 end
 
+-- A group's container padding on each side, which a match leaves out: the
+-- match follows its icons' size and spacing. Negative padding lets the icons
+-- overhang the frame, so the frame alone would come up short.
+local function GroupPadding(rec)
+    if (R(rec, "anchorTargetKind") or "group") ~= "group" then return 0 end
+    local g = Store.Get(R(rec, "anchorTargetId") or 0)
+    if not (g and g.type == "group") then return 0 end
+    return tonumber(Store.Resolve(g, "arrangement", "containerPadding")) or 0
+end
+
 -- Match width / height take the target's size in this frame's own units, as
 -- the two may sit in layouts of different scales. A standing bar swaps them:
 -- its width runs along its long side.
@@ -401,11 +411,12 @@ local function MatchSize(rec, frame, target)
     local ts, fs = target:GetEffectiveScale(), frame:GetEffectiveScale()
     local k = (type(ts) == "number" and type(fs) == "number" and fs > 0) and ts / fs or 1
     local standing = rec.type == "bar" and Store.BarStanding ~= nil and Store.BarStanding(rec)
+    local pad2 = 2 * GroupPadding(rec)
     if R(rec, "anchorMatchWidth") == true then
         local adj = R(rec, "anchorMatchWidthAdjust") or 0
         local v = standing and target:GetHeight() or target:GetWidth()
         if v and v > 0 then
-            v = SnapSize(frame, math.max(1, v * k + adj))
+            v = SnapSize(frame, math.max(1, (v - pad2) * k + adj))
             if standing then frame:SetHeight(v) else frame:SetWidth(v) end
         end
     end
@@ -413,10 +424,31 @@ local function MatchSize(rec, frame, target)
         local adj = R(rec, "anchorMatchHeightAdjust") or 0
         local v = standing and target:GetWidth() or target:GetHeight()
         if v and v > 0 then
-            v = SnapSize(frame, math.max(1, v * k + adj))
+            v = SnapSize(frame, math.max(1, (v - pad2) * k + adj))
             if standing then frame:SetWidth(v) else frame:SetHeight(v) end
         end
     end
+end
+
+-- Every edge on a physical pixel, as the engine's SnapPlacement does for a free
+-- frame: a whole-unit offset is a whole pixel only at UI scale 1, and a TOP or
+-- CENTER point puts an odd-sized frame's sides between pixels. A bar between
+-- pixels rounds its background and its fill to different edges, so a line of
+-- the background shows. The anchor's offset takes the bottom-left's sub-pixel
+-- remainder, measured from the typed spot (a re-snap after a size change must
+-- not stack on the last shift); a secret or unresolved rect is left there.
+local function SnapAnchored(rec, frame, target)
+    local src, dst = R(rec, "anchorSrcPoint") or DEFAULT_SRC, R(rec, "anchorDstPoint") or DEFAULT_DST
+    local x, y = R(rec, "anchorOffsetX") or 0, R(rec, "anchorOffsetY") or 0
+    frame:SetPoint(src, target, dst, x, y)
+    local left, bottom = Plain(frame:GetLeft()), Plain(frame:GetBottom())
+    local s = Plain(frame:GetEffectiveScale())
+    local _, physH = GetPhysicalScreenSize()
+    if not (left and bottom and s and physH) or s <= 0 or physH <= 0 then return end
+    local px = (768 / physH) / s
+    local dx = left - math.floor(left / px + 0.5) * px
+    local dy = bottom - math.floor(bottom / px + 0.5) * px
+    if dx ~= 0 or dy ~= 0 then frame:SetPoint(src, target, dst, x - dx, y - dy) end
 end
 
 -- A match follows its target live (a group grows with its auras, a pips bar
@@ -434,6 +466,7 @@ local function FollowSize(rec, target)
                 -- a source that moved to another target left a stale entry
                 if r and f and f:IsShown() and Anchor.ResolveTarget(r) == t then
                     MatchSize(r, f, t)
+                    SnapAnchored(r, f, t)
                 end
             end
         end)
@@ -477,6 +510,7 @@ function Anchor.Apply(rec, frame)
         MatchSize(rec, frame, target)
         if (R(rec, "anchorTargetKind") or "group") ~= "frame" then FollowSize(rec, target) end
     end
+    SnapAnchored(rec, frame, target)
     return true
 end
 
@@ -623,6 +657,35 @@ function Anchor.PickSet(rec, v)
     Store.SetOverride(rec, "anchor", "anchorEnabled", true)
     Store.SetOverride(rec, "anchor", "anchorTargetKind", kind)
     Store.SetOverride(rec, "anchor", "anchorTargetId", tonumber(id))
+end
+
+-- The Arc Auras frames Pick Frame can offer for rec (UI\AD_FramePicker.lua),
+-- as frame -> { value, text } in PickList's words, for every target rec may
+-- pick. rec's own frame and a target that would close a loop map to { why }
+-- instead, so the picker stops there rather than walking on to the layout
+-- behind. A grouped icon is left out: its walk goes on to its group.
+function Anchor.PickFrames(rec)
+    local map = {}
+    if not (rec and Store.EachRecord) then return map end
+    for _, kind in ipairs(PICK_ORDER) do
+        local get = providers[kind]
+        if get and Anchor.Allows(rec, kind) then
+            Store.EachRecord(function(id, other)
+                if other.type ~= kind or (kind == "icon" and other.groupId ~= nil) then return end
+                local f = get(id)
+                if not f then return end
+                if id == rec.id then
+                    map[f] = { why = "self" }
+                elseif Anchor.CreatesCycle(rec.id, other) then
+                    map[f] = { why = "loop" }
+                else
+                    map[f] = { value = kind .. ":" .. id,
+                        text = PREFIX[kind] .. ":  " .. (other.name or ((KIND_LABEL[kind] or "Record") .. " " .. id)) }
+                end
+            end)
+        end
+    end
+    return map
 end
 
 function Anchor.IsFramePick(rec)

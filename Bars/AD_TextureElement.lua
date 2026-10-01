@@ -69,33 +69,153 @@ function TP.PictureOf(rec)
     return TP.QUESTION
 end
 
+-- The crop on each edge as a share of the picture: none in fill mode, which
+-- keeps the picture whole, and each pair held under 98% so a sliver stays.
+function TP.Crop(rec)
+    if TP.FillMode(rec) then return 0, 0, 0, 0 end
+    local function F(v)
+        return math.max(0, math.min(90, tonumber(v) or 0)) / 100
+    end
+    local l, r = F(R(rec, "texlook", "cropL")), F(R(rec, "texlook", "cropR"))
+    local t, b = F(R(rec, "texlook", "cropT")), F(R(rec, "texlook", "cropB"))
+    if l + r > 0.98 then
+        local k = 0.98 / (l + r)
+        l, r = l * k, r * k
+    end
+    if t + b > 0.98 then
+        local k = 0.98 / (t + b)
+        t, b = t * k, b * k
+    end
+    return l, r, t, b
+end
+
+-- The picture frame's size as plain numbers, nil while it is not laid out or
+-- its rect is secret (pinned to a nameplate). Read on our own host only.
+function TP.FrameSize(e)
+    local host = e and e.tpHost
+    if not host then return nil end
+    local w, h = host:GetWidth(), host:GetHeight()
+    if IsSecret(w) or IsSecret(h) or type(w) ~= "number" or type(h) ~= "number" then return nil end
+    if w <= 0 or h <= 0 then return nil end
+    return w, h
+end
+
 -- The whole picture's look on a plain texture: the art, colour, blend and grey,
--- then the turn, flips and zoom (a fill keeps the picture upright). dim: the
--- dim copy behind, at its own opacity and grey.
-function TP.Dress(tex, rec, dim)
+-- then the turn, flips, zoom and crop (a fill keeps the picture upright). dim:
+-- the dim copy behind, at its own opacity, tint and grey. frame, w, h: where
+-- the texture sits and that frame's plain size; a crop cuts the edges off in
+-- place, so the kept part is never stretched. With the size unknown the crop
+-- waits (the whole picture shows) until the frame is laid out.
+function TP.Dress(tex, rec, dim, frame, w, h)
     tex:SetTexture(TP.PictureOf(rec))
     local c = R(rec, "texlook", "color") or { 1, 1, 1, 1 }
-    local a = c[4] or 1
-    local grey = R(rec, "texlook", "desat") == true
+    local cr, cg, cb, a = c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1
+    local grey = (R(rec, "texlook", "desat") == true) and 1 or 0
     if dim then
         a = a * (R(rec, "texlook", "bgAlpha") or 0.3)
-        if R(rec, "texlook", "bgDesat") == true then grey = true end
+        if R(rec, "texlook", "bgTint") == true then
+            local t = R(rec, "texlook", "bgColor") or { 1, 1, 1 }
+            cr, cg, cb = t[1] or 1, t[2] or 1, t[3] or 1
+        end
+        -- never less grey than the picture it copies
+        if R(rec, "texlook", "bgDesat") == true then
+            grey = math.max(grey, (tonumber(R(rec, "texlook", "bgDesatAmount")) or 100) / 100)
+        end
     end
-    tex:SetVertexColor(c[1] or 1, c[2] or 1, c[3] or 1, a)
+    tex:SetVertexColor(cr, cg, cb, a)
     tex:SetBlendMode(R(rec, "texlook", "blend") == "ADD" and "ADD" or "BLEND")
-    tex:SetDesaturated(grey)
+    if tex.SetDesaturation then tex:SetDesaturation(grey) else tex:SetDesaturated(grey > 0) end
+    local l, r, t, b = 0, 0, 0, 0
+    if frame and w and h then l, r, t, b = TP.Crop(rec) end
+    if frame then
+        tex:ClearAllPoints()
+        if l + r + t + b > 0 then
+            tex:SetPoint("TOPLEFT", frame, "TOPLEFT", w * l, -h * t)
+            tex:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -w * r, h * b)
+        else
+            tex:SetAllPoints(frame)
+        end
+    end
     if TP.FillMode(rec) then
         tex:SetTexCoord(0, 1, 0, 1)
         if tex.SetRotation then tex:SetRotation(0) end
         return
     end
-    -- zoom crops the edges evenly: 45% keeps the middle 55%
+    -- zoom magnifies the middle evenly (45% keeps the middle 55%); the crop
+    -- then cuts each edge off the zoomed picture
     local z = (R(rec, "texlook", "zoom") or 0) / 200
-    local l, r, t, b = z, 1 - z, z, 1 - z
-    if R(rec, "texlook", "flipH") == true then l, r = r, l end
-    if R(rec, "texlook", "flipV") == true then t, b = b, t end
-    tex:SetTexCoord(l, r, t, b)
+    local span = 1 - 2 * z
+    local tl, tr, tt, tb = z + span * l, 1 - z - span * r, z + span * t, 1 - z - span * b
+    if R(rec, "texlook", "flipH") == true then tl, tr = tr, tl end
+    if R(rec, "texlook", "flipV") == true then tt, tb = tb, tt end
+    tex:SetTexCoord(tl, tr, tt, tb)
     if tex.SetRotation then tex:SetRotation(math.rad(R(rec, "texlook", "rotation") or 0)) end
+end
+
+-- The pulse: one repeating group, grow then shrink. Scale animations on one
+-- region multiply, so the shrink runs 1 to 1/s over the held grow and each
+-- loop ends at exactly the picture's own size; two legs of s back to 1 would
+-- jump to s * s at the peak. The game plays it, so under an aura's button it
+-- keeps going in combat with that button's shown state as the switch. A
+-- hidden region's animation keeps running, so our own are stopped by hand.
+function TP.Pulse(region, rec, on)
+    local g = region._adPulse
+    if not (on and R(rec, "texlook", "pulse") == true) then
+        if g and g:IsPlaying() then g:Stop() end
+        return
+    end
+    local s = 1 + (tonumber(R(rec, "texlook", "pulseSize")) or 15) / 100
+    local half = math.max(0.1, (tonumber(R(rec, "texlook", "pulseTime")) or 1) / 2)
+    if not g then
+        g = region:CreateAnimationGroup()
+        g:SetLooping("REPEAT")
+        g.up, g.down = g:CreateAnimation("Scale"), g:CreateAnimation("Scale")
+        g.up:SetOrder(1)
+        g.down:SetOrder(2)
+        for _, an in ipairs({ g.up, g.down }) do
+            an:SetOrigin("CENTER", 0, 0)
+            an:SetSmoothing("IN_OUT")
+        end
+        region._adPulse = g
+    end
+    if g.size ~= s or g.half ~= half then
+        if g:IsPlaying() then g:Stop() end
+        g.size, g.half = s, half
+        g.up:SetScaleFrom(1, 1)
+        g.up:SetScaleTo(s, s)
+        g.up:SetDuration(half)
+        g.down:SetScaleFrom(1, 1)
+        g.down:SetScaleTo(1 / s, 1 / s)
+        g.down:SetDuration(half)
+    end
+    if not g:IsPlaying() then g:Play() end
+end
+
+-- Our own picture pulses while it shows.
+function TP.PulseOwn(e)
+    TP.Pulse(e.tpPic, e.rec, e.tpPic:IsShown())
+    TP.Pulse(e.tpBar, e.rec, e.tpBar:IsShown())
+end
+
+-- An aura's button and what we put on it may be touched only while the game
+-- allows it (never in combat or while auras are secret).
+function TP.Touchable(sub)
+    local DA = NS.DriverAura
+    return sub ~= nil and sub.button ~= nil and (not (DA and DA.IsAccessible) or DA.IsAccessible(sub.button))
+end
+
+-- The frame's size changed: a crop re-places its picture (an aura's while its
+-- button can be touched, else at its next restyle).
+function TP.Recrop(e)
+    local rec = e.rec
+    if not rec then return end
+    local l, r, t, b = TP.Crop(rec)
+    if l + r + t + b == 0 then return end
+    local w, h = TP.FrameSize(e)
+    TP.Dress(e.tpBg, rec, true, e.tpHost, w, h)
+    TP.Dress(e.tpPic, rec, false, e.tpHost, w, h)
+    local sub = e.tpAura
+    if sub and sub.pic and TP.Touchable(sub) then TP.Dress(sub.pic, rec, false, sub.button, w, h) end
 end
 
 -- A fill's bar: the picture as its fill texture (the bar reveals it, never
@@ -183,6 +303,9 @@ function TP.ParkAura(sub)
         sub.container:SetAuraSlotCandidateFilters(sub.key, { includeSpellIDs = { [0] = true } })
     end
     sub.container:Hide()
+    -- a parked slot never shows again: its pulse would run on unseen
+    local region = sub.pic or sub.bar
+    if region and region._adPulse and TP.Touchable(sub) then region._adPulse:Stop() end
 end
 
 -- Creates the slot once per recipe; false means retry on a later rebuild
@@ -248,11 +371,13 @@ function TP.EnsureAura(e)
                 sub.bar = bar
                 TP.DressBar(bar, cur.rec)
                 b:SetDurationBar(bar, dir and { direction = dir } or {})
+                TP.Pulse(bar, cur.rec, true)
             else
                 local pic = b:CreateTexture(nil, "ARTWORK")
-                pic:SetAllPoints(b)
                 sub.pic = pic
-                TP.Dress(pic, cur.rec, false)
+                -- the size from our own host: the button's rect is never read
+                TP.Dress(pic, cur.rec, false, b, TP.FrameSize(cur))
+                TP.Pulse(pic, cur.rec, true)
             end
         end,
         candidateFilters = { includeSpellIDs = ids },
@@ -356,8 +481,7 @@ end
 -- Paints a cooldown or rule picture: the whole picture while active, or the
 -- fill running with its timer (full with nothing running but active, empty
 -- when not). While you place it (edit mode) it always shows.
-function TP.Paint(e)
-    if e.isPreview then return end
+local function PaintPicture(e)
     local rec = e.rec
     local s = TP.Source(rec)
     local edit = K.IsEditMode()
@@ -383,6 +507,12 @@ function TP.Paint(e)
         e.tpBar:Hide()
         e.tpPic:SetShown(active or edit)
     end
+end
+
+function TP.Paint(e)
+    if e.isPreview then return end
+    PaintPicture(e)
+    TP.PulseOwn(e)
 end
 
 -- The custom engine's paint told every picture that reads that state.
@@ -495,6 +625,8 @@ function TP.Build(e)
     bar:SetValue(0)
     bar:Hide()
     e.tpHost, e.tpBg, e.tpPic, e.tpBar = host, bg, pic, bar
+    -- a crop is placed in pixels, so it follows the frame's size
+    host:SetScript("OnSizeChanged", function() TP.Recrop(e) end)
 end
 
 -- What another source held: the aura slot, the rules sink.
@@ -539,6 +671,10 @@ end
 function TP.Release(e)
     TP.DropOthers(e, nil)
     e.tpGcdQueued = nil
+    if e.tpPic then
+        TP.Pulse(e.tpPic, e.rec, false)
+        TP.Pulse(e.tpBar, e.rec, false)
+    end
     TP.Sync()
 end
 
@@ -551,16 +687,21 @@ function TP.Styled(e)
     for _, t in pairs(shell.edges) do t:Hide() end
     if shell.borderF then shell.borderF:Hide() end
     shell.sheen:Hide()
-    TP.Dress(e.tpBg, rec, true)
+    local w, h = TP.FrameSize(e)
+    TP.Dress(e.tpBg, rec, true, e.tpHost, w, h)
     e.tpBg:SetShown(R(rec, "texlook", "bgShow") == true)
-    TP.Dress(e.tpPic, rec, false)
+    TP.Dress(e.tpPic, rec, false, e.tpHost, w, h)
     TP.DressBar(e.tpBar, rec)
+    TP.PulseOwn(e)
     local sub = e.tpAura
-    if sub and sub.button then
-        local DA = NS.DriverAura
-        if not (DA and DA.IsAccessible) or DA.IsAccessible(sub.button) then
-            if sub.bar then TP.DressBar(sub.bar, rec) end
-            if sub.pic then TP.Dress(sub.pic, rec, false) end
+    if TP.Touchable(sub) then
+        if sub.bar then
+            TP.DressBar(sub.bar, rec)
+            TP.Pulse(sub.bar, rec, true)
+        end
+        if sub.pic then
+            TP.Dress(sub.pic, rec, false, sub.button, w, h)
+            TP.Pulse(sub.pic, rec, true)
         end
     end
 end
@@ -590,6 +731,7 @@ function TP.PreviewApply(e)
         e.tpBar:Hide()
         e.tpPic:Show()
     end
+    TP.PulseOwn(e)
 end
 
 -- What the sidebar and the layout cards say about a picture.

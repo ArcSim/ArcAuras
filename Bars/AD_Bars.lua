@@ -1040,6 +1040,8 @@ local function ApplyStyle(entry)
     if entry.kind == "swing" and Bars.SwingRange then Bars.SwingRange.Styled(entry) end
     -- a health bar's click area (Bars\AD_ClickUnit.lua)
     if entry.kind == "health" and Bars.ClickUnit then Bars.ClickUnit.Styled(entry) end
+    -- a mana bar's five-second rule (Bars\AD_ManaRegen.lua)
+    if entry.kind == "resource" and Bars.ManaRegen then Bars.ManaRegen.Styled(entry) end
     -- a main-hand swing bar's next-swing ability markers (Bars\AD_SwingAbilities.lua),
     -- they ride the main fill as the two passes above left it
     if entry.kind == "swing" and Bars.SwingAbil then Bars.SwingAbil.Styled(entry) end
@@ -5449,6 +5451,7 @@ function Bars.Release(barId)
     AuraBarRelease(e)
     HB.Disarm()                -- the last health bar takes its events with it
     if e.kind == "resource" and Bars.ResPowers then Bars.ResPowers.Release(e) end
+    if e.kind == "resource" and Bars.ManaRegen then Bars.ManaRegen.Release(e) end
     local KX = Bars.KINDS[e.kind]
     if KX and KX.Release then KX.Release(e) end
     if e.kind == "swing" and Bars.SwingOH then Bars.SwingOH.Release(e) end

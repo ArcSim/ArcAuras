@@ -271,6 +271,38 @@ local function AddExtras(out, dtype, id, owner, held)
     if id ~= nil and Part("CDM") then PushCooldown(out, dtype, id) end
 end
 
+-- Temporary weapon enchants (imbues, poisons, oils, stones): the game's enchant
+-- buffs, the character pane and our enchant icons all show the weapon's own
+-- item tooltip, so the enchant IDs ride on it. Only a tooltip built from the
+-- player's main or off hand slot answers (the game reports enchants on
+-- equipped weapons only). A buff whose picture is one enchant's shows that
+-- one; otherwise every enchant, each with its time left to tell them apart.
+local ENCHANT_HAND = { [16] = "main", [17] = "off" }
+local function PushEnchants(out, tooltip, owner)
+    local DE = NS.DriverEnchant
+    local info = tooltip.processingInfo
+    if not (DE and DE.ReadHand and type(info) == "table") then return end
+    local args = info.getterArgs
+    if info.getterName ~= "GetInventoryItem" or type(args) ~= "table" then return end
+    local unit, slot = args[1], args[2]
+    if IsSecret(unit) or IsSecret(slot) or unit ~= "player" or type(slot) ~= "number" then return end
+    local hand = ENCHANT_HAND[slot]
+    local list = hand and DE.ReadHand(hand)
+    if not list or #list == 0 then return end
+    if #list > 1 then
+        local shown = ShownIconOf(owner)
+        for _, e in ipairs(list) do
+            if shown ~= nil and e.icon == shown then
+                list = { e }
+                break
+            end
+        end
+    end
+    for i, e in ipairs(list) do
+        Push(out, i == 1 and "Enchant ID" or "", #list > 1 and DE.Describe(e) or Val(e.id))
+    end
+end
+
 -- Talent buttons carry their node IDs as plain fields, on the button or a
 -- close ancestor, so walk up a few parents.
 local function NodeIDsFromOwner(owner)
@@ -321,6 +353,7 @@ function T.Append(tooltip, data)
     if label and hasID and Part("Data") and not idSecret then
         Push(out, label, Val(id))
         idIndex = #out
+        if data.type == Enum.TooltipDataType.Item then PushEnchants(out, tooltip, owner) end
     end
     -- A secret id goes in as nil; the combat-drop recheck adds its lines.
     AddExtras(out, data and data.type, (label and hasID and not idSecret) and id or nil,

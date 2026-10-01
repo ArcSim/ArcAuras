@@ -113,9 +113,32 @@ local function LaneOf(d)
 end
 Driver.LaneOf = LaneOf
 
+-- "You, then your target", the Cooldown Manager's rule: your buff on you, and
+-- while you have none, the aura on your target. Your button sits RISE levels
+-- above the target's (button, swipe and texts each take one), so it covers it
+-- whenever both are up; presence is never read.
+local RISE = 3
+Driver.RISE = RISE
+
+local function TwoUnits(d)
+    return type(d) == "table" and d.unit == "player" and d.unit2 == "target"
+end
+Driver.TwoUnits = TwoUnits
+
 local function LanesFor(d)
     local unit, harmful = LaneOf(d)
+    if TwoUnits(d) then
+        return { { unit = "player", harmful = false, rise = RISE }, { unit = "target", harmful = harmful } }
+    end
     return { { unit = unit, harmful = harmful } }
+end
+Driver.LanesFor = LanesFor
+
+-- one string per lane set, so a switch between one and two units rewires
+local function LaneSig(list)
+    local t = {}
+    for i, l in ipairs(list) do t[i] = l.unit .. (l.harmful and ":h" or ":b") end
+    return table.concat(t, ",")
 end
 
 -- lane: anything with .harmful (a lane or a live sub). Caster goes in the
@@ -309,6 +332,12 @@ Driver.ShapeFor = ShapeFor
 -- a spell icon whose aura overlay is on and can run on this client
 function Driver.OverlayOn(rec)
     return IS_121 and rec ~= nil and rec.kind == "spell" and ShapeFor(rec) ~= nil
+end
+
+-- How far the holder's texts and glows sit up to stay over a two-unit icon's top button.
+function Driver.Rise(rec)
+    if not IS_121 then return 0 end
+    return TwoUnits(ShapeFor(rec)) and RISE or 0
 end
 
 -- True when every tracked id is never-secret, the one case a spell-ID filter
@@ -587,7 +616,7 @@ local function EnsureGlowSlots(iconId, entry, startParked)
                     .. (lane.harmful and "_h" or "_b") .. "_g" .. (entry.gen or 0)
                 local ids = (startParked or not gids) and { [0] = true } or gids
                 local g = { slot = slot, unit = lane.unit, key = key, container = c,
-                    harmful = lane.harmful, filterSig = FilterSig(ids) }
+                    harmful = lane.harmful, rise = lane.rise, filterSig = FilterSig(ids) }
                 entry.glows[#entry.glows + 1] = g
                 c:AddAuraSlot(key, FilterForLane(d, lane), {
                     maxFrameCount = 1,
@@ -596,7 +625,7 @@ local function EnsureGlowSlots(iconId, entry, startParked)
                         local e = entries[iconId]
                         if not e then return end
                         g.frame = b
-                        if e.holder then AnchorButton(b, e.holder, e.lift) end
+                        if e.holder then AnchorButton(b, e.holder, (e.lift or 0) + (g.rise or 0)) end
                         if e.rec then
                             Factory.StyleAuraGlowButton(b, e.rec, HolderPx(e),
                                 GlowOpts(e, AuraButtonOpts(e), g))
@@ -642,7 +671,7 @@ local function EnsureSlots(iconId, rec, startParked)
             -- Parked creation bakes in the never-matching id.
             local ids = startParked and { [0] = true } or IncludeMap(d)
             local sub = { unit = lane.unit, key = key, container = c, harmful = lane.harmful,
-                filterSig = FilterSig(ids), inStage = stage ~= nil }
+                rise = lane.rise, filterSig = FilterSig(ids), inStage = stage ~= nil }
             entry.subs[#entry.subs + 1] = sub
             c:AddAuraSlot(key, FilterForLane(d, lane), {
                 maxFrameCount = 1,
@@ -651,7 +680,7 @@ local function EnsureSlots(iconId, rec, startParked)
                     local e = entries[iconId]
                     if not e then return end
                     sub.frame = b
-                    if e.holder then AnchorButton(b, e.holder, e.lift) end
+                    if e.holder then AnchorButton(b, e.holder, (e.lift or 0) + (sub.rise or 0)) end
                     -- Style the button as it is created; StyleAuraButton (shared with the group
                     -- driver) draws every option on it.
                     local r = e.rec
@@ -796,7 +825,7 @@ local function RestyleEntry(entry)
         local b = sub.frame
         if b then
             if IsAccessible(b) then
-                AnchorButton(b, entry.holder, entry.lift)
+                AnchorButton(b, entry.holder, (entry.lift or 0) + (sub.rise or 0))
                 Factory.StyleAuraButton(b, entry.rec, px, opts)
             else
                 entry.stylePending = true
@@ -808,7 +837,7 @@ local function RestyleEntry(entry)
         local b = g.frame
         if b then
             if IsAccessible(b) then
-                AnchorButton(b, entry.holder, entry.lift)
+                AnchorButton(b, entry.holder, (entry.lift or 0) + (g.rise or 0))
                 Factory.StyleAuraGlowButton(b, entry.rec, px, GlowOpts(entry, opts, g))
             else
                 entry.stylePending = true
@@ -847,14 +876,14 @@ local function AttachEntry(rec, f, d)
     entry.holder = f
     entry.off = nil
     entry.lift = (rec.kind ~= "aura") and 1 or nil
-    local unit, harmful = LaneOf(d)
+    local unit = LaneOf(d)
     entry.laneUnit = unit
 
-    -- A lane change (new unit, or buff to debuff) parks and retires the old
-    -- slots, which cannot be removed; fresh ones take the next generation key.
-    -- Creation is not combat-safe, so in combat this waits for a settle edge.
-    local first = entry.subs[1]
-    if first and (first.unit ~= unit or first.harmful ~= harmful) then
+    -- A lane change (new unit, buff to debuff, one unit to two) parks and
+    -- retires the old slots, which cannot be removed; fresh ones take the next
+    -- generation key. Creation is not combat-safe, so in combat this waits for
+    -- a settle edge.
+    if #entry.subs > 0 and LaneSig(entry.subs) ~= LaneSig(LanesFor(d)) then
         if InCombatLockdown() then
             entry.lanePending = true
         else

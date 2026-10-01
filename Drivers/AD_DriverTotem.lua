@@ -213,9 +213,94 @@ function DT.Track(rec)
     if nm then DT.tracked[nm] = true end
 end
 
+-- The totem bar (Forever's shaman bar): each element's slot holds the totem
+-- picked in its flyout, the one the bar drops. An icon following it
+-- (driver.bar, its element in driver.slot) shows that totem while the slot
+-- is empty, and a click or a key can drop it (Drivers\AD_TotemButton.lua).
+
+function DT.IsBar(rec)
+    return rec ~= nil and rec.kind == "totem" and type(rec.driver) == "table" and rec.driver.bar == true
+end
+
+-- Only Forever's client has one.
+function DT.HasBar()
+    return C_ActionBar ~= nil and C_ActionBar.GetMultiCastBarIndex ~= nil and MultiCastActionBarFrame ~= nil
+end
+
+-- The action slot of an element on the bar's current page: Blizzard's
+-- totem bar button math (SecureActionButtonMixin:CalculateAction).
+function DT.BarAction(slot)
+    if not (slot and DT.HasBar()) then return nil end
+    local idx = C_ActionBar.GetMultiCastBarIndex()
+    if type(idx) ~= "number" or (issecretvalue and issecretvalue(idx)) or idx < 1 then return nil end
+    local page = MultiCastActionBarFrame.currentPage
+    if type(page) ~= "number" or page < 1 then page = 1 end
+    return (idx - 1) * (NUM_ACTIONBAR_BUTTONS or 12) + (page - 1) * (NUM_MULTI_CAST_BUTTONS_PER_PAGE or 4) + slot
+end
+
+-- The totem the bar drops for an element: its spell ID, art and action slot,
+-- or nil while the slot holds none.
+function DT.BarPick(slot)
+    local action = DT.BarAction(slot)
+    if not (action and GetActionInfo) then return nil end
+    local kind, id = GetActionInfo(action)
+    if issecretvalue and (issecretvalue(kind) or issecretvalue(id)) then return nil end
+    if kind ~= "spell" or type(id) ~= "number" then return nil end
+    local tex = GetActionTexture and GetActionTexture(action)
+    if issecretvalue and issecretvalue(tex) then tex = nil end
+    return id, tex, action
+end
+
+-- What an icon following the bar shows while its slot is empty: the bar's
+-- pick (spell ID, art). nil for any other icon, or while a totem is down.
+function DT.BarShows(rec)
+    if not DT.IsBar(rec) then return nil end
+    local slot = rec.driver.slot or 1
+    if DT.Active(slot) then return nil end
+    return DT.BarPick(slot)
+end
+
+-- A new pick, a page change or a new bar: the icons re-art, the buttons re-aim.
+function DT.BarChanged()
+    DT.Changed()
+    if NS.TotemButton then NS.TotemButton.SyncAll() end
+end
+
+-- The bar's own events, only while an icon follows it; a page change reaches
+-- no event, so its function is hooked once.
+function DT.ArmBar()
+    if DT.barLive then return end
+    DT.barLive = true
+    Events.On("UPDATE_MULTI_CAST_ACTIONBAR", "adtotembar", DT.BarChanged)
+    Events.On("ACTIONBAR_SLOT_CHANGED", "adtotembar", function(_, action)
+        local idx = C_ActionBar and C_ActionBar.GetMultiCastBarIndex and C_ActionBar.GetMultiCastBarIndex()
+        if type(action) ~= "number" or type(idx) ~= "number" then return end
+        if issecretvalue and (issecretvalue(action) or issecretvalue(idx)) then return end
+        local first = (idx - 1) * (NUM_ACTIONBAR_BUTTONS or 12) + 1
+        if action >= first and action < first + (NUM_ACTIONBAR_BUTTONS or 12) then DT.BarChanged() end
+    end)
+    if not DT.pageHooked and type(ChangeMultiCastActionPage) == "function" then
+        DT.pageHooked = true
+        hooksecurefunc("ChangeMultiCastActionPage", function()
+            if DT.barLive then DT.BarChanged() end
+        end)
+    end
+end
+
+function DT.DisarmBar()
+    for _, r in pairs(DT.recs) do
+        if DT.IsBar(r) then return end
+    end
+    if not DT.barLive then return end
+    DT.barLive = false
+    Events.Off("UPDATE_MULTI_CAST_ACTIONBAR", "adtotembar")
+    Events.Off("ACTIONBAR_SLOT_CHANGED", "adtotembar")
+end
+
 function DT.Attach(rec)
     DT.recs[rec.id] = rec
     DT.Track(rec)
+    if DT.IsBar(rec) and DT.HasBar() then DT.ArmBar() else DT.DisarmBar() end
     if DT.live then return end
     DT.live = true
     Events.On("PLAYER_TOTEM_UPDATE", "adtotem", function(_, slot) DT.OnSlotUpdate(slot) end)
@@ -230,6 +315,7 @@ end
 function DT.Detach(id, f)
     DT.recs[id] = nil
     if f then DT.StopPulse(f) end
+    DT.DisarmBar()
     if next(DT.recs) or not DT.live then return end
     DT.live = false
     Events.Off("PLAYER_TOTEM_UPDATE", "adtotem")

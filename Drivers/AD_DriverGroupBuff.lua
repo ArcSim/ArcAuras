@@ -323,12 +323,13 @@ local function AimSet(set, rec, parked)
     end
 end
 
--- The custom texts a layer carries: those shown while someone lacks it.
+-- The custom texts a layer carries: those shown while someone lacks it (the
+-- first of a group buff's two states).
 function GB.LayerTexts(rec)
     local out = {}
     for _, suf in ipairs({ "", "2", "3" }) do
         local t = Store.Resolve(rec, "label", "labelText" .. suf)
-        if t ~= nil and t ~= "" and Store.Resolve(rec, "label", "labelWhen" .. suf) ~= "has" then
+        if t ~= nil and t ~= "" and Store.Resolve(rec, "label", "labelShowReady" .. suf) ~= false then
             out[#out + 1] = suf
         end
     end

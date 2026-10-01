@@ -86,16 +86,53 @@ function DE.WeaponIn(handKey)
     return id
 end
 
+-- The enchant IDs a record counts, in order, once each: enchantID first, then
+-- enchantIDs, which is set only for two or more. None = any enchant.
+function DE.IDs(d)
+    local out, seen = {}, {}
+    local function add(v)
+        v = tonumber(v)
+        if v and v > 0 and not seen[v] then
+            seen[v] = true
+            out[#out + 1] = v
+        end
+    end
+    d = d or {}
+    add(d.enchantID)
+    if type(d.enchantIDs) == "table" then
+        for _, v in ipairs(d.enchantIDs) do add(v) end
+    end
+    return out
+end
+
 -- The enchant this icon tracks: an entry while it is on, false while it is
--- not, nil while the answer is secret.
+-- not, nil while the answer is secret. A weapon can carry two enchants, so
+-- the first ID listed that is on it wins.
 function DE.Read(rec)
     local list = DE.ReadHand(rec.driver and rec.driver.hand)
     if list == nil then return nil end
-    local want = tonumber(rec.driver and rec.driver.enchantID)
-    for _, e in ipairs(list) do
-        if not want or want <= 0 or e.id == want then return e end
+    local ids = DE.IDs(rec.driver)
+    if #ids == 0 then return list[1] or false end
+    for _, want in ipairs(ids) do
+        for _, e in ipairs(list) do
+            if e.id == want then return e end
+        end
     end
     return false
+end
+
+-- An entry's time left in words: "50 min", or "40 s" under a minute.
+function DE.LeftText(e)
+    local left = e.left or 0
+    if left >= 60 then return math.floor(left / 60 + 0.5) .. " min" end
+    return math.floor(left + 0.5) .. " s"
+end
+
+-- An entry as the options and the tooltip IDs name it: "29 (50 min)", with
+-- its charges when it has some ("29 (24 min, 5 charges)").
+function DE.Describe(e)
+    local ch = (e.charges or 0) > 0 and (", " .. e.charges .. " charges") or ""
+    return tostring(e.id or 0) .. " (" .. DE.LeftText(e) .. ch .. ")"
 end
 
 -- The enchant's full length for the swipe: the longest time left seen, since

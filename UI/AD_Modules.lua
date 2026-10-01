@@ -531,6 +531,12 @@ function MOD.TooltipRows(pg, m)
         function(v) Store.SetSetting("tooltipIDsShift", v and true or nil) end,
         m.isOn, "The ID block shows only when Shift is held as the tooltip opens.")
     MOD.Stamp(row, m, "tooltipIDsShift", "bool")
+    -- QOL\AD_ImbueTooltip.lua: off unless switched on
+    row = AT.RowToggle(pg, "Imbue damage with your weapon",
+        function() return Store.GetSetting("tooltipImbueDamage") == true end,
+        function(v) Store.SetSetting("tooltipImbueDamage", v and true or nil) end,
+        m.isOn, "Rockbiter, Flametongue and Windfury Weapon, sharpening stones and weightstones: what each adds per hit and per second with your main-hand weapon, to compare them.")
+    MOD.Stamp(row, m, "tooltipImbueDamage", "bool")
 end
 
 -- QOL\AD_AutoRank.lua acts on the switch; the button is a one-time catch-up.

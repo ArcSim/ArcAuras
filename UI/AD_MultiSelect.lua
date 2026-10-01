@@ -1,4 +1,4 @@
--- AD_MultiSelect: several sidebar rows selected at once: the "N selected" pane (Move to, Edit together, Export selection) and the multi proxy the icon and bar editors read and write through.
+-- AD_MultiSelect: several sidebar rows selected at once: the "N selected" pane (Move or copy to, Edit together, Duplicate, Export selection, Delete selection) and the multi proxy the icon and bar editors read and write through.
 -- AD_Options wires the rail clicks, the pane and the editors' gates behind nil checks; the proxy is Store.MultiProxy, and a write through it fans out in Store.SetOverride.
 local ADDON, NS = ...
 local Options = NS.Options
@@ -593,11 +593,11 @@ end
 
 -- The actions
 
--- The Move to targets: every layout (free there), and for icons alone every
--- group that takes each of them; a place the whole selection already holds
--- is left out. Values "L<id>" / "G<id>", as the band's Move to.
+-- The Move or copy to targets: every layout (free there), and for icons alone
+-- every group that takes each of them; a place the whole selection already
+-- holds is left out. Values "L<id>" / "G<id>", as the band's Move to.
 function M.MoveItems()
-    local items = { { value = 0, text = "Move to..." } }
+    local items = { { value = 0, text = "Pick a place..." } }
     local recs = M.Records()
     if #recs == 0 then return items end
     local iconsOnly = true
@@ -638,16 +638,17 @@ function M.MoveItems()
     return items
 end
 
--- Moves the selection to a picked place and lands on that place (the single
--- pick forgets the selection). Returns how many moved, or nil for a bad pick.
-function M.Move(value)
+-- a picked place: its kind ("G" / "L"), its id and the store's target, or nil
+local function PickTarget(value)
     if type(value) ~= "string" then return nil end
     local kind, id = value:sub(1, 1), tonumber(value:sub(2))
     if not id then return nil end
-    local target
-    if kind == "G" then target = { groupId = id } elseif kind == "L" then target = { layoutId = id } end
-    if not target then return nil end
-    local moved = Store.MoveMany(M.ids, target)
+    if kind == "G" then return kind, id, { groupId = id } end
+    if kind == "L" then return kind, id, { layoutId = id } end
+end
+
+-- lands on a picked place, unfolded (the single pick forgets the selection)
+local function Land(kind, id)
     local u = Store.UI()
     u.expanded = u.expanded or {}
     if kind == "G" then
@@ -660,7 +661,108 @@ function M.Move(value)
         u.expanded[id] = true
         Options.Select("layout", id)
     end
+end
+
+-- Moves the selection to a picked place and lands on that place. Returns how
+-- many moved, or nil for a bad pick.
+function M.Move(value)
+    local kind, id, target = PickTarget(value)
+    if not target then return nil end
+    local moved = Store.MoveMany(M.ids, target)
+    Land(kind, id)
     return #moved
+end
+
+-- Copies the selection into a picked place, the originals left where they
+-- are, and lands on that place. Returns how many copies, or nil for a bad pick.
+function M.Copy(value)
+    local kind, id, target = PickTarget(value)
+    if not target then return nil end
+    local copies = Store.CopyMany(M.ids, target)
+    Land(kind, id)
+    return #copies
+end
+
+-- Copies every selected record beside its original (the band's Duplicate, for
+-- several at once) and selects the copies, their rows unfolded. Returns how
+-- many copies were made.
+function M.Duplicate()
+    local copies = Store.CopyMany(M.ids, nil)
+    if #copies == 0 then return 0 end
+    M.ids, M.set = {}, {}
+    local u = Store.UI()
+    u.expanded = u.expanded or {}
+    for _, c in ipairs(copies) do
+        M.Add(c.id)
+        local g = Store.Get(c.groupId)
+        if g then u.expanded[g.id] = true end
+        local lid = c.layoutId or (g and g.layoutId)
+        if lid then u.expanded[lid] = true end
+    end
+    M.anchor = copies[#copies].id
+    M.Settle(copies[1])
+    return #copies
+end
+
+-- Deletes every selected record, or the ids given (a group takes what is
+-- inside it), and lands on the layout the sidebar last had open. Returns how
+-- many went.
+function M.Delete(ids)
+    local n = 0
+    for _, id in ipairs(ids or M.ids) do
+        if Store.Get(id) then
+            Store.Delete(id)
+            n = n + 1
+        end
+    end
+    if ui.selIconId and not Store.Get(ui.selIconId) then
+        ui.selIconId = nil
+        ui.grpMode = "grp"
+    end
+    M.Clear()
+    M.OpenLast()
+    return n
+end
+
+-- The question before Delete: the selection's summary, and what its groups
+-- take with them that is not selected itself.
+function M.DeleteText()
+    local inside, groups = { icon = 0, reminder = 0 }, 0
+    for _, r in ipairs(M.Records()) do
+        if r.type == "group" then
+            groups = groups + 1
+            for _, mid in ipairs(r.members or {}) do
+                local m = Store.Get(mid)
+                if m and not M.set[mid] and inside[m.type] then inside[m.type] = inside[m.type] + 1 end
+            end
+        end
+    end
+    local parts = {}
+    for _, t in ipairs({ "icon", "reminder" }) do
+        local k = inside[t]
+        if k > 0 then parts[#parts + 1] = k .. " " .. TYPE_WORD[t][k == 1 and 1 or 2] end
+    end
+    local text = "Delete " .. M.Summary() .. "?"
+    if #parts > 0 then
+        text = text .. "\n" .. (groups == 1 and "The group takes its " or "The groups take their ")
+            .. table.concat(parts, " and ") .. " with " .. (groups == 1 and "it." or "them.")
+    end
+    return text
+end
+
+-- Asks first; a Yes deletes the selection as it stood when asked.
+function M.ConfirmDelete()
+    if #M.ids == 0 then return end
+    StaticPopupDialogs["ARCUIV2_DELETE_MANY"] = StaticPopupDialogs["ARCUIV2_DELETE_MANY"] or {
+        button1 = YES, button2 = NO, timeout = 0, whileDead = true, hideOnEscape = true,
+        preferredIndex = 3,
+    }
+    local d = StaticPopupDialogs["ARCUIV2_DELETE_MANY"]
+    d.text = M.DeleteText()
+    local ids = {}
+    for i, id in ipairs(M.ids) do ids[i] = id end
+    d.OnAccept = function() M.Delete(ids) end
+    StaticPopup_Show("ARCUIV2_DELETE_MANY")
 end
 
 -- The Import / Export page with exactly this selection ticked and its share
@@ -726,9 +828,9 @@ function M.Fill(pane, header, win, kit)
     sum._sync = function() sum._adFS:SetText(M.Summary()) end
     M.summaryRow = sum
 
-    -- Move to: the pick, then Move
+    -- Move or copy to: the pick, then Move or Copy
     local mv = AT.AddRow(pg, 24)
-    local lbl = AT.RowLabel(mv, "Move to")
+    local lbl = AT.RowLabel(mv, "Move or copy to")
     local pick, pickRev = 0, nil
     local function Pick()
         if pickRev ~= M.rev then pick, pickRev = 0, M.rev end
@@ -740,35 +842,57 @@ function M.Fill(pane, header, win, kit)
     end)
     local go = AT.MakeSmallButton(mv, "Move", 60)
     go:SetPoint("LEFT", dd, "RIGHT", 6, 0)
-    go:SetScript("OnClick", function()
-        AT.CloseDropdown()
-        local v = Pick()
-        if v == 0 then
-            go.fs:SetText("Pick one")
-            C_Timer.After(1.2, function() go.fs:SetText("Move") end)
-            return
-        end
-        M.Move(v)
-    end)
-    AT.Tooltip(dd, "Move to", "Where everything selected goes: free in a layout, or, for icons, into a group that takes them. A selected group takes its icons along. Nothing happens until you press Move.")
+    local cp = AT.MakeSmallButton(mv, "Copy", 60)
+    cp:SetPoint("LEFT", go, "RIGHT", 6, 0)
+    -- a press with no place picked asks for one on the button itself
+    local function Act(btn, word, fn)
+        btn:SetScript("OnClick", function()
+            AT.CloseDropdown()
+            local v = Pick()
+            if v == 0 then
+                btn.fs:SetText("Pick one")
+                C_Timer.After(1.2, function() btn.fs:SetText(word) end)
+                return
+            end
+            fn(v)
+        end)
+    end
+    Act(go, "Move", function(v) M.Move(v) end)
+    Act(cp, "Copy", function(v) M.Copy(v) end)
+    AT.Tooltip(dd, "Move or copy to", "Where the selection goes: free in a layout, or, for icons, into a group that takes them. A selected group takes its icons along. Nothing happens until you press Move or Copy.")
     AT.Tooltip(go, "Move", "Moves the selection to the picked place. Positions and settings travel with each item.")
+    AT.Tooltip(cp, "Copy", "Puts a copy of the selection in the picked place and leaves the originals where they are. Each copy keeps its settings, name and position.")
     mv._colLabel, mv._colCtrl = lbl, dd
     mv._sync = dd.Refresh
-    M.moveDD, M.moveBtn = dd, go
+    M.moveDD, M.moveBtn, M.copyBtn = dd, go, cp
 
-    -- the actions on one line, on the control column
+    -- the actions on the control column: Edit together, Duplicate and Export
+    -- on one line, Delete and Clear on the next
     local act = AT.AddRow(pg, 28)
     local alb = AT.RowLabel(act, "Actions")
     local edit = AT.MakeSmallButton(act, "Edit together", 100)
+    local dup = AT.MakeSmallButton(act, "Duplicate", 74)
     local exp = AT.MakeSmallButton(act, "Export selection", 112)
-    local clr = AT.MakeQuietButton(act, "Clear selection", 108)
+    local act2 = AT.AddRow(pg, 28)
+    local del = AT.MakeSmallButton(act2, "Delete selection", 112)
+    local clr = AT.MakeQuietButton(act2, "Clear selection", 108)
+    clr:SetPoint("LEFT", del, "RIGHT", 8, 0)
+    act2._colCtrl = del
     edit:SetScript("OnClick", function()
         AT.CloseDropdown()
         M.EditTogether()
     end)
+    dup:SetScript("OnClick", function()
+        AT.CloseDropdown()
+        M.Duplicate()
+    end)
     exp:SetScript("OnClick", function()
         AT.CloseDropdown()
         M.Export()
+    end)
+    del:SetScript("OnClick", function()
+        AT.CloseDropdown()
+        M.ConfirmDelete()
     end)
     clr:SetScript("OnClick", function()
         AT.CloseDropdown()
@@ -776,7 +900,9 @@ function M.Fill(pane, header, win, kit)
         M.OpenLast()
     end)
     AT.Tooltip(edit, "Edit together", "One editor for every selected icon (or bar): the rows they all share, read from the first one; a change lands on all of them.")
+    AT.Tooltip(dup, "Duplicate", "Makes a copy of each selected item right beside it (a group with its icons) and selects the copies.")
     AT.Tooltip(exp, "Export selection", "Opens Import / Export with exactly this selection ticked and its share string ready to copy.")
+    AT.Tooltip(del, "Delete selection", "Deletes everything selected, a group with its icons. Asks first.")
     AT.Tooltip(clr, "Clear selection", "Forgets the selection and goes back to the layout.")
     act._colLabel = alb
     -- Edit together goes while the editor is open or the kinds mix; the rest
@@ -784,7 +910,7 @@ function M.Fill(pane, header, win, kit)
     act._sync = function()
         edit:SetShown(not M.editing and M.SameFamily() ~= nil)
         local prev
-        for _, b in ipairs({ edit, exp, clr }) do
+        for _, b in ipairs({ edit, dup, exp }) do
             if b:IsShown() then
                 if prev then
                     b:ClearAllPoints()
@@ -796,7 +922,7 @@ function M.Fill(pane, header, win, kit)
             end
         end
     end
-    M.editBtn, M.exportBtn, M.clearBtn = edit, exp, clr
+    M.editBtn, M.dupBtn, M.exportBtn, M.deleteBtn, M.clearBtn = edit, dup, exp, del, clr
     local note = Line(pg, 20, 11, COL.dim, function() return M.SameFamily() == nil end)
     note._adFS:SetText("Edit together needs icons only, or bars only.")
     M.noteRow = note

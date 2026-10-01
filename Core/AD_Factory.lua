@@ -223,6 +223,13 @@ local function KindTexture(rec)
         -- shows the character sheet's empty-ammo art, not the question mark.
         return GetInventoryItemTexture("player", AMMO_SLOT) or Factory.AmmoEmptyTexture()
     elseif kind == "totem" then
+        -- an icon following the totem bar shows the totem it would drop while
+        -- its slot is empty (NS.DriverTotem)
+        local DT = NS.DriverTotem
+        if DT and DT.BarShows then
+            local _, barTex = DT.BarShows(rec)
+            if barTex then return barTex end
+        end
         -- haveTotem is a secret boolean, so it is never tested. The icon is
         -- only painted, and SetTexture takes a secret. A totem followed by
         -- spell shows its spell's art while it is not down.
@@ -597,7 +604,9 @@ local function CountdownFormatterFor(rec)
         end
         if R("text", "durationColorBands") == true then
             bands = {}
-            for i = 1, 3 do
+            -- only the bands in play ("+ Add band"); 0 seconds is still off
+            local count = math.max(1, math.min(3, math.floor(tonumber(R("text", "durBandCount")) or 1)))
+            for i = 1, count do
                 local secs = R("text", "durBand" .. i .. "Sec") or 0
                 if secs > 0 then
                     bands[#bands + 1] = {
@@ -643,7 +652,9 @@ function Factory.GetStackFormatter(rec, off)
     local bands
     if R("text", "stackColorBands") == true then
         bands = {}
-        for i = 1, 3 do
+        -- only the bands in play ("+ Add band")
+        local count = math.max(1, math.min(3, math.floor(tonumber(R("text", "stkBandCount")) or 1)))
+        for i = 1, count do
             local m = R("text", "stkBand" .. i .. "Min") or 0
             if m > 0 then
                 bands[#bands + 1] = { m = m, c = R("text", "stkBand" .. i .. "Color") or { 1, 1, 1, 1 } }
@@ -1223,7 +1234,7 @@ function Factory.ApplyStyle(f, rec)
     local hostLvl = f:GetFrameLevel()
     local plainLvl = not (issecretvalue and issecretvalue(hostLvl)) and type(hostLvl) == "number"
     if plainLvl then
-        f.textHost:SetFrameLevel(hostLvl + 7)
+        f.textHost:SetFrameLevel(hostLvl + 7 + Factory.Rise(rec))
         if rec.kind ~= "aura" then f.cooldown:SetFrameLevel(hostLvl + 2) end
     end
     -- With an aura overlay the button shows the aura's count in that corner,
@@ -1371,12 +1382,6 @@ function Factory.ApplyStyle(f, rec)
         st.fs = fs
         st.ready = R("label", "labelShowReady" .. suf) ~= false
         st.cd = R("label", "labelShowCooldown" .. suf) ~= false
-        -- a group buff's pick: its ready state is "someone lacks it", its
-        -- cooldown state "everyone has it"
-        if rec.kind == "groupbuff" then
-            local when = R("label", "labelWhen" .. suf)
-            st.ready, st.cd = when ~= "has", when ~= "lacks"
-        end
         st.activeOnly = rec.kind == "aura" and R("label", "labelActiveOnly" .. suf) == true
         st.missingOnly = rec.kind == "aura" and R("label", "labelMissingOnly" .. suf) == true
         local ltext = R("label", "labelText" .. suf)
@@ -1484,6 +1489,13 @@ end
 -- Aura icon ladder over the holder: glows above borders, the live button above every missing piece.
 Factory.AURA_LADDER = { border = 1, missLabels = 1, missGlow = 2, button = 3 }
 
+-- An aura watching you, then your target, has a second button above the
+-- first: the holder's texts and glows go up by as much to stay on top.
+function Factory.Rise(rec)
+    local D = NS.DriverAura
+    return (D and D.Rise and D.Rise(rec)) or 0
+end
+
 -- Moves the missing look onto the stage, each piece keeping its level; nil brings it home.
 function Factory.StageMissingLook(f, stage)
     local p = stage or f
@@ -1529,8 +1541,16 @@ function Factory.StyleAuraButton(b, rec, px, opts)
     local forceHide = R("appearance", "forceHideIcon") == true
     local aA = Factory.AuraActiveAlpha(rec)
     -- "Hide icon art": art, swipe, border and glow go; texts keep full alpha.
+    -- A dimmed active look keeps them bright too, as the missing look and a
+    -- spell's states do; a hidden one (alpha 0) hides them with it.
     local artA = forceHide and 0 or aA
-    local textA = forceHide and 1 or aA
+    local keep
+    if rec.kind == "aura" then
+        keep = R("auraActive", "activePreserveText") ~= false
+    else
+        keep = R("states", "preserveDurationText") ~= false
+    end
+    local textA = (forceHide or (aA > 0 and keep)) and 1 or aA
     -- Active alpha goes on the pieces, so the button stays at 1.
     b:SetAlpha(1)
     local padPx = (R("appearance", "padding") or 0) * kS
@@ -2507,8 +2527,10 @@ function Factory.SetState(f, rec, onCooldown, desatState)
                     -- A label kept to its absence has its copy under the button.
                     st.fs:SetShown(not st.missingOnly and not (st.activeOnly and onCooldown))
                 else
-                    st.fs:SetShown((onCooldown and st.cd)
-                        or ((not onCooldown) and st.ready))
+                    -- the kind's second state: on cooldown, or ammo's none left
+                    local second = onCooldown
+                    if rec.kind == "ammo" then second = f._adItemEmpty == true end
+                    st.fs:SetShown((second and st.cd) or ((not second) and st.ready))
                 end
             end
         end
@@ -2856,7 +2878,7 @@ function Factory.SetProcGlow(f, rec, on)
         mx = R("states", "procGlowMoveX") or 0,
         my = R("states", "procGlowMoveY") or 0,
     }
-    p.level = R("states", "procGlowLevel") or GLOW_LEVEL
+    p.level = (R("states", "procGlowLevel") or GLOW_LEVEL) + Factory.Rise(rec)
     p.strata = R("states", "procGlowStrata") or "inherit"
     local gtype = DrawnGlowStyle(R("states", "procGlowType") or "proc")
     local sig = GlowSig(f, gtype, p.color, p.speed, p.lines, p.thickness,
@@ -3015,7 +3037,7 @@ function Factory.UpdateGlow(f, rec, ready)
     local th = R("states", "readyGlowThickness") or 2
     local parts = R("states", "readyGlowParticles") or 4
     local scale = R("states", "readyGlowScale") or 1
-    local lvl = R("states", "readyGlowLevel") or GLOW_LEVEL
+    local lvl = (R("states", "readyGlowLevel") or GLOW_LEVEL) + Factory.Rise(rec)
     local strata = R("states", "readyGlowStrata") or "inherit"
     local len = R("states", "readyGlowLength") or 0
     local mx = R("states", "readyGlowMoveX") or 0
@@ -3071,7 +3093,7 @@ function Factory.UpdateUsableGlow(f, rec)
     local th = R("states", "usableGlowThickness") or 2
     local parts = R("states", "usableGlowParticles") or 4
     local scale = R("states", "usableGlowScale") or 1
-    local lvl = R("states", "usableGlowLevel") or GLOW_LEVEL
+    local lvl = (R("states", "usableGlowLevel") or GLOW_LEVEL) + Factory.Rise(rec)
     local strata = R("states", "usableGlowStrata") or "inherit"
     local len = R("states", "usableGlowLength") or 0
     local mx = R("states", "usableGlowMoveX") or 0
@@ -3124,7 +3146,7 @@ function Factory.UpdateCooldownGlow(f, rec)
     local th = R("states", "cooldownGlowThickness") or 2
     local parts = R("states", "cooldownGlowParticles") or 4
     local scale = R("states", "cooldownGlowScale") or 1
-    local lvl = R("states", "cooldownGlowLevel") or GLOW_LEVEL
+    local lvl = (R("states", "cooldownGlowLevel") or GLOW_LEVEL) + Factory.Rise(rec)
     local strata = R("states", "cooldownGlowStrata") or "inherit"
     local len = R("states", "cooldownGlowLength") or 0
     local mx = R("states", "cooldownGlowMoveX") or 0
@@ -3213,7 +3235,11 @@ function Factory.ShowTooltip(f, rec)
     elseif kind == "totem" then
         local slot = d.slot or 1
         if NS.DriverTotem then slot = NS.DriverTotem.SlotFor(rec) end
-        if slot and GameTooltip.SetTotem then
+        -- an empty slot on an icon following the totem bar: the totem it would drop
+        local barSid = NS.DriverTotem and NS.DriverTotem.BarShows and NS.DriverTotem.BarShows(rec)
+        if barSid then
+            GameTooltip:SetSpellByID(barSid)
+        elseif slot and GameTooltip.SetTotem then
             GameTooltip:SetTotem(slot)
         elseif d.spellID then
             GameTooltip:SetSpellByID(d.spellID)

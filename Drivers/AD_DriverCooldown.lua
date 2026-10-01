@@ -938,6 +938,8 @@ local function FeedTotem(a)
     local active = a.shadow:IsShown() == true
     Factory.SetState(a.frame, a.rec, not active, not active)
     if DT then DT.Pulse(a.frame, a.rec, slot, active) end
+    -- the Out of range look shows only while the totem is out
+    if NS.TotemRange then NS.TotemRange.Feed(a.rec, a.frame, active) end
 end
 
 local function FeedAllTotems()
@@ -1154,6 +1156,9 @@ function Driver.Attach(rec, f)
             EnsureEvents()
             -- the slot pairing reads every slot first
             if NS.DriverTotem then NS.DriverTotem.Attach(rec) end
+            if NS.TotemRange then NS.TotemRange.Attach(rec, f) end
+            -- a click or a key that drops the totem bar's pick
+            if NS.TotemButton then NS.TotemButton.Attach(rec, f) end
             FeedTotem(at)
         elseif rec.kind == "enchant" and NS.DriverEnchant then
             NS.DriverEnchant.Attach(rec, f)
@@ -1218,6 +1223,8 @@ function Driver.Detach(id)
     attachedItems[id] = nil
     local at = attachedTotems[id]
     if at and NS.DriverTotem then NS.DriverTotem.Detach(id, at.frame) end
+    if NS.TotemRange then NS.TotemRange.Detach(id) end
+    if NS.TotemButton then NS.TotemButton.Detach(id) end
     attachedTotems[id] = nil
     if NS.DriverEnchant then NS.DriverEnchant.Detach(id) end
     if NS.DriverCustom then NS.DriverCustom.Detach(id) end

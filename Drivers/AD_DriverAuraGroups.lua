@@ -331,7 +331,7 @@ local function BuildRuntime(groupId, seed)
                 layout = {
                     elementSpacingX = 2, elementSpacingY = 2,  -- pre-PTR7 keys
                     elementSpacing = 2, lineSpacing = 2,       -- PTR7 keys
-                    groupSpacing = 2, groupLineSpacing = 2,    -- between slots
+                    groupSpacing = 0, groupLineSpacing = 2,    -- no gap of their own (ApplyFlow)
                 },
             })
         end
@@ -373,10 +373,12 @@ Groups.GroupDims = GroupDims
 local function ApplyFlow(c, keys, sx, sy, lineSize, pad, flowRight, flowDown)
     if c.SetAuraGroupLayout then
         for _, key in ipairs(keys) do
+            -- Every button already leaves elementSpacing after itself, so a
+            -- group gap would put two spacings between the member rows' slots.
             c:SetAuraGroupLayout(key, {
                 elementSpacingX = sx, elementSpacingY = sy,
                 elementSpacing = sx, lineSpacing = sy,
-                groupSpacing = sx, groupLineSpacing = sy,
+                groupSpacing = 0, groupLineSpacing = sy,
             })
         end
     end

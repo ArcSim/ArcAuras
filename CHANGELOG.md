@@ -1,5 +1,39 @@
 # Arc Auras
 
+## 1.9.0
+
+Cooldown Manager layouts, totem bar icons, mana regen sparks and a picture picker for textures.
+
+### New Features
+
+- **From my Cooldown Manager** - Copy your Cooldown Manager into a layout in one click.
+- **Totem bar icons** - Show your totem bar's pick and drop it with a click or a key.
+- **Totem out of range** - Grey out, tint or glow a totem icon while its buff is not on you.
+- **Shaman in my group** - A new Show When rule.
+- **Five-second rule and mana ticks** - Sparks on mana bars for both.
+- **Picture picker** - Pick a texture's picture from thumbnails, with a search.
+- **Copy and duplicate** - Copy, duplicate or delete several items at once.
+- **Imbue damage** - Optional tooltip line: what an imbue or weapon stone adds to your weapon.
+
+### Improvements
+
+- **You, then your target** - Aura icons can show your buff, then your target's.
+- **Textures** - Crop, pulse and a tinted dim copy.
+- **Weapon enchants** - Several enchant IDs per icon or bar, and enchant IDs in weapon tooltips.
+- **Pick Frame** - Works on every anchor and can pick your Arc Auras items.
+- **Color bands** - Start with one band. Add more as you need them.
+- **Custom text** - One Show choice in each icon's own words.
+- **Cost & Regen** - A new tab on resource bars.
+- **Group load conditions** - Match the group fixes icons that leave out the group's classes.
+
+### Bug Fixes
+
+- **Dynamic aura groups** - Icons sit one Spacing apart, as in the edit grid.
+- **Match width** - Bars matched to a group span exactly its icons.
+- **Anchored bars** - No more thin background line along a bar's edge.
+- **Aura icon texts** - Stay bright when you lower the active opacity.
+- **Ammo icons** - Custom text for in stock or out of stock now works.
+
 ## 1.8.0
 
 Missing-only aura icons and glows, textures, group buff counts, texts for spells and auras, updates for shared setups and known spells.

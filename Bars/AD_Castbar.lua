@@ -343,7 +343,7 @@ function CB.StartTicker(e)
                 local now = GetTime()
                 e.castGoneAt = e.castGoneAt or now
                 if now - e.castGoneAt >= 0.15 then
-                    e.castLastEv = "watchdog"
+                    e.castLastEv, e.castLastID = "watchdog", nil
                     CB.End(e, "done")
                     return
                 end
@@ -430,11 +430,12 @@ function CB.Begin(e, channel, dur)
         latency = (not channel and unit == "player") and CB.LiveLatency() or nil })
 end
 
--- how = "done", "failed" or "interrupted". A mismatched cast bar id belongs to
--- an older cast only while the unit still casts; with nothing cast, the bar ends.
+-- how = "done", "failed" or "interrupted". An end event whose cast bar id is
+-- missing, secret or not ours may belong to another cast, so it waits while
+-- the unit still casts; with nothing cast, the bar ends (else the watchdog).
 function CB.End(e, how, barID)
     if not e.castOn then return end
-    if barID ~= nil and e.castBarID ~= nil and barID ~= e.castBarID and CB.StillCasting(e) then
+    if (barID == nil or barID ~= e.castBarID) and CB.StillCasting(e) then
         return
     end
     e.castOn = false
@@ -578,11 +579,22 @@ end
 
 -- Events
 
-function CB.ForUnit(unit, fn)
+-- fn(e, a, b) for every castbar of the unit: arguments, not a new closure,
+-- so a cast event makes no garbage.
+function CB.ForUnit(unit, fn, a, b)
     if not CB.UNITS[unit] then return end
     for _, e in pairs(K.live) do
-        if e.kind == "cast" and e.castUnit == unit then fn(e) end
+        if e.kind == "cast" and e.castUnit == unit then fn(e, a, b) end
     end
+end
+
+-- For /adbars diag: the raw event and id, turned into words only by CB.Diag.
+function CB.Note(e, event, id)
+    e.castLastEv, e.castLastID = event, id
+end
+
+function CB.SyncIfOn(e)
+    if e.castOn then CB.Sync(e) end
 end
 
 -- The cast bar id is NeverSecret. INTERRUPTED and CHANNEL_STOP carry one extra
@@ -599,19 +611,17 @@ end
 
 function CB.OnCast(event, unit, ...)
     if not CB.UNITS[unit] then return end
-    -- For /adbars diag; plain parts only.
     local id = CB.BarIDOf(event, unit, ...)
-    local short = event:gsub("^UNIT_SPELLCAST_", "")
-    CB.ForUnit(unit, function(e) e.castLastEv = short .. "#" .. tostring(id) end)
+    CB.ForUnit(unit, CB.Note, event, id)
     if event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START"
         or event == "UNIT_SPELLCAST_DELAYED" or event == "UNIT_SPELLCAST_CHANNEL_UPDATE" then
         CB.ForUnit(unit, CB.Sync)
     elseif event == "UNIT_SPELLCAST_INTERRUPTIBLE" or event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
-        CB.ForUnit(unit, function(e) if e.castOn then CB.Sync(e) end end)
+        CB.ForUnit(unit, CB.SyncIfOn)
     else
         local how = (event == "UNIT_SPELLCAST_INTERRUPTED" and "interrupted")
             or (event == "UNIT_SPELLCAST_FAILED" and "failed") or "done"
-        CB.ForUnit(unit, function(e) CB.End(e, how, id) end)
+        CB.ForUnit(unit, CB.End, how, id)
     end
 end
 
@@ -624,32 +634,50 @@ function CB.Swap(unit)
     end)
 end
 
-function CB.Arm()
-    if CB.armed then return end
-    CB.armed = true
-    for _, ev in ipairs(CB.EVENTS) do
-        K.SafeOn(ev, CB.KEY, function(event, unit, ...) CB.OnCast(event, unit, ...) end)
-    end
-    K.SafeOn("PLAYER_TARGET_CHANGED", CB.KEY, function() CB.Swap("target") end)
-    K.SafeOn("PLAYER_FOCUS_CHANGED", CB.KEY, function() CB.Swap("focus") end)
-end
+function CB.SwapTarget() CB.Swap("target") end
+function CB.SwapFocus() CB.Swap("focus") end
 
-function CB.Disarm()
-    if not CB.armed then return end
+-- Each unit's cast events come to a frame of its own, registered only while a
+-- castbar shows that unit, so the game drops every other unit's casts (raid
+-- members, nameplates) before any Lua runs. Called on every Ensure and
+-- Release; a released castbar has left K.live by then.
+CB.frames = {}
+function CB.Listen()
+    local want = {}
     for _, e in pairs(K.live) do
-        if e.kind == "cast" then return end
+        if e.kind == "cast" then want[CB.Unit(e)] = true end
     end
-    CB.armed = false
-    for _, ev in ipairs(CB.EVENTS) do NS.Events.Off(ev, CB.KEY) end
-    NS.Events.Off("PLAYER_TARGET_CHANGED", CB.KEY)
-    NS.Events.Off("PLAYER_FOCUS_CHANGED", CB.KEY)
+    for unit in pairs(CB.UNITS) do
+        local f = CB.frames[unit]
+        if want[unit] and not (f and f.adOn) then
+            if not f then
+                f = CreateFrame("Frame")
+                -- through the table, so /arcperf times it
+                f:SetScript("OnEvent", function(_, event, u, ...) CB.OnCast(event, u, ...) end)
+                CB.frames[unit] = f
+            end
+            for _, ev in ipairs(CB.EVENTS) do
+                if (not (C_EventUtils and C_EventUtils.IsEventValid)) or C_EventUtils.IsEventValid(ev) then
+                    f:RegisterUnitEvent(ev, unit)
+                end
+            end
+            f.adOn = true
+        elseif not want[unit] and f and f.adOn then
+            f:UnregisterAllEvents()
+            f.adOn = false
+        end
+    end
+    if want.target then K.SafeOn("PLAYER_TARGET_CHANGED", CB.KEY, CB.SwapTarget)
+    else NS.Events.Off("PLAYER_TARGET_CHANGED", CB.KEY) end
+    if want.focus then K.SafeOn("PLAYER_FOCUS_CHANGED", CB.KEY, CB.SwapFocus)
+    else NS.Events.Off("PLAYER_FOCUS_CHANGED", CB.KEY) end
 end
 
 -- Kind registry hooks
 
 function CB.Ensure(e)
     CB.Style(e)
-    CB.Arm()
+    CB.Listen()
     CB.SyncBlizzard()
     if not e.castHold then CB.Sync(e) end
 end
@@ -667,7 +695,7 @@ function CB.Release(e)
     e.castOn, e.castHold = false, nil
     CB.StopTicker(e)
     CB.StopFade(e)
-    CB.Disarm()
+    CB.Listen()
     CB.SyncBlizzard()
 end
 
@@ -682,12 +710,17 @@ function CB.Styled(e)
     end
 end
 
--- One /adbars diag line; plain values only (casting now is a nil test).
+-- One /adbars diag line; plain values only (casting now is a nil test). The
+-- last event reads as its short name and cast bar id, or "watchdog".
 function CB.Diag(e)
+    local last = e.castLastEv
+    if last and last ~= "watchdog" then
+        last = last:gsub("^UNIT_SPELLCAST_", "") .. "#" .. tostring(e.castLastID)
+    end
     return ("%s [cast %s] on=%s channel=%s hold=%s barID=%s last=%s castingNow=%s blizzardHidden=%s"):format(
         tostring(e.rec.name), tostring(e.castUnit), tostring(e.castOn == true),
         tostring(e.castChannel == true), tostring(e.castHold == true), tostring(e.castBarID),
-        tostring(e.castLastEv), tostring(CB.StillCasting(e) ~= nil), tostring(CB.blizzOff == true))
+        tostring(last), tostring(CB.StillCasting(e) ~= nil), tostring(CB.blizzOff == true))
 end
 
 -- Editor preview

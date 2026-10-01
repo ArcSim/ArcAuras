@@ -2,7 +2,7 @@
 ## Title: |cff3fc9f2Arc|r Auras
 ## Notes: Icons, icon groups and bars for your cooldowns, auras and resources, all set up from one panel. /arcauras
 ## Author: Arc
-## Version: 1.8.0
+## Version: 1.9.0
 ## IconTexture: Interface\AddOns\ArcAuras\Textures\ArcAuras_Icon_256
 ## SavedVariables: ArcAurasDB
 ## OptionalDeps: ArcUI
@@ -28,7 +28,9 @@ Core\AD_SpellCatalog.lua
 Core\AD_BarScan.lua
 Core\AD_SpellNames.lua
 Core\AD_TooltipIDs.lua
+Core\AD_CDMMirror.lua
 QOL\AD_AutoRank.lua
+QOL\AD_ImbueTooltip.lua
 Core\AD_Factory.lua
 Core\AD_PressHighlight.lua
 Drivers\AD_DriverCooldown.lua
@@ -41,6 +43,8 @@ Drivers\AD_DriverAura.lua
 Drivers\AD_AuraSounds.lua
 Drivers\AD_DriverAuraGroups.lua
 Drivers\AD_DriverGroupBuff.lua
+Drivers\AD_TotemRange.lua
+Drivers\AD_TotemButton.lua
 Bars\AD_Bars.lua
 Bars\AD_ResourcePowers.lua
 Bars\AD_SwingOffhand.lua
@@ -50,6 +54,7 @@ Bars\AD_SwingColors.lua
 Bars\AD_SwingRange.lua
 Bars\AD_ClickUnit.lua
 Bars\AD_BarSpark.lua
+Bars\AD_ManaRegen.lua
 Bars\AD_Castbar.lua
 Bars\AD_EnchantBar.lua
 Bars\AD_RangeBar.lua
@@ -76,9 +81,11 @@ UI\AD_Modules.lua
 UI\AD_EditorTabs.lua
 UI\AD_FramePicker.lua
 UI\AD_NewLayout.lua
+UI\AD_CDMMirrorOptions.lua
 UI\AD_BarImport.lua
 UI\AD_ImportArcUIOptions.lua
 UI\AD_RangeOptions.lua
+UI\AD_TotemOptions.lua
 UI\AD_CustomOptions.lua
 UI\AD_SwingColorOptions.lua
 UI\AD_UnitAuraOptions.lua

@@ -248,6 +248,7 @@ ET.GLOW_WHEN = {
     proc = "the proc glow is up",
     usable = "you can cast it now",
     overlay = "its aura is up",
+    range = "the totem is out and its buff is not on you",
     warn = function(rec) return WARN_WORDS[Store.Resolve(rec, "states", "warnGlowWhen")] or "" end,
 }
 
@@ -325,6 +326,11 @@ ET.STATES = {
         { label = "Active", when = "while the totem is out", alpha = READY.alpha, tint = READY.tint },
         { label = "Missing", when = "while no totem is out", alpha = COOLDOWN.alpha, grey = COOLDOWN.grey,
           tint = COOLDOWN.tint },
+        -- a totem set to one totem: out, but its buff not on you
+        -- (Drivers\AD_TotemRange.lua); its look covers the art, so no opacity
+        { label = "Out of range", lookTitle = "Out of totem range", showIf = Schema.TotemBySpell,
+          when = "while the totem is out and its buff is not on you",
+          grey = { S, "totemRangeDesaturate" }, tint = { S, "totemRangeTintColor", on = "totemRangeTint" } },
     },
     enchant = {
         { label = "Active", when = "while the weapon has the enchant", alpha = READY.alpha, tint = READY.tint },
@@ -384,13 +390,19 @@ local function OverlayOn(rec)
     return DA ~= nil and DA.OverlayOn ~= nil and DA.OverlayOn(rec) == true
 end
 
+-- A row that waits on something: the aura overlay, or its own gate.
+local function RowShows(st, rec)
+    if st.overlay and not OverlayOn(rec) then return false end
+    return not st.showIf or st.showIf(rec) == true
+end
+
 -- The state rows a record shows.
 function ET.StatesFor(rec)
     local list = rec and ET.STATES[rec.kind]
     if not list then return nil end
     local out = {}
     for _, st in ipairs(list) do
-        if not st.overlay or OverlayOn(rec) then out[#out + 1] = st end
+        if RowShows(st, rec) then out[#out + 1] = st end
     end
     return out
 end
@@ -448,7 +460,7 @@ function ET.StateLooks(tabName)
                 end
             end
             for _, section in ipairs(order) do
-                Options.LookBlock("icon", tabName, st.label, section, bySec[section])
+                Options.LookBlock("icon", tabName, st.lookTitle or st.label, section, bySec[section])
             end
         end
     end
@@ -547,7 +559,7 @@ local function StateRow(pg, T, ctx, vis, kind, st)
         if not vis() then return false end
         local r = ctx()
         if not (r and r.kind == kind) then return false end
-        return not st.overlay or OverlayOn(r)
+        return RowShows(st, r)
     end)
     row._adStateRow = st
     row._adStateKind = kind

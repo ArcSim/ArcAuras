@@ -773,9 +773,11 @@ function Store.Normalize()
         -- look: all of them once, then an import from an older string (it
         -- carries its v; a new record has none until this stamp).
         if (rec.v or 0) < 3 and (not DB.offsetsZero or rec.v ~= nil) then Store.KeepOldOffsets(rec) end
+        -- The same for the color bands that became a count (v 4).
+        if (rec.v or 0) < 4 and (not DB.bandCounts or rec.v ~= nil) then Store.KeepOldBands(rec) end
         -- Per-record schema version that versioned folds key off; a new one
         -- bumps it and runs before this stamp.
-        rec.v = 3
+        rec.v = 4
         CleanWho(rec)
         if NS.Conditions then NS.Conditions.Normalize(rec) end
         -- Only a layout carries looks for the things inside it.
@@ -812,6 +814,7 @@ function Store.Normalize()
         end
     end
     DB.offsetsZero = true
+    DB.bandCounts = true
     EnsureUids()
 end
 
@@ -895,6 +898,68 @@ function Store.KeepOldOffsets(rec)
         if keep then
             rec.o[section] = own or {}
             rec.o[section][field] = e[3]
+        end
+    end
+end
+
+-- Color bands became a count (one band when switched on, "+ Add band" for
+-- more) and some band defaults moved (Schema.OLD_BANDS). A record
+-- that colored before keeps what it showed: its count (the old default, or
+-- every band whose value was above 0) and each shown band's old value and
+-- color where nothing was set. Only the record is written; a count set
+-- anywhere (record, layout, saved default) is left alone.
+local function SameValue(a, b)
+    if type(a) ~= "table" or type(b) ~= "table" then return a == b end
+    for i = 1, 4 do
+        if (a[i] or 1) ~= (b[i] or 1) then return false end
+    end
+    return true
+end
+function Store.KeepOldBands(rec)
+    if rec.type ~= "icon" and rec.type ~= "bar" then return end
+    local family = Store.FamilyOf(rec)
+    local list, fam = Schema.OLD_BANDS and Schema.OLD_BANDS[family], Schema[family]
+    if not (list and fam and rec.o) then return end
+    local inh, nd = InhOf(rec), DB.newDefaults and DB.newDefaults[FamilyKey(rec)]
+    local kind = Store.KindOf(rec)
+    -- a value set on the record, its layout or a saved default, else nil
+    local function SetVal(section, field)
+        local t = rec.o[section]
+        if t and t[field] ~= nil then return t[field] end
+        t = inh and inh[section]
+        if t and t[field] ~= nil then return t[field] end
+        t = nd and nd[section]
+        if t and t[field] ~= nil then return t[field] end
+    end
+    local function Put(section, field, v)
+        rec.o[section] = rec.o[section] or {}
+        rec.o[section][field] = v
+    end
+    for _, b in ipairs(list) do
+        local section = b.section
+        local sec = fam[section]
+        local cdef = sec and sec.fields[b.count]
+        if cdef and Schema.Applies(cdef, sec, kind, rec.barMode)
+            and Store.Resolve(rec, section, b.toggle) == true and SetVal(section, b.count) == nil then
+            local n = b.oldCount
+            if not n then
+                n = 0
+                for i = 1, 3 do
+                    local v = SetVal(section, b.value:format(i))
+                    if v == nil then v = b.vals[i] end
+                    if (tonumber(v) or 0) > 0 then n = i end
+                end
+                -- the shown bands keep their old defaults where nothing was set
+                for i = 1, n do
+                    for _, e in ipairs({ { b.value:format(i), b.vals[i] }, { b.color:format(i), b.cols[i] } }) do
+                        local def = sec.fields[e[1]]
+                        if def and SetVal(section, e[1]) == nil and not SameValue(def.d, e[2]) then
+                            Put(section, e[1], type(e[2]) == "table" and { e[2][1], e[2][2], e[2][3], e[2][4] } or e[2])
+                        end
+                    end
+                end
+            end
+            if n > 0 and n ~= cdef.d then Put(section, b.count, n) end
         end
     end
 end
@@ -1865,6 +1930,55 @@ function Store.SetAllSpecs(rec, on)
     rec.c.specs = nil
     if not on then
         if Specless() then rec.c.classes = {} else rec.c.specs = {} end
+    end
+    Store.Dirty("load")
+end
+
+-- The boxes a record allows, as IsLoaded reads them, or nil for everywhere:
+-- a spec-less client the class set itself, retail the effective spec boxes
+-- (a legacy class layer folds in).
+local function AllowedSet(rec)
+    if Specless() then return rec.c.classes end
+    if not (rec.c.classes or rec.c.specs) then return nil end
+    return MaterializeSpecSet(rec)
+end
+
+-- A group's icons and reminders whose own class and spec boxes leave out
+-- some the group allows: an import made on one class keeps its boxes on every
+-- item, so ticking another class on the group alone does not load them there.
+-- A group that loads everywhere leaves its items' own boxes alone.
+function Store.ClassSpecStrays(group)
+    local out = {}
+    if not (group and group.type == "group" and group.c) then return out end
+    local want = AllowedSet(group)
+    if not want then return out end
+    for _, rec in ipairs(Store.GroupMembers(group)) do
+        local have = rec.c and AllowedSet(rec)
+        if have then
+            for k, on in pairs(want) do
+                if on and not have[k] then
+                    out[#out + 1] = rec
+                    break
+                end
+            end
+        end
+    end
+    return out
+end
+
+-- Gives each record the group's class and spec boxes: one copy, no link.
+function Store.MatchClassSpecs(group, recs)
+    local function Copy(t)
+        if type(t) ~= "table" then return nil end
+        local o = {}
+        for k, v in pairs(t) do o[k] = v end
+        return o
+    end
+    for _, rec in ipairs(recs or {}) do
+        if rec.c then
+            rec.c.classes = Copy(group.c.classes)
+            rec.c.specs = Copy(group.c.specs)
+        end
     end
     Store.Dirty("load")
 end
@@ -3061,6 +3175,87 @@ function Store.MoveMany(ids, target)
     return moved, refused
 end
 
+-- Copies a selection at once (UI\AD_MultiSelect.lua's Copy and Duplicate):
+-- target = { layoutId } / { groupId } as MoveMany, or nil for each copy
+-- beside its original as Store.Duplicate makes it. A group brings its icons
+-- (an icon or reminder whose group is in the set rides with that copy); a
+-- layout never copies, a reminder only beside its original. One id map over
+-- the whole set, so anchors and chain rules between selected records re-point
+-- to the copies. A copy that lands where its original lives takes " copy" and
+-- Duplicate's nudge; one that lands elsewhere keeps its name and position, as
+-- a move would. Returns the copies and the ids refused.
+function Store.CopyMany(ids, target)
+    local set, map, made, copies, refused = {}, {}, {}, {}, {}
+    for _, id in ipairs(ids or {}) do set[id] = true end
+    local toGroup = target and target.groupId and Store.Get(target.groupId)
+    local toLayout = target and target.layoutId and Store.Get(target.layoutId)
+    if toGroup and toGroup.type ~= "group" then toGroup = nil end
+    if toLayout and toLayout.type ~= "layout" then toLayout = nil end
+    -- the copy's home and whether that is its original's own, or nil when
+    -- the target cannot take it
+    local function Home(rec)
+        if not target then
+            if rec.groupId then return Store.Get(rec.groupId), true end
+            return Store.Get(rec.layoutId), true
+        end
+        if toGroup then
+            if rec.type ~= "icon" or not Store.GroupTakes(toGroup, rec.kind) then return nil end
+            return toGroup, rec.groupId == toGroup.id
+        end
+        if not toLayout or rec.type == "reminder" then return nil end
+        if rec.type == "icon" then return toLayout, not rec.groupId and rec.layoutId == toLayout.id end
+        return toLayout, rec.layoutId == toLayout.id
+    end
+    for _, id in ipairs(ids or {}) do
+        local rec = DB.records[id]
+        local t = rec and rec.type
+        local ok = false
+        if (t == "icon" or t == "reminder") and rec.groupId and set[rec.groupId] then
+            ok = nil
+        elseif t == "group" or t == "bar" or t == "icon" or t == "reminder" then
+            local home, same = Home(rec)
+            if home and home.members then
+                local c = CloneRecord(rec, map, made)
+                if same then c.name = tostring(rec.name or "") .. " copy" end
+                if t == "group" then
+                    c.layoutId = home.id
+                    if same then c.pos = Nudge(rec.pos, 24, -24) end
+                    CloneIcons(rec, c, map, made)
+                elseif t == "bar" then
+                    c.layoutId = home.id
+                    if same then c.pos = Nudge(rec.pos, 0, -22) end
+                elseif home.type == "group" then
+                    -- into a group: the first free cell on the next render
+                    c.groupId, c.layoutId, c.pos, c.gpos = home.id, nil, nil, nil
+                else
+                    -- free in a layout; a grouped icon takes PlaceInLayout's spot
+                    local p = rec.pos
+                    if same then
+                        c.pos = Nudge(p, 42, 0)
+                    elseif rec.groupId then
+                        c.pos = {
+                            x = math.floor((tonumber(p and p.x) or 0) + 0.5),
+                            y = math.floor((tonumber(p and p.y) or -60) + 0.5),
+                        }
+                    end
+                    c.groupId, c.gpos, c.layoutId = nil, nil, home.id
+                end
+                home.members[#home.members + 1] = c.id
+                DB.records[c.id] = c
+                copies[#copies + 1] = c
+                ok = true
+            end
+        end
+        if ok == false then refused[#refused + 1] = id end
+    end
+    for _, r in ipairs(made) do
+        RemapAnchors(r, map, true)
+        RemapRules(r, map, true)
+    end
+    if #copies > 0 then Store.Dirty("tree") end
+    return copies, refused
+end
+
 -- Grow arrows add or remove one row or column on a visual edge: "bottom",
 -- "left" or "right" (no top pair, the title bar owns that edge). Growth
 -- directions flip logical to visual, so a visual edge is either the start of
@@ -3653,7 +3848,8 @@ local PART_OF_SECTION = {
     bar = { abilcolors = "appearance", anchor = "position", behavior = "showhide", cast = "appearance",
         fill = "appearance", frame = "position", healpred = "appearance", healththresholds = "appearance",
         icon = "appearance", look = "appearance", powerthresholds = "appearance", predict = "appearance",
-        range = "appearance", resource = "appearance", segments = "appearance", size = "position",
+        range = "appearance", regen = "appearance", resource = "appearance", segments = "appearance",
+        size = "position",
         stackcolors = "appearance", texlook = "appearance", text = "text", textel = "text",
         thresholds = "appearance", ticks = "appearance" },
     iconGroup = { anchor = "position", arrangement = "arrange", audio = "sounds", frame = "position",

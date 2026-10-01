@@ -177,6 +177,7 @@ local USE_CD = { spell = true, item = true, trinket = true, timer = true, enchan
 local USE = { spell = true, item = true, trinket = true, timer = true, enchant = true, special = true }
 local SP  = { spell = true }
 local AU  = { aura = true }
+local TOT = { totem = true }
 local AA  = { spell = true, aura = true }
 local SPC = { special = true }
 -- Every kind but aura: holder-only options (keep bright) mean nothing on an
@@ -201,10 +202,10 @@ local DUR = { spell = true, item = true, trinket = true, timer = true, totem = t
 local CDG = { spell = true, item = true, trinket = true, timer = true, special = true }
 -- An ammo count: the ammo icon's stack text, a spell icon's ammo text.
 local AMMO_CT = { ammo = true, spell = true }
--- A group buff's custom texts: which of its two states shows each.
-local GBK = { groupbuff = true }
-local GB_WHEN = { "always", "lacks", "has" }
-local GB_WHEN_LABELS = { always = "Always", lacks = "While someone lacks it", has = "While everyone has it" }
+-- The kinds whose custom texts follow their two states (the first two rows
+-- of their Show & Hide table: ready / on cooldown, active / missing, ...).
+local TWO = { spell = true, item = true, trinket = true, timer = true, totem = true, ammo = true,
+    enchant = true, special = true, groupbuff = true }
 -- "Minutes and seconds" cutoffs in seconds, for icons and bars alike.
 local ABBREV_VALUES = { 0, 120, 300, 600, 3600 }
 local ABBREV_LABELS = { [0] = "Off", [120] = "Under 2 minutes", [300] = "Under 5 minutes",
@@ -262,6 +263,13 @@ function Schema.AmmoCountShown(rec)
     if not (rec and Store) then return false end
     if rec.kind == "ammo" then return Store.Resolve(rec, "text", "stackText") ~= false end
     return Store.Resolve(rec, "text", "ammoText") == true
+end
+
+-- A totem icon set to one totem by its spell: it has one buff to be out of
+-- range of. A slot icon holds whatever lands in its slot.
+function Schema.TotemBySpell(rec)
+    if not (rec and rec.kind == "totem" and type(rec.driver) == "table") then return false end
+    return tonumber(rec.driver.spellID) ~= nil
 end
 
 Schema.icon = {
@@ -534,6 +542,49 @@ Schema.icon = {
             label = "Warning glow frame level", dep = { field = "warnGlow" } },
         rangeTint = { d = false, t = "bool", kinds = SP, label = "Out-of-range tint" },
         rangeTintColor = { d = { 0.85, 0.2, 0.2, 1 }, t = "color", kinds = SP, label = "Out-of-range color", dep = { field = "rangeTint" } },
+        -- A totem's Out of range look: while the totem is out and its buff is
+        -- not on you (Drivers\AD_TotemRange.lua). The game draws it, so it
+        -- holds in combat.
+        totemRangeDesaturate = { d = false, t = "bool", kinds = TOT, showIf = Schema.TotemBySpell,
+            label = "Grey out while out of totem range" },
+        totemRangeTint = { d = false, t = "bool", kinds = TOT, showIf = Schema.TotemBySpell,
+            label = "Out of totem range tint" },
+        totemRangeTintColor = { d = { 0.85, 0.2, 0.2, 1 }, t = "color", kinds = TOT, showIf = Schema.TotemBySpell,
+            label = "Out of totem range tint color", dep = { field = "totemRangeTint" } },
+        totemRangeGlow = { d = false, t = "bool", kinds = TOT, showIf = Schema.TotemBySpell,
+            label = "Glow while out of totem range" },
+        totemRangeGlowType = { d = "flash", t = "enum", values = GLOW_STYLES, labels = GLOW_STYLE_LABELS, kinds = TOT,
+            showIf = Schema.TotemBySpell, label = "Out of range glow style", dep = { field = "totemRangeGlow" } },
+        totemRangeGlowColor = { d = { 1, 0.3, 0.2, 1 }, t = "color", kinds = TOT, showIf = Schema.TotemBySpell,
+            label = "Out of range glow color", dep = { field = "totemRangeGlow" } },
+        totemRangeGlowSpeed = { adv = "glow", d = 0.25, t = "num", min = 0.05, max = 1, kinds = TOT,
+            showIf = Schema.TotemBySpell, label = "Out of range glow speed",
+            dep = { { field = "totemRangeGlow" }, { field = "totemRangeGlowType", anyOf = GLOW_SPEED_STYLES } } },
+        totemRangeGlowLines = { adv = "glow", d = 8, t = "int", min = 1, max = 16, kinds = TOT,
+            showIf = Schema.TotemBySpell, label = "Out of range glow lines",
+            dep = { { field = "totemRangeGlow" }, { field = "totemRangeGlowType", value = "pixel" } } },
+        totemRangeGlowThickness = { adv = "glow", d = 2, t = "int", min = 1, max = 20, kinds = TOT,
+            showIf = Schema.TotemBySpell, label = "Out of range glow thickness",
+            dep = { { field = "totemRangeGlow" }, { field = "totemRangeGlowType", value = "pixel" } } },
+        totemRangeGlowLength = { adv = "glow", d = 0, t = "int", min = 0, max = 40, kinds = TOT,
+            showIf = Schema.TotemBySpell, label = "Out of range glow line length (0 = auto)",
+            dep = { { field = "totemRangeGlow" }, { field = "totemRangeGlowType", value = "pixel" } } },
+        totemRangeGlowParticles = { adv = "glow", d = 4, t = "int", min = 1, max = 16, kinds = TOT,
+            showIf = Schema.TotemBySpell, label = "Out of range glow particles",
+            dep = { { field = "totemRangeGlow" }, { field = "totemRangeGlowType", value = "autocast" } } },
+        totemRangeGlowScale = { adv = "glow", d = 1, t = "num", min = 0.5, max = 2, kinds = TOT,
+            showIf = Schema.TotemBySpell, label = "Out of range glow size",
+            dep = { { field = "totemRangeGlow" }, { field = "totemRangeGlowType", value = "autocast" } } },
+        totemRangeGlowIntensity = { adv = "glow", d = 1, t = "num", min = 0.1, max = 1, kinds = TOT,
+            showIf = Schema.TotemBySpell, label = "Out of range glow intensity", dep = { field = "totemRangeGlow" } },
+        totemRangeGlowXOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = TOT,
+            showIf = Schema.TotemBySpell, label = "Out of range glow X offset", dep = { field = "totemRangeGlow" } },
+        totemRangeGlowYOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = TOT,
+            showIf = Schema.TotemBySpell, label = "Out of range glow Y offset", dep = { field = "totemRangeGlow" } },
+        totemRangeGlowMoveX = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = TOT,
+            showIf = Schema.TotemBySpell, label = "Out of range glow move X", dep = { field = "totemRangeGlow" } },
+        totemRangeGlowMoveY = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = TOT,
+            showIf = Schema.TotemBySpell, label = "Out of range glow move Y", dep = { field = "totemRangeGlow" } },
     } },
     -- Up to three custom texts per icon, each shown or hidden by state.
     label = { push = true, inherit = true, fields = {
@@ -548,17 +599,23 @@ Schema.icon = {
             label = "Custom text anchor", dep = { field = "labelText", nonempty = true } },
         labelX = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text X", dep = { field = "labelText", nonempty = true } },
         labelY = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text Y", dep = { field = "labelText", nonempty = true } },
-        labelShowReady = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show custom text when ready", dep = { field = "labelText", nonempty = true } },
-        labelShowCooldown = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show custom text on cooldown", dep = { field = "labelText", nonempty = true } },
+        -- The two-state kinds: one dropdown in the kind's own state words writes
+        -- both (statePick, UI\AD_Options.lua); both on = always.
+        labelShowReady = { inherit = false, d = true, t = "bool", kinds = TWO, label = "Show custom text",
+            statePick = "labelShowCooldown", rangePick = "labelShowRange", dep = { field = "labelText", nonempty = true } },
+        labelShowCooldown = { inherit = false, d = true, t = "bool", kinds = TWO, label = "Show custom text on cooldown",
+            pickedBy = "labelShowReady", dep = { field = "labelText", nonempty = true } },
+        -- A totem set to one totem: shown only while out of its range, in the
+        -- Out of range look (Drivers\AD_TotemRange.lua); the same dropdown
+        -- writes it (rangePick).
+        labelShowRange = { inherit = false, d = false, t = "bool", kinds = TOT, showIf = Schema.TotemBySpell,
+            label = "Show custom text only while out of totem range", pickedBy = "labelShowReady",
+            dep = { field = "labelText", nonempty = true } },
         -- Drawn on the engine button, so it holds in combat. One dropdown writes both (showPick).
         labelActiveOnly = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show custom text",
             showPick = "labelMissingOnly", dep = { field = "labelText", nonempty = true } },
         labelMissingOnly = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show custom text only while the aura is missing",
             pickedBy = "labelActiveOnly", dep = { field = "labelText", nonempty = true } },
-        -- A group buff: its combat layers carry the texts shown while someone
-        -- lacks it (Drivers\AD_DriverGroupBuff.lua).
-        labelWhen = { inherit = false, d = "always", t = "enum", kinds = GBK, values = GB_WHEN, labels = GB_WHEN_LABELS,
-            label = "Show custom text", dep = { field = "labelText", nonempty = true } },
         labelText2 = { inherit = false, d = "", t = "text", label = "Custom text 2" },
         labelSize2 = { d = 12, t = "int", min = 6, max = 32, label = "Custom text 2 size", dep = { field = "labelText2", nonempty = true } },
         labelColor2 = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Custom text 2 color", dep = { field = "labelText2", nonempty = true } },
@@ -567,14 +624,17 @@ Schema.icon = {
             label = "Custom text 2 anchor", dep = { field = "labelText2", nonempty = true } },
         labelX2 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text 2 X", dep = { field = "labelText2", nonempty = true } },
         labelY2 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text 2 Y", dep = { field = "labelText2", nonempty = true } },
-        labelShowReady2 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show custom text 2 when ready", dep = { field = "labelText2", nonempty = true } },
-        labelShowCooldown2 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show custom text 2 on cooldown", dep = { field = "labelText2", nonempty = true } },
+        labelShowReady2 = { inherit = false, d = true, t = "bool", kinds = TWO, label = "Show custom text 2",
+            statePick = "labelShowCooldown2", rangePick = "labelShowRange2", dep = { field = "labelText2", nonempty = true } },
+        labelShowCooldown2 = { inherit = false, d = true, t = "bool", kinds = TWO, label = "Show custom text 2 on cooldown",
+            pickedBy = "labelShowReady2", dep = { field = "labelText2", nonempty = true } },
+        labelShowRange2 = { inherit = false, d = false, t = "bool", kinds = TOT, showIf = Schema.TotemBySpell,
+            label = "Show custom text 2 only while out of totem range", pickedBy = "labelShowReady2",
+            dep = { field = "labelText2", nonempty = true } },
         labelActiveOnly2 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show custom text 2",
             showPick = "labelMissingOnly2", dep = { field = "labelText2", nonempty = true } },
         labelMissingOnly2 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show custom text 2 only while the aura is missing",
             pickedBy = "labelActiveOnly2", dep = { field = "labelText2", nonempty = true } },
-        labelWhen2 = { inherit = false, d = "always", t = "enum", kinds = GBK, values = GB_WHEN, labels = GB_WHEN_LABELS,
-            label = "Show custom text 2", dep = { field = "labelText2", nonempty = true } },
         labelText3 = { inherit = false, d = "", t = "text", label = "Custom text 3" },
         labelSize3 = { d = 12, t = "int", min = 6, max = 32, label = "Custom text 3 size", dep = { field = "labelText3", nonempty = true } },
         labelColor3 = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Custom text 3 color", dep = { field = "labelText3", nonempty = true } },
@@ -583,14 +643,17 @@ Schema.icon = {
             label = "Custom text 3 anchor", dep = { field = "labelText3", nonempty = true } },
         labelX3 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text 3 X", dep = { field = "labelText3", nonempty = true } },
         labelY3 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text 3 Y", dep = { field = "labelText3", nonempty = true } },
-        labelShowReady3 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show custom text 3 when ready", dep = { field = "labelText3", nonempty = true } },
-        labelShowCooldown3 = { inherit = false, d = true, t = "bool", kinds = NA, label = "Show custom text 3 on cooldown", dep = { field = "labelText3", nonempty = true } },
+        labelShowReady3 = { inherit = false, d = true, t = "bool", kinds = TWO, label = "Show custom text 3",
+            statePick = "labelShowCooldown3", rangePick = "labelShowRange3", dep = { field = "labelText3", nonempty = true } },
+        labelShowCooldown3 = { inherit = false, d = true, t = "bool", kinds = TWO, label = "Show custom text 3 on cooldown",
+            pickedBy = "labelShowReady3", dep = { field = "labelText3", nonempty = true } },
+        labelShowRange3 = { inherit = false, d = false, t = "bool", kinds = TOT, showIf = Schema.TotemBySpell,
+            label = "Show custom text 3 only while out of totem range", pickedBy = "labelShowReady3",
+            dep = { field = "labelText3", nonempty = true } },
         labelActiveOnly3 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show custom text 3",
             showPick = "labelMissingOnly3", dep = { field = "labelText3", nonempty = true } },
         labelMissingOnly3 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show custom text 3 only while the aura is missing",
             pickedBy = "labelActiveOnly3", dep = { field = "labelText3", nonempty = true } },
-        labelWhen3 = { inherit = false, d = "always", t = "enum", kinds = GBK, values = GB_WHEN, labels = GB_WHEN_LABELS,
-            label = "Show custom text 3", dep = { field = "labelText3", nonempty = true } },
     } },
     -- Transition sounds. A sound cannot be unplayed, so the driver fires only
     -- on verified transitions. Each trigger is a toggle plus a t = "sound"
@@ -786,6 +849,10 @@ Schema.icon = {
             label = "Active icon from" },
         activeIcon = { inherit = false, d = 0, t = "id", label = "Active icon ID" },
         activeAlpha = { d = 1.0, t = "num", min = 0, max = 1, label = "Active alpha" },
+        -- The twin of auraMissing.missingPreserveText: a dimmed (not hidden)
+        -- active look keeps its texts bright. A spell icon's aura phase follows
+        -- the spell's own states.preserveDurationText instead.
+        activePreserveText = { d = true, t = "bool", kinds = AU, label = "Keep texts bright while active" },
         activeDesaturate = { d = false, t = "bool", label = "Desaturate while active" },
         activeTintEnabled = { d = false, t = "bool", label = "Active tint" },
         activeTintColor = { d = { 1, 1, 1, 1 }, t = "color", label = "Active tint color", dep = { field = "activeTintEnabled" } },
@@ -923,6 +990,8 @@ Schema.icon = {
         -- Bands bake into the countdown formatter as color escapes, so the
         -- engine colors the text from the real remaining time. A band colors
         -- values under its seconds (0 = off); above them, the plain color.
+        -- durBandCount bands are in play: one when switched on, "+ Add band"
+        -- for more (Schema.OLD_BANDS keeps the looks from before the count).
         durationColorBands = { kinds = DUR, d = false, t = "bool", label = "Color by remaining time",
             dep = { field = "durationText" } },
         durBand1Sec = { kinds = DUR, d = 5, t = "int", min = 0, max = 3600, label = "Band 1: under (seconds)",
@@ -930,12 +999,14 @@ Schema.icon = {
         durBand1Color = { kinds = DUR, d = { 0.9, 0.15, 0.15, 1 }, t = "color", label = "Band 1 color",
             dep = { { field = "durationText" }, { field = "durationColorBands" } } },
         durBand2Sec = { kinds = DUR, d = 60, t = "int", min = 0, max = 3600, label = "Band 2: under (seconds)",
-            dep = { { field = "durationText" }, { field = "durationColorBands" } } },
+            dep = { { field = "durationText" }, { field = "durationColorBands" }, { field = "durBandCount", min = 2 } } },
         durBand2Color = { kinds = DUR, d = { 0.95, 0.75, 0.2, 1 }, t = "color", label = "Band 2 color",
-            dep = { { field = "durationText" }, { field = "durationColorBands" } } },
-        durBand3Sec = { kinds = DUR, d = 0, t = "int", min = 0, max = 3600, label = "Band 3: under (seconds)",
-            dep = { { field = "durationText" }, { field = "durationColorBands" } } },
-        durBand3Color = { kinds = DUR, d = { 1, 1, 1, 1 }, t = "color", label = "Band 3 color",
+            dep = { { field = "durationText" }, { field = "durationColorBands" }, { field = "durBandCount", min = 2 } } },
+        durBand3Sec = { kinds = DUR, d = 10, t = "int", min = 0, max = 3600, label = "Band 3: under (seconds)",
+            dep = { { field = "durationText" }, { field = "durationColorBands" }, { field = "durBandCount", min = 3 } } },
+        durBand3Color = { kinds = DUR, d = { 1, 0.5, 0.1, 1 }, t = "color", label = "Band 3 color",
+            dep = { { field = "durationText" }, { field = "durationColorBands" }, { field = "durBandCount", min = 3 } } },
+        durBandCount = { kinds = DUR, d = 1, t = "int", min = 1, max = 3, adds = "band", label = "Number of time bands",
             dep = { { field = "durationText" }, { field = "durationColorBands" } } },
         stackText = { d = true, t = "bool", kinds = STK, label = "Stack text" },
         stackSize = { d = 14, t = "int", min = 6, max = 32, kinds = STK, label = "Stack text size", dep = { field = "stackText" } },
@@ -953,19 +1024,23 @@ Schema.icon = {
         -- NumericRuleFormatter. The same formatter carries a color escape per
         -- breakpoint, so the count stays secret and the engine colors it.
         stackShowSingle = { d = false, t = "bool", kinds = AU, label = "Show count at 1 stack", dep = { field = "stackText" } },
+        -- stkBandCount bands are in play: one when switched on (from 3
+        -- stacks, green), "+ Add band" for more.
         stackColorBands = { inherit = false, d = false, t = "bool", kinds = AU, label = "Color by stack count", dep = { field = "stackText" } },
-        stkBand1Min = { inherit = false, d = 1, t = "int", min = 1, max = 50, kinds = AU, label = "Band 1: from (stacks)",
+        stkBand1Min = { inherit = false, d = 3, t = "int", min = 1, max = 50, kinds = AU, label = "Band 1: from (stacks)",
             dep = { { field = "stackText" }, { field = "stackColorBands" } } },
-        stkBand1Color = { inherit = false, d = { 1, 1, 1, 1 }, t = "color", kinds = AU, label = "Band 1 color",
+        stkBand1Color = { inherit = false, d = { 0.48, 0.85, 0.56, 1 }, t = "color", kinds = AU, label = "Band 1 color",
             dep = { { field = "stackText" }, { field = "stackColorBands" } } },
-        stkBand2Min = { inherit = false, d = 3, t = "int", min = 1, max = 50, kinds = AU, label = "Band 2: from (stacks)",
-            dep = { { field = "stackText" }, { field = "stackColorBands" } } },
-        stkBand2Color = { inherit = false, d = { 0.48, 0.85, 0.56, 1 }, t = "color", kinds = AU, label = "Band 2 color",
-            dep = { { field = "stackText" }, { field = "stackColorBands" } } },
-        stkBand3Min = { inherit = false, d = 6, t = "int", min = 1, max = 50, kinds = AU, label = "Band 3: from (stacks)",
-            dep = { { field = "stackText" }, { field = "stackColorBands" } } },
+        stkBand2Min = { inherit = false, d = 6, t = "int", min = 1, max = 50, kinds = AU, label = "Band 2: from (stacks)",
+            dep = { { field = "stackText" }, { field = "stackColorBands" }, { field = "stkBandCount", min = 2 } } },
+        stkBand2Color = { inherit = false, d = { 0.95, 0.75, 0.2, 1 }, t = "color", kinds = AU, label = "Band 2 color",
+            dep = { { field = "stackText" }, { field = "stackColorBands" }, { field = "stkBandCount", min = 2 } } },
+        stkBand3Min = { inherit = false, d = 10, t = "int", min = 1, max = 50, kinds = AU, label = "Band 3: from (stacks)",
+            dep = { { field = "stackText" }, { field = "stackColorBands" }, { field = "stkBandCount", min = 3 } } },
         stkBand3Color = { inherit = false, d = { 0.9, 0.15, 0.15, 1 }, t = "color", kinds = AU, label = "Band 3 color",
-            dep = { { field = "stackText" }, { field = "stackColorBands" } } },
+            dep = { { field = "stackText" }, { field = "stackColorBands" }, { field = "stkBandCount", min = 3 } } },
+        stkBandCount = { inherit = false, d = 1, t = "int", min = 1, max = 3, kinds = AU, adds = "band",
+            label = "Number of stack bands", dep = { { field = "stackText" }, { field = "stackColorBands" } } },
         -- The equipped ammo count on a spell icon, styled apart from the stack
         -- text: a charge spell can show both, hence the opposite corner. The
         -- count is plain in combat (no secrecy annotation; Blizzard's item
@@ -1199,7 +1274,9 @@ Schema.iconGroup = {
         -- its cell for dragging (gpos is its identity). On an aura group it
         -- switches live view: on packs the engine rows with auras that are up,
         -- off keeps a static grid. The other dynamic fields are cooldown-only.
-        dynamicLayout = { inherit = false, d = false, t = "bool", label = "Dynamic: compact icons" },
+        dynamicLayout = { inherit = false, d = false, t = "bool", label = "Dynamic: compact icons",
+            desc = "Icons pack together while you play. On an aura group only the auras that are up show, "
+                .. "so its Aura Missing icons stay hidden (0%) while this is on." },
         -- Shape-aware: one row offers left/center/right, one column
         -- top/center/bottom, a grid six gravity modes. Remapped per shape at
         -- read time (LayoutEngine.EffectiveAlignment); hidden, since a bespoke
@@ -1520,6 +1597,25 @@ Schema.OLD_OFFSETS = {
         { "text", "hpOffsetX", -3, "hpAnchor" }, { "text", "hp2OffsetX", 3, "hp2Anchor" },
         { "text", "nameOffsetY", 1 },
         { "anchor", "anchorOffsetY", -2, nil, "anchorEnabled" },
+    },
+}
+
+-- The color band sets that became a count (one band when switched on, "+ Add
+-- band" for more) and the looks they had before, for
+-- Store.KeepOldBands: the count field, the old count when it had a default
+-- (oldCount), else the old per-band values and colors (value / color name a
+-- band's fields, %d its number) - a band counted when its value was above 0.
+Schema.OLD_BANDS = {
+    icon = {
+        { section = "text", toggle = "durationColorBands", count = "durBandCount",
+            value = "durBand%dSec", color = "durBand%dColor",
+            vals = { 5, 60, 0 }, cols = { { 0.9, 0.15, 0.15, 1 }, { 0.95, 0.75, 0.2, 1 }, { 1, 1, 1, 1 } } },
+        { section = "text", toggle = "stackColorBands", count = "stkBandCount",
+            value = "stkBand%dMin", color = "stkBand%dColor",
+            vals = { 1, 3, 6 }, cols = { { 1, 1, 1, 1 }, { 0.48, 0.85, 0.56, 1 }, { 0.9, 0.15, 0.15, 1 } } },
+    },
+    bar = {
+        { section = "thresholds", toggle = "threshEnabled", count = "threshCount", oldCount = 2 },
     },
 }
 
@@ -1946,8 +2042,9 @@ Schema.bar = {
         kindModes = { aura = { duration = true }, timer = { duration = true } }, fields = {
         threshEnabled = { d = false, t = "bool", label = "Threshold colors" },
         -- Bands in play (of three); the others hide and the runtime skips them.
-        -- adds: the panel grows the count with an "Add threshold" button.
-        threshCount = { d = 2, t = "int", min = 1, max = 3, adds = "threshold", label = "Number of thresholds", dep = { field = "threshEnabled" } },
+        -- adds: the panel grows the count with an "Add threshold" button. One
+        -- to start (it was two: Schema.OLD_BANDS keeps those).
+        threshCount = { d = 1, t = "int", min = 1, max = 3, adds = "threshold", label = "Number of thresholds", dep = { field = "threshEnabled" } },
         threshAsSeconds = { d = true, t = "bool", label = "Thresholds in seconds", dep = { field = "threshEnabled" } },
         -- Seconds mode places its points as a fraction of the cooldown, so it
         -- needs the length: this field when set, else the client's
@@ -2109,6 +2206,39 @@ Schema.bar = {
         predictColor = { d = { 1, 1, 1, 1 }, t = "color", label = "Cost color", dep = { field = "predictEnabled" } },
         predictAlpha = { d = 0.5, t = "num", min = 0.1, max = 1, label = "Cost opacity", dep = { field = "predictEnabled" } },
     } },
+    -- Mana bars: the five-second rule, a spark crossing the bar while spirit
+    -- regen waits after a spell that costs mana (Bars\AD_ManaRegen.lua).
+    regen = { push = true, inherit = true, kinds = BK_RES, fields = {
+        fsrOn = { d = false, t = "bool", label = "Five-second rule",
+            desc = "After a spell that costs mana, a spark crosses the bar for the 5 seconds before spirit regen resumes." },
+        fsrShow = { d = "always", t = "enum", values = { "always", "ooc" },
+            labels = { always = "Always", ooc = "Only out of combat" }, label = "Show", dep = { field = "fsrOn" } },
+        fsrColor = { d = { 1, 0.82, 0.25, 0.95 }, t = "color", alpha = true, label = "Spark color", dep = { field = "fsrOn" } },
+        fsrWidth = { d = 2, t = "int", min = 1, max = 12, label = "Spark width", dep = { field = "fsrOn" } },
+        fsrDir = { d = "down", t = "enum", values = { "down", "up" },
+            labels = { down = "Counting down", up = "Counting up" }, label = "Spark moves",
+            desc = "Counting down: the spark starts at the bar's full end and moves back. Counting up: the other way.",
+            dep = { field = "fsrOn" } },
+        fsrSound = { d = "", t = "sound", label = "Sound when regen resumes", dep = { field = "fsrOn" } },
+        fsrText = { d = false, t = "bool", label = "Countdown text", dep = { field = "fsrOn" } },
+        fsrTextPos = { d = "right", t = "enum", values = { "left", "center", "right" },
+            labels = { left = "Left", center = "Center", right = "Right" }, label = "Countdown position",
+            dep = { { field = "fsrOn" }, { field = "fsrText" } } },
+        fsrTextSize = { d = 11, t = "int", min = 6, max = 24, label = "Countdown size",
+            dep = { { field = "fsrOn" }, { field = "fsrText" } } },
+        -- The regen ticks, every 2 s: found from mana events away from your
+        -- casts; the next tick's mana comes from GetManaRegen, fed unread.
+        tickSpark = { d = false, t = "bool", label = "Tick spark",
+            desc = "A spark crosses the bar every 2 seconds and lands on each mana tick." },
+        tickSparkColor = { d = { 0.9, 0.95, 1, 0.9 }, t = "color", alpha = true, label = "Tick spark color",
+            dep = { field = "tickSpark" } },
+        tickSparkWidth = { d = 2, t = "int", min = 1, max = 12, label = "Tick spark width", dep = { field = "tickSpark" } },
+        incoming = { d = false, t = "bool", label = "Incoming mana",
+            desc = "The mana the next tick adds glows past the fill, brightens as the tick nears, then lands. Empty while the five-second rule runs." },
+        incomingColor = { d = { 0.52, 0.72, 0.92, 0.85 }, t = "color", alpha = true, label = "Incoming color",
+            dep = { field = "incoming" } },
+        incomingFlash = { d = false, t = "bool", label = "Flash when a tick lands", dep = { field = "incoming" } },
+    } },
     -- Health bars: heals, shields and heal absorbs at the health edge. Every
     -- amount is secret, so each overlay is a StatusBar with the health bar's
     -- range, anchored to the fill's edge and fed the amount; Lua never reads
@@ -2240,12 +2370,28 @@ Schema.bar = {
         bgShow = { d = false, t = "bool", label = "Dim copy behind",
             desc = "The picture again, dimmed, behind it: the empty part of a fill, and all that shows while it is not active." },
         bgAlpha = { d = 0.3, t = "num", min = 0, max = 1, label = "Dim copy opacity", dep = { field = "bgShow" } },
+        -- off: the dim copy wears the picture's colour
+        bgTint = { d = false, t = "bool", label = "Tint the dim copy", dep = { field = "bgShow" } },
+        bgColor = { d = { 1, 1, 1 }, t = "color", label = "Dim copy tint",
+            dep = { { field = "bgShow" }, { field = "bgTint" } } },
         bgDesat = { d = false, t = "bool", label = "Grey the dim copy", dep = { field = "bgShow" } },
+        bgDesatAmount = { d = 100, t = "int", min = 5, max = 100, label = "Dim copy grey (%)",
+            dep = { { field = "bgShow" }, { field = "bgDesat" } } },
         rotation = { d = 0, t = "int", min = -180, max = 180, label = "Turn the picture (degrees)",
             dep = { field = "mode", value = "show" } },
         flipH = { d = false, t = "bool", label = "Flip the picture left to right", dep = { field = "mode", value = "show" } },
         flipV = { d = false, t = "bool", label = "Flip the picture upside down", dep = { field = "mode", value = "show" } },
         zoom = { d = 0, t = "int", min = 0, max = 45, label = "Picture zoom (%)", dep = { field = "mode", value = "show" } },
+        -- Crop cuts an edge off where it is: the rest keeps its size and place.
+        cropL = { d = 0, t = "int", min = 0, max = 90, label = "Crop the left edge (%)", dep = { field = "mode", value = "show" } },
+        cropR = { d = 0, t = "int", min = 0, max = 90, label = "Crop the right edge (%)", dep = { field = "mode", value = "show" } },
+        cropT = { d = 0, t = "int", min = 0, max = 90, label = "Crop the top edge (%)", dep = { field = "mode", value = "show" } },
+        cropB = { d = 0, t = "int", min = 0, max = 90, label = "Crop the bottom edge (%)", dep = { field = "mode", value = "show" } },
+        pulse = { d = false, t = "bool", label = "Pulse while it shows",
+            desc = "The picture grows and shrinks gently, in combat too." },
+        pulseSize = { d = 15, t = "int", min = 2, max = 60, label = "Pulse size (%)", dep = { field = "pulse" } },
+        pulseTime = { d = 1, t = "num", min = 0.2, max = 4, step = 0.1, fmt = "%.1f", label = "One pulse (seconds)",
+            dep = { field = "pulse" } },
     } },
     -- Not pushable, like conditions. hiddenAlpha is the opacity for the state
     -- hides below; every kind it lists must honor it.

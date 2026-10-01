@@ -930,6 +930,8 @@ local function DurationBands(o, list)
         Put(o, "text", "durBand" .. i .. "Sec", b and math.floor(b.sec + 0.5) or 0)
         if b then Put(o, "text", "durBand" .. i .. "Color", b.color) end
     end
+    -- the bands in play: one shows by default now
+    if #bands > 0 then Put(o, "text", "durBandCount", math.min(3, #bands)) end
     return #bands
 end
 
@@ -949,6 +951,7 @@ local function StackBands(o, list)
             Put(o, "text", "stkBand" .. i .. "Color", b.color)
         end
     end
+    if #bands > 0 then Put(o, "text", "stkBandCount", math.min(3, #bands)) end
     return #bands
 end
 

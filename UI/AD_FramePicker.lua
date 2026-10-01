@@ -1,6 +1,7 @@
--- AD_FramePicker: Pick Frame for the anchor rows: hover any frame on screen, click it, and its name fills Frame name.
+-- AD_FramePicker: Pick Frame for the anchor rows: hover any frame on screen, a game frame or an Arc Auras item, and click it to anchor to it.
 -- Owns pick mode (a click catcher, a readout on the cursor, a box on the frame) and the common-frames list;
--- Options.AnchorPickRows calls FramePickRows. Pick mode runs out of combat only and offers what Anchor.FrameProblem passes.
+-- Options.AnchorPickRows calls FramePickRows. Pick mode runs out of combat only and offers what Anchor.FrameProblem
+-- passes, plus the Arc Auras items Anchor.PickFrames maps for the record being edited.
 local ADDON, NS = ...
 
 local FP = {}
@@ -39,6 +40,8 @@ FP.COMMON = {
 
 -- What the readout says when nothing under the cursor can be picked.
 FP.WHY_TEXT = {
+    self = "This item itself: not offered",
+    loop = "Anchored to this one: it would loop",
     ownItem = "An Arc Auras item: pick it in Anchor to",
     own = "Arc Auras' own window: not offered",
     plate = "A nameplate: not offered",
@@ -83,10 +86,11 @@ function FP.OwnKind(name)
 end
 
 -- From one frame under the cursor up its parents: the first frame with a
--- global name that anchoring can use, as name, frame; else nil, nil, why the
--- walk stopped. A forbidden frame answers nothing but IsForbidden, so that is
--- asked first, and every other read can be secret.
-function FP.Walk(f)
+-- global name that anchoring can use, as name, frame; the first Arc Auras
+-- item in `items` (Anchor.PickFrames), as nil, frame, nil, item; else nil,
+-- nil, why the walk stopped. A forbidden frame answers nothing but
+-- IsForbidden, so that is asked first, and every other read can be secret.
+function FP.Walk(f, items)
     local A = NS.Anchor
     local depth = 0
     while f ~= nil and depth < FP.MAX_DEPTH do
@@ -95,6 +99,11 @@ function FP.Walk(f)
         if f.IsForbidden then
             local fb = f:IsForbidden()
             if Secret(fb) or fb then return nil, nil, "protected" end
+        end
+        local item = items and items[f]
+        if item then
+            if item.value then return nil, f, nil, item end
+            return nil, nil, item.why
         end
         local name = f.GetName and f:GetName()
         if Secret(name) then name = nil end
@@ -127,14 +136,14 @@ function FP.Foci()
     return foci
 end
 
--- The first pickable frame under the cursor: name, frame, or nil, nil, why.
--- The catcher is always the top one; being unnamed under UIParent, its walk
--- yields nothing.
-function FP.Resolve(foci)
+-- The first pickable frame under the cursor: name, frame (a game frame), nil,
+-- frame, nil, item (an Arc Auras item), or nil, nil, why. The catcher is
+-- always the top one; being unnamed under UIParent, its walk yields nothing.
+function FP.Resolve(foci, items)
     local why
     for _, f in ipairs(foci or {}) do
-        local name, frame, w = FP.Walk(f)
-        if name then return name, frame end
+        local name, frame, w, item = FP.Walk(f, items)
+        if name or item then return name, frame, nil, item end
         why = why or w
     end
     return nil, nil, why
@@ -230,13 +239,13 @@ end
 
 -- Looks under the cursor, then shows the name (or why not) and boxes the frame.
 function FP.Refresh()
-    local name, frame, why = FP.Resolve(FP.Foci())
-    FP.name, FP.frame = name, frame
+    local name, frame, why, item = FP.Resolve(FP.Foci(), FP.items)
+    FP.name, FP.frame, FP.item = name, frame, item
     local r, b = FP.readout, FP.box
     if r then
         local COL = NS.AT.COL
-        if name then
-            r.name:SetText(name)
+        if name or item then
+            r.name:SetText(name or item.text)
             r.name:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
         else
             r.name:SetText(FP.WHY_TEXT[why or "none"] or FP.WHY_TEXT.none)
@@ -268,7 +277,7 @@ function FP.Tick(_, elapsed)
     end
 end
 
--- Left-click takes the name under the cursor (nothing pickable: keep looking);
+-- Left-click takes what is under the cursor (nothing pickable: keep looking);
 -- right-click cancels.
 function FP.Click(button)
     if button == "RightButton" then
@@ -277,21 +286,27 @@ function FP.Click(button)
     end
     if button ~= "LeftButton" or not FP.active then return end
     FP.Refresh()
-    local name, onPick = FP.name, FP.onPick
-    if not name then return end
+    local name, item, onPick = FP.name, FP.item, FP.onPick
+    if not (name or item) then return end
     FP.Stop()
-    if onPick then onPick(name) end
+    if onPick then onPick(name, item) end
 end
 
--- Starts pick mode; onPick(name) runs on a pick. Refused in combat: a screen
--- covering click catcher would take the player's clicks.
-function FP.Start(onPick)
+-- Starts pick mode; onPick(name) runs on a game frame's pick, onPick(nil,
+-- item) on an Arc Auras item's (item.value is an Anchor.PickSet value). rec:
+-- the record being anchored, whose legal targets are offered; nil offers game
+-- frames only. Refused in combat: a screen covering click catcher would take
+-- the player's clicks.
+function FP.Start(onPick, rec)
     if InCombatLockdown() then return false end
     FP.Stop()
     local c = Catcher()
     Readout()
     Box()
     FP.onPick = onPick
+    -- the items are mapped once: pick mode is short, and a rebuild while it
+    -- runs only leaves a stale frame that is no longer under the cursor
+    FP.items = (rec and NS.Anchor and NS.Anchor.PickFrames) and NS.Anchor.PickFrames(rec) or nil
     FP.active = true
     FP.acc, FP.lastX, FP.lastY = 0, nil, nil
     if c.SetPropagateKeyboardInput then c:SetPropagateKeyboardInput(true) end
@@ -308,7 +323,7 @@ end
 function FP.Stop()
     if not FP.active then return end
     FP.active = false
-    FP.onPick, FP.name, FP.frame = nil, nil, nil
+    FP.onPick, FP.name, FP.frame, FP.item, FP.items = nil, nil, nil, nil, nil
     if NS.Events then NS.Events.Off("PLAYER_REGEN_DISABLED", "adpick") end
     local c = FP.catcher
     if c then
@@ -326,8 +341,11 @@ local Options = NS.Options
 if not Options then return end
 
 -- Two rows under Frame name: Common frames, then the Pick Frame button. vis:
--- when they show (a Named frame pick). owner: the window the dropdown opens on.
-function Options.FramePickRows(pg, ctx, vis, owner)
+-- when Common frames shows (a Named frame pick); pickVis: when Pick Frame
+-- shows (every anchor pick; vis when nil). owner: the window the dropdown
+-- opens on. A pick of a game frame makes the anchor a Named frame with that
+-- name; a pick of an Arc Auras item anchors to that item, as Anchor to would.
+function Options.FramePickRows(pg, ctx, vis, owner, pickVis)
     local AT, Store = NS.AT, NS.Store
     local function SetName(r, name)
         if r and type(name) == "string" and name ~= "" then
@@ -348,17 +366,24 @@ function Options.FramePickRows(pg, ctx, vis, owner)
         local r = ctx()
         if not r then return end
         local id = r.id
-        local ok = FP.Start(function(name)
-            SetName(Store.Get(id), name)
+        local ok = FP.Start(function(name, item)
+            local A, rec = NS.Anchor, Store.Get(id)
+            if not (A and rec) then return end
+            if item then
+                A.PickSet(rec, item.value)
+            else
+                A.PickSet(rec, "frame")
+                SetName(rec, name)
+            end
             AT.LayoutPage(pg)
-        end)
+        end, r)
         if not ok then
             row.button.fs:SetText("Not in combat")
             C_Timer.After(2, function() row.button.fs:SetText("Pick Frame") end)
         end
-    end, vis, 110, "Pick it on screen")
+    end, pickVis or vis, 110, "Pick it on screen")
     AT.Tooltip(row.button, "Pick Frame",
-        "Hover any frame on screen and left-click it to use its name. Right-click or Esc cancels.")
+        "Hover a game frame or one of your Arc Auras items and left-click it to anchor to it. Right-click or Esc cancels.")
     -- pick mode ends with the page that started it
     pg:HookScript("OnHide", function() FP.Stop() end)
 end

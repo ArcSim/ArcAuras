@@ -197,7 +197,8 @@ end
 -- first; a secret string, an abbreviation, is joined as it is).
 function TX.Write(e, v, numeric)
     local fs = e.txFS
-    if v == nil or v == "" then
+    -- a secret (a name, a formatted number) is never compared, only passed on
+    if not IsSecret(v) and (v == nil or v == "") then
         fs:SetText("")
         return
     end
@@ -353,6 +354,51 @@ function TX.PaintHealth(e)
         TX.Number(e, UnitHealthMax and UnitHealthMax(unit))
     else
         TX.Number(e, UnitHealth and UnitHealth(unit))
+    end
+end
+
+-- The separator between a first name and a surname, the game's own.
+function TX.NameSeparator()
+    local C = Constants and Constants.CharacterNameSeparatorConsts
+    local sep = C and C.CHARACTERNAME_SURNAME_SEPARATOR
+    return (type(sep) == "string" and not IsSecret(sep)) and sep or " "
+end
+
+-- The unit's name. On Forever another player's name comes in two parts and
+-- shows joined, as the game shows it; on retail the second part is a realm,
+-- left out. Names read secret where unit identity is restricted, so the parts
+-- are joined C-side (WrapString drops the separator with no surname).
+function TX.PaintName(e)
+    local first, last = UnitName(e.rec.driver.unit or "player")
+    if not IsSecret(first) and (first == nil or first == "") then
+        TX.Write(e, nil)
+        return
+    end
+    local SU = C_StringUtil
+    if NS.IsForever == true and SU and SU.WrapString and (IsSecret(last) or (type(last) == "string" and last ~= "")) then
+        first = SU.WrapString(first, nil, SU.WrapString(last, TX.NameSeparator(), nil))
+    end
+    TX.Write(e, first, false)
+end
+
+-- A unit's health or name hides while the unit is not there (an empty party
+-- slot, no target), as health bars do; never the player's, and never while the
+-- options are open (the sample shows). UnitExists can read secret in combat on
+-- Forever: then the host's alpha is set from it C-side.
+function TX.UnitGate(e)
+    local host = e.txHost
+    if not host then return end
+    local s = TX.Source(e.rec)
+    local unit = (s == "health" or s == "name") and (e.rec.driver.unit or "player") or "player"
+    if unit == "player" or K.IsEditMode() or not UnitExists then
+        host:SetAlpha(1)
+        return
+    end
+    local ex = UnitExists(unit)
+    if IsSecret(ex) then
+        if host.SetAlphaFromBoolean then host:SetAlphaFromBoolean(ex, 1, 0) else host:SetAlpha(1) end
+    else
+        host:SetAlpha(ex and 1 or 0)
     end
 end
 
@@ -984,7 +1030,7 @@ function TX.NudgeAuras(unit)
 end
 
 TX.PAINT = {
-    static = TX.PaintStatic, power = TX.PaintPower, health = TX.PaintHealth, combo = TX.PaintCombo,
+    static = TX.PaintStatic, power = TX.PaintPower, health = TX.PaintHealth, name = TX.PaintName, combo = TX.PaintCombo,
     ammo = TX.PaintAmmo, petMood = TX.PaintMood, range = TX.PaintRange, clock = TX.PaintClock,
     spellCd = TX.FeedCooldown, spellCharges = TX.PaintCharges, rules = TX.PaintCustom,
     custom = TX.PaintCustom, spellText = TX.PaintSpellText, auraText = TX.PaintAuraText,
@@ -1005,6 +1051,7 @@ end
 
 function TX.Paint(e)
     if e.isPreview then return end
+    TX.UnitGate(e)
     if TX.StandIn(e) then
         TX.PreviewApply(e)
         return
@@ -1050,6 +1097,14 @@ local function HealthPred(unit)
     end
 end
 
+-- a unit's health and name texts (nil: every one), what a swap of the unit repaints
+local function UnitPred(unit)
+    return function(e)
+        local s = TX.Source(e.rec)
+        return (s == "health" or s == "name") and (unit == nil or (e.rec.driver.unit or "player") == unit)
+    end
+end
+
 -- the sources that read a spell's cooldown
 local SPELL_READ = { spellCd = true, spellCharges = true, spellText = true }
 local function SpellPred(e)
@@ -1091,21 +1146,35 @@ TX.HANDLERS = {
     PLAYER_TARGET_CHANGED = function()
         PaintWhere("target", function(e)
             local s = TX.Source(e.rec)
-            return (s == "health" and (e.rec.driver.unit or "player") == "target") or s == "combo" or UsablePred(e)
+            local onUnit = (s == "health" or s == "name") and (e.rec.driver.unit or "player") == "target"
+            return onUnit or s == "combo" or UsablePred(e)
         end)
         TX.NudgeAuras("target")
     end,
     PLAYER_FOCUS_CHANGED = function()
-        PaintWhere("focus", HealthPred("focus"))
+        PaintWhere("focus", UnitPred("focus"))
         TX.NudgeAuras("focus")
     end,
     UNIT_PET = function(_, unit)
         if unit ~= nil and unit ~= "player" and not IsSecret(unit) then return end
         PaintWhere("pet", function(e)
             local s = TX.Source(e.rec)
-            return (s == "health" and (e.rec.driver.unit or "player") == "pet") or s == "petMood"
+            return ((s == "health" or s == "name") and (e.rec.driver.unit or "player") == "pet") or s == "petMood"
         end)
         TX.NudgeAuras("pet")
+    end,
+    UNIT_NAME_UPDATE = function(_, unit)
+        if IsSecret(unit) then unit = nil end
+        PaintWhere("name", function(e)
+            return TX.Source(e.rec) == "name" and (unit == nil or (e.rec.driver.unit or "player") == unit)
+        end)
+    end,
+    -- a party slot can point at someone new, or at no one
+    GROUP_ROSTER_UPDATE = function()
+        PaintWhere("roster", function(e)
+            local s = TX.Source(e.rec)
+            return (s == "health" or s == "name") and tostring(e.rec.driver.unit or ""):match("^party") ~= nil
+        end)
     end,
     UNIT_HAPPINESS = function() PaintWhere("mood", SourceIs("petMood")) end,
     UNIT_INVENTORY_CHANGED = function(_, unit)
@@ -1160,12 +1229,13 @@ function TX.Needs()
             if NS.IsForever == true then
                 n.PLAYER_TARGET_CHANGED, n.UNIT_SPELLCAST_SUCCEEDED, n.comboCast = true, true, true
             end
-        elseif s == "health" then
-            n.UNIT_HEALTH, n.UNIT_MAXHEALTH = true, true
+        elseif s == "health" or s == "name" then
+            if s == "health" then n.UNIT_HEALTH, n.UNIT_MAXHEALTH = true, true else n.UNIT_NAME_UPDATE = true end
             local u = rec.driver.unit or "player"
             if u == "target" then n.PLAYER_TARGET_CHANGED = true
             elseif u == "focus" then n.PLAYER_FOCUS_CHANGED = true
-            elseif u == "pet" then n.UNIT_PET = true end
+            elseif u == "pet" then n.UNIT_PET = true
+            elseif tostring(u):match("^party") then n.GROUP_ROSTER_UPDATE = true end
         elseif s == "ammo" then
             n.UNIT_INVENTORY_CHANGED, n.BAG_UPDATE_DELAYED, n.PLAYER_EQUIPMENT_CHANGED = true, true, true
         elseif s == "petMood" then
@@ -1363,6 +1433,16 @@ function TX.PreviewModes()
     return { { key = "static", text = "Preview", tip = "The text with a sample value, in its font, colour and box." } }
 end
 
+-- The Name text's sample: the unit's own name while it reads plain, else who it is.
+TX.SAMPLE_NAMES = { player = "Your name", target = "Target", focus = "Focus", pet = "Pet",
+    party1 = "Party 1", party2 = "Party 2", party3 = "Party 3", party4 = "Party 4" }
+function TX.SampleName(rec)
+    local unit = rec.driver.unit or "player"
+    local nm = UnitName and UnitName(unit)
+    if not IsSecret(nm) and type(nm) == "string" and nm ~= "" then return nm end
+    return TX.SAMPLE_NAMES[unit] or "Name"
+end
+
 function TX.SampleText(e)
     local rec = e.rec
     local s = TX.Source(rec)
@@ -1375,6 +1455,7 @@ function TX.SampleText(e)
     elseif s == "health" then
         if show == "percent" then return "65%", false end
         return (show == "max") and 12000 or 7800, true
+    elseif s == "name" then return TX.SampleName(rec), false
     elseif s == "combo" then return 3, true
     elseif s == "ammo" then return 400, true
     elseif s == "petMood" then return "Happy", false
@@ -1424,6 +1505,11 @@ function TX.Describe(rec)
     end
     local L = Schema.TEXT_SOURCE_LABELS or {}
     local base = L[s] or s
+    local unit = d.unit or "player"
+    if (s == "health" or s == "name") and unit ~= "player" then
+        local O = NS.Options
+        base = base .. " of " .. ((O and O.HealthUnitLabel and O.HealthUnitLabel(unit)) or tostring(unit))
+    end
     if s == "power" or s == "health" then
         local SL = Schema.TEXT_SHOW_LABELS or {}
         base = base .. ", " .. (SL[d.show or "current"] or d.show or "current"):lower()

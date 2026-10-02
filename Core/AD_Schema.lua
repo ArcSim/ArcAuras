@@ -19,12 +19,13 @@ Schema.GROUP_KINDS = { "cooldown", "aura", "reminder" }
 -- "stack"). The create UI hides swing where C_SwingTimer is missing, but the
 -- kind stays valid everywhere, so sync never rewrites a record. Legacy "timer"
 -- and "stack" (power) bars stay legal but cannot be created.
-Schema.BAR_KINDS = { "cooldown", "aura", "swing", "resource", "health", "cast", "enchant", "range", "text", "texture" }
+Schema.BAR_KINDS = { "cooldown", "aura", "swing", "resource", "health", "cast", "enchant", "range", "text", "texture",
+    "wheel" }
 -- A text element's sources (rec.driver.source, Bars\AD_TextElement.lua): each
 -- reads plain in combat or reaches the screen through a text sink only.
-Schema.TEXT_SOURCES = { "static", "power", "health", "combo", "ammo", "petMood", "range", "clock",
+Schema.TEXT_SOURCES = { "static", "power", "health", "name", "combo", "ammo", "petMood", "range", "clock",
     "spellCd", "spellCharges", "auraTime", "auraStacks", "rules", "custom", "spellText", "auraText" }
-Schema.TEXT_SOURCE_LABELS = { static = "Words you type", power = "Your power", health = "Health",
+Schema.TEXT_SOURCE_LABELS = { static = "Words you type", power = "Your power", health = "Health", name = "Name",
     combo = "Combo points", ammo = "Ammo count", petMood = "Pet happiness", range = "Target range band",
     clock = "Time of day", spellCd = "A spell's cooldown", spellCharges = "A spell's charges",
     auraTime = "An aura's time left", auraStacks = "An aura's stacks", rules = "Custom rules",
@@ -1275,8 +1276,7 @@ Schema.iconGroup = {
         -- switches live view: on packs the engine rows with auras that are up,
         -- off keeps a static grid. The other dynamic fields are cooldown-only.
         dynamicLayout = { inherit = false, d = false, t = "bool", label = "Dynamic: compact icons",
-            desc = "Icons pack together while you play. On an aura group only the auras that are up show, "
-                .. "so its Aura Missing icons stay hidden (0%) while this is on." },
+            desc = "Icons pack together while you play." },
         -- Shape-aware: one row offers left/center/right, one column
         -- top/center/bottom, a grid six gravity modes. Remapped per shape at
         -- read time (LayoutEngine.EffectiveAlignment); hidden, since a bespoke
@@ -1367,6 +1367,16 @@ Schema.iconGroup = {
         hideSpells = { d = "", t = "text", label = "Hide these spells", hint = "Spell IDs, comma separated",
             desc = "Spell IDs to leave out of this group, separated by commas or spaces.",
             showIf = Schema.UnitAuraHideShown, dep = { field = "shows", value = "unit" } },
+        -- The game's own dispel-type filter (the container's includeDispelTypes):
+        -- any unit, enemies too, in combat; none ticked = every aura.
+        dispelMagic = { d = false, t = "bool", label = "Magic", dep = { field = "shows", value = "unit" },
+            desc = "Show Magic auras. Tick any dispel types to show only those; none ticked shows every aura." },
+        dispelCurse = { d = false, t = "bool", label = "Curse", dep = { field = "shows", value = "unit" },
+            desc = "Show Curse auras. Tick any dispel types to show only those; none ticked shows every aura." },
+        dispelDisease = { d = false, t = "bool", label = "Disease", dep = { field = "shows", value = "unit" },
+            desc = "Show Disease auras. Tick any dispel types to show only those; none ticked shows every aura." },
+        dispelPoison = { d = false, t = "bool", label = "Poison", dep = { field = "shows", value = "unit" },
+            desc = "Show Poison auras. Tick any dispel types to show only those; none ticked shows every aura." },
         -- Enemy nameplates: a row per plate, on the plate's edge. The pool of
         -- plate rows is Nameplates covered deep, grown out of combat.
         plateCount = { d = 20, t = "int", min = 1, max = Schema.UNIT_AURA_PLATES, label = "Nameplates covered",
@@ -2392,6 +2402,17 @@ Schema.bar = {
         pulseSize = { d = 15, t = "int", min = 2, max = 60, label = "Pulse size (%)", dep = { field = "pulse" } },
         pulseTime = { d = 1, t = "num", min = 0.2, max = 4, step = 0.1, fmt = "%.1f", label = "One pulse (seconds)",
             dep = { field = "pulse" } },
+    } },
+    -- A wheel's look (Bars\AD_Wheel.lua): it opens at the cursor, so it has no
+    -- place, bar size or chrome of its own.
+    wheel = { kinds = { wheel = true }, fields = {
+        size = { d = 100, t = "int", min = 60, max = 160, step = 5, label = "Wheel size (%)" },
+        names = { d = true, t = "bool", label = "Show names",
+            desc = "Each spell's or item's name beside its icon." },
+        cooldowns = { d = true, t = "bool", label = "Show cooldowns",
+            desc = "A swipe over each icon while it is on cooldown." },
+        counts = { d = true, t = "bool", label = "Show item counts",
+            desc = "How many you carry, on items that stack, such as potions." },
     } },
     -- Not pushable, like conditions. hiddenAlpha is the opacity for the state
     -- hides below; every kind it lists must honor it.

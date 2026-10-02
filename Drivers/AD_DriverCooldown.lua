@@ -727,6 +727,55 @@ end
 
 local attachedItems = {}   -- [iconId] = { rec, frame }
 
+-- An item icon with several items (driver.itemIDs, its first first) shows one:
+-- the first you carry and are high enough level to use, else its first, out of
+-- stock. Counts are plain (GetItemCount has no secret return); a secret one
+-- still keeps the last pick.
+Driver.liveItems = {}      -- [iconId] = the item it shows
+
+function Driver.ItemUsable(id)
+    local lvl = C_Item and C_Item.GetItemInfo and select(5, C_Item.GetItemInfo(id))
+    if type(lvl) ~= "number" or (issecretvalue and issecretvalue(lvl)) or lvl <= 1 then return true end
+    local me = UnitLevel and UnitLevel("player")
+    if type(me) ~= "number" or (issecretvalue and issecretvalue(me)) then return true end
+    return me >= lvl
+end
+
+-- true carried and usable, false not, nil unreadable
+function Driver.ItemReady(id)
+    local c = C_Item and C_Item.GetItemCount and C_Item.GetItemCount(id, false, true)
+    if type(c) ~= "number" or (issecretvalue and issecretvalue(c)) then return nil end
+    return c > 0 and Driver.ItemUsable(id)
+end
+
+-- the item to show, or nil while a read is unreadable
+function Driver.PickItem(d)
+    local first = tonumber(d.itemID)
+    if not first then return nil end
+    local ok = Driver.ItemReady(first)
+    if ok == nil then return nil end
+    if ok then return first end
+    if type(d.itemIDs) == "table" then
+        for _, v in ipairs(d.itemIDs) do
+            local id = tonumber(v)
+            if id and id ~= first then
+                local r = Driver.ItemReady(id)
+                if r == nil then return nil end
+                if r then return id end
+            end
+        end
+    end
+    return first
+end
+
+-- the item an icon shows now: its pick when it has several, else its item
+function Driver.LiveItem(rec)
+    local d = rec and rec.driver
+    if not (type(d) == "table" and rec.kind == "item") then return nil end
+    if type(d.itemIDs) ~= "table" then return tonumber(d.itemID) end
+    return Driver.liveItems[rec.id] or tonumber(d.itemID)
+end
+
 -- A trinket with no use spell. Item data not loaded yet reads as on-use, so a
 -- real one is never hidden: the game is asked for it, and its arrival
 -- re-feeds the trinket icons (GET_ITEM_INFO_RECEIVED in EnsureEvents).
@@ -758,21 +807,41 @@ end
 local function FeedItem(a)
     local rec = a.rec
     local d = rec.driver or {}
+    -- several items: the one it shows gives the art, cooldown and count
+    local iid = d.itemID
+    local several = rec.kind == "item" and type(d.itemIDs) == "table"
+    if several then
+        local pick = Driver.PickItem(d)
+        if pick then Driver.liveItems[rec.id] = pick end
+        iid = Driver.liveItems[rec.id] or d.itemID
+        if a.frame._adLiveItem ~= iid then
+            a.frame._adLiveItem = iid
+            local tex = Factory.GetTexture(rec)
+            a.frame.icon:SetTexture(tex)
+            a.frame._adArt = not (issecretvalue and issecretvalue(tex)) and tex or nil
+        end
+    end
     local start, duration, enable
     if rec.kind == "trinket" then
         start, duration, enable = GetInventoryItemCooldown("player", d.slotID or 13)
-    elseif C_Container and C_Container.GetItemCooldown and d.itemID then
-        start, duration, enable = C_Container.GetItemCooldown(d.itemID)
+    elseif C_Container and C_Container.GetItemCooldown and iid then
+        start, duration, enable = C_Container.GetItemCooldown(iid)
     end
     -- Count first, whatever the cooldown secrecy: SetText takes it raw (a
-    -- secret-safe sink); the empty flag changes only on a plain count.
-    if rec.kind == "item" and d.itemID and C_Item and C_Item.GetItemCount then
-        local cnt = C_Item.GetItemCount(d.itemID, false, true)
+    -- secret-safe sink); the empty flag changes only on a plain count. With
+    -- several items, none you can use reads as out of stock.
+    if rec.kind == "item" and iid and C_Item and C_Item.GetItemCount then
+        local cnt = C_Item.GetItemCount(iid, false, true)
         if Store.Resolve(rec, "text", "stackText") ~= false then
             a.frame.stackText:SetText(cnt)
         end
         if cnt ~= nil and not (issecretvalue and issecretvalue(cnt)) then
-            a.frame._adItemEmpty = (cnt == 0)
+            if several then
+                local r = Driver.ItemReady(iid)
+                if r ~= nil then a.frame._adItemEmpty = not r end
+            else
+                a.frame._adItemEmpty = (cnt == 0)
+            end
         end
     end
     if rec.kind == "trinket" then
@@ -1026,6 +1095,10 @@ local function EnsureEvents()
     Events.On("PLAYER_EQUIPMENT_CHANGED", "adcd_items", function()
         Events.Coalesce("adcd_feedammo", FeedAmmoAll)
     end)
+    -- a level can make a better item of a several-item icon usable
+    Events.On("PLAYER_LEVEL_UP", "adcd_items", function()
+        Events.Coalesce("adcd_feeditems", FeedAllItems)
+    end)
     -- a trinket read as on-use while its data loaded: settle it now
     Events.On("GET_ITEM_INFO_RECEIVED", "adcd_items", function()
         if not Driver.itemDataWanted then return end
@@ -1115,6 +1188,7 @@ local function MaybeReleaseEvents()
     end
     if NS.DriverRange then NS.DriverRange.OnSpellRange("adcd", nil) end
     Events.Off("PLAYER_EQUIPMENT_CHANGED", "adcd_items")
+    Events.Off("PLAYER_LEVEL_UP", "adcd_items")
     Events.Off("GET_ITEM_INFO_RECEIVED", "adcd_items")
     Events.Off("PLAYER_ENTERING_WORLD", "adcd")
     Events.Off("SPELLS_CHANGED", "adcd")

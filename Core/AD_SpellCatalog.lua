@@ -24,13 +24,37 @@ local EXCLUDED_SPELLS = {
     [388114] = true, [389694] = true, [390163] = true, [442688] = true,
     [388116] = true, [382197] = true,
 }
+-- Racials show only for the race that has them: one of these that you do not
+-- know stays out, whatever source offers it.
 local RACIAL_SPELLS = {
     [58984] = true, [20594] = true, [20589] = true, [59752] = true,
     [7744] = true, [255654] = true, [312411] = true,
 }
 
+function Catalog.Known(spellID)
+    local SB = C_SpellBook
+    local v
+    if SB and SB.IsSpellKnown then
+        v = SB.IsSpellKnown(spellID)
+    elseif IsPlayerSpell then
+        v = IsPlayerSpell(spellID)
+    end
+    return not (issecretvalue and issecretvalue(v)) and v == true
+end
+
+-- True when the spell has a cooldown of its own (a racial's 2 min, not Attack
+-- or Shoot). The global is undocumented on Forever but present; nil without it.
+function Catalog.OwnCooldown(spellID)
+    local f = GetSpellBaseCooldown
+    if not f then return nil end
+    local ms = f(spellID)
+    if type(ms) ~= "number" or (issecretvalue and issecretvalue(ms)) then return nil end
+    return ms > 0
+end
+
 local function ShouldExclude(spellID, name)
-    if EXCLUDED_SPELLS[spellID] or RACIAL_SPELLS[spellID] then return true end
+    if EXCLUDED_SPELLS[spellID] then return true end
+    if RACIAL_SPELLS[spellID] and not Catalog.Known(spellID) then return true end
     if not name then return true end
     local n = name:lower()
     if n:find("passive") then return true end
@@ -136,18 +160,27 @@ local function Scan()
         end
     end
 
-    -- Source 4: the spellbook, minus General, guild, hidden and off-spec lines
+    -- Source 4: the spellbook, minus guild, hidden and off-spec lines. From the
+    -- General line (index 1; its name is localized) only the spells with a
+    -- cooldown of their own: your race's cooldowns, never another race's.
     if C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines then
+        local GENERAL = Enum.SpellBookSkillLineIndex and Enum.SpellBookSkillLineIndex.General or 1
         for skillIndex = 1, C_SpellBook.GetNumSpellBookSkillLines() do
             local line = C_SpellBook.GetSpellBookSkillLineInfo(skillIndex)
-            if line and not line.isGuild and not line.shouldHide and line.name ~= "General"
+            local general = skillIndex == GENERAL
+            if line and not line.isGuild and not line.shouldHide
                 and (line.specID ~= nil or line.offSpecID == nil) then
                 local first = line.itemIndexOffset + 1
                 local last = first + line.numSpellBookItems - 1
                 for i = first, last do
                     local item = C_SpellBook.GetSpellBookItemInfo(i, Enum.SpellBookSpellBank.Player)
                     if item and not item.isPassive and not item.isOffSpec then
-                        AddSpell(seen, item.actionID or item.spellID, "Spellbook")
+                        local sid = item.actionID or item.spellID
+                        if not general then
+                            AddSpell(seen, sid, "Spellbook")
+                        elseif sid and Catalog.OwnCooldown(sid) == true then
+                            AddSpell(seen, sid, "General")
+                        end
                     end
                 end
             end

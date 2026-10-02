@@ -105,6 +105,47 @@ function DE.IDs(d)
     return out
 end
 
+-- Templates: every rank of the shaman's weapon imbues, and of the two totems
+-- that put an enchant on a group member's weapon, as Forever's game data
+-- numbers them. An addon cannot list a spell's enchants in game (it only sees
+-- the enchant on a weapon), so they ship here. Forever only: retail numbers
+-- its enchants apart.
+-- spell = the rank 1 spell, whose icon the picker shows.
+DE.TEMPLATE_LIST = {
+    { key = "rockbiter", name = "Rockbiter Weapon", spell = 8017, ids = { 29, 6, 1, 503, 1663, 683, 1664, 7568 } },
+    { key = "flametongue", name = "Flametongue Weapon", spell = 8024, ids = { 5, 4, 3, 523, 1665, 1666, 7567 } },
+    { key = "frostbrand", name = "Frostbrand Weapon", spell = 8033, ids = { 2, 12, 524, 1667, 1668, 7566 } },
+    { key = "windfury", name = "Windfury Weapon", spell = 8232, ids = { 283, 284, 525, 1669, 7569 } },
+    { key = "windfuryTotem", name = "Windfury Totem", spell = 8512, ids = { 1783, 563, 564 } },
+    { key = "flametongueTotem", name = "Flametongue Totem", spell = 8227, ids = { 124, 285, 543, 1683 } },
+}
+DE.IMBUES = { rockbiter = true, flametongue = true, frostbrand = true, windfury = true }
+
+-- The templates this client offers, each { key, name, label, ids }: any shaman
+-- imbue first (the four imbues' ranks together), then each one.
+function DE.Templates()
+    if NS.IsForever ~= true then return {} end
+    local all = {}
+    for _, t in ipairs(DE.TEMPLATE_LIST) do
+        if DE.IMBUES[t.key] then
+            for _, id in ipairs(t.ids) do all[#all + 1] = id end
+        end
+    end
+    local out = { { key = "imbues", name = "Shaman Imbue", label = "Any shaman imbue, every rank", ids = all,
+        class = "SHAMAN" } }
+    for _, t in ipairs(DE.TEMPLATE_LIST) do
+        out[#out + 1] = { key = t.key, name = t.name, label = t.name .. ", every rank", ids = t.ids, spell = t.spell }
+    end
+    return out
+end
+
+function DE.Template(key)
+    for _, t in ipairs(DE.Templates()) do
+        if t.key == key then return t end
+    end
+    return nil
+end
+
 -- The enchant this icon tracks: an entry while it is on, false while it is
 -- not, nil while the answer is secret. A weapon can carry two enchants, so
 -- the first ID listed that is on it wins.

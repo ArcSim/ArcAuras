@@ -20,7 +20,8 @@
 --           or layoutId + pos={x,y} when free
 --   reminder: groupId (a reminder group), kind="spell"|"item"|"enchant",
 --           driver={spellID|itemID|hand}, triggers={...} (Store.CleanTriggers)
---   bar:    layoutId, barKind, barMode, driver={...}, pos={x,y}
+--   bar:    layoutId, barKind, barMode, driver={...}, pos={x,y}; a wheel
+--           also wheelKey, its key, which no string or copy carries
 --   o = { [section] = { [field] = value } }  sparse overrides
 --   c = { specs, classes, chars, talents, factions = set|nil, talentMode,
 --         plus the conditions module's loadWhen/loadNever/showWhen/fadeWhen =
@@ -647,7 +648,7 @@ function Store.Normalize()
                 and rec.barKind ~= "resource" and rec.barKind ~= "health"
                 and rec.barKind ~= "cast" and rec.barKind ~= "enchant"
                 and rec.barKind ~= "range" and rec.barKind ~= "text"
-                and rec.barKind ~= "texture" then
+                and rec.barKind ~= "texture" and rec.barKind ~= "wheel" then
                 rec.barKind = "cooldown"
             end
             -- a timer (custom) bar fills with its timer or with its stacks
@@ -701,6 +702,7 @@ function Store.Normalize()
             -- a text element: its source and the fields that source reads
             if rec.barKind == "text" then Store.CleanText(rec.driver) end
             if rec.barKind == "texture" then Store.CleanTexture(rec.driver) end
+            if rec.barKind == "wheel" then Store.CleanWheel(rec) end
         end
         if rec.type == "icon" and rec.kind == "timer" then
             rec.driver = rec.driver or {}
@@ -2613,8 +2615,10 @@ end
 -- A text element's driver made usable (Bars\AD_TextElement.lua): a known source
 -- (else the typed words), its value choice, whole positive ids, the aura shape
 -- the aura driver reads, and its own rules through CleanCustom when it has any.
-local TEXT_SOURCE_SET, TEXT_SHOW_SET, TEXT_UNIT_SET = {}, {}, { player = true, target = true, focus = true, pet = true }
+local TEXT_SOURCE_SET, TEXT_SHOW_SET, TEXT_UNIT_SET = {}, {}, {}
 for _, s in ipairs(Schema.TEXT_SOURCES or {}) do TEXT_SOURCE_SET[s] = true end
+-- the health bars' units: you, your target, focus, pet and party members 1-4
+for _, u in ipairs(Schema.HEALTH_UNITS or { "player", "target", "focus", "pet" }) do TEXT_UNIT_SET[u] = true end
 for _, s in ipairs(Schema.TEXT_SHOWS or {}) do TEXT_SHOW_SET[s] = true end
 for _, s in ipairs(Schema.TEXT_READOUTS or {}) do TEXT_SHOW_SET[s] = true end
 -- the states custom words show on, per source (nil = the first: ready, up)
@@ -2680,6 +2684,28 @@ local TEXTURE_SOURCE_SET = {}
 for _, s in ipairs(Schema.TEXTURE_SOURCES or {}) do TEXTURE_SOURCE_SET[s] = true end
 local TEXTURE_UNIT_SET = { player = true, target = true, focus = true, pet = true,
     party1 = true, party2 = true, party3 = true, party4 = true }
+-- A wheel (Bars\AD_Wheel.lua): 3 to 10 spots, each a spell or an item by a
+-- whole positive ID, and its key a binding name or none.
+function Store.CleanWheel(rec)
+    local d = rec.driver
+    local n = tonumber(d.count)
+    d.count = n and math.max(3, math.min(10, math.floor(n))) or nil
+    local out = {}
+    if type(d.spots) == "table" then
+        for spot, v in pairs(d.spots) do
+            local k = tonumber(spot)
+            local id = type(v) == "table" and tonumber(v.id) or nil
+            if k and k >= 1 and k <= 10 and k == math.floor(k) and id and id > 0
+                and (v.t == "spell" or v.t == "item") then
+                out[k] = { t = v.t, id = math.floor(id) }
+            end
+        end
+    end
+    d.spots = out
+    local key = rec.wheelKey
+    if type(key) ~= "string" or key == "" or #key > 40 or key:find("%c") then rec.wheelKey = nil end
+end
+
 function Store.CleanTexture(d)
     if not TEXTURE_SOURCE_SET[d.source] then d.source = "aura" end
     local function Whole(v)
@@ -2726,7 +2752,7 @@ function Store.NewBar(layoutId, barKind, driver, name, barMode)
     if barKind ~= "timer" and barKind ~= "stack" and barKind ~= "swing"
         and barKind ~= "aura" and barKind ~= "resource" and barKind ~= "health"
         and barKind ~= "cast" and barKind ~= "enchant" and barKind ~= "range"
-        and barKind ~= "text" and barKind ~= "texture" then
+        and barKind ~= "text" and barKind ~= "texture" and barKind ~= "wheel" then
         barKind = "cooldown"
     end
     local id = NewId()
@@ -2750,7 +2776,7 @@ function Store.NewBar(layoutId, barKind, driver, name, barMode)
     -- there; other health bars show their unit's live name.
     local hpUnit = barKind == "health" and (rec.driver.unit or "player") or nil
     if barKind ~= "resource" and barKind ~= "swing" and barKind ~= "text" and barKind ~= "texture"
-        and hpUnit ~= "player" then
+        and barKind ~= "wheel" and hpUnit ~= "player" then
         TemplateSet(rec, "text", "nameShow", true)
     end
     -- A text element is born as a small box; its look is the schema's (white, 14).
@@ -3012,6 +3038,8 @@ end
 local function CloneRecord(rec, map, made)
     local c = CopyDeep(rec)
     c.id = NewId()
+    -- one key opens one wheel: a copy starts without it
+    c.wheelKey = nil
     -- a copy is the player's own new item: its own ID, from no pack
     c.uid = NewUid()
     c.imported = nil
@@ -3510,6 +3538,8 @@ end
 -- A character list names the maker's characters: never anyone else's.
 local function DropPersonal(rec)
     if type(rec.c) == "table" then rec.c.chars = nil end
+    -- a wheel's key is its maker's own binding
+    rec.wheelKey = nil
 end
 
 -- The maker's Save as Default looks (newDefaults) sit under every record's own
@@ -3851,7 +3881,7 @@ local PART_OF_SECTION = {
         range = "appearance", regen = "appearance", resource = "appearance", segments = "appearance",
         size = "position",
         stackcolors = "appearance", texlook = "appearance", text = "text", textel = "text",
-        thresholds = "appearance", ticks = "appearance" },
+        thresholds = "appearance", ticks = "appearance", wheel = "appearance" },
     iconGroup = { anchor = "position", arrangement = "arrange", audio = "sounds", frame = "position",
         keybind = "text", look = "appearance", mouse = "position", pulse = "appearance",
         unitAuras = "tracking" },

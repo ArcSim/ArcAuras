@@ -91,4 +91,9 @@ function Options.UnitAuraGroupRows(pg, ctx, tabFn, kit)
         return UA ~= nil and UA.PoolShort(g)
     end))
     SR({ "plateEdge", "plateX", "plateY" })
+    -- the game's own dispel-type filter: any unit, enemies too, in combat
+    local always = On(function() return true end)
+    AT.Section(pg, "Dispel types", { visibleFn = always })
+    AT.RowDesc(pg, "Tick any to show only those types; none ticked shows every aura.", 20, always)
+    SR({ "dispelMagic", "dispelCurse", "dispelDisease", "dispelPoison" })
 end

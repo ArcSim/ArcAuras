@@ -149,6 +149,35 @@ function CO.TrackRows(pg, Rec, vis, owner, isBar)
         local r = Rec()
         nameFS:SetText(r and CO.SpellName(r.driver.spellID) or "")
     end
+    -- The spell above gates the item as on a spell icon: Store.IsLoaded reads
+    -- driver.onlyKnown with driver.spellID, so a change is a load pass.
+    local function HasSpell()
+        local r = Rec()
+        return vis() and r ~= nil and r.driver.spellID ~= nil
+    end
+    AT.RowToggle(pg, "Only load once learned",
+        function() local r = Rec() return r ~= nil and r.driver.onlyKnown == true end,
+        function(v)
+            local r = Rec()
+            if not r then return end
+            r.driver.onlyKnown = v and true or nil
+            Store.Dirty("load")
+            AT.LayoutPage(pg)
+        end,
+        HasSpell, "Doesn't load until your character knows the spell above (any rank), and loads by itself the moment you learn it.")
+    AT.RowToggle(pg, "Only this rank",
+        function() local r = Rec() return r ~= nil and r.driver.knownExact == true end,
+        function(v)
+            local r = Rec()
+            if not r then return end
+            r.driver.knownExact = v and true or nil
+            Store.Dirty("load")
+        end,
+        function()
+            local r = Rec()
+            return HasSpell() and r.driver.onlyKnown == true and NS.IsForever == true
+        end,
+        "Waits for this exact rank (the spell ID above), not just any rank of the spell.")
     AT.RowDropdown(pg, owner, "Show as active while",
         function()
             local r = Rec()

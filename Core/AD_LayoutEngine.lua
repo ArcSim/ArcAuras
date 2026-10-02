@@ -782,6 +782,16 @@ local function PlaceBar(rec, container)
     local h = Store.Resolve(rec, "size", "height") or 16
     local sc = Store.Resolve(rec, "size", "scale") or 1
     f:SetSize(Snap(math.max(1, w * sc)), Snap(math.max(1, h * sc)))
+    -- A kind with no place on screen (a wheel opens at the cursor): its
+    -- runtime still gets the record, the holder stays hidden and anchors nothing.
+    local KH = NS.Bars and NS.Bars.KINDS and NS.Bars.KINDS[rec.barKind]
+    if KH and KH.noHolder then
+        if NS.Anchor then NS.Anchor.Unregister(rec.id) end
+        f:EnableMouse(false)
+        f:Hide()
+        NS.Bars.EnsureBar(rec, f)
+        return
+    end
     -- Place it free now and register it as an anchor source; the post-pass
     -- re-places it once every frame exists, so a bar can target a group,
     -- another bar, a layout or a named frame regardless of build order.

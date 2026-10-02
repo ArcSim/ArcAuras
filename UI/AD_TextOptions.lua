@@ -129,7 +129,7 @@ end
 
 -- a kind's own first values, so its first draw means something
 function TO.SourceDefaults(d, s)
-    if s == "health" and not d.unit then d.unit = "player" end
+    if (s == "health" or s == "name") and not d.unit then d.unit = "player" end
     if s == "rules" and type(d.rules) ~= "table" then d.rules = {} end
 end
 
@@ -199,7 +199,7 @@ function TO.UnitItems()
     local hasFocus = not (C_EventUtils and C_EventUtils.IsEventValid)
         or C_EventUtils.IsEventValid("PLAYER_FOCUS_CHANGED")
     local out = {}
-    for _, u in ipairs({ "player", "target", "focus", "pet" }) do
+    for _, u in ipairs(NS.Schema.HEALTH_UNITS or { "player", "target", "focus", "pet" }) do
         if u ~= "focus" or hasFocus then out[#out + 1] = { value = u, text = Options.HealthUnitLabel(u) } end
     end
     return out
@@ -242,9 +242,9 @@ function Options.TextWhat(rec)
     return T and T.Describe(rec) or "text"
 end
 
--- The Add window's pick: a spell or an aura and what of it, or another kind.
--- The spell, the aura and a kind's own settings are set on Tracking once it
--- exists.
+-- The Add window's pick: a spell or an aura and what of it, or another kind
+-- with its own pick (whose health or name, which power, the value, the bands,
+-- the custom item). The spell and the aura are set on Tracking once it exists.
 local function AddFor(addState)
     local items = TO.SubjectItems(nil)
     for _, it in ipairs(items) do
@@ -283,6 +283,57 @@ function Options.TextAddRows(pg, owner, addState)
             return sh and TO.ShowsItems(sh[1]) or {}
         end,
         function() return vis() and TO.SHOWS[AddFor(addState)] ~= nil end, function() AT.LayoutPage(pg) end)
+    -- a kind's own pick, as Tracking shows it, so the text starts on it
+    local function AddIs(...)
+        local want = { ... }
+        return function()
+            if not vis() then return false end
+            local s = AddSource(addState)
+            for _, w in ipairs(want) do
+                if s == w then return true end
+            end
+            return false
+        end
+    end
+    local S = NS.Schema
+    AT.RowDropdown(pg, owner, "Power shown",
+        function() return addState.textPower or -1 end,
+        function(v) addState.textPower = tonumber(v) end,
+        function()
+            if Options.PowerItems then return Options.PowerItems(addState.textPower) end
+            return { { value = -1, text = "Automatic (current power)" } }
+        end,
+        AddIs("power"))
+    AT.RowDropdown(pg, owner, "Value",
+        function() return addState.textShow or "current" end,
+        function(v) addState.textShow = v end,
+        function() return Items(S.TEXT_SHOWS, S.TEXT_SHOW_LABELS) end,
+        AddIs("power", "health"))
+    AT.RowDropdown(pg, owner, "Health of",
+        function() return addState.textUnit or "player" end,
+        function(v) addState.textUnit = v end,
+        TO.UnitItems, AddIs("health"))
+    AT.RowDropdown(pg, owner, "Name of",
+        function() return addState.textUnit or "player" end,
+        function(v) addState.textUnit = v end,
+        TO.UnitItems, AddIs("name"))
+    AT.RowDropdown(pg, owner, "Bands from",
+        function() return addState.textRange or 0 end,
+        function(v) addState.textRange = v end,
+        TO.RangeItems, AddIs("range"))
+    AT.RowDropdown(pg, owner, "Custom item",
+        function() return addState.textSrcId or 0 end,
+        function(v) addState.textSrcId = v end,
+        function()
+            local CO = Options.Custom
+            return CO and CO.ChainItems and CO.ChainItems(nil) or { { value = 0, text = "Pick an item" } }
+        end,
+        AddIs("custom"))
+    AT.RowDropdown(pg, owner, "Readout",
+        function() return addState.textReadout or "stacks" end,
+        function(v) addState.textReadout = v end,
+        function() return Items(S.TEXT_READOUTS, S.TEXT_READOUT_LABELS) end,
+        AddIs("rules", "custom"))
     AT.RowInput(pg, "Words",
         function() return addState.textWords or "" end,
         function(v) addState.textWords = v end,
@@ -304,6 +355,20 @@ function Options.TextCreate(addState, layoutId)
     if s == "spellText" or s == "auraText" or s == "static" then
         local words = Trim(addState.textWords)
         driver.text = (words ~= "") and words:sub(1, 120) or nil
+    end
+    -- the kind's own pick from the Add window (the Tracking rows' values)
+    if s == "power" then
+        local pt = tonumber(addState.textPower)
+        driver.powerType = (pt and pt >= 0) and pt or nil
+    end
+    if (s == "power" or s == "health") and addState.textShow and addState.textShow ~= "current" then
+        driver.show = addState.textShow
+    end
+    if s == "health" or s == "name" then driver.unit = addState.textUnit end
+    if s == "range" and addState.textRange and addState.textRange ~= 0 then driver.rangeFrom = addState.textRange end
+    if s == "custom" and addState.textSrcId and addState.textSrcId ~= 0 then driver.srcId = addState.textSrcId end
+    if (s == "rules" or s == "custom") and addState.textReadout and addState.textReadout ~= "stacks" then
+        driver.show = addState.textReadout
     end
     TO.SourceDefaults(driver, s)
     local name = Trim(addState.textName)
@@ -606,6 +671,13 @@ function Options.TextTrackRows(pg, ctx, trackVis, owner, kit)
         end,
         function(v) Set("unit", v) end,
         TO.UnitItems, Is("health"))
+    AT.RowDropdown(pg, owner, "Name of",
+        function()
+            local r = Rec()
+            return (r and r.driver.unit) or "player"
+        end,
+        function(v) Set("unit", v) end,
+        TO.UnitItems, Is("name"))
     AT.RowDesc(pg, "Combo points on your target, as the combo bar counts them.", 20, Is("combo"))
     AT.RowDesc(pg, "The count of your equipped ammo; blank with the slot empty.", 20, Is("ammo"))
     AT.RowDesc(pg, "Happy, Content or Unhappy; blank with no pet out.", 20, Is("petMood"))

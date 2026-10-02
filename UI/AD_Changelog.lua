@@ -12,6 +12,40 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "1.10.0",
+        intro = "Wheels, ready-made item icons, name texts and dispel type filters.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Wheels",
+                    desc = "A ring of your spells and items on a key: hold it, point, let go to cast. Start one from hunter Aspects or Trackings, or shaman imbues." },
+                { title = "Ready-made item icons",
+                    desc = "Healthstones, potions, bandages, food, drink and mana gems, one click each in the Add window." },
+                { title = "Name text",
+                    desc = "A text can show a name: yours, your target's, focus, pet or a party member's." },
+                { title = "Dispel types",
+                    desc = "Aura groups that show every aura on a unit can show only Magic, Curse, Disease or Poison." },
+                { title = "Enchant templates",
+                    desc = "Start an enchant icon or bar from a shaman imbue or totem, every rank filled in." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Item icons",
+                    desc = "Follow several items and show the first one you carry and can use." },
+                { title = "Party texts",
+                    desc = "Health texts can follow party members 1 to 4." },
+                { title = "Adding texts",
+                    desc = "The Add window shows a text's own choices." },
+                { title = "Dynamic aura groups",
+                    desc = "A \"!\" explains why Aura Missing icons are off." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Health texts",
+                    desc = "Hide with no target instead of showing 0." },
+                { title = "Racial cooldowns",
+                    desc = "Your race's cooldowns, like Will of the Forsaken, now show in the Add window's spell list." },
+            } },
+        },
+    },
+    {
         version = "1.9.0",
         intro = "Cooldown Manager layouts, totem bar icons, mana regen sparks and a picture picker for textures.",
         sections = {

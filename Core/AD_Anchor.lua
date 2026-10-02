@@ -578,12 +578,20 @@ end
 local KIND_LABEL = { layout = "Layout", group = "Group", bar = "Bar", icon = "Icon" }
 
 -- A grouped icon is never a target: its group's cell places it.
+-- A bar kind with no place on screen (a wheel opens at the cursor) is no target.
+function Anchor.Placeless(rec)
+    local B = NS.Bars
+    local K = rec and rec.type == "bar" and B and B.KINDS and B.KINDS[rec.barKind]
+    return type(K) == "table" and K.noHolder == true
+end
+
 function Anchor.TargetChoices(rec, kind)
     local out = {}
     if not (rec and Store.EachRecord) then return out end
     Store.EachRecord(function(id, other)
         if id ~= rec.id and other.type == kind
             and not (kind == "icon" and other.groupId ~= nil)
+            and not Anchor.Placeless(other)
             and not Anchor.CreatesCycle(rec.id, other) then
             out[#out + 1] = { value = id,
                 text = other.name or ((KIND_LABEL[kind] or "Record") .. " " .. id) }

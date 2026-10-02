@@ -102,7 +102,17 @@ function UA.Config(g)
     end
     local rows, cols, cap = UA.Grid(g)
     local caster = R("caster")
+    -- the dispel types ticked (none = every aura), both halves alike
+    local dispel, dispelSig
+    for _, d in ipairs(UA.DISPEL) do
+        if R(d.field) == true then
+            dispel = dispel or {}
+            dispel[d.name] = true
+            dispelSig = (dispelSig and (dispelSig .. ",") or "") .. d.name
+        end
+    end
     return {
+        dispel = dispel, dispelSig = dispelSig,
         unit = unit, plates = plates, harmful = harmful, both = both, hide = hide, hideD = hideD, count = count,
         rows = rows, cols = cols, cap = cap,
         filter = DA.FilterForLane({ caster = caster }, { harmful = harmful }),
@@ -117,12 +127,23 @@ function UA.Config(g)
 end
 
 -- A half's candidate filters and their signature. No list means every aura
--- that passes the filter string shows.
+-- that passes the filter string shows. The dispel types reach every unit: the
+-- game filters them itself (only spell IDs are refused on some units).
+UA.DISPEL = { { field = "dispelMagic", name = "Magic" }, { field = "dispelCurse", name = "Curse" },
+    { field = "dispelDisease", name = "Disease" }, { field = "dispelPoison", name = "Poison" } }
 function UA.Filters(cfg, debuffs)
     local ids = cfg.hide
     if debuffs then ids = cfg.hideD end
-    if ids then return { excludeSpellIDs = ids }, "x:" .. NS.DriverAura.FilterSig(ids) end
-    return {}, "none"
+    local filters, sig = {}, "none"
+    if ids then
+        filters.excludeSpellIDs = ids
+        sig = "x:" .. NS.DriverAura.FilterSig(ids)
+    end
+    if cfg.dispel then
+        filters.includeDispelTypes = cfg.dispel
+        sig = sig .. "|d:" .. cfg.dispelSig
+    end
+    return filters, sig
 end
 
 function UA.Sort(order)

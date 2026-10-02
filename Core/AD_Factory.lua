@@ -216,7 +216,10 @@ local function KindTexture(rec)
         local tex = d.slotID and GetInventoryItemTexture("player", d.slotID)
         return tex or QUESTION_MARK
     elseif kind == "item" then
-        local tex = d.itemID and C_Item.GetItemIconByID and C_Item.GetItemIconByID(d.itemID)
+        -- an icon with several items wears the one it shows
+        local DC = NS.DriverCooldown
+        local iid = (DC and DC.LiveItem and DC.LiveItem(rec)) or d.itemID
+        local tex = iid and C_Item.GetItemIconByID and C_Item.GetItemIconByID(iid)
         return tex or QUESTION_MARK
     elseif kind == "ammo" then
         -- Current ammo art, so swapping arrows re-arts the icon; an empty slot
@@ -3227,7 +3230,8 @@ function Factory.ShowTooltip(f, rec)
             GameTooltip:SetText(rec.name or "Unknown spell")
         end
     elseif kind == "item" and d.itemID then
-        GameTooltip:SetItemByID(d.itemID)
+        local DC = NS.DriverCooldown
+        GameTooltip:SetItemByID((DC and DC.LiveItem and DC.LiveItem(rec)) or d.itemID)
     elseif kind == "trinket" and d.slotID then
         GameTooltip:SetInventoryItem("player", d.slotID)
     elseif kind == "ammo" then

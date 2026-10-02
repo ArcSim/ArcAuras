@@ -2,7 +2,7 @@
 ## Title: |cff3fc9f2Arc|r Auras
 ## Notes: Icons, icon groups and bars for your cooldowns, auras and resources, all set up from one panel. /arcauras
 ## Author: Arc
-## Version: 1.9.0
+## Version: 1.10.0
 ## IconTexture: Interface\AddOns\ArcAuras\Textures\ArcAuras_Icon_256
 ## SavedVariables: ArcAurasDB
 ## OptionalDeps: ArcUI
@@ -60,6 +60,7 @@ Bars\AD_EnchantBar.lua
 Bars\AD_RangeBar.lua
 Bars\AD_TextElement.lua
 Bars\AD_TextureElement.lua
+Bars\AD_Wheel.lua
 Bars\AD_AuraBarPrebuild.lua
 Core\AD_LayoutEngine.lua
 Drivers\AD_DriverReminders.lua
@@ -93,10 +94,12 @@ UI\AD_MultiSelect.lua
 UI\AD_TextOptions.lua
 UI\AD_TextureLibrary.lua
 UI\AD_TextureOptions.lua
+UI\AD_WheelOptions.lua
 UI\AD_ReminderOptions.lua
 UI\AD_RetailWho.lua
 UI\AD_TalentPickerRetail.lua
 UI\AD_SpecialOptions.lua
+UI\AD_ItemSets.lua
 UI\AD_OptionsLoader.lua
 UI\AD_IconScreen.lua
 UI\AD_Minimap.lua

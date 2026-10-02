@@ -162,6 +162,8 @@ local BAR_TABS = {
     text     = { "Tracking", "Triggers", "Appearance", "Show & Hide", "Position", "Load Conditions" },
     -- Triggers only with custom triggers (Options.TextureTabs); this is every tab it can have
     texture  = { "Tracking", "Triggers", "Appearance", "Show & Hide", "Position", "Load Conditions" },
+    -- a wheel opens at the cursor: no place, chrome or show rules (Bars\AD_Wheel.lua)
+    wheel    = { "Wheel", "Appearance", "Load Conditions" },
 }
 
 -- C_SwingTimer swing types; the API exists only on WoW Forever.
@@ -280,6 +282,7 @@ local function BarPillText(barKind, barMode)
     if barKind == "range" then return "Range Bar", { 0.92, 0.34, 0.34 } end
     if barKind == "text" then return "Text", { 0.93, 0.84, 0.58 } end
     if barKind == "texture" then return "Texture", { 0.66, 0.55, 0.98 } end
+    if barKind == "wheel" then return "Wheel", { 0.98, 0.78, 0.2 } end
     return "CD " .. mode, YELLOW
 end
 
@@ -375,6 +378,149 @@ function Options.EnchantIDsText(d)
     return E and table.concat(E.IDs(d), ", ") or ""
 end
 
+-- Weapon enchant templates (Forever: NS.DriverEnchant.Templates); the picker
+-- is Options.EnchantTemplateGrid.
+function Options.HasEnchantTemplates()
+    local E = NS.DriverEnchant
+    return E ~= nil and E.Templates ~= nil and #E.Templates() > 0
+end
+
+-- A template's IDs into a driver, a copy of them; returns the template.
+function Options.UseEnchantTemplate(d, key)
+    local E = NS.DriverEnchant
+    local t = E and E.Template and E.Template(key)
+    if not t then return nil end
+    local ids = {}
+    for i, id in ipairs(t.ids) do ids[i] = id end
+    Options.SetEnchantIDs(d, ids)
+    return t
+end
+
+-- What a template calls an icon or a bar, the off hand said.
+function Options.EnchantTemplateName(t, hand)
+    return t.name .. ((hand == "off") and " (Off Hand)" or "")
+end
+
+-- An enchant record's name still one it was given (a hand's default or a
+-- template's): a template may rename it; a name of the player's own stays.
+function Options.EnchantNameIsAuto(r)
+    local n = r and r.name
+    if type(n) ~= "string" or n == "" or n == "Main Hand Enchant" or n == "Off Hand Enchant" then return true end
+    for _, t in ipairs(NS.DriverEnchant and NS.DriverEnchant.Templates() or {}) do
+        if n == t.name or n == t.name .. " (Off Hand)" then return true end
+    end
+    return false
+end
+
+-- The Tracking tab's template: picked, then Use (pick then act). The pick
+-- belongs to one record and resets on another.
+function Options.EnchantTemplatePick(r)
+    local p = Options.ui.enchTpl
+    return (p and r and p.id == r.id and p.key) or ""
+end
+function Options.SetEnchantTemplatePick(r, key)
+    Options.ui.enchTpl = r and { id = r.id, key = key } or nil
+end
+function Options.ApplyEnchantTemplate(r)
+    local key = Options.EnchantTemplatePick(r)
+    if not (r and key ~= "") then return false end
+    local auto = Options.EnchantNameIsAuto(r)
+    local t = Options.UseEnchantTemplate(r.driver, key)
+    if not t then return false end
+    if auto then Store.Rename(r.id, Options.EnchantTemplateName(t, r.driver.hand)) end
+    Options.ui.enchTpl = nil
+    Store.Dirty("style", r.id)
+    return true
+end
+
+-- A template's art: its spell's icon, the class crest for any imbue, the
+-- weapon itself for none. Returns the texture and its coords, or nil.
+function Options.EnchantTemplateArt(t, hand)
+    if t and t.spell then
+        local tex = C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(t.spell)
+        return tex, { 0.08, 0.92, 0.08, 0.92 }
+    end
+    if t and t.class and CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[t.class] then
+        return "Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Classes", CLASS_ICON_TCOORDS[t.class]
+    end
+    local E = NS.DriverEnchant
+    local inv = E and E.HANDS[hand or "main"] and E.HANDS[hand or "main"].inv or 16
+    local tex = GetInventoryItemTexture and GetInventoryItemTexture("player", inv)
+    if issecretvalue and issecretvalue(tex) then tex = nil end
+    return tex or "Interface\\Icons\\INV_Misc_QuestionMark", { 0.08, 0.92, 0.08, 0.92 }
+end
+
+-- The template picker, the Add window's spell grid in small: a cell per
+-- template (withNone: "any enchant" first), the pick lit cyan, a tooltip each;
+-- a click picks (set), nothing else happens. get() / set(key) hold the pick;
+-- hand() the weapon whose art the "any enchant" cell shows.
+Options.TPL_CELL, Options.TPL_GAP, Options.TPL_TOP = 32, 4, 14
+function Options.EnchantTemplateGrid(pg, vis, get, set, withNone, hand)
+    local cell, gap, top = Options.TPL_CELL, Options.TPL_GAP, Options.TPL_TOP
+    local row = AT.AddRow(pg, top + cell + gap, vis)
+    row._tplGrid = true
+    local cap = row:CreateFontString(nil, "OVERLAY")
+    cap:SetFont(STANDARD_TEXT_FONT, 9, "")
+    cap:SetPoint("TOPLEFT", 10, -2)
+    cap:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
+    cap:SetText("TEMPLATE - click one to fill in every rank's enchant ID")
+    row._cells = {}
+    local function Cell(i)
+        local b = row._cells[i]
+        if b then return b end
+        b = CreateFrame("Button", nil, row, "BackdropTemplate")
+        b:SetSize(cell, cell)
+        AT.Skin(b, COL.well, COL.line)
+        b.tex = b:CreateTexture(nil, "ARTWORK")
+        b.tex:SetPoint("TOPLEFT", 2, -2)
+        b.tex:SetPoint("BOTTOMRIGHT", -2, 2)
+        function b.Edge(hot)
+            local c = (b._picked and COL.arc) or (hot and COL.arcDeep) or COL.line
+            b:SetBackdropBorderColor(c[1], c[2], c[3], 1)
+        end
+        b:SetScript("OnEnter", function()
+            b.Edge(true)
+            GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
+            GameTooltip:AddLine(b._title or "", 1, 1, 1)
+            GameTooltip:AddLine(b._body or "", COL.dim[1], COL.dim[2], COL.dim[3], true)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function()
+            b.Edge(false)
+            if GameTooltip:IsOwned(b) then GameTooltip:Hide() end
+        end)
+        b:SetScript("OnClick", function()
+            set(b._key)
+            if row._sync then row._sync() end
+        end)
+        row._cells[i] = b
+        return b
+    end
+    row._sync = function()
+        local E = NS.DriverEnchant
+        local list = {}
+        if withNone then list[1] = { key = "", label = "Any enchant", none = true } end
+        for _, t in ipairs(E and E.Templates() or {}) do list[#list + 1] = t end
+        local cur = get() or ""
+        for i, t in ipairs(list) do
+            local b = Cell(i)
+            local tex, coords = Options.EnchantTemplateArt(t, hand and hand())
+            b.tex:SetTexture(tex)
+            if coords then b.tex:SetTexCoord(coords[1], coords[2], coords[3], coords[4]) end
+            b._key, b._picked = t.key, t.key == cur
+            b._title = t.label
+            b._body = t.none and "Lights for any enchant on the weapon: an imbue, a poison, an oil or a stone."
+                or (#t.ids .. " enchant IDs. You can still edit them after.")
+            b:ClearAllPoints()
+            b:SetPoint("TOPLEFT", 8 + (i - 1) * (cell + gap), -top)
+            b.Edge(b:IsMouseOver())
+            b:Show()
+        end
+        for i = #list + 1, #row._cells do row._cells[i]:Hide() end
+    end
+    return row
+end
+
 -- What a totem icon tracks, in a few words: its totem, else its slot.
 function Options.TotemWhat(d)
     local nm = d.spellID and C_Spell.GetSpellName and C_Spell.GetSpellName(d.spellID)
@@ -466,6 +612,71 @@ function Options.UnitPickItems(rec, d)
     end
     return items
 end
+-- The row SectionRows just made for a field: the current section's last match.
+function Options.RowFor(pg, section, field)
+    local sec = pg and pg._curSection
+    local rows = (sec and sec.rows) or (pg and pg._rows) or {}
+    for i = #rows, 1, -1 do
+        local m = rows[i]._adMeta
+        if m and m.section == section and m.field == field then return rows[i] end
+    end
+    return nil
+end
+-- A drawn yellow "!" in a ring after a row's control: a limit worth knowing,
+-- its why on hover, in place of a note line. Shown while vis() holds.
+Options.MARK_YELLOW = { 1, 0.82, 0 }
+function Options.InfoMark(row, title, body, vis)
+    local ctrl = row and row._colCtrl
+    if not ctrl then return nil end
+    local Y = Options.MARK_YELLOW
+    local m = CreateFrame("Frame", nil, row)
+    m:SetSize(16, 16)
+    m:SetPoint("LEFT", ctrl, "RIGHT", 8, 0)
+    m:EnableMouse(true)
+    -- The ring: a yellow disc under one in the page's colour.
+    local function Disc(sub, c)
+        local t = m:CreateTexture(nil, "ARTWORK", nil, sub)
+        t:SetColorTexture(c[1], c[2], c[3], 1)
+        local mask = m:CreateMaskTexture()
+        mask:SetTexture("Interface\\CHARACTERFRAME\\TempPortraitAlphaMask", "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+        mask:SetAllPoints(t)
+        t:AddMaskTexture(mask)
+        return t
+    end
+    local ring = Disc(0, Y)
+    ring:SetAllPoints()
+    local hole = Disc(1, COL.panel)
+    -- never thinner than two device pixels, or it breaks up at some scales
+    local function Thick()
+        local t = math.max(1.5, 2 * AT.Px(m))
+        hole:ClearAllPoints()
+        hole:SetPoint("TOPLEFT", t, -t)
+        hole:SetPoint("BOTTOMRIGHT", -t, t)
+    end
+    Thick()
+    -- The "!": a stem and a dot, whole units on the 16 grid.
+    for _, b in ipairs({ { 3, 6 }, { 11, 2 } }) do
+        local t = m:CreateTexture(nil, "OVERLAY")
+        t:SetColorTexture(Y[1], Y[2], Y[3], 1)
+        t:SetPoint("TOPLEFT", 7, -b[1])
+        t:SetSize(2, b[2])
+    end
+    AT.Tooltip(m, title, body)
+    local sync = row._sync
+    row._sync = function(...)
+        if sync then sync(...) end
+        Thick()
+        m:SetShown(vis == nil or vis() == true)
+    end
+    row._adInfoMark = m
+    return m
+end
+-- Why a Dynamic aura group has no Aura Missing icons, on both of its switches.
+Options.DYN_MISSING_GROUP_TITLE = "Aura Missing icons disabled"
+Options.DYN_MISSING_GROUP = "Due to an API limitation, auras inside this group won't have Aura Missing icons while Dynamic is on."
+Options.DYN_MISSING_ICON_TITLE = "Aura Missing icon disabled"
+Options.DYN_MISSING_ICON = "Due to an API limitation, auras in a Dynamic group won't have Aura Missing icons. "
+    .. "Turn off Dynamic in the group's Appearance."
 -- keep: the current unit, listed even when no longer allowed.
 function Options.AuraUnitItems(d, auraType, keep)
     local items = {}
@@ -497,6 +708,26 @@ end
 function Options.SetAuraSpellIDs(d, ids)
     d.spellID = ids[1]
     d.spellIDs = (#ids > 1) and ids or nil
+end
+-- An item icon's items, the same shape: itemID first, itemIDs the full list
+-- when there are several (it shows the first you carry and can use).
+function Options.SetItemIDs(d, ids)
+    d.itemID = ids[1]
+    d.itemIDs = (#ids > 1) and ids or nil
+end
+function Options.ItemIDsText(d)
+    local t = {}
+    if d and d.itemID then t[1] = tostring(d.itemID) end
+    for _, v in ipairs(d and type(d.itemIDs) == "table" and d.itemIDs or {}) do
+        if v ~= d.itemID then t[#t + 1] = tostring(v) end
+    end
+    return table.concat(t, ", ")
+end
+-- the rail's words for an item icon: "item 5512" or "items 19013 +14"
+function Options.ItemWords(d)
+    local n = type(d.itemIDs) == "table" and #d.itemIDs or 1
+    if n > 1 then return "items " .. tostring(d.itemID) .. " +" .. (n - 1) end
+    return "item " .. tostring(d.itemID)
 end
 -- The aura on a spell icon: an aura driver shape on rec.driver.overlay plus
 -- `on`, kept while off so switching back on restores it. The first switch-on
@@ -2451,7 +2682,9 @@ local function ConditionRows(pg, ctx, tabVisible)
     -- frames kept, so it returns the moment the answer flips, in combat too.
     if C then
         local whenVis = function()
-            return tabVisible() and not InAuraGroup(ctx())
+            local r = ctx()
+            -- a wheel's key cannot change in combat, so it takes no Load When rules
+            return tabVisible() and not InAuraGroup(r) and not (r and r.type == "bar" and r.barKind == "wheel")
         end
         AT.Section(pg, "Load When",
             { collapsible = true, store = uiStore, visibleFn = whenVis })
@@ -2483,6 +2716,11 @@ local function ConditionRows(pg, ctx, tabVisible)
         AT.Section(pg, nil)
         AT.RowDesc(pg, "Set these on the icon's Aura Group: it cannot hide one member in combat.", 20,
             function() return tabVisible() and InAuraGroup(ctx()) end)
+        AT.RowDesc(pg, "A wheel loads by class, spec, talents and spells: its key cannot change during combat.", 20,
+            function()
+                local r = ctx()
+                return tabVisible() and r ~= nil and r.type == "bar" and r.barKind == "wheel"
+            end)
     else
         AT.Section(pg, nil)
         AT.RowDesc(pg, COND_RESTART, 20, tabVisible)
@@ -2859,6 +3097,7 @@ local function MakeThumb(parent, size, groupSize)
     -- below that (the sidebar) it fills the thumb behind the same mini bar
     function t:SetBar(rec, width, spellTex)
         if rec.barKind == "text" then return self:SetText(rec, width, spellTex) end
+        if rec.barKind == "wheel" then return self:SetIcon(Options.WheelThumb and Options.WheelThumb(rec) or 134400) end
         width = width or size
         self:SetSize(width, size)
         local lead = (width >= 40) and spellTex
@@ -4229,6 +4468,7 @@ function Options.FillLayoutTile(t, rec)
         th:SetPoint("TOP", 0, -20)
         th:Show()
         kindLine = (rec.barKind == "text") and "Text element" or (rec.barKind == "texture") and "Texture"
+            or (rec.barKind == "wheel") and "Wheel"
             or (text:find("Bar") and text or (text .. " bar"))
         t._open = function() Options.Select("bar", rec.id) end
     end
@@ -4402,7 +4642,7 @@ local function RefreshLayoutPane()
         local row = Card(false, pcolor, true, 30)
         row.name:SetText(ic.name)
         local d = ic.driver or {}
-        local what = (ic.kind == "item" and d.itemID and ("item " .. d.itemID))
+        local what = (ic.kind == "item" and d.itemID and Options.ItemWords(d))
             or (ic.kind == "trinket" and d.slotID and ("trinket slot " .. d.slotID))
             or (ic.kind == "totem" and Options.TotemWhat(d))
             or (ic.kind == "enchant" and ((d.hand == "off") and "off-hand enchant" or "main-hand enchant"))
@@ -4452,6 +4692,8 @@ local function RefreshLayoutPane()
             row.sub:SetText("Text  -  " .. (Options.TextWhat and Options.TextWhat(b) or "text"))
         elseif b.barKind == "texture" then
             row.sub:SetText("Texture  -  " .. (Options.TextureWhat and Options.TextureWhat(b) or "texture"))
+        elseif b.barKind == "wheel" then
+            row.sub:SetText("Wheel  -  " .. (Options.WheelWhat and Options.WheelWhat(b) or "wheel"))
         else
             row.sub:SetText("Cooldown bar  -  " .. (b.barMode == "stack" and "charges" or "duration")
                 .. " of spell " .. tostring(d.spellID or "?"))
@@ -6410,18 +6652,19 @@ local function BuildIconEditor(parent)
         local r = SelIcon()
         return trackVis() and r ~= nil and r.kind == "trinket"
     end, { "onlyOnUse" })
-    AT.RowInput(pg, "Item ID",
+    AT.RowInput(pg, "Item IDs",
         function()
             local r = SelIcon()
-            return r and r.driver.itemID and tostring(r.driver.itemID) or ""
+            return r and Options.ItemIDsText(r.driver) or ""
         end,
         function(v)
             local r = SelIcon()
             if not r then return end
-            local iid = tonumber(v)
-            if iid then
-                r.driver.itemID = iid
-                local nm = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(iid)
+            local ids = Options.ParseSpellIDs(v)
+            if #ids > 0 then
+                Options.SetItemIDs(r.driver, ids)
+                -- one item names the icon after itself; a list keeps its name
+                local nm = #ids == 1 and C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(ids[1])
                 if nm then r.name = nm end
                 Store.Dirty("tree")
                 RefreshAll()
@@ -6431,7 +6674,7 @@ local function BuildIconEditor(parent)
             local r = SelIcon()
             return trackVis() and r ~= nil and r.kind == "item"
         end,
-        "The tracked item. Retargeting keeps every setting and position.")
+        "The tracked item, or several: the icon shows the first one you carry and can use. Retargeting keeps every setting and position.")
     -- A totem icon: what it follows (one totem, a slot, or the totem bar's
     -- pick), the bar's click and key, and its Out of range buff
     -- (UI\AD_TotemOptions.lua).
@@ -6488,6 +6731,18 @@ local function BuildIconEditor(parent)
         end,
         function() return Options.EnchantPickItems(SelIcon()) end,
         enchVis)
+    -- every rank of an imbue (Forever): pick a template, then Use
+    local tplVis = function() return enchVis() and Options.HasEnchantTemplates() end
+    Options.EnchantTemplateGrid(pg, tplVis,
+        function() return Options.EnchantTemplatePick(SelIcon()) end,
+        function(v) Options.SetEnchantTemplatePick(SelIcon(), v) end,
+        false, function() local r = SelIcon() return r and r.driver.hand end)
+    AT.RowButton(pg, "Use template", function()
+        if Options.ApplyEnchantTemplate(SelIcon()) then
+            AT.LayoutPage(pg)
+            RefreshAll()
+        end
+    end, tplVis, 120)
     AT.RowDesc(pg, "Any spell ID above lights this one icon.", 20,
         function()
             local r = SelIcon()
@@ -6831,12 +7086,10 @@ local function BuildIconEditor(parent)
     More(stateDef, "states", { "usabilityTint" }, { noLook = true,
         labels = { usabilityTint = "Usability tints (Can't use it, Not enough resource)" } })
     More(stateDef, "auraMissing", { "showWhileMissing" }, { noLook = true })
-    More(stateDef, "outOfStock", { "hideWhenMissing" }, { noLook = true })
-    Options.LookBlock("icon", "Show & Hide", "Missing", "auraMissing", { "showWhileMissing" })
-    Options.LookBlock("icon", "Show & Hide", "Out of stock", "outOfStock", { "hideWhenMissing" })
-    -- A Dynamic aura group drops missing auras from its live rows, so the
-    -- missing look shows only while the panel is open.
-    AT.RowDesc(pg, "In a Dynamic group a missing aura leaves the row: this shows only while editing.", 20,
+    -- A Dynamic aura group shows only the auras that are up: a "!" on the
+    -- switch says why, in place of a note line.
+    Options.InfoMark(Options.RowFor(pg, "auraMissing", "showWhileMissing"),
+        Options.DYN_MISSING_ICON_TITLE, Options.DYN_MISSING_ICON,
         function()
             if not stateDef.vis() then return false end
             local r = SelIcon()
@@ -6845,6 +7098,9 @@ local function BuildIconEditor(parent)
             return g ~= nil and g.groupKind == "aura"
                 and Store.Resolve(g, "arrangement", "dynamicLayout") == true
         end)
+    More(stateDef, "outOfStock", { "hideWhenMissing" }, { noLook = true })
+    Options.LookBlock("icon", "Show & Hide", "Missing", "auraMissing", { "showWhileMissing" })
+    Options.LookBlock("icon", "Show & Hide", "Out of stock", "outOfStock", { "hideWhenMissing" })
     -- the rules that decide which look wins; an aura icon has its own
     Block("Show & Hide", "By State", "When states overlap", "states", {
         "procOverride", "usableOverride", "preserveDurationText", "waitForNoCharges",
@@ -7419,14 +7675,12 @@ local function BuildGroupPane()
         return dynVis() and g ~= nil and g.groupKind ~= "aura"
     end
     SectionRows(pg, "iconGroup", "arrangement", SelGroup, dynVis, { "dynamicLayout" })
+    -- the one cost of Dynamic on an aura group, a "!" on the switch while on
+    Options.InfoMark(Options.RowFor(pg, "arrangement", "dynamicLayout"),
+        Options.DYN_MISSING_GROUP_TITLE, Options.DYN_MISSING_GROUP,
+        function() return dynAura() and dynOn() end)
     AT.RowDesc(pg, "Icons pack while you play; with this window open each keeps its own cell.", 20, dynCD)
     AT.RowDesc(pg, "On: only the auras that are up show, packed. Off: every aura keeps its cell.", 20, dynAura)
-    do
-        -- the one cost of Dynamic on an aura group, said where it is switched
-        local warn = AT.RowDesc(pg, "Important: Aura Missing icons stay hidden (0%) while Dynamic is on.", 20, dynAura)
-        local fs = warn:GetRegions()
-        if fs and fs.SetTextColor then fs:SetTextColor(0.95, 0.76, 0.31) end
-    end
     do
         -- The search walks one sample group per kind, mostly static ones: hand
         -- it the gate without the Dynamic check plus that switch, so "alignment"
@@ -7996,7 +8250,8 @@ end
 -- height the editor page must leave for it
 function barPrev.Attach(parent, y)
     local rec, B, band = SelBar(), NS.Bars, barPrev.band
-    if not (band and rec and B and B.PreviewBuild) then
+    -- a wheel has no bar to preview: its editor draws the wheel itself
+    if not (band and rec and B and B.PreviewBuild) or rec.barKind == "wheel" then
         if band then
             band:Hide()
             band:SetScript("OnUpdate", nil)
@@ -8581,6 +8836,17 @@ local function BuildBarPane()
         end,
         function() return Options.EnchantPickItems(SelBar()) end,
         enchBarVis)
+    local tplBarVis = function() return enchBarVis() and Options.HasEnchantTemplates() end
+    Options.EnchantTemplateGrid(pg, tplBarVis,
+        function() return Options.EnchantTemplatePick(SelBar()) end,
+        function(v) Options.SetEnchantTemplatePick(SelBar(), v) end,
+        false, function() local r = SelBar() return r and r.driver.hand end)
+    AT.RowButton(pg, "Use template", function()
+        if Options.ApplyEnchantTemplate(SelBar()) then
+            AT.LayoutPage(pg)
+            RefreshAll()
+        end
+    end, tplBarVis, 120)
     -- A range bar: its preset of bands (or its own, edited on the Range tab), and
     -- the spell a Melee or Caster preset checks (Bars\AD_RangeBar.lua).
     do
@@ -8708,6 +8974,8 @@ local function BuildBarPane()
     -- a texture's source rows (UI\AD_TextureOptions.lua); its triggers are the
     -- text's Triggers block above
     if Options.TextureTrackRows then Options.TextureTrackRows(pg, SelBar, BarTabVisible("Tracking"), win) end
+    -- a wheel's key, spots and editor (UI\AD_WheelOptions.lua)
+    if Options.WheelRows then Options.WheelRows(pg, SelBar, BarTabVisible("Wheel"), win) end
 
     ConditionRows(pg, SelBar, BarTabVisible("Load Conditions"))
 
@@ -8907,7 +9175,7 @@ local function BuildBarPane()
     -- bar style only: the bar's own size
     local sizeVis = BarBlock("Bar Size", "size", "Appearance", {
         "width", "height", "scale", "opacity",
-    }, function(r) return NotPips(r) and not IsText(r) and not IsTexture(r) end, SF)
+    }, function(r) return NotPips(r) and not IsText(r) and not IsTexture(r) and r.barKind ~= "wheel" end, SF)
     -- An anchored bar can take its size from its target: the Anchor block's
     -- match rows again, where the size is set. Not a BarSub: these are anchor
     -- fields, outside the size section's copy and reset.
@@ -9307,6 +9575,9 @@ local function BuildBarPane()
         })
     end
     SubPush("Appearance", "Size")
+
+    -- a wheel's look (Bars\AD_Wheel.lua): one block, no layout looks
+    BarBlock("Wheel", "wheel", "Appearance", { "size", "names", "cooldowns", "counts" }, nil, "Wheel", true)
 
     -- Text: the bar's one font first, then one chip per text run.
     local textTabVis = BarTabVisible("Text")
@@ -9747,6 +10018,8 @@ local function BuildAddWindow()
     if Options.TextAddRows then TABS[#TABS + 1] = "Text" end
     -- a texture's tab (UI\AD_TextureOptions.lua)
     if Options.TextureAddRows then TABS[#TABS + 1] = "Texture" end
+    -- a wheel's tab (UI\AD_WheelOptions.lua)
+    if Options.WheelAddRows then TABS[#TABS + 1] = "Wheel" end
     if Options.SpecialAddTab then Options.SpecialAddTab(TABS) end
     -- Opened for a Reminder group it makes a reminder: one tab, and the icon
     -- form's spell and item rows (addState.remGroupId).
@@ -9938,10 +10211,26 @@ local function BuildAddWindow()
         end, true)
     AT.RowDesc(pg, "An item's cooldown and count, by item ID.", 20,
         function() return isIcon("item")() and not addState.remGroupId end)
+    -- the ready-made item lists (UI\AD_ItemSets.lua)
+    if Options.ItemSetAddRows then
+        Options.ItemSetAddRows(pg, addWin, addState,
+            function() return isIcon("item")() and not addState.remGroupId end,
+            function() if UpdateCreate then UpdateCreate() end end)
+    end
+    -- a reminder follows one item; an icon can take several
     AT.RowInput(pg, "Item ID",
         function() return addState.itemID or "" end,
         function(v) addState.itemID = v if UpdateCreate then UpdateCreate() end end,
-        isIcon("item"), "The numeric item ID.", "e.g. 5512", true)
+        function() return isIcon("item")() and addState.remGroupId ~= nil end,
+        "The numeric item ID.", "e.g. 5512", true)
+    AT.RowInput(pg, "Item IDs",
+        function() return addState.itemID or "" end,
+        function(v)
+            addState.itemID, addState.itemName, addState.itemSet = v, nil, nil
+            if UpdateCreate then UpdateCreate() end
+        end,
+        function() return isIcon("item")() and not addState.remGroupId end,
+        "The item, or several: the icon shows the first one you carry and can use.", "e.g. 5512", true)
     -- a Custom Icon's name and art (UI\AD_CustomOptions.lua)
     if Options.CustomAddRows then Options.CustomAddRows(pg, addWin, addState, "Icon") end
     -- the Special tab's tracker list (UI\AD_SpecialOptions.lua)
@@ -9993,6 +10282,13 @@ local function BuildAddWindow()
         function()
             return addState.cat == "Bar" and addState.barKind == "enchant"
         end)
+    Options.EnchantTemplateGrid(pg,
+        function()
+            return addState.cat == "Bar" and addState.barKind == "enchant" and Options.HasEnchantTemplates()
+        end,
+        function() return addState.enchantTemplate or "" end,
+        function(v) addState.enchantTemplate = v end,
+        true, function() return addState.enchantHand end)
     AT.RowDesc(pg, "Casts of you, your target or your focus; hidden between casts.", 20,
         function()
             return addState.cat == "Bar" and addState.barKind == "cast"
@@ -10270,6 +10566,11 @@ local function BuildAddWindow()
         function(v) addState.enchantHand = v end,
         function() return Options.EnchantHandItems() end,
         isIcon("enchant"))
+    Options.EnchantTemplateGrid(pg,
+        function() return isIcon("enchant")() and not addState.remGroupId and Options.HasEnchantTemplates() end,
+        function() return addState.enchantTemplate or "" end,
+        function(v) addState.enchantTemplate = v end,
+        true, function() return addState.enchantHand end)
     local totemVis = isIcon("totem")
     AT.RowDesc(pg, "A totem or guardian in its slot, or one of them by the spell that puts it down.", 20,
         totemVis)
@@ -10309,6 +10610,7 @@ local function BuildAddWindow()
         "Opens a picker for this group's spells and items right after Create. Out of combat only.")
     if Options.TextAddRows then Options.TextAddRows(pg, addWin, addState) end
     if Options.TextureAddRows then Options.TextureAddRows(pg, addWin, addState) end
+    if Options.WheelAddRows then Options.WheelAddRows(pg, addWin, addState) end
 
     -- only icons pick a destination: bars are always free, groups have none
     AT.RowDropdown(pg, addWin, "Add to",
@@ -10347,7 +10649,7 @@ local function BuildAddWindow()
             if ik == "spell" then return (addState.spellID or "") ~= "" end
             if ik == "aura" then return #Options.ParseSpellIDs(addState.auraID) > 0 end
             if ik == "groupbuff" then return #Options.ParseSpellIDs(addState.gbID) > 0 end
-            if ik == "item" then return tonumber(addState.itemID) ~= nil end
+            if ik == "item" then return #Options.ParseSpellIDs(addState.itemID) > 0 end
             if ik == "timer" then return Options.CustomCreate ~= nil end
             return true
         elseif addState.cat == "Bar" then
@@ -10373,6 +10675,8 @@ local function BuildAddWindow()
             return Options.TextCreate ~= nil
         elseif addState.cat == "Texture" then
             return Options.TextureCanCreate ~= nil and Options.TextureCanCreate(addState)
+        elseif addState.cat == "Wheel" then
+            return Options.WheelCreate ~= nil
         end
         return true
     end
@@ -10443,7 +10747,7 @@ local function BuildAddWindow()
             if kind == "enchant" then
                 id = (addState.enchantHand == "off") and "off" or "main"
             elseif kind == "item" then
-                id = tonumber(addState.itemID)
+                id = Options.ParseSpellIDs(addState.itemID)[1]
             else
                 id = ResolveSpellInput(addState.spellID)
             end
@@ -10473,11 +10777,15 @@ local function BuildAddWindow()
             local rec = Store.NewIcon("groupbuff", driver, dest, layoutId, name)
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
         elseif iconKind == "item" then
-            local iid = tonumber(addState.itemID)
-            if not iid then return end
-            local name = (C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(iid))
-                or ("Item " .. iid)
-            local rec = Store.NewIcon("item", { itemID = iid }, dest, layoutId, name)
+            local ids = Options.ParseSpellIDs(addState.itemID)
+            if #ids == 0 then return end
+            local d = {}
+            Options.SetItemIDs(d, ids)
+            -- a ready-made list names the icon after itself
+            local name = addState.itemName
+                or (C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(ids[1]))
+                or ("Item " .. ids[1])
+            local rec = Store.NewIcon("item", d, dest, layoutId, name)
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
         elseif iconKind == "trinket" then
             local slot = addState.slotID or 13
@@ -10498,8 +10806,10 @@ local function BuildAddWindow()
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
         elseif iconKind == "enchant" then
             local hand = (addState.enchantHand == "off") and "off" or "main"
-            local rec = Store.NewIcon("enchant", { hand = hand }, dest, layoutId,
-                (hand == "off" and "Off Hand" or "Main Hand") .. " Enchant")
+            local driver = { hand = hand }
+            local t = (addState.enchantTemplate or "") ~= "" and Options.UseEnchantTemplate(driver, addState.enchantTemplate)
+            local rec = Store.NewIcon("enchant", driver, dest, layoutId,
+                t and Options.EnchantTemplateName(t, hand) or ((hand == "off" and "Off Hand" or "Main Hand") .. " Enchant"))
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
         elseif iconKind == "timer" then
             local rec = Options.CustomCreate and Options.CustomCreate(addState, dest, layoutId)
@@ -10538,7 +10848,8 @@ local function BuildAddWindow()
             elseif bk == "enchant" then
                 local hand = (addState.enchantHand == "off") and "off" or "main"
                 driver = { hand = hand }
-                name = (hand == "off" and "Off Hand" or "Main Hand") .. " Enchant"
+                local t = (addState.enchantTemplate or "") ~= "" and Options.UseEnchantTemplate(driver, addState.enchantTemplate)
+                name = t and Options.EnchantTemplateName(t, hand) or ((hand == "off" and "Off Hand" or "Main Hand") .. " Enchant")
                 mode = nil
             elseif bk == "range" then
                 -- the class's preset; its spell stays empty to follow the class default
@@ -10589,6 +10900,13 @@ local function BuildAddWindow()
             end
         elseif addState.cat == "Texture" then
             local rec = Options.TextureCreate and Options.TextureCreate(addState, layoutId)
+            if rec then
+                addWin:Hide()
+                ExpandedSet()[layoutId] = true
+                Options.Select("bar", rec.id)
+            end
+        elseif addState.cat == "Wheel" then
+            local rec = Options.WheelCreate and Options.WheelCreate(addState, layoutId)
             if rec then
                 addWin:Hide()
                 ExpandedSet()[layoutId] = true
@@ -11850,7 +12168,7 @@ Options.Search = {
         bar = { cooldown = "cooldown bars", aura = "aura bars", timer = "custom bars",
             stack = "stack bars", swing = "swing bars", resource = "resource bars",
             health = "health bars", enchant = "enchant bars", range = "range bars",
-            text = "text elements", texture = "textures" },
+            text = "text elements", texture = "textures", wheel = "wheels" },
         group = { aura = "aura groups", cooldown = "CD groups", reminder = "reminder groups" },
     },
     -- the ui fields a sample walk moves (put back by RestoreUI)
@@ -11900,6 +12218,9 @@ function Options.Search.RecIDs(rec)
     add(d.itemID)
     if type(d.spellIDs) == "table" then
         for _, v in ipairs(d.spellIDs) do add(v) end
+    end
+    if type(d.itemIDs) == "table" then
+        for _, v in ipairs(d.itemIDs) do add(v) end
     end
     return out
 end

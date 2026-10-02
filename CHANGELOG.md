@@ -1,5 +1,29 @@
 # Arc Auras
 
+## 1.10.0
+
+Wheels, ready-made item icons, name texts and dispel type filters.
+
+### New Features
+
+- **Wheels** - A ring of your spells and items on a key: hold it, point, let go to cast. Start one from hunter Aspects or Trackings, or shaman imbues.
+- **Ready-made item icons** - Healthstones, potions, bandages, food, drink and mana gems, one click each in the Add window.
+- **Name text** - A text can show a name: yours, your target's, focus, pet or a party member's.
+- **Dispel types** - Aura groups that show every aura on a unit can show only Magic, Curse, Disease or Poison.
+- **Enchant templates** - Start an enchant icon or bar from a shaman imbue or totem, every rank filled in.
+
+### Improvements
+
+- **Item icons** - Follow several items and show the first one you carry and can use.
+- **Party texts** - Health texts can follow party members 1 to 4.
+- **Adding texts** - The Add window shows a text's own choices.
+- **Dynamic aura groups** - A "!" explains why Aura Missing icons are off.
+
+### Bug Fixes
+
+- **Health texts** - Hide with no target instead of showing 0.
+- **Racial cooldowns** - Your race's cooldowns, like Will of the Forsaken, now show in the Add window's spell list.
+
 ## 1.9.0
 
 Cooldown Manager layouts, totem bar icons, mana regen sparks and a picture picker for textures.

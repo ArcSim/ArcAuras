@@ -12,6 +12,38 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "2.0.0",
+        intro = "Dynamic aura groups pack by row, Spotlight Layouts, and bars that pin to your action bars.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Dynamic aura groups pack by row",
+                    desc = "Each row packs and lines up on its own, in the order you placed the icons, with buffs and debuffs mixed." },
+                { title = "Pack direction",
+                    desc = "Dynamic aura groups can pack each column instead, aligned Up, Center or Down." },
+                { title = "Spotlight Layouts",
+                    desc = "Ready-made layouts shared by players on the New Layout page, starting with Emity's Druid and Paladin." },
+                { title = "Pin to your action bars",
+                    desc = "A bar or a text can sit on the action bar button that holds a spell, or on its Cooldown Manager icon, and follows the spell when your bars change." },
+                { title = "Layout changes reach what is inside",
+                    desc = "Change a layout's classes, specs, talents or look and it offers to update the items inside. It always asks first." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Follow your rank",
+                    desc = "Icons, bars and texts follow the rank of a spell you know, so they keep working when you train a new rank." },
+                { title = "Texts",
+                    desc = "A text starts with what it is: your own words, a countdown, a count, or info like health or power. Your texts carry over as they are." },
+                { title = "Show while editing",
+                    desc = "Clicking the eye on a layout or a group shows or hides everything inside it." },
+                { title = "Unloaded mark",
+                    desc = "Items that don't load on this character show a small eye while you edit. Settings can turn it off." },
+                { title = "Wheels",
+                    desc = "The tracking you are on has a check on the wheel." },
+                { title = "Cooldown Manager card",
+                    desc = "A clearer picture and its full name on the New Layout page." },
+            } },
+        },
+    },
+    {
         version = "1.10.0",
         intro = "Wheels, ready-made item icons, name texts and dispel type filters.",
         sections = {

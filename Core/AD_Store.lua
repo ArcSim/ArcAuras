@@ -209,6 +209,27 @@ function Store.SetEditHidden(rec, on)
     Store.Dirty("style", rec.id)
 end
 
+-- A layout's or group's eye reaches everything under it: each item below gets
+-- the same answer, drawn or not while the window is open (an unloaded one
+-- through its own eye, a loaded one through edit-hidden). A shared layout
+-- whose items each carry their own class checks then shows whole. One item
+-- can still be flipped on its own afterwards.
+function Store.SetEyeTree(rec, on)
+    if not (rec and DB and DB.settings) then return end
+    local list = (rec.type == "layout") and Store.LayoutDescendants(rec)
+        or (rec.type == "group") and Store.GroupMembers(rec) or {}
+    if #list == 0 then return end
+    DB.settings.unloadedShow = DB.settings.unloadedShow or {}
+    for _, d in ipairs(list) do
+        if Store.IsLoaded(d) then
+            editHidden[d.id] = (not on) and true or nil
+        else
+            DB.settings.unloadedShow[d.id] = on and true or false
+        end
+    end
+    Store.Dirty("style")
+end
+
 function Store.ClearEditHidden()
     if next(editHidden) == nil then return end
     wipe(editHidden)
@@ -1279,7 +1300,11 @@ function Store.SetLayoutValue(layout, family, section, field, value)
         vals[field] = value
     end
     fi[section] = (next(vals) ~= nil) and vals or nil
-    if old ~= vals[field] then Store.Dirty("style") end
+    if old ~= vals[field] then
+        Store.Dirty("style")
+        -- the panel offers it to items that keep their own (UI\AD_LayoutFollow.lua)
+        Events.Fire("AD_LAYOUT_LOOK", layout.id, family, section, field)
+    end
     return true
 end
 
@@ -1394,6 +1419,21 @@ function Store.LayoutOwnCount(layout, family, section, fields)
         end
     end
     return n
+end
+
+-- The items themselves, for one row the layout sets (the look popup names
+-- how many and which row).
+function Store.LayoutOwners(layout, family, section, field)
+    local list, sec = LayoutSetFields(layout, family, section, { field })
+    local out = {}
+    if #list == 0 then return out end
+    for _, item in ipairs(Store.LayoutItems(layout, family)) do
+        local o = item.o[section]
+        if o and o[field] ~= nil and Schema.Applies(sec.fields[field], sec, Store.KindOf(item), item.barMode) then
+            out[#out + 1] = item
+        end
+    end
+    return out
 end
 
 -- ... and make them follow: drop their own values for the rows the layout
@@ -1553,6 +1593,14 @@ function Store.KnownChanged()
         if Store.KnowsSpell(sid, true) ~= was then changed = true end
     end
     return changed
+end
+
+-- Auto rank (a spell followed by name to the rank you know): on by default
+-- on Forever, where ranks exist, so only off (false) is stored. A true saved
+-- before keeps working anywhere.
+function Store.AutoRankOn(d)
+    if type(d) ~= "table" or d.autoRank == false then return false end
+    return d.autoRank == true or NS.IsForever == true
 end
 
 -- The Known Spell rule's setters: "known" / "unknown" / nil, the spell, the
@@ -1983,6 +2031,128 @@ function Store.MatchClassSpecs(group, recs)
         end
     end
     Store.Dirty("load")
+end
+
+-- Everything under a layout: its groups, bars and free icons in member order,
+-- each group followed by its icons and reminders.
+function Store.LayoutDescendants(layout)
+    local out = {}
+    if not (layout and layout.type == "layout") then return out end
+    for _, m in ipairs(Store.MembersOf(layout)) do
+        out[#out + 1] = m
+        if m.type == "group" then
+            for _, ic in ipairs(Store.GroupMembers(m)) do out[#out + 1] = ic end
+        end
+    end
+    return out
+end
+
+-- A layout's class / spec boxes and talent checks, offered to the items inside
+-- it (UI\AD_LayoutFollow.lua). An item follows a change only where it carried
+-- exactly the layout's old checks (a shared layout made on one class puts
+-- them on every item); checks of its own stay, and so does its Load When.
+do
+    local function CopySet(t)
+        if type(t) ~= "table" then return nil end
+        local o = {}
+        for k, v in pairs(t) do o[k] = v end
+        return o
+    end
+    local function NonEmpty(t)
+        return (type(t) == "table" and next(t) ~= nil) and t or nil
+    end
+    local function SameSet(a, b)
+        if a == nil or b == nil then return a == b end
+        for k, v in pairs(a) do if b[k] ~= v then return false end end
+        for k, v in pairs(b) do if a[k] ~= v then return false end end
+        return true
+    end
+    local function Mode(w) return w.talentMode == "any" and "any" or "all" end
+    local function HasCls(w) return w.classes ~= nil or w.specs ~= nil end
+    local function HasTal(w) return NonEmpty(w.talents) ~= nil or NonEmpty(w.talentsNot) ~= nil end
+    local function ClsSame(a, b) return SameSet(a.classes, b.classes) and SameSet(a.specs, b.specs) end
+    local function TalSame(a, b)
+        return SameSet(NonEmpty(a.talents), NonEmpty(b.talents))
+            and SameSet(NonEmpty(a.talentsNot), NonEmpty(b.talentsNot)) and Mode(a) == Mode(b)
+    end
+
+    -- the checks themselves, copied
+    function Store.WhoOf(rec)
+        local c = rec and rec.c or {}
+        return { classes = CopySet(c.classes), specs = CopySet(c.specs), talents = CopySet(c.talents),
+            talentsNot = CopySet(c.talentsNot), talentMode = c.talentMode }
+    end
+
+    -- The items that carried the layout's old checks (old = Store.WhoOf before
+    -- the change), each { rec, cls, tal }: which half to bring along. A half
+    -- the layout did not set before, or did not change, moves nothing.
+    function Store.WhoFollowers(layout, old)
+        local out = {}
+        if not (layout and layout.type == "layout" and old) then return out end
+        local new = Store.WhoOf(layout)
+        local cls = HasCls(old) and not ClsSame(old, new)
+        local tal = HasTal(old) and not TalSame(old, new)
+        if not (cls or tal) then return out end
+        for _, d in ipairs(Store.LayoutDescendants(layout)) do
+            local w = Store.WhoOf(d)
+            local e = { rec = d, cls = cls and ClsSame(w, old), tal = tal and TalSame(w, old) }
+            if e.cls or e.tal then out[#out + 1] = e end
+        end
+        return out
+    end
+
+    function Store.ApplyWho(layout, list)
+        local c = layout.c or {}
+        for _, e in ipairs(list or {}) do
+            local dc = e.rec.c
+            if dc then
+                if e.cls then dc.classes, dc.specs = CopySet(c.classes), CopySet(c.specs) end
+                if e.tal then
+                    dc.talents, dc.talentsNot = CopySet(c.talents), CopySet(c.talentsNot)
+                    dc.talentMode = c.talentMode
+                end
+            end
+        end
+        Store.Dirty("load")
+    end
+
+    -- Items whose own class or spec boxes leave out some of the layout's (the
+    -- group rule): a layout that loads everywhere leaves its items' boxes alone.
+    function Store.LayoutClassStrays(layout)
+        local out = {}
+        if not (layout and layout.type == "layout" and layout.c) then return out end
+        local want = AllowedSet(layout)
+        if not want then return out end
+        for _, rec in ipairs(Store.LayoutDescendants(layout)) do
+            local have = rec.c and AllowedSet(rec)
+            if have then
+                for k, on in pairs(want) do
+                    if on and not have[k] then
+                        out[#out + 1] = rec
+                        break
+                    end
+                end
+            end
+        end
+        return out
+    end
+
+    -- "Match the layout": its class and spec boxes, and its talent checks when
+    -- it has any (an item's own talent gate stays under a layout with none).
+    function Store.MatchLayout(layout, recs)
+        local c = layout.c or {}
+        local tal = HasTal(c)
+        for _, rec in ipairs(recs or {}) do
+            if rec.c then
+                rec.c.classes, rec.c.specs = CopySet(c.classes), CopySet(c.specs)
+                if tal then
+                    rec.c.talents, rec.c.talentsNot = CopySet(c.talents), CopySet(c.talentsNot)
+                    rec.c.talentMode = c.talentMode
+                end
+            end
+        end
+        Store.Dirty("load")
+    end
 end
 
 function Store.SetClassSpecs(rec, classTag, on)
@@ -2562,6 +2732,7 @@ function Store.CleanRules(list)
                 srcId = Whole(r.srcId, 1, 1e12),
                 combat = (r.combat == "in" or r.combat == "out") and r.combat or nil,
                 talent = Whole(r.talent, 1, 1e9),
+                spec = Whole(r.spec, 1, 1e6),
                 spellReady = Whole(r.spellReady, 1, 1e9),
                 stacksMin = Whole(r.stacksMin, 0, 999),
                 stacksMax = Whole(r.stacksMax, 0, 999),
@@ -2576,6 +2747,11 @@ function Store.CleanRules(list)
                 text = Str(r.text, 200),
             }
             if c.withinRule then c.withinSecs = Num(r.withinSecs, 0.1, 600) or 1 end
+            -- a talent's choice option and its reverse live only with a talent
+            if c.talent then
+                c.talentEntry = Whole(r.talentEntry, 1, 1e9)
+                c.talentNot = (r.talentNot == true) and true or nil
+            end
             out[#out + 1] = c
         end
     end
@@ -2649,7 +2825,8 @@ function Store.CleanText(d)
     if not TEXT_SHOW_SET[d.show] then d.show = nil end
     if not TEXT_UNIT_SET[d.unit] then d.unit = nil end
     d.spellID = Whole(d.spellID)
-    d.autoRank = (d.autoRank == true) and true or nil
+    -- on by default (Store.AutoRankOn): keep a switched-off false
+    if d.autoRank ~= true and d.autoRank ~= false then d.autoRank = nil end
     -- the aura shape: a list only past one id, the primary in spellID
     if type(d.spellIDs) == "table" then
         local out, seen = {}, {}
@@ -2713,7 +2890,8 @@ function Store.CleanTexture(d)
         return (v and v > 0) and math.floor(v) or nil
     end
     d.spellID = Whole(d.spellID)
-    d.autoRank = (d.autoRank == true) and true or nil
+    -- on by default (Store.AutoRankOn): keep a switched-off false
+    if d.autoRank ~= true and d.autoRank ~= false then d.autoRank = nil end
     if type(d.spellIDs) == "table" then
         local out, seen = {}, {}
         for _, v in ipairs(d.spellIDs) do
@@ -3853,6 +4031,13 @@ function Store.ImportLayout(text)
     local res, err = Store.Import(text)
     if not res then return nil, err end
     return res.layouts[1] or res.target
+end
+
+-- A string's records, read and left out of the account (the New Layout page
+-- draws a shared layout from them): the payload, or nil and why. Its ids are
+-- the maker's, so nothing here may look them up in the account.
+function Store.Peek(text)
+    return DecodeString(text)
 end
 
 -- Pack updates: a string's items find the ones an earlier version of it made

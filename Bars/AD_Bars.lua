@@ -1109,7 +1109,7 @@ function SpellIDFor(rec)
     -- Ranked realms (Forever): resolve by name on each feed so the bar follows
     -- the player's known rank; SPELLS_CHANGED re-feeds cover rank-ups.
     local sid = d.spellID
-    if d.autoRank and sid and C_Spell.GetSpellIDForSpellIdentifier then
+    if Store.AutoRankOn(d) and sid and C_Spell.GetSpellIDForSpellIdentifier then
         local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(sid)
         if nm then
             local rid = C_Spell.GetSpellIDForSpellIdentifier(nm)
@@ -4135,7 +4135,12 @@ local function AuraPresent(entry)
             unit, nm, AuraFilter(d)))
     else
         if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID) then return false end
-        n, data = AuraFetchCount(C_UnitAuras.GetPlayerAuraBySpellID(sid))
+        -- the bar's aura or, while it follows your rank, your rank of it
+        local DA = NS.DriverAura
+        for _, id in ipairs((DA and DA.TrackedIDs) and DA.TrackedIDs(d) or { sid }) do
+            n, data = AuraFetchCount(C_UnitAuras.GetPlayerAuraBySpellID(id))
+            if n == 0 or data ~= nil then break end
+        end
     end
     if n == 0 then return nil end
     return data ~= nil
@@ -4166,10 +4171,22 @@ local function TargetHostileNow(unit)
     return assist ~= true
 end
 
+-- The bar's aura, and your rank of it while it follows your rank (Forever):
+-- the aura icons' own id map, and that map as a comparable string.
+function Bars.AuraIDs(d)
+    local DA = NS.DriverAura
+    if DA and DA.IncludeMap then return DA.IncludeMap(d) end
+    return { [d.spellID or 0] = true }
+end
+function Bars.AuraIDSig(d)
+    local DA = NS.DriverAura
+    if DA and DA.FilterSig then return DA.FilterSig(Bars.AuraIDs(d)) end
+    return tostring(d.spellID)
+end
+
 local function AuraSlotFilters(entry, parked)
     local d = entry.rec.driver or {}
-    return { includeSpellIDs = parked and { [0] = true }
-        or { [d.spellID or 0] = true } }
+    return { includeSpellIDs = parked and { [0] = true } or Bars.AuraIDs(d) }
 end
 
 local function AuraSetParked(entry, parked)
@@ -4830,8 +4847,10 @@ local function AuraBarEnsure(entry)
     local sub = entry.auraSub
     if sub then
         if sub.sig == wantSig then
-            if sub.spellID ~= d.spellID then
-                sub.spellID = d.spellID
+            -- a new id, or a new rank of it while the bar follows your rank
+            local idSig = Bars.AuraIDSig(d)
+            if sub.idSig ~= idSig then
+                sub.idSig, sub.spellID = idSig, d.spellID
                 if not sub.parked then
                     local f = AuraSlotFilters(entry, false)
                     for _, k in ipairs(sub.keys) do
@@ -4880,12 +4899,12 @@ local function AuraBarEnsure(entry)
     -- which the engine always honours.
     local hostilePark = harmful and (wantUnit == "target" or wantUnit == "focus")
     local parked = hostilePark and not TargetHostileNow(wantUnit)
-    local cf = { includeSpellIDs = parked and { [0] = true } or { [d.spellID] = true } }
+    local cf = { includeSpellIDs = parked and { [0] = true } or Bars.AuraIDs(d) }
     local plan = entry.auraPlan or {}
     -- The sub exists before the slots: the initializer runs inside
     -- AddAuraSlot and must already find it.
     sub = { container = c, keys = {}, slots = {}, unit = wantUnit, harmful = harmful,
-        hostilePark = hostilePark, spellID = d.spellID,
+        hostilePark = hostilePark, spellID = d.spellID, idSig = Bars.AuraIDSig(d),
         parked = parked, sig = wantSig, plan = plan }
     entry.auraSub = sub
 

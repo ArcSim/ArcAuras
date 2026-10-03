@@ -186,7 +186,7 @@ function CO.TrackRows(pg, Rec, vis, owner, isBar)
         function(v) Set("showWhile", (v ~= "timer") and v or nil) end,
         Items(S.CUSTOM_SHOW_WHILE, S.CUSTOM_SHOW_WHILE_LABELS), vis)
     AT.RowDesc(pg, isBar and "Active: the bar shows (Hide when inactive hides it otherwise)."
-        or "Active: the Ready look; otherwise the On cooldown look. An item with no rules yet always shows active.",
+        or "Show & Hide sets its Active and Not active looks. With no rules yet it shows as active.",
         20, vis)
     AT.RowInput(pg, "Default seconds",
         function()
@@ -244,17 +244,69 @@ function CO.ChainItems(self)
     return out
 end
 
--- The talents of your class, for the "talent known" guard.
+-- A choice node (two or more options, retail): its rule can name one.
+function CO.IsChoice(nodeID)
+    local T = NS.TalentCatalog
+    local e = T and nodeID and T.Known(nodeID)
+    return type(e) == "table" and type(e.entries) == "table"
+end
+
+-- A choice node's options, for the "which choice" row.
+function CO.ChoiceItems(nodeID, current)
+    local out = { { value = 0, text = "Either choice" } }
+    local T = NS.TalentCatalog
+    local e = T and nodeID and T.Known(nodeID)
+    if type(e) ~= "table" then e = nil end
+    local seen = false
+    for _, opt in ipairs((e and e.entries) or {}) do
+        if opt.entryID == current then seen = true end
+        local yours = (e.rank or 0) > 0 and e.activeEntryID == opt.entryID
+        out[#out + 1] = { value = opt.entryID, text = tostring(opt.name) .. (yours and "  (yours)" or "") }
+    end
+    if current and current ~= 0 and not seen then
+        out[#out + 1] = { value = current, text = "Choice " .. current .. " (not in this tree)" }
+    end
+    return out
+end
+
+-- The talents of your class, for the talent guard.
 function CO.TalentItems(current)
     local out = { { value = 0, text = "Any talent build" } }
     local T = NS.TalentCatalog
     local seen = false
     for _, e in ipairs(T and T.All() or {}) do
         if e.nodeID == current then seen = true end
-        out[#out + 1] = { value = e.nodeID, text = e.name .. ((e.rank or 0) > 0 and "  (yours)" or "") }
+        local name = e.name
+        -- a choice node lists its options; the row under it names one
+        if type(e.entries) == "table" then
+            local names = {}
+            for _, opt in ipairs(e.entries) do names[#names + 1] = tostring(opt.name) end
+            name = table.concat(names, " / ")
+        end
+        out[#out + 1] = { value = e.nodeID, text = name .. ((e.rank or 0) > 0 and "  (yours)" or "") }
     end
     if current and current ~= 0 and not seen then
         out[#out + 1] = { value = current, text = "Talent " .. current .. " (not in this tree)" }
+    end
+    return out
+end
+
+-- Your class's specs, for the "spec" guard (retail only: WoW Forever has none).
+function CO.SpecItems(current)
+    local out = { { value = 0, text = "Any spec" } }
+    local SI = C_SpecializationInfo
+    local n = (NS.IsForever ~= true and SI and SI.GetSpecializationInfo and GetNumSpecializations
+        and GetNumSpecializations()) or 0
+    local seen = false
+    for i = 1, n do
+        local id, name = SI.GetSpecializationInfo(i)
+        if type(id) == "number" and id > 0 then
+            if id == current then seen = true end
+            out[#out + 1] = { value = id, text = (type(name) == "string" and name ~= "") and name or ("Spec " .. id) }
+        end
+    end
+    if current and current ~= 0 and not seen then
+        out[#out + 1] = { value = current, text = "Spec " .. current .. " (another class)" }
     end
     return out
 end
@@ -327,7 +379,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
         local function Gated()
             local r = Rule(i)
             if not r then return false end
-            return r.combat ~= nil or r.talent ~= nil or r.spellReady ~= nil or r.stacksMin ~= nil
+            return r.combat ~= nil or r.talent ~= nil or r.spec ~= nil or r.spellReady ~= nil or r.stacksMin ~= nil
                 or r.stacksMax ~= nil or r.withinRule ~= nil or r.timer ~= nil or CO.showIf[key()] == true
         end
         local gv = function() return rv() and Gated() end
@@ -431,7 +483,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
                 CO.showIf[key()] = v or nil
                 if not v then
                     Edit(function(E, r)
-                        for _, f in ipairs({ "combat", "talent", "spellReady", "stacksMin", "stacksMax",
+                        for _, f in ipairs({ "combat", "talent", "spec", "spellReady", "stacksMin", "stacksMax",
                             "withinRule", "timer" }) do
                             E.SetRule(r, i, f, nil)
                         end
@@ -447,7 +499,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
             end,
             function(v) Set("combat", (v ~= "any") and v or nil) end,
             Items(S.CUSTOM_COMBAT, S.CUSTOM_COMBAT_LABELS), gv)
-        AT.RowDropdown(pg, owner, "Talent known",
+        AT.RowDropdown(pg, owner, "Talent",
             function()
                 local r = Rule(i)
                 return (r and r.talent) or 0
@@ -458,6 +510,42 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
                 return CO.TalentItems(r and r.talent)
             end,
             gv)
+        AT.RowDropdown(pg, owner, "Which choice",
+            function()
+                local r = Rule(i)
+                return (r and r.talentEntry) or 0
+            end,
+            function(v) Set("talentEntry", (v ~= 0) and v or nil) end,
+            function()
+                local r = Rule(i)
+                return CO.ChoiceItems(r and r.talent, r and r.talentEntry)
+            end,
+            function()
+                local r = Rule(i)
+                return gv() and r.talent ~= nil and (r.talentEntry ~= nil or CO.IsChoice(r.talent))
+            end)
+        AT.RowDropdown(pg, owner, "Talent is",
+            function()
+                local r = Rule(i)
+                return (r and r.talentNot) and "not" or "taken"
+            end,
+            function(v) Set("talentNot", (v == "not") or nil) end,
+            function() return { { value = "taken", text = "Taken" }, { value = "not", text = "Not taken" } } end,
+            function()
+                local r = Rule(i)
+                return gv() and r.talent ~= nil
+            end)
+        AT.RowDropdown(pg, owner, "Spec",
+            function()
+                local r = Rule(i)
+                return (r and r.spec) or 0
+            end,
+            function(v) Set("spec", (v ~= 0) and v or nil) end,
+            function()
+                local r = Rule(i)
+                return CO.SpecItems(r and r.spec)
+            end,
+            function() return gv() and NS.IsForever ~= true end)
         AT.RowInput(pg, "Spell is ready",
             function()
                 local r = Rule(i)
@@ -556,16 +644,25 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
             end,
             function(v) Set("mode", (v ~= "restart") and v or nil) end,
             Items(S.CUSTOM_START_MODES, S.CUSTOM_START_MODE_LABELS), Is("act", "start"))
+        -- unset, the engine adds or removes 1 and sets 0: the row says so,
+        -- and a set takes a typed 0 (stored as unset)
         AT.RowInput(pg, "How many",
             function()
                 local r = Rule(i)
-                return tostring(tonumber(r and r.n) or 1)
+                return tostring(tonumber(r and r.n) or ((r and r.act == "set") and 0 or 1))
             end,
             function(v)
+                local r = Rule(i)
                 local n = tonumber(v)
-                if n and n >= 1 then Set("n", math.floor(math.min(999, n))) end
+                if not (r and n) then return end
+                n = math.floor(math.min(999, n))
+                if n >= 1 then
+                    Set("n", n)
+                elseif n == 0 and r.act == "set" then
+                    Set("n", nil)
+                end
             end,
-            Is("act", "add", "remove", "set"), "Stacks to add, remove or set. Enter applies it.")
+            Is("act", "add", "remove", "set"), "Stacks to add, remove or set (set takes 0). Enter applies it.")
         AT.RowToggle(pg, "Restart the timer too",
             function()
                 local r = Rule(i)

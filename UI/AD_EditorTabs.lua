@@ -244,7 +244,11 @@ local AURA_WORDS = { always = "the aura is up", pandemic = "the last 30% of it",
 ET.GLOW_WHEN = {
     ready = function(rec) return rec.kind == "special" and "a proc is still in the deck" or "cooldown done" end,
     cooldown = function(rec) return rec.kind == "special" and "every proc is used, or the timer runs" or "the cooldown runs" end,
-    active = function(rec) return rec.kind == "totem" and "the totem is out" or "the weapon has it" end,
+    active = function(rec)
+        if rec.kind == "timer" then return "it is active" end
+        return rec.kind == "totem" and "the totem is out" or "the weapon has it"
+    end,
+    inactive = "it is not active",
     proc = "the proc glow is up",
     usable = "you can cast it now",
     overlay = "its aura is up",
@@ -321,7 +325,14 @@ ET.STATES = {
     },
     item = { READY, COOLDOWN, OUT_OF_STOCK },
     trinket = { READY, COOLDOWN, OUT_OF_STOCK },
-    timer = { READY, COOLDOWN },
+    -- a Custom Icon: active per its Show as active while (the ready bucket),
+    -- else not active (the cooldown bucket); both can grey out
+    timer = {
+        { label = "Active", when = "while it is active", alpha = READY.alpha, grey = { S, "readyDesaturate" },
+          tint = READY.tint, alphaTip = READY.alphaTip },
+        { label = "Not active", when = "while it is not active", alpha = COOLDOWN.alpha, grey = COOLDOWN.grey,
+          tint = COOLDOWN.tint },
+    },
     totem = {
         { label = "Active", when = "while the totem is out", alpha = READY.alpha, tint = READY.tint },
         { label = "Missing", when = "while no totem is out", alpha = COOLDOWN.alpha, grey = COOLDOWN.grey,

@@ -16,12 +16,26 @@ NL.MIN_W = NL.STAGE_W + 16
 
 -- The template cards, in order: { key, title, desc, rows, class, make }.
 -- rows (a table, or a function returning one) are the groups the preview
--- draws, each { kind, y, size, n } with n squares (6 when unset); class shows
--- the card to that class only; make returns the new layout record.
+-- draws, each { kind, y, size, n } with n squares (6 when unset), or
+-- { kind, y, size, w } for one bar w wide and size tall; class shows the card
+-- to that class only; make returns the new layout record.
 NL.TEMPLATES = {}
 
 function NL.AddTemplate(t)
     NL.TEMPLATES[#NL.TEMPLATES + 1] = t
+end
+
+-- Spotlight cards: whole layouts players made, in their own section after the
+-- templates. Same entry shape as a template plus the picture's source: image
+-- (a 2:1 screenshot texture) or text (the share string, drawn from its own
+-- records); make may return nil (an import that failed), and then nothing opens.
+NL.SPOTLIGHT = {}
+-- a screenshot's width over its height, and the size of the hover picture
+NL.IMAGE_ASPECT = 2
+NL.BIG_W, NL.BIG_H = 448, 224
+
+function NL.AddSpotlight(t)
+    NL.SPOTLIGHT[#NL.SPOTLIGHT + 1] = t
 end
 
 -- Cards other files add under "Start blank or import" (an importer): the card
@@ -53,13 +67,14 @@ NL.AddTemplate({
 
 -- A template's groups in miniature: a row of squares per group, sized and
 -- spaced like the real ones and scaled to fit, in the sidebar's kind colour.
+-- A bar row is one strip; a kind with no sidebar colour takes the accent.
 function NL.DrawRows(stage, rows)
     local COL = NS.AT.COL
     local GC = NS.Options and NS.Options.GROUP_COLORS or {}
     local top, bottom, wide
     for _, r in ipairs(rows) do
         local n = r.n or 6
-        local w = n * r.size + (n - 1) * 2
+        local w = r.w or (n * r.size + (n - 1) * 2)
         if not wide or w > wide then wide = w end
         local t, b = r.y + r.size / 2, r.y - r.size / 2
         if not top or t > top then top = t end
@@ -67,19 +82,30 @@ function NL.DrawRows(stage, rows)
     end
     if not wide or top <= bottom then return end
     local s = math.min(NL.STAGE_W / wide, NL.STAGE_H / (top - bottom))
-    local padY = math.floor((NL.STAGE_H - (top - bottom) * s) / 2)
+    -- a height-bound picture fills the stage exactly, which float error can
+    -- tip to -1
+    local padY = math.max(0, math.floor((NL.STAGE_H - (top - bottom) * s) / 2))
     for _, r in ipairs(rows) do
-        local n = r.n or 6
-        local sz = math.max(3, math.floor(r.size * s + 0.5))
-        local gap = math.max(1, math.floor(2 * s + 0.5))
-        local x0 = math.floor((NL.STAGE_W - (n * sz + (n - 1) * gap)) / 2)
         local y0 = padY + math.floor((top - (r.y + r.size / 2)) * s + 0.5)
         local c = GC[r.kind] or COL.arc
-        for i = 1, n do
+        if r.w then
+            local bw = math.max(3, math.floor(r.w * s + 0.5))
+            local bh = math.max(2, math.floor(r.size * s + 0.5))
             local t = stage:CreateTexture(nil, "ARTWORK")
             t:SetColorTexture(c[1], c[2], c[3], 0.9)
-            t:SetSize(sz, sz)
-            t:SetPoint("TOPLEFT", stage, "TOPLEFT", x0 + (i - 1) * (sz + gap), -y0)
+            t:SetSize(bw, bh)
+            t:SetPoint("TOPLEFT", stage, "TOPLEFT", math.floor((NL.STAGE_W - bw) / 2), -y0)
+        else
+            local n = r.n or 6
+            local sz = math.max(3, math.floor(r.size * s + 0.5))
+            local gap = math.max(1, math.floor(2 * s + 0.5))
+            local x0 = math.floor((NL.STAGE_W - (n * sz + (n - 1) * gap)) / 2)
+            for i = 1, n do
+                local t = stage:CreateTexture(nil, "ARTWORK")
+                t:SetColorTexture(c[1], c[2], c[3], 0.9)
+                t:SetSize(sz, sz)
+                t:SetPoint("TOPLEFT", stage, "TOPLEFT", x0 + (i - 1) * (sz + gap), -y0)
+            end
         end
     end
 end
@@ -132,7 +158,72 @@ function NL.Paint(c, hot)
     c.title:SetTextColor(ink[1], ink[2], ink[3])
 end
 
--- entry = { title, desc, draw(stage), pick() }.
+-- A screenshot, as large as fits w x h at its own shape, centred on parent.
+function NL.DrawImage(parent, path, w, h)
+    local iw, ih = w, w / NL.IMAGE_ASPECT
+    if ih > h then iw, ih = h * NL.IMAGE_ASPECT, h end
+    local t = parent:CreateTexture(nil, "ARTWORK")
+    t:SetTexture(path)
+    t:SetSize(math.floor(iw), math.floor(ih))
+    t:SetPoint("CENTER")
+    return t
+end
+
+-- A template's picture into a w x h stage: its screenshot, else the layout
+-- drawn from its share string, else its rows. On a card (onCard) a screenshot
+-- fills the preview box, which is larger than the stage.
+function NL.DrawEntry(stage, t, w, h, onCard)
+    if t.image then
+        if onCard then
+            NL.DrawImage(stage:GetParent(), t.image, NL.MIN_W - 18, NL.PREV_H - 2)
+        else
+            NL.DrawImage(stage, t.image, w, h)
+        end
+        return
+    end
+    local LP = NS.LayoutPreview
+    if t.text and LP and LP.Draw(stage, t.text, w, h) then return end
+    local rows = type(t.rows) == "function" and t.rows() or t.rows
+    if rows then NL.DrawRows(stage, rows) end
+end
+
+-- The hover picture: the card's layout at a larger size beside the card, one
+-- stage per template, drawn on first hover and kept.
+function NL.ShowBig(card)
+    local t = card.entry and card.entry.src
+    if not t then return end
+    local AT, COL = NS.AT, NS.AT.COL
+    local big = NL.big
+    if not big then
+        big = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+        big:SetFrameStrata("TOOLTIP")
+        big:SetSize(NL.BIG_W + 16, NL.BIG_H + 16)
+        big:SetClampedToScreen(true)
+        AT.Skin(big, COL.well, COL.line)
+        big.stages = {}
+        NL.big = big
+    end
+    for _, st in pairs(big.stages) do st:Hide() end
+    local st = big.stages[t]
+    if not st then
+        st = CreateFrame("Frame", nil, big)
+        st:SetSize(NL.BIG_W, NL.BIG_H)
+        st:SetPoint("CENTER")
+        NL.DrawEntry(st, t, NL.BIG_W, NL.BIG_H, false)
+        big.stages[t] = st
+    end
+    st:Show()
+    big:ClearAllPoints()
+    big:SetPoint("LEFT", card, "RIGHT", 8, 0)
+    big:Show()
+end
+
+function NL.HideBig()
+    if NL.big then NL.big:Hide() end
+end
+
+-- entry = { title, desc, draw(stage), pick(), src }: src (a Spotlight
+-- template) adds the hover picture.
 function NL.MakeCard(parent, entry)
     local AT, COL = NS.AT, NS.AT.COL
     local c = CreateFrame("Button", nil, parent, "BackdropTemplate")
@@ -177,8 +268,14 @@ function NL.MakeCard(parent, entry)
         c.secondaryBtn = sec
     end
     NL.Paint(c, false)
-    c:SetScript("OnEnter", function(s) NL.Paint(s, true) end)
-    c:SetScript("OnLeave", function(s) NL.Paint(s, false) end)
+    c:SetScript("OnEnter", function(s)
+        NL.Paint(s, true)
+        if entry.src then NL.ShowBig(s) end
+    end)
+    c:SetScript("OnLeave", function(s)
+        NL.Paint(s, false)
+        if entry.src then NL.HideBig() end
+    end)
     c:SetScript("OnClick", function() entry.pick() end)
     return c
 end
@@ -211,7 +308,30 @@ function NL.CardRow(pg, entries)
     return row
 end
 
--- The template list is read once, when the window builds: a template added
+-- Card entries for a template list, this class's own and the class-free ones.
+function NL.Cards(list)
+    local O = NS.Options
+    local _, class = UnitClass("player")
+    local out = {}
+    for _, t in ipairs(list) do
+        if not t.class or t.class == class then
+            out[#out + 1] = {
+                title = t.title, desc = t.desc,
+                draw = function(stage) NL.DrawEntry(stage, t, NL.STAGE_W, NL.STAGE_H, true) end,
+                src = (t.image or t.text) and t or nil,
+                pick = function()
+                    NL.HideBig()
+                    local rec = t.make()
+                    if rec then O.OpenLayout(rec) end
+                end,
+                secondary = t.secondary,
+            }
+        end
+    end
+    return out
+end
+
+-- The template lists are read once, when the window builds: a template added
 -- later shows after a /reload.
 function NL.Fill(pane)
     local AT = NS.AT
@@ -222,23 +342,14 @@ function NL.Fill(pane)
     pg:SetPoint("BOTTOMRIGHT", 0, 0)
     pg:Show()
     NL.pg = pg
-    local _, class = UnitClass("player")
-    local tpl = {}
-    for _, t in ipairs(NL.TEMPLATES) do
-        if not t.class or t.class == class then
-            tpl[#tpl + 1] = {
-                title = t.title, desc = t.desc,
-                draw = function(stage)
-                    local rows = type(t.rows) == "function" and t.rows() or t.rows
-                    if rows then NL.DrawRows(stage, rows) end
-                end,
-                pick = function() O.OpenLayout(t.make()) end,
-                secondary = t.secondary,
-            }
-        end
-    end
     AT.Section(pg, "Start from a template")
-    NL.tplRow = NL.CardRow(pg, tpl)
+    NL.tplRow = NL.CardRow(pg, NL.Cards(NL.TEMPLATES))
+    local spot = NL.Cards(NL.SPOTLIGHT)
+    NL.spotRow = nil
+    if #spot > 0 then
+        AT.Section(pg, "Spotlight Layouts")
+        NL.spotRow = NL.CardRow(pg, spot)
+    end
     AT.Section(pg, "Start blank or import")
     local own = {
         { title = "Empty Layout", desc = "A blank layout. Add your own groups, icons and bars.",

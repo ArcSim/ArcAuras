@@ -677,6 +677,9 @@ Options.DYN_MISSING_GROUP = "Due to an API limitation, auras inside this group w
 Options.DYN_MISSING_ICON_TITLE = "Aura Missing icon disabled"
 Options.DYN_MISSING_ICON = "Due to an API limitation, auras in a Dynamic group won't have Aura Missing icons. "
     .. "Turn off Dynamic in the group's Appearance."
+-- Follow my rank: aura icons, the aura on a spell icon and aura bars (Forever).
+Options.FOLLOW_RANK_DESC = "Also watches the rank you know of each spell, so this keeps working when you train "
+    .. "a new rank. The IDs you typed still count."
 -- keep: the current unit, listed even when no longer allowed.
 function Options.AuraUnitItems(d, auraType, keep)
     local items = {}
@@ -2452,6 +2455,10 @@ local function ConditionRows(pg, ctx, tabVisible)
         AT.Tooltip(row.button, "Match the group", "Copies this group's " .. what
             .. " onto those icons, so they load wherever the group does.")
     end
+    -- the layout's twin, Match the layout (UI\AD_LayoutFollow.lua)
+    if ctx == SelLayout and Options.LayoutFollow then
+        Options.LayoutFollow.Rows(pg, ctx, tabVisible, anySpecs)
+    end
     -- retail only: the Role row and the Hero Talents section (UI\AD_RetailWho.lua)
     if Options.RetailWhoRows then Options.RetailWhoRows(pg, ctx, tabVisible, uiStore) end
 
@@ -3589,6 +3596,8 @@ function Options.MakeEye(parent)
             on = not Store.UnloadedShown(rec)
             Store.SetUnloadedShown(rec, on)
         end
+        -- a layout's or group's click reaches everything under it
+        if rec.type == "layout" or rec.type == "group" then Store.SetEyeTree(rec, on) end
         PlaySound(on and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON
                      or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF, "Master")
         RefreshAll()
@@ -5437,6 +5446,8 @@ local function BuildLayoutPane()
     tabRow._sync = function()
         local h = tabRow._strip:Set(tabs, ui.layoutTab, function(name)
             ui.layoutTab = name
+            -- leaving Load Conditions offers its changes to the items inside
+            if Options.LayoutFollow then Options.LayoutFollow.Sync(Options.LCLayoutId()) end
             AT.LayoutPage(pg)
         end)
         -- wrapped chips grow the row (never overlap the content below)
@@ -6484,6 +6495,21 @@ local function BuildIconEditor(parent)
         auraVis,
         "Every spell ID this icon lights for, separated by commas or spaces - one icon for all of them, and the game shows whichever is up. The first ID gives the icon its art and name.",
         "e.g. 2825, 32182, 80353")
+    -- Forever's ranks share only a name: the icon can follow the one you know
+    AT.RowToggle(pg, "Follow my rank",
+        function()
+            local r = SelIcon()
+            return r ~= nil and r.driver.followRank ~= false
+        end,
+        function(v)
+            local r = SelIcon()
+            if not r then return end
+            -- on by default: only off is stored
+            if v then r.driver.followRank = nil else r.driver.followRank = false end
+            Store.Dirty("style", r.id)
+        end,
+        function() return auraVis() and NS.IsForever == true end,
+        Options.FOLLOW_RANK_DESC)
     AT.RowDropdown(pg, win, "Aura type",
         function()
             local r = SelIcon()
@@ -6578,11 +6604,12 @@ local function BuildIconEditor(parent)
         "e.g. 10938, 21564")
     SectionRows(pg, "icon", "groupBuff", SelIcon, gbVis, { "combatShow" })
     AT.RowToggle(pg, "Auto rank (follow my known rank)",
-        function() local r = SelIcon() return r ~= nil and r.driver.autoRank == true end,
+        function() local r = SelIcon() return r ~= nil and Store.AutoRankOn(r.driver) end,
         function(v)
             local r = SelIcon()
             if r then
-                r.driver.autoRank = v and true or nil
+                -- on by default: only off is stored
+                if v then r.driver.autoRank = nil else r.driver.autoRank = false end
                 Store.Dirty("style", r.id)
             end
         end,
@@ -6808,6 +6835,20 @@ local function BuildIconEditor(parent)
         ovVis,
         "The aura's spell IDs, separated by commas or spaces. A buff or debuff usually has the ID of the spell that puts it up; add every rank's ID if they differ. The game shows whichever is up.",
         "e.g. 5118")
+    AT.RowToggle(pg, "Follow my rank",
+        function()
+            local ov = Options.OverlayOf(SelIcon())
+            return ov ~= nil and ov.followRank ~= false
+        end,
+        function(v)
+            local r = SelIcon()
+            local ov = Options.OverlayOf(r)
+            if not ov then return end
+            if v then ov.followRank = nil else ov.followRank = false end
+            Store.Dirty("style", r.id)
+        end,
+        function() return ovVis() and NS.IsForever == true end,
+        Options.FOLLOW_RANK_DESC)
     AT.RowDropdown(pg, win, "Aura type",
         function()
             local ov = Options.OverlayOf(SelIcon())
@@ -7134,17 +7175,20 @@ local function BuildIconEditor(parent)
             return Block("Glows", nil, title, section, fields, o)
         end
         Card("When ready", "states", "readyGlow", nil, "Glow when ready", W.ready,
-            { kindOnly = { spell = true, item = true, trinket = true, timer = true, special = true } })
-        -- a totem or an enchant is up or gone: the same glow, worded so
+            { kindOnly = { spell = true, item = true, trinket = true, special = true } })
+        -- a totem or an enchant is up or gone, a Custom Icon active or not:
+        -- the same glows, worded so
         Card("While active", "states", "readyGlow", nil, "Glow while active", W.active,
-            { kindOnly = { totem = true, enchant = true }, noLook = true })
+            { kindOnly = { totem = true, enchant = true, timer = true }, noLook = true })
         -- a totem set to one totem: out, but its buff not on you
         Card("While out of range", "states", "totemRangeGlow", nil, "Glow while out of range", W.range,
             { kindOnly = { totem = true }, noLook = true })
         Card("On proc", "states", "procGlow", nil, "Proc glow", W.proc, {})
         Card("When usable", "states", "usableGlow", nil, "Glow when usable", W.usable, {})
         Card("While on cooldown", "states", "cooldownGlow", nil, "Glow while on cooldown", W.cooldown,
-            { kindOnly = { spell = true, item = true, trinket = true, timer = true, special = true } })
+            { kindOnly = { spell = true, item = true, trinket = true, special = true } })
+        Card("While not active", "states", "cooldownGlow", nil, "Glow while not active", W.inactive,
+            { kindOnly = { timer = true }, noLook = true })
         -- ammo and pet warnings (Drivers\AD_DriverWarn.lua), for the classes
         -- with ammo or a pet
         Card("Warning", "states", "warnGlow", nil, "Warning glow", W.warn, { noLook = true,
@@ -7681,11 +7725,38 @@ local function BuildGroupPane()
         function() return dynAura() and dynOn() end)
     AT.RowDesc(pg, "Icons pack while you play; with this window open each keeps its own cell.", 20, dynCD)
     AT.RowDesc(pg, "On: only the auras that are up show, packed. Off: every aura keeps its cell.", 20, dynAura)
+    -- An aura group packs each grid row or column on its own
+    -- (Drivers\AD_DriverAuraRows.lua): its direction, then Alignment in that
+    -- direction's words, a row Left / Center / Right, a column Up / Center / Down.
+    local auraDyn = function() return dynOn() and dynAura() end
+    SectionRows(pg, "iconGroup", "arrangement", SelGroup, auraDyn, { "dynamicAxis" })
+    AT.RowDropdown(pg, win, "Alignment",
+        function()
+            local g, AR = SelGroup(), NS.DriverAuraRows
+            if not (g and AR) then return "center" end
+            local axis, mode = AR.Pack(g)
+            if axis == "vertical" and mode == "center" then return "center_v" end
+            return mode
+        end,
+        function(v)
+            local g = SelGroup()
+            if g then Store.SetOverride(g, "arrangement", "alignment", v) end
+        end,
+        function()
+            local g, AR = SelGroup(), NS.DriverAuraRows
+            if g and AR and AR.Pack(g) == "vertical" then
+                return { { value = "top", text = "Up" }, { value = "center_v", text = "Center" },
+                    { value = "bottom", text = "Down" } }
+            end
+            return { { value = "left", text = "Left" }, { value = "center", text = "Center" },
+                { value = "right", text = "Right" } }
+        end,
+        auraDyn)
     do
         -- The search walks one sample group per kind, mostly static ones: hand
         -- it the gate without the Dynamic check plus that switch, so "alignment"
         -- is found on any group and the jump flashes the toggle.
-        local row = AlignmentRow(dynOn)
+        local row = AlignmentRow(function() return dynOn() and dynCD() end)
         row._adMeta = { family = "iconGroup", section = "arrangement", field = "alignment",
             def = { label = "Alignment",
                 dep = { field = "dynamicLayout", value = true } },
@@ -7707,6 +7778,7 @@ local function BuildGroupPane()
         for _, f in ipairs(GRID_FIELDS) do list[#list + 1] = f end
         for _, f in ipairs(DYN_FIELDS) do list[#list + 1] = f end
         list[#list + 1] = "alignment"
+        list[#list + 1] = "dynamicAxis"
         AT.Section(pg, nil, { visibleFn = gridVis })
         PushBar(pg, SelGroup, "arrangement", gridVis, list)
     end
@@ -8454,10 +8526,12 @@ local function BuildBarPane()
     -- ranked realms (WoW Forever): resolve by name each feed so the bar
     -- follows the player's known rank; probe-gated, mirrors the icon driver
     AT.RowToggle(pg, "Auto rank",
-        function() local r = SelBar() return r ~= nil and r.driver.autoRank == true end,
+        function() local r = SelBar() return r ~= nil and Store.AutoRankOn(r.driver) end,
         function(v)
             local r = SelBar()
-            if r then r.driver.autoRank = v or nil Store.Dirty("style", r.id) end
+            if not r then return end
+            if v then r.driver.autoRank = nil else r.driver.autoRank = false end
+            Store.Dirty("style", r.id)
         end,
         function()
             local r = SelBar()
@@ -8565,6 +8639,19 @@ local function BuildBarPane()
             if userInput then RefreshBarEdSug(false) end
         end)
     end
+    AT.RowToggle(pg, "Follow my rank",
+        function()
+            local r = SelBar()
+            return r ~= nil and r.driver.followRank ~= false
+        end,
+        function(v)
+            local r = SelBar()
+            if not r then return end
+            if v then r.driver.followRank = nil else r.driver.followRank = false end
+            Store.Dirty("style", r.id)
+        end,
+        function() return barAuraVis() and NS.IsForever == true end,
+        Options.FOLLOW_RANK_DESC)
     AT.RowDropdown(pg, win, "Aura type",
         function() local r = SelBar() return r and (r.driver.auraType or "buff") end,
         function(v)
@@ -11069,7 +11156,11 @@ local function BuildSettingsPane()
             Store.ResetUnloadedShown()
             RefreshAll()
         end,
-        nil, "While this window is open, every layout, group, icon and bar whose load conditions fail on this character is drawn anyway, each with a small \"unloaded\" tag, so you can place and style it. Each one's eye, in the sidebar and on the layout tiles, shows or hides it on its own, and flipping this switch sets them all again. Load conditions stay exactly as they are, and closing the window hides everything unloaded.")
+        nil, "While this window is open, every layout, group, icon and bar whose load conditions fail on this character is drawn anyway, each with a small slashed eye in its corner, so you can place and style it. Each one's eye, in the sidebar and on the layout tiles, shows or hides it on its own, and flipping this switch sets them all again. Load conditions stay exactly as they are, and closing the window hides everything unloaded.")
+    AT.RowToggle(pg, "Mark unloaded items",
+        function() return Store.GetSetting("hideGhostMark") ~= true end,
+        function(v) Store.SetSetting("hideGhostMark", (not v) and true or nil) end,
+        nil, "Unloaded items drawn while this window is open carry a small slashed eye in their corner. Turn this off to draw them without it.")
     -- Every More options fold stays open (UI\AD_EditorTabs.lua).
     AT.RowToggle(pg, "Show every option",
         function() return Store.GetSetting("showEveryOption") == true end,
@@ -12083,6 +12174,7 @@ function Options.Select(selType, id)
     -- an icon's copy too: only an icon pane can keep it (its preview decides)
     if NS.IconScreen and selType ~= "group" and selType ~= "free" then NS.IconScreen.Stop() end
     ui.selType, ui.selId = selType, id
+    if Options.LayoutFollow then Options.LayoutFollow.Sync(Options.LCLayoutId()) end
     -- the import target follows the rail: the layout last opened here
     if selType == "layout" or selType == "free" then
         ui.lastLayoutId = id
@@ -12146,6 +12238,10 @@ RefreshAll = function()
     if S and S.showing and S.page then AT.LayoutPage(S.page) end
 end
 Options.RefreshAll = function() RefreshAll() end
+-- the layout whose Load Conditions page is open, or nil (UI\AD_LayoutFollow.lua)
+function Options.LCLayoutId()
+    return (ui.selType == "layout" and ui.layoutTab == "Load Conditions") and ui.selId or nil
+end
 Options.RefreshPane = RefreshPane
 
 -- Search: the rail's box finds your layouts, groups, icons and bars (by name,
@@ -13063,8 +13159,13 @@ local function Build()
         onResize = function() RefreshAll() end,
     })
     -- Window open = edit mode (drag and Edit chips); closed = click-through again.
-    win:HookScript("OnShow", function() Engine.SetEditMode(true) end)
+    win:HookScript("OnShow", function()
+        Engine.SetEditMode(true)
+        if Options.LayoutFollow then Options.LayoutFollow.Sync(Options.LCLayoutId()) end
+    end)
     win:HookScript("OnHide", function()
+        -- closing the window leaves an open Load Conditions page too
+        if Options.LayoutFollow then Options.LayoutFollow.Sync(nil) end
         -- before edit mode ends: its rebuild must show the real bar and icon again
         if NS.Bars and NS.Bars.PreviewScreenStop then NS.Bars.PreviewScreenStop() end
         if NS.IconScreen then NS.IconScreen.Stop() end

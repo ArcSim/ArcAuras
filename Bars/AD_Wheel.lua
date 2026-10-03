@@ -201,6 +201,13 @@ function WH.DialSlot(d, spot)
     s.sel = s.top:CreateTexture(nil, "OVERLAY")
     s.sel:SetAtlas("Radial_Wheel_Select_Close")
     s.sel:SetPoint("CENTER", s, "CENTER")
+    -- the tracking you are on now: a small cyan check
+    local COL = NS.AT.COL
+    s.check = s.top:CreateTexture(nil, "OVERLAY", nil, 2)
+    s.check:SetAtlas("checkmark-minimal")
+    s.check:SetDesaturated(true)
+    s.check:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
+    s.check:Hide()
     s.label = d.ring:CreateFontString(nil, "OVERLAY")
     s.label:SetFont(STANDARD_TEXT_FONT, 14, "")
     s.label:SetShadowOffset(1, -1)
@@ -289,6 +296,11 @@ function WH.FillDial(d, shown, n, look, names)
             sl.label:SetText(e.name)
             sl.count:SetFont(STANDARD_TEXT_FONT, math.max(8, g.font - 2), "OUTLINE")
             sl.count:SetText("")
+            local cs = g.S(16 * k)
+            sl.check:SetSize(cs, cs)
+            sl.check:ClearAllPoints()
+            sl.check:SetPoint("CENTER", sl, "BOTTOMRIGHT", -g.S(4 * k), g.S(4 * k))
+            sl.check:Hide()
             sl.cd:Clear()
             sl:Show()
             sl.label:SetShown(names)
@@ -345,6 +357,9 @@ function WH.Feed(d, spot)
             s.cd:Clear()
         end
     end
+    -- a tracking spell checked while it is the one you are on
+    local tr = d.tracking
+    s.check:SetShown(e.t == "spell" and tr ~= nil and (tr[e.cast] or tr[e.id] or tr[e.name]) == true)
     if e.t == "item" then
         local CI = C_Item
         local stacks = CI and CI.GetItemMaxStackSizeByID and Plain(CI.GetItemMaxStackSizeByID(e.id))
@@ -362,7 +377,25 @@ function WH.Feed(d, spot)
     end
 end
 
+-- The tracking you are on now, by spell ID and by name: the game's own
+-- tracking list, a plain answer in combat too. Empty when there is none.
+function WH.ActiveTracking()
+    local CM, set = C_Minimap, {}
+    if not (CM and CM.GetNumTrackingTypes and CM.GetTrackingInfo) then return set end
+    local n = Plain(CM.GetNumTrackingTypes())
+    for i = 1, (type(n) == "number" and n or 0) do
+        local info = CM.GetTrackingInfo(i)
+        if type(info) == "table" and Plain(info.active) == true then
+            local sid, nm = Plain(info.spellID), Plain(info.name)
+            if type(sid) == "number" then set[sid] = true end
+            if type(nm) == "string" and nm ~= "" then set[nm] = true end
+        end
+    end
+    return set
+end
+
 function WH.FeedAll(d)
+    d.tracking = WH.ActiveTracking()
     for spot = 1, d.n do
         if d.shown[spot] then WH.Feed(d, spot) end
     end
@@ -407,10 +440,14 @@ function WH.Opened(u)
     u.pointed = nil
     WH.PaintDial(u.dial, nil)
     WH.FeedAll(u.dial)
-    -- the swipes and counts follow the game only while the wheel is up
+    -- the swipes, counts and the tracking check follow the game only while
+    -- the wheel is up
     u.vis:RegisterEvent("SPELL_UPDATE_COOLDOWN")
     u.vis:RegisterEvent("BAG_UPDATE_COOLDOWN")
     u.vis:RegisterEvent("BAG_UPDATE_DELAYED")
+    if not (C_EventUtils and C_EventUtils.IsEventValid) or C_EventUtils.IsEventValid("MINIMAP_UPDATE_TRACKING") then
+        u.vis:RegisterEvent("MINIMAP_UPDATE_TRACKING")
+    end
     u.intro:Play()
 end
 

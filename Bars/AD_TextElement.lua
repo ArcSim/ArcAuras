@@ -80,11 +80,17 @@ function TX.AuraSource(rec)
     return AURA[TX.Source(rec)] == true
 end
 
--- The prefix and suffix rows: every source but a spell's or an aura's own
--- words (typed words keep them, as they always had them).
+-- The prefix and suffix rows: a value this element writes. Never on words of
+-- your own nor on a countdown the game draws (neither shows them); typed words
+-- keep a prefix they already have, so it stays editable.
 function TX.ValueSource(rec)
     local s = TX.Source(rec)
-    return s ~= "spellText" and s ~= "auraText"
+    if s == "spellText" or s == "auraText" or s == "spellCd" or s == "auraTime" then return false end
+    if s == "static" then
+        if not rec.o then return false end
+        return (R(rec, "textel", "prefix") or "") ~= "" or (R(rec, "textel", "suffix") or "") ~= ""
+    end
+    return true
 end
 
 function TX.Words(rec)
@@ -475,7 +481,7 @@ function TX.EffSpell(rec)
     local d = rec.driver
     local sid = tonumber(d.spellID)
     if not (sid and sid > 0) then return nil end
-    if d.autoRank and NS.DriverRange and NS.DriverRange.Resolve then
+    if NS.Store.AutoRankOn(d) and NS.DriverRange and NS.DriverRange.Resolve then
         sid = NS.DriverRange.Resolve(sid) or sid
     end
     if C_Spell and C_Spell.GetOverrideSpell then
@@ -1476,9 +1482,10 @@ end
 
 function TX.PreviewApply(e)
     local v, count = TX.SampleText(e)
-    -- a spell's or an aura's words are written as they are, as they paint live
+    -- a spell's or an aura's words, and the countdowns the game draws, are
+    -- written as they are, as they paint live
     local s = TX.Source(e.rec)
-    if s == "spellText" or s == "auraText" then
+    if s == "spellText" or s == "auraText" or s == "spellCd" or s == "auraTime" then
         e.txFS:SetText(v)
         return
     end

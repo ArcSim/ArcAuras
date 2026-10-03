@@ -154,8 +154,7 @@ end
 
 -- The box: Rows by Columns, a line filled across (Columns long) or down (Rows
 -- long) first, the debuffs' block after the buffs' when both show. The unit's
--- container is pinned where Alignment says and reads away from that pin, as
--- the member rows do (Drivers\AD_DriverAuraGroups.lua ApplyEngineLayout); a
+-- container is pinned where Alignment says and reads away from that pin; a
 -- centred axis keeps its growth direction and grows both ways. A plate row
 -- grows away from the plate's edge instead, from its corner.
 function UA.Plan(g, cfg)

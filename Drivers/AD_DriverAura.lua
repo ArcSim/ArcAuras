@@ -172,11 +172,59 @@ local function SpellIDList(d)
 end
 Driver.SpellIDList = SpellIDList
 
+-- Follow my rank (Forever; on unless driver.followRank is false): ranks are
+-- unrelated IDs that share only a name, so the rank you know of each tracked
+-- spell is watched too. A spell you know no rank of, or a secret answer, adds
+-- nothing. Answers are kept until SPELLS_CHANGED.
+local rankOf = {}   -- [id] = your rank of that spell, false for none
+local function KnownRank(id)
+    local v = rankOf[id]
+    if v ~= nil then return v or nil end
+    local CS = C_Spell
+    if not (CS and CS.GetSpellName and CS.GetSpellIDForSpellIdentifier) then return nil end
+    local nm = CS.GetSpellName(id)
+    if issecretvalue and issecretvalue(nm) then return nil end
+    local top = (type(nm) == "string" and nm ~= "") and CS.GetSpellIDForSpellIdentifier(nm) or nil
+    if issecretvalue and issecretvalue(top) then return nil end
+    if type(top) ~= "number" or top <= 0 then
+        top = false
+    elseif top ~= id then
+        local known = Store.KnowsSpell(top, true)
+        if known == nil then return nil end
+        if not known then top = false end
+    end
+    rankOf[id] = top
+    return top or nil
+end
+Driver.KnownRank = KnownRank
+
+-- The ids the game is asked to watch: the tracked ones, then your rank of
+-- each while the record follows your rank. It only ever adds, so an icon that
+-- lists several ranks keeps them all.
+local function TrackedIDs(d)
+    local ids = SpellIDList(d)
+    if not (NS.IsForever == true and type(d) == "table" and d.followRank ~= false) then return ids end
+    local out, seen = {}, {}
+    for _, id in ipairs(ids) do
+        seen[id] = true
+        out[#out + 1] = id
+    end
+    for _, id in ipairs(ids) do
+        local v = KnownRank(id)
+        if v and not seen[v] then
+            seen[v] = true
+            out[#out + 1] = v
+        end
+    end
+    return out
+end
+Driver.TrackedIDs = TrackedIDs
+
 -- Every tracked id on the one button. No ids gets the never-matching id 0,
 -- never an empty set: a HELPFUL slot with no id filter shows an arbitrary buff.
 local function IncludeMap(d)
     local m = {}
-    for _, id in ipairs(SpellIDList(d)) do m[id] = true end
+    for _, id in ipairs(TrackedIDs(d)) do m[id] = true end
     if next(m) == nil then m[0] = true end
     return m
 end
@@ -263,7 +311,7 @@ local function GlowIDs(rec, slot)
     -- a Missing or Always glow is the holder's, not a button's
     local when = R("activeGlowWhen")
     if when == "missing" or when == "both" then return nil end
-    local ids = SpellIDList(rec.driver)
+    local ids = TrackedIDs(rec.driver)
     local m, n = {}, 0
     local pick = tonumber(R("activeGlowFor")) or 0
     if pick > 0 then
@@ -348,7 +396,7 @@ function Driver.IDsNeverSecret(d)
     if not (C_Secrets and C_Secrets.GetSpellAuraSecrecy and Enum and Enum.SecrecyLevel) then
         return false
     end
-    local ids = SpellIDList(d)
+    local ids = TrackedIDs(d)
     if #ids == 0 then return false end
     for _, id in ipairs(ids) do
         if C_Secrets.GetSpellAuraSecrecy(id) ~= Enum.SecrecyLevel.NeverSecret then
@@ -1074,6 +1122,30 @@ Events.On("PLAYER_REGEN_ENABLED", "adaura", OnSettleEdge)
 Events.On("PLAYER_ENTERING_WORLD", "adaura", OnSettleEdge)
 Events.On("PLAYER_LOGIN", "adaura_lw", function()
     loadWindowOver = true
+end)
+-- Follow my rank: a rank learned (or the spellbook loaded) sends a record's
+-- filters again when the ids it follows changed: aura icons, the aura on a
+-- spell icon, and aura, text and texture bars. The send waits out combat.
+local followSig = {}   -- [record id] = the followed ids last seen
+local FOLLOW_BARS = { aura = true, text = true, texture = true }
+OnIfValid("SPELLS_CHANGED", "adaura_rank", function()
+    wipe(rankOf)
+    if NS.IsForever ~= true then return end
+    Store.EachRecord(function(id, rec)
+        local d
+        if rec.type == "icon" then
+            d = ShapeFor(rec)
+        elseif rec.type == "bar" and FOLLOW_BARS[rec.barKind] then
+            d = rec.driver
+        end
+        if d and d.followRank ~= false then
+            local sig = table.concat(TrackedIDs(d), ",")
+            if followSig[id] ~= sig then
+                followSig[id] = sig
+                Store.Dirty("style", id)
+            end
+        end
+    end)
 end)
 -- the engine's visibility pass (conditions -> alpha) fires this after every
 -- paint: mirror the holders' effective alpha onto the containers

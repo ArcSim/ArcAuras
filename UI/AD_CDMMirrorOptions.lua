@@ -1,11 +1,11 @@
--- AD_CDMMirrorOptions: the "From my Cooldown Manager" card on the New Layout page.
+-- AD_CDMMirrorOptions: the "From Cooldown Manager" card on the New Layout page.
 -- Core\AD_CDMMirror.lua reads and builds; this file only offers it, through NL.AddOwnCard.
 local ADDON, NS = ...
 
 local MO = {}
 NS.CDMMirrorOptions = MO
 
-MO.TITLE = "From my Cooldown Manager"
+MO.TITLE = "From Cooldown Manager"
 MO.DESC = "Your Cooldown Manager's bars as groups: same spells, sizes and places. Then hide its bars in Edit Mode."
 MO.SAY = {
     empty = "Your Cooldown Manager shows no spells yet.",
@@ -36,16 +36,47 @@ function MO.Rows()
     return rows
 end
 
--- The card reads the Cooldown Manager as the window builds: its picture is the
--- player's own bars, and its line says why when there is nothing to build.
+-- The card reads the Cooldown Manager as the window builds: its line says why
+-- when there is nothing to build. The picture is fixed (a player's own bars,
+-- often one or two icons, scaled up into blocks).
 function MO.Draw(stage)
     local rows, why = MO.Rows()
     MO.entry.desc = rows and MO.DESC or MO.SAY[why] or MO.DESC
-    if rows then
-        NS.NewLayout.DrawRows(stage, rows)
-    else
-        NS.NewLayout.DrawEmpty(stage)
+    MO.DrawGlyph(stage)
+end
+
+-- The Cooldown Manager's rows in grey, an arrow, and the same rows as our
+-- coloured groups: two rows each, four large squares over five small.
+MO.GLYPH_ROWS = { { n = 4, size = 12 }, { n = 5, size = 9 } }
+MO.GLYPH_X = { from = 36, arrow = 80, to = 124 }
+
+function MO.DrawGlyph(stage)
+    local AT = NS.AT
+    local COL = AT.COL
+    local GC = NS.Options and NS.Options.GROUP_COLORS or {}
+    local function Rows(cx, top, bottom)
+        local y = 18
+        for i, r in ipairs(MO.GLYPH_ROWS) do
+            local c = (i == 1) and top or bottom
+            local w = r.n * r.size + (r.n - 1) * 2
+            local x0 = math.floor(cx - w / 2)
+            for k = 1, r.n do
+                local t = stage:CreateTexture(nil, "ARTWORK")
+                t:SetColorTexture(c[1], c[2], c[3], 0.9)
+                t:SetSize(r.size, r.size)
+                t:SetPoint("TOPLEFT", stage, "TOPLEFT", x0 + (k - 1) * (r.size + 2), -y)
+            end
+            y = y + r.size + 3
+        end
     end
+    Rows(MO.GLYPH_X.from, COL.dim, COL.dim)
+    Rows(MO.GLYPH_X.to, GC.cooldown or COL.arc, GC.aura or COL.arc)
+    local head = AT.MakeChevron(stage)
+    head:SetDir("right")
+    head:SetColor(COL.arc)
+    head:SetScale(2)
+    -- its offsets are in its own scale
+    head:SetPoint("CENTER", stage, "TOPLEFT", MO.GLYPH_X.arrow / 2, -30 / 2)
 end
 
 -- A card's own line carries a failed click's reason: nothing prints to chat.

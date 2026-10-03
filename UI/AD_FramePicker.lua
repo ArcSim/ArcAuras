@@ -1,7 +1,8 @@
 -- AD_FramePicker: Pick Frame for the anchor rows: hover any frame on screen, a game frame or an Arc Auras item, and click it to anchor to it.
--- Owns pick mode (a click catcher, a readout on the cursor, a box on the frame) and the common-frames list;
+-- Owns pick mode (a click catcher, a readout on the cursor, a box on the frame), the common-frames list and a spell pin's Spell row;
 -- Options.AnchorPickRows calls FramePickRows. Pick mode runs out of combat only and offers what Anchor.FrameProblem
--- passes, plus the Arc Auras items Anchor.PickFrames maps for the record being edited.
+-- passes, the Arc Auras items Anchor.PickFrames maps for the record being edited, and for a bar the action buttons and
+-- Cooldown Manager icons that hold a spell (Core\AD_SpellAnchor.lua PickMap).
 local ADDON, NS = ...
 
 local FP = {}
@@ -49,6 +50,32 @@ FP.WHY_TEXT = {
     none = "No named frame here",
 }
 FP.HINT = "Click to pick   Right-click or Esc: cancel"
+-- an action button: its spell wherever it moves, or this one button
+FP.BUTTON_HINT = "Click: follow the spell   Shift-click: this button   Esc: cancel"
+FP.ICON_HINT = "Click: follow this spell's icon   Right-click or Esc: cancel"
+
+-- Typed words to the spell ids a spell pin keeps: numbers as they are, a link
+-- or a spell's name through the spell parser. nil when nothing reads as a spell.
+function FP.SpellSpec(text)
+    text = tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if text == "" then return "" end
+    local ids, seen = {}, {}
+    if text:find("^[%d%s,]+$") then
+        for n in text:gmatch("%d+") do
+            local v = tonumber(n)
+            if v and v > 0 and not seen[v] then
+                seen[v] = true
+                ids[#ids + 1] = v
+            end
+        end
+    else
+        local CO = NS.Options and NS.Options.Custom
+        local id = CO and CO.ParseSpell and CO.ParseSpell(text)
+        if id then ids[1] = id end
+    end
+    if #ids == 0 then return nil end
+    return table.concat(ids, ", ")
+end
 
 function FP.IsCommon(name)
     for _, c in ipairs(FP.COMMON) do
@@ -87,10 +114,11 @@ end
 
 -- From one frame under the cursor up its parents: the first frame with a
 -- global name that anchoring can use, as name, frame; the first Arc Auras
--- item in `items` (Anchor.PickFrames), as nil, frame, nil, item; else nil,
--- nil, why the walk stopped. A forbidden frame answers nothing but
--- IsForbidden, so that is asked first, and every other read can be secret.
-function FP.Walk(f, items)
+-- item in `items` (Anchor.PickFrames) or action button / Cooldown Manager icon
+-- in `spells`, as nil, frame, nil, item; else nil, nil, why the walk stopped.
+-- A forbidden frame answers nothing but IsForbidden, so that is asked first,
+-- and every other read can be secret.
+function FP.Walk(f, items, spells)
     local A = NS.Anchor
     local depth = 0
     while f ~= nil and depth < FP.MAX_DEPTH do
@@ -105,6 +133,8 @@ function FP.Walk(f, items)
             if item.value then return nil, f, nil, item end
             return nil, nil, item.why
         end
+        local sp = spells and spells[f]
+        if sp then return nil, f, nil, sp end
         local name = f.GetName and f:GetName()
         if Secret(name) then name = nil end
         local own = FP.OwnKind(name)
@@ -139,10 +169,10 @@ end
 -- The first pickable frame under the cursor: name, frame (a game frame), nil,
 -- frame, nil, item (an Arc Auras item), or nil, nil, why. The catcher is
 -- always the top one; being unnamed under UIParent, its walk yields nothing.
-function FP.Resolve(foci, items)
+function FP.Resolve(foci, items, spells)
     local why
     for _, f in ipairs(foci or {}) do
-        local name, frame, w, item = FP.Walk(f, items)
+        local name, frame, w, item = FP.Walk(f, items, spells)
         if name or item then return name, frame, nil, item end
         why = why or w
     end
@@ -239,7 +269,7 @@ end
 
 -- Looks under the cursor, then shows the name (or why not) and boxes the frame.
 function FP.Refresh()
-    local name, frame, why, item = FP.Resolve(FP.Foci(), FP.items)
+    local name, frame, why, item = FP.Resolve(FP.Foci(), FP.items, FP.spells)
     FP.name, FP.frame, FP.item = name, frame, item
     local r, b = FP.readout, FP.box
     if r then
@@ -251,6 +281,13 @@ function FP.Refresh()
             r.name:SetText(FP.WHY_TEXT[why or "none"] or FP.WHY_TEXT.none)
             r.name:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
         end
+        -- a spell pin says what a click and a Shift-click take
+        local hint = FP.HINT
+        if item and item.spec then
+            hint = (item.value == "action" and item.frameName) and FP.BUTTON_HINT
+                or (item.value == "cdm" and FP.ICON_HINT) or FP.HINT
+        end
+        r.hint:SetText(hint)
         r:SetWidth(math.ceil(math.max(TextW(r.name), TextW(r.hint))) + 18)
     end
     if b then
@@ -278,7 +315,8 @@ function FP.Tick(_, elapsed)
 end
 
 -- Left-click takes what is under the cursor (nothing pickable: keep looking);
--- right-click cancels.
+-- right-click cancels. Shift on an action button takes that button by its
+-- name instead of the spell it holds.
 function FP.Click(button)
     if button == "RightButton" then
         FP.Stop()
@@ -288,8 +326,28 @@ function FP.Click(button)
     FP.Refresh()
     local name, item, onPick = FP.name, FP.item, FP.onPick
     if not (name or item) then return end
+    if item and item.spec and item.frameName and IsShiftKeyDown and IsShiftKeyDown() then
+        name, item = item.frameName, nil
+    end
     FP.Stop()
     if onPick then onPick(name, item) end
+end
+
+-- The action buttons and Cooldown Manager icons a pick may offer rec: the
+-- spell kinds its family allows, each as a pick ({ value, spec, text,
+-- frameName }); nil when it allows none.
+function FP.SpellPicks(rec)
+    local A, SA = NS.Anchor, NS.SpellAnchor
+    if not (rec and A and SA and SA.PickMap) then return nil end
+    local action, cdm = A.Allows(rec, "action"), A.Allows(rec, "cdm")
+    if not (action or cdm) then return nil end
+    local out = {}
+    for f, it in pairs(SA.PickMap()) do
+        if (it.kind == "action" and action) or (it.kind == "cdm" and cdm) then
+            out[f] = { value = it.kind, spec = tostring(it.id), text = it.text, frameName = it.frameName }
+        end
+    end
+    return out
 end
 
 -- Starts pick mode; onPick(name) runs on a game frame's pick, onPick(nil,
@@ -307,6 +365,7 @@ function FP.Start(onPick, rec)
     -- the items are mapped once: pick mode is short, and a rebuild while it
     -- runs only leaves a stale frame that is no longer under the cursor
     FP.items = (rec and NS.Anchor and NS.Anchor.PickFrames) and NS.Anchor.PickFrames(rec) or nil
+    FP.spells = FP.SpellPicks(rec)
     FP.active = true
     FP.acc, FP.lastX, FP.lastY = 0, nil, nil
     if c.SetPropagateKeyboardInput then c:SetPropagateKeyboardInput(true) end
@@ -323,7 +382,7 @@ end
 function FP.Stop()
     if not FP.active then return end
     FP.active = false
-    FP.onPick, FP.name, FP.frame, FP.item, FP.items = nil, nil, nil, nil, nil
+    FP.onPick, FP.name, FP.frame, FP.item, FP.items, FP.spells = nil, nil, nil, nil, nil, nil
     if NS.Events then NS.Events.Off("PLAYER_REGEN_DISABLED", "adpick") end
     local c = FP.catcher
     if c then
@@ -352,6 +411,23 @@ function Options.FramePickRows(pg, ctx, vis, owner, pickVis)
             Store.SetOverride(r, "anchor", "anchorTargetFrame", name)
         end
     end
+    -- a spell pin (an action bar button or a Cooldown Manager icon): its
+    -- spell, kept as ids in the anchor's frame field
+    local spellVis = function()
+        return (pickVis or vis)() and NS.Anchor ~= nil and NS.Anchor.IsSpellPick(ctx())
+    end
+    AT.RowInput(pg, "Anchor spell",
+        function()
+            local r = ctx()
+            return r and (Store.Resolve(r, "anchor", "anchorTargetFrame") or "") or ""
+        end,
+        function(v)
+            local r, spec = ctx(), FP.SpellSpec(v)
+            if r and spec then Store.SetOverride(r, "anchor", "anchorTargetFrame", spec) end
+        end,
+        spellVis,
+        "The spell whose button or icon it rides: a spell ID, a link or the name of a spell you know. Several ranks' IDs may be listed. Enter applies it.",
+        "e.g. 17364")
     AT.RowDropdown(pg, owner, "Common frames",
         function()
             local r = ctx()
@@ -371,6 +447,7 @@ function Options.FramePickRows(pg, ctx, vis, owner, pickVis)
             if not (A and rec) then return end
             if item then
                 A.PickSet(rec, item.value)
+                if item.spec then Store.SetOverride(rec, "anchor", "anchorTargetFrame", item.spec) end
             else
                 A.PickSet(rec, "frame")
                 SetName(rec, name)
@@ -383,7 +460,7 @@ function Options.FramePickRows(pg, ctx, vis, owner, pickVis)
         end
     end, pickVis or vis, 110, "Pick it on screen")
     AT.Tooltip(row.button, "Pick Frame",
-        "Hover a game frame or one of your Arc Auras items and left-click it to anchor to it. Right-click or Esc cancels.")
+        "Hover a game frame, one of your Arc Auras items, or for a bar an action button or Cooldown Manager icon, and left-click it. A button is followed by its spell; Shift-click keeps that one button. Right-click or Esc cancels.")
     -- pick mode ends with the page that started it
     pg:HookScript("OnHide", function() FP.Stop() end)
 end

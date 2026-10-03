@@ -43,7 +43,7 @@ function TP.EffSpell(rec)
     local d = rec.driver
     local sid = tonumber(d.spellID)
     if not (sid and sid > 0) then return nil end
-    if d.autoRank and NS.DriverRange and NS.DriverRange.Resolve then
+    if NS.Store.AutoRankOn(d) and NS.DriverRange and NS.DriverRange.Resolve then
         sid = NS.DriverRange.Resolve(sid) or sid
     end
     if C_Spell and C_Spell.GetOverrideSpell then

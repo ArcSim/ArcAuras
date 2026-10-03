@@ -583,7 +583,7 @@ Feed = function(a)
     -- Auto rank (ranked realms): GetSpellIDForSpellIdentifier(name) gives the
     -- rank the player knows, and SPELLS_CHANGED re-feeds when one is learned.
     -- The spell's own name is used (cached per id), not the record's.
-    if a.rec.driver.autoRank and C_Spell.GetSpellIDForSpellIdentifier then
+    if Store.AutoRankOn(a.rec.driver) and C_Spell.GetSpellIDForSpellIdentifier then
         if a.nameForSid ~= sid and C_Spell.GetSpellName then
             local nm = C_Spell.GetSpellName(sid)
             if nm and nm ~= "" then a.nameForSid, a.spellName = sid, nm end

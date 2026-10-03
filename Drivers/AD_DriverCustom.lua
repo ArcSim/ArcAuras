@@ -267,15 +267,28 @@ end
 
 function CU.WatchKey(sid) return CU.WATCH_PREFIX .. tostring(sid) end
 
+-- The spec you play, plain on retail. WoW Forever has none, so a rule kept to
+-- a spec holds back there.
+function CU.SpecID()
+    if NS.IsForever == true or not Store.CurSpecID then return nil end
+    return Store.CurSpecID()
+end
+
 -- Every guard reads a plain value of our own or of the talent catalog; a guard
 -- that cannot be read holds the rule back.
 function CU.Guard(st, r)
     if r.combat == "in" and not CU.inCombat then return false end
     if r.combat == "out" and CU.inCombat then return false end
+    -- a talent taken, as Load Conditions read it: a choice node names its
+    -- option (talentEntry), and talentNot asks the reverse
     if r.talent then
         local T = NS.TalentCatalog
-        if not (T and T.IsTaken(r.talent)) then return false end
+        if not T then return false end
+        local met = T.IsTaken(r.talent) == true
+        if met and r.talentEntry then met = T.ActiveEntry ~= nil and T.ActiveEntry(r.talent) == r.talentEntry end
+        if met == (r.talentNot == true) then return false end
     end
+    if r.spec and CU.SpecID() ~= r.spec then return false end
     if r.spellReady then
         local RM = NS.Reminders
         if not (RM and RM.WatchReady and RM.WatchReady(CU.WatchKey(r.spellReady))) then return false end
@@ -882,6 +895,11 @@ function CU.SetRule(rec, i, field, value)
         if value ~= "chain" then r.srcId = nil end
     end
     if field == "withinRule" and value == nil then r.withinSecs = nil end
+    -- a choice belongs to its talent; no talent, no reverse
+    if field == "talent" then
+        r.talentEntry = nil
+        if value == nil then r.talentNot = nil end
+    end
     Store.Dirty("style", rec.id)
     return true
 end

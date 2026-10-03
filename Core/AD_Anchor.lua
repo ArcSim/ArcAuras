@@ -1,9 +1,9 @@
 -- Anchoring: bars, groups and free icons pin to a group, bar, free icon, layout,
--- named frame or the cursor, and bars to the target's nameplate. An `anchor` section must use
--- these fields: anchorEnabled, anchorTargetKind/Id/Frame, anchorSrcPoint,
--- anchorDstPoint, anchorOffsetX/Y, anchorMatchWidth, anchorMatchWidthAdjust
--- (bars also anchorMatchHeight, anchorMatchHeightAdjust). The values of a family's
--- anchorTargetKind are the kinds its records may pick, here and in the panel.
+-- named frame or the cursor; bars also to the target's nameplate, or by spell to
+-- an action button or Cooldown Manager icon (Core\AD_SpellAnchor.lua).
+-- An `anchor` section uses only: anchorEnabled, anchorTargetKind/Id/Frame,
+-- anchorSrcPoint/DstPoint, anchorOffsetX/Y, anchorMatchWidth(Adjust), bars also
+-- anchorMatchHeight(Adjust). A family's anchorTargetKind values are what it may pick.
 
 local ADDON, NS = ...
 local Store = NS.Store
@@ -25,7 +25,11 @@ local function R(rec, field)
 end
 
 -- the kinds that name no record: nothing to look up by id
-local NO_ID = { frame = true, nameplate = true, mouse = true }
+local NO_ID = { frame = true, nameplate = true, mouse = true, action = true, cdm = true }
+-- the kinds found by spell, whose spell ids sit in anchorTargetFrame
+local SPELL_KIND = { action = true, cdm = true }
+-- the kinds whose target is one of the game's frames: nothing of ours hooks it
+local GAME_TARGET = { frame = true, action = true, cdm = true }
 
 -- May this record pick that target kind? Its family's schema list answers, so
 -- the pick list, the setter and the pin can never disagree.
@@ -73,6 +77,10 @@ local function IsMouseKind(rec)
     return (R(rec, "anchorTargetKind") or "group") == "mouse"
 end
 
+local function IsSpellKind(rec)
+    return SPELL_KIND[R(rec, "anchorTargetKind") or "group"] == true
+end
+
 -- a plain number, or nil when the game keeps it secret
 local function Plain(v)
     if v == nil or (issecretvalue and issecretvalue(v)) then return nil end
@@ -84,6 +92,11 @@ end
 local editModeCheck
 function Anchor.SetEditModeCheck(fn) editModeCheck = fn end
 local function Editing() return editModeCheck ~= nil and editModeCheck() == true end
+
+-- The engine's free placement (registered too), for a spell pin whose target
+-- leaves the screen between two rebuilds: the frame goes back to its own spot.
+local freePlacer
+function Anchor.SetFreePlacer(fn) freePlacer = fn end
 
 -- the nameplate the current target wears (a forbidden one is never ours)
 function Anchor.TargetPlate()
@@ -280,6 +293,11 @@ function Anchor.ResolveTarget(rec)
     end
     if kind == "nameplate" then return Anchor.TargetPlate() end
     if kind == "mouse" then return EnsureMouseProxy() end
+    -- the button or icon holding the spell now; nil while none is on screen
+    if SPELL_KIND[kind] then
+        local SA = NS.SpellAnchor
+        return SA and SA.Resolve(kind, R(rec, "anchorTargetFrame")) or nil
+    end
 
     local tid = R(rec, "anchorTargetId") or 0
     if tid == 0 or tid == rec.id then return nil end
@@ -310,6 +328,8 @@ function Anchor.Register(rec, frame)
             if r and Anchor.IsEnabled(r) and IsMouseKind(r) and not Editing() then
                 Anchor.Apply(r, self)
             end
+            -- a spell pin shown later (a load condition) finds its button now
+            if r and Anchor.IsEnabled(r) and IsSpellKind(r) then Anchor.PlaceSpellPin(r, self) end
         end)
     end
 end
@@ -474,6 +494,26 @@ local function FollowSize(rec, target)
     set[rec.id] = true
 end
 
+-- A spell pin draws over the button or icon it rides: the target's strata when
+-- that is higher (not while the options window is open, which holds displays at
+-- MEDIUM), and a level above the target's own layers.
+local STRATA_RANK = { BACKGROUND = 1, LOW = 2, MEDIUM = 3, HIGH = 4, DIALOG = 5, FULLSCREEN = 6,
+    FULLSCREEN_DIALOG = 7, TOOLTIP = 8 }
+Anchor.ABOVE_TARGET = 10
+local function RaiseOver(frame, target)
+    local ts = Plain(target:GetFrameStrata())
+    local fs = frame:GetFrameStrata()
+    if ts and not Editing() and (STRATA_RANK[ts] or 0) > (STRATA_RANK[fs] or 0) then
+        frame:SetFrameStrata(ts)
+        fs = ts
+    end
+    local tl = Plain(target:GetFrameLevel())
+    if ts == fs and type(tl) == "number" then
+        local want = math.min(9000, tl + Anchor.ABOVE_TARGET)
+        if (frame:GetFrameLevel() or 0) < want then frame:SetFrameLevel(want) end
+    end
+end
+
 -- Places one source. Returns true when it anchored, false when the caller
 -- should fall back to its own free placement.
 function Anchor.Apply(rec, frame)
@@ -506,12 +546,48 @@ function Anchor.Apply(rec, frame)
         R(rec, "anchorDstPoint") or DEFAULT_DST,
         R(rec, "anchorOffsetX") or 0,
         R(rec, "anchorOffsetY") or 0)
+    local kind = R(rec, "anchorTargetKind") or "group"
+    if SPELL_KIND[kind] then RaiseOver(frame, target) end
     if R(rec, "anchorMatchWidth") == true or R(rec, "anchorMatchHeight") == true then
         MatchSize(rec, frame, target)
-        if (R(rec, "anchorTargetKind") or "group") ~= "frame" then FollowSize(rec, target) end
+        if not GAME_TARGET[kind] then FollowSize(rec, target) end
     end
     SnapAnchored(rec, frame, target)
     return true
+end
+
+-- A spell pin, placed: on its target, else back at its own spot.
+function Anchor.PlaceSpellPin(rec, frame)
+    if Anchor.Apply(rec, frame) then return true end
+    if freePlacer then freePlacer(rec, frame) end
+    return false
+end
+
+-- Every shown bar that rides a spell's button or icon looks again
+-- (Core\AD_SpellAnchor.lua asks after a bar or Cooldown Manager change).
+function Anchor.ReapplySpellPins()
+    for id, frame in pairs(sources) do
+        local rec = Store.Get(id)
+        if rec and frame:IsShown() and Anchor.IsEnabled(rec) and IsSpellKind(rec) then
+            Anchor.PlaceSpellPin(rec, frame)
+        end
+    end
+end
+
+-- The spell finder's events and hooks follow the pins that exist.
+function Anchor.SyncSpellPins()
+    local SA = NS.SpellAnchor
+    if not (SA and SA.Sync) then return end
+    local wantAction, wantCDM = false, false
+    for id in pairs(sources) do
+        local rec = Store.Get(id)
+        if rec and Anchor.IsEnabled(rec) then
+            local kind = R(rec, "anchorTargetKind") or "group"
+            if kind == "action" then wantAction = true end
+            if kind == "cdm" then wantCDM = true end
+        end
+    end
+    SA.Sync(wantAction, wantCDM)
 end
 
 -- Post-pass, run once the engine has built every frame and registered each
@@ -526,11 +602,13 @@ function Anchor.ApplyAll()
         done[id] = true
         local rec = Store.Get(id)
         if not (rec and frame.IsShown and frame:IsShown()) then return end
-        local tid = Anchor.IsEnabled(rec) and R(rec, "anchorTargetId")
+        local tid = Anchor.IsEnabled(rec) and not NO_ID[R(rec, "anchorTargetKind") or "group"]
+            and R(rec, "anchorTargetId")
         if tid and sources[tid] then Place(tid, sources[tid]) end
         Anchor.Apply(rec, frame)
     end
     for id, frame in pairs(sources) do Place(id, frame) end
+    Anchor.SyncSpellPins()
 end
 
 -- Drag support: dragging an anchored thing edits its offsets, never its free
@@ -613,6 +691,8 @@ local PICK_ORDER = { "group", "bar", "icon", "layout" }
 local SPECIAL_PICKS = {
     { value = "nameplate", text = "Target's nameplate" },
     { value = "mouse", text = "Mouse cursor" },
+    { value = "action", text = "Action bar button (by spell)" },
+    { value = "cdm", text = "Cooldown Manager icon (by spell)" },
 }
 
 -- everything this record may legally anchor to, in one flat list
@@ -641,7 +721,7 @@ end
 function Anchor.PickGet(rec)
     if not (rec and Anchor.IsEnabled(rec)) then return "none" end
     local kind = R(rec, "anchorTargetKind") or "group"
-    if kind == "frame" or kind == "nameplate" or kind == "mouse" then return kind end
+    if NO_ID[kind] then return kind end
     local id = R(rec, "anchorTargetId") or 0
     if id == 0 then return "none" end
     return kind .. ":" .. id
@@ -656,6 +736,12 @@ function Anchor.PickSet(rec, v)
     end
     if NO_ID[v] then
         if not Anchor.Allows(rec, v) then return end
+        -- a frame name and a spell list share anchorTargetFrame: a switch
+        -- between those kinds starts it empty
+        local old = R(rec, "anchorTargetKind") or "group"
+        if old ~= v and GAME_TARGET[old] and GAME_TARGET[v] then
+            Store.SetOverride(rec, "anchor", "anchorTargetFrame", "")
+        end
         Store.SetOverride(rec, "anchor", "anchorEnabled", true)
         Store.SetOverride(rec, "anchor", "anchorTargetKind", v)
         return
@@ -709,6 +795,10 @@ function Anchor.IsMousePick(rec)
     return rec ~= nil and Anchor.IsEnabled(rec) and IsMouseKind(rec)
 end
 
+function Anchor.IsSpellPick(rec)
+    return rec ~= nil and Anchor.IsEnabled(rec) and IsSpellKind(rec)
+end
+
 -- Everything anchored to this record, sorted by name. Ids are unique across
 -- record types, so the target id alone identifies the link.
 function Anchor.DependentsOf(rec)
@@ -744,6 +834,23 @@ function Anchor.DescribePick(rec)
             return "Follows your mouse cursor while you play. While this window is open it sits at its own spot; set where it sits next to the cursor with My point and the offsets."
         end
         return "Follows your mouse cursor."
+    end
+    if Anchor.IsSpellPick(rec) then
+        local SA = NS.SpellAnchor
+        local p = SA and SA.Parse(R(rec, "anchorTargetFrame"))
+        if not p then return "No spell entered yet, so it stays at its own spot." end
+        local nm = SA.NameOf(p.list[1]) or ("spell " .. p.list[1])
+        local t = Anchor.ResolveTarget(rec)
+        if R(rec, "anchorTargetKind") == "action" then
+            if t then
+                local n = t.GetName and t:GetName()
+                if Secret(n) or type(n) ~= "string" then n = nil end
+                return "On the action button holding " .. nm .. (n and (" (" .. n .. ")") or "") .. "."
+            end
+            return nm .. " is not on a shown action button now, so it stays at its own spot."
+        end
+        if t then return "On the Cooldown Manager icon for " .. nm .. "." end
+        return nm .. " is not in your Cooldown Manager now, so it stays at its own spot."
     end
     if Anchor.IsFramePick(rec) then
         local n = R(rec, "anchorTargetFrame")

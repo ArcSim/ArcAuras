@@ -79,30 +79,41 @@ end
 -- above the top-left corner (the Edit chip owns the bottom edge); dy lifts it
 -- clear of a group's border. Re-anchored every call: frames are pooled.
 local function GhostTag(f, rec, dy)
-    local on = editMode and not Store.IsLoaded(rec)
+    local on = editMode and not Store.IsLoaded(rec) and Store.GetSetting("hideGhostMark") ~= true
     local tag = f._adGhostTag
     if not on then
         if tag then tag:Hide() end
         return
     end
     if not tag then
+        -- the sidebar's slashed eye, small and amber, on a dark square
         tag = CreateFrame("Frame", nil, f)
-        tag:SetSize(50, 11)
+        tag:SetSize(14, 14)
         tag.bg = tag:CreateTexture(nil, "BACKGROUND")
         tag.bg:SetAllPoints()
         tag.bg:SetColorTexture(0, 0, 0, 0.75)
-        tag.fs = tag:CreateFontString(nil, "OVERLAY")
-        tag.fs:SetFont(STANDARD_TEXT_FONT, 8, "")
-        tag.fs:SetPoint("CENTER", 0, 0)
-        tag.fs:SetTextColor(0.95, 0.76, 0.31)
-        tag.fs:SetText("unloaded")
+        tag.eye = tag:CreateTexture(nil, "OVERLAY")
+        tag.eye:SetSize(12, 12)
+        tag.eye:SetPoint("CENTER", 0, 0)
+        tag.eye:SetTexture(Engine.GHOST_TEX)
+        tag.eye:SetVertexColor(0.95, 0.76, 0.31, 1)
         f._adGhostTag = tag
     end
     tag:ClearAllPoints()
-    tag:SetPoint("BOTTOMLEFT", f, "TOPLEFT", 0, dy or 1)
+    if dy then
+        -- a group or layout: just above its corner, clear of its border
+        tag:SetPoint("BOTTOMLEFT", f, "TOPLEFT", 0, dy)
+    elseif rec.type == "bar" then
+        -- a bar: inside its left end, centred on a thin bar too
+        tag:SetPoint("LEFT", f, "LEFT", 1, 0)
+    else
+        -- an icon: inside its own corner, so a grid of them never stacks
+        tag:SetPoint("TOPLEFT", f, "TOPLEFT", 1, -1)
+    end
     tag:SetFrameLevel(f:GetFrameLevel() + 101)
     tag:Show()
 end
+Engine.GHOST_TEX = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\AD_EyeOff"
 
 -- While the panel is open, chrome goes to HIGH and no display sits above
 -- MEDIUM: a bar anchored to a group's top covers its name tab, and one set
@@ -116,6 +127,19 @@ local function EditStrata(want)
     if not editMode then return want end
     if (STRATA_RANK[want] or 3) > STRATA_RANK.MEDIUM then return "MEDIUM" end
     return want
+end
+
+-- A bar riding a spell's action button or Cooldown Manager icon goes back to
+-- its own spot, strata and level when that target leaves the screen between
+-- two rebuilds (Core\AD_Anchor.lua calls it).
+if NS.Anchor and NS.Anchor.SetFreePlacer then
+    NS.Anchor.SetFreePlacer(function(rec, f)
+        local c = f:GetParent()
+        if not (c and rec.pos) then return end
+        f:SetFrameStrata(EditStrata(Store.Resolve(rec, "frame", "strata")))
+        f:SetFrameLevel(Store.Resolve(rec, "frame", "level") or 10)
+        SnapPlacement(f, c, rec.pos.x or 0, rec.pos.y or 0)
+    end)
 end
 
 -- An icon's own size: the group's slot unless Use group scale is off; a free
@@ -1865,11 +1889,9 @@ function Engine.SetEditMode(on)
     -- First-come order resets on every panel open and close, so a closed panel
     -- builds the dynamic layout from the grid, not the last fight's arrivals.
     wipe(fcfsOrders)
+    -- the rebuild also hands Dynamic aura groups between the grid and their
+    -- pieces (Drivers\AD_DriverAuraRows.lua claims them in play only)
     Engine.QueueRebuild()
-    -- Aura groups switch between holders and engine rows here too.
-    if NS.DriverAuraGroups and NS.DriverAuraGroups.QueueSync then
-        NS.DriverAuraGroups.QueueSync()
-    end
 end
 
 function Engine.IsEditMode() return editMode end

@@ -66,6 +66,7 @@ local function CreditProc(snapDeck)
         elemDeckProcs = elemDeckProcs + 1
     end
     snap.procCredited = true
+    SP.Proc("elemtempest")
     SP.Update("elemtempest")
 end
 

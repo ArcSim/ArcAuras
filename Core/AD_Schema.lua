@@ -336,6 +336,8 @@ Schema.icon = {
         cooldownAlpha = { d = 1.0, dk = { groupbuff = 0 }, t = "num", min = 0, max = 1, kinds = CDGB,
             label = "On cooldown alpha" },
         cooldownDesaturate = { d = true, t = "bool", kinds = CDGB, label = "Desaturate on cooldown" },
+        -- A Custom Icon's Active look is the ready bucket: it can grey out too.
+        readyDesaturate = { d = false, t = "bool", kinds = { timer = true }, label = "Grey out while active" },
         -- On: duration, stack and label texts stay bright while the icon dims.
         -- Off: they follow the state alpha.
         preserveDurationText = { d = true, t = "bool", label = "Keep texts bright while dimmed" },
@@ -1277,6 +1279,15 @@ Schema.iconGroup = {
         -- off keeps a static grid. The other dynamic fields are cooldown-only.
         dynamicLayout = { inherit = false, d = false, t = "bool", label = "Dynamic: compact icons",
             desc = "Icons pack together while you play." },
+        -- A Dynamic aura group's direction (Drivers\AD_DriverAuraRows.lua):
+        -- Horizontal packs each grid row sideways (Left / Center / Right),
+        -- Vertical each column (Up / Center / Down). The alignment value is
+        -- read per direction (AR.Pack).
+        dynamicAxis = { inherit = false, d = "horizontal", t = "enum", kinds = GK_AU,
+            values = { "horizontal", "vertical" },
+            labels = { horizontal = "Horizontal", vertical = "Vertical" },
+            label = "Pack direction",
+            desc = "Horizontal packs each row sideways; Vertical packs each column up or down." },
         -- Shape-aware: one row offers left/center/right, one column
         -- top/center/bottom, a grid six gravity modes. Remapped per shape at
         -- read time (LayoutEngine.EffectiveAlignment); hidden, since a bespoke
@@ -2446,10 +2457,14 @@ Schema.bar = {
     -- anchorable family: don't rename them here or add a second set.
     anchor = { fields = {
         anchorEnabled = { d = false, t = "bool", hidden = true, label = "Anchor this bar" },
-        -- "nameplate" is the current target's nameplate (bars only).
-        anchorTargetKind = { d = "group", t = "enum", values = { "group", "bar", "icon", "layout", "frame", "nameplate", "mouse" },
+        -- "nameplate" is the current target's nameplate; "action" / "cdm" the
+        -- action bar button or Cooldown Manager icon holding the spell typed in
+        -- anchorTargetFrame (bars only).
+        anchorTargetKind = { d = "group", t = "enum", values = { "group", "bar", "icon", "layout", "frame", "nameplate", "mouse",
+            "action", "cdm" },
             labels = { group = "Group", bar = "Bar", icon = "Icon", layout = "Layout", frame = "Named frame",
-                nameplate = "Target's nameplate", mouse = "Mouse cursor" },
+                nameplate = "Target's nameplate", mouse = "Mouse cursor", action = "Action bar button",
+                cdm = "Cooldown Manager icon" },
             hidden = true, label = "Anchor to", dep = { field = "anchorEnabled" } },
         anchorTargetId = { d = 0, t = "id", hidden = true, label = "Anchor target" },
         anchorTargetFrame = { d = "", t = "text", hidden = true, label = "Anchor frame name" },

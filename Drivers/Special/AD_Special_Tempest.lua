@@ -55,6 +55,7 @@ local function CreditProc()
     else
         tempDeckProcs = tempDeckProcs + 1
     end
+    SP.Proc("tempest")
     SP.Update("tempest")
 end
 

@@ -68,7 +68,8 @@ function AS.Wanted(rec)
     local D = NS.DriverAura
     if not (D and D.ShapeOf and D.SpellIDList) then return out end
     local d = rec.driver or {}
-    local ids = D.SpellIDList(d)
+    -- the ids the icon watches: your rank of each while it follows your rank
+    local ids = (D.TrackedIDs or D.SpellIDList)(d)
     local unit = D.ShapeOf(d)
     local ch = Store.Resolve(rec, "alerts", "soundChannel") or "Master"
     for _, m in ipairs(AS.MOMENTS) do

@@ -16,11 +16,11 @@ loader:SetScript("OnEvent", function(self, event, arg1)
         if NS.DriverAura and NS.DriverAura.PreBuild then
             NS.DriverAura.PreBuild()
         end
-        if NS.DriverAuraGroups and NS.DriverAuraGroups.PreBuild then
-            NS.DriverAuraGroups.PreBuild()
-        end
         if NS.DriverUnitAuras and NS.DriverUnitAuras.PreBuild then
             NS.DriverUnitAuras.PreBuild()
+        end
+        if NS.DriverAuraRows and NS.DriverAuraRows.PreBuild then
+            NS.DriverAuraRows.PreBuild()
         end
         self:UnregisterEvent("ADDON_LOADED")
     elseif event == "PLAYER_LOGIN" then

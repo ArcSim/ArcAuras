@@ -1,5 +1,26 @@
 # Arc Auras
 
+## 2.0.0
+
+Dynamic aura groups pack by row, Spotlight Layouts, and bars that pin to your action bars.
+
+### New Features
+
+- **Dynamic aura groups pack by row** - Each row packs and lines up on its own, in the order you placed the icons, with buffs and debuffs mixed.
+- **Pack direction** - Dynamic aura groups can pack each column instead, aligned Up, Center or Down.
+- **Spotlight Layouts** - Ready-made layouts shared by players on the New Layout page, starting with Emity's Druid and Paladin.
+- **Pin to your action bars** - A bar or a text can sit on the action bar button that holds a spell, or on its Cooldown Manager icon, and follows the spell when your bars change.
+- **Layout changes reach what is inside** - Change a layout's classes, specs, talents or look and it offers to update the items inside. It always asks first.
+
+### Improvements
+
+- **Follow your rank** - Icons, bars and texts follow the rank of a spell you know, so they keep working when you train a new rank.
+- **Texts** - A text starts with what it is: your own words, a countdown, a count, or info like health or power. Your texts carry over as they are.
+- **Show while editing** - Clicking the eye on a layout or a group shows or hides everything inside it.
+- **Unloaded mark** - Items that don't load on this character show a small eye while you edit. Settings can turn it off.
+- **Wheels** - The tracking you are on has a check on the wheel.
+- **Cooldown Manager card** - A clearer picture and its full name on the New Layout page.
+
 ## 1.10.0
 
 Wheels, ready-made item icons, name texts and dispel type filters.

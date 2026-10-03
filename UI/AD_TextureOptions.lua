@@ -637,9 +637,10 @@ function Options.TextureTrackRows(pg, ctx, trackVis, owner)
     AT.RowToggle(pg, "Use my current rank",
         function()
             local r = Rec()
-            return r ~= nil and r.driver.autoRank == true
+            return r ~= nil and NS.Store.AutoRankOn(r.driver)
         end,
-        function(v) Set("autoRank", v or nil) end,
+        -- on by default: only off is stored
+        function(v) if v then Set("autoRank", nil) else Set("autoRank", false) end end,
         function() return cdVis() and NS.IsForever == true end,
         "On ranked realms, follow whichever rank of this spell you know now.")
     AT.RowDropdown(pg, owner, "Picture active while",

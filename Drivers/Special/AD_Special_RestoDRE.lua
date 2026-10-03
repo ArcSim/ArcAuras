@@ -111,6 +111,7 @@ local function OnSUC(sid)
     local wasPTCCast = HasPTC() and (castCount % PTC_EVERY == 0)
     sinceProc = wasPTCCast and 1 or 0
     ascUntil = GetTime() + 6.0
+    SP.Proc("restodre")
     SP.Update("restodre")
 end
 

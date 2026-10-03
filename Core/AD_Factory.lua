@@ -2592,6 +2592,11 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     local desatOK = not keepBright or R("appearance", "keepBrightAllowDesat") == true
     f.icon:SetDesaturated(desatOK and f._adDesatState
         and R("states", "cooldownDesaturate") == true or false)
+    -- A Custom Icon's Active look (the ready bucket) has its own grey out.
+    if desatOK and not f._adDesatState and rec.kind == "timer"
+        and R("states", "readyDesaturate") == true then
+        f.icon:SetDesaturated(true)
+    end
     -- No-resource or unusable can grey the icon apart from the cooldown desat.
     if not onCooldown and desatOK then
         local ucode = f._adUsability

@@ -29,6 +29,9 @@ end
 -- templates. Same entry shape as a template plus the picture's source: image
 -- (a 2:1 screenshot texture) or text (the share string, drawn from its own
 -- records); make may return nil (an import that failed), and then nothing opens.
+-- A pack with versions adds notes (what the newest string changed), owned()
+-- (the player has a layout from it), hasUpdate() (theirs is older) and update()
+-- (offers the newer one for their copy).
 NL.SPOTLIGHT = {}
 -- a screenshot's width over its height, and the size of the hover picture
 NL.IMAGE_ASPECT = 2
@@ -208,11 +211,29 @@ function NL.ShowBig(card)
     if not st then
         st = CreateFrame("Frame", nil, big)
         st:SetSize(NL.BIG_W, NL.BIG_H)
-        st:SetPoint("CENTER")
+        st:SetPoint("TOP", 0, -8)
         NL.DrawEntry(st, t, NL.BIG_W, NL.BIG_H, false)
         big.stages[t] = st
     end
     st:Show()
+    -- a pack's newest notes under its picture
+    if not big.notes then
+        big.notes = big:CreateFontString(nil, "OVERLAY")
+        big.notes:SetFont(STANDARD_TEXT_FONT, 11, "")
+        big.notes:SetPoint("TOPLEFT", 10, -(NL.BIG_H + 14))
+        big.notes:SetPoint("TOPRIGHT", -10, -(NL.BIG_H + 14))
+        big.notes:SetJustifyH("LEFT")
+        big.notes:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+    end
+    local notes = (t.notes and #t.notes > 0) and table.concat(t.notes, " ") or nil
+    if notes then
+        big.notes:SetText("What's new: " .. notes)
+        big.notes:Show()
+        big:SetHeight(NL.BIG_H + 16 + math.ceil(big.notes:GetStringHeight() or 14) + 10)
+    else
+        big.notes:Hide()
+        big:SetHeight(NL.BIG_H + 16)
+    end
     big:ClearAllPoints()
     big:SetPoint("LEFT", card, "RIGHT", 8, 0)
     big:Show()
@@ -267,6 +288,21 @@ function NL.MakeCard(parent, entry)
         if entry.secondary.tip then AT.Tooltip(sec, entry.secondary.label, entry.secondary.tip) end
         c.secondaryBtn = sec
     end
+    -- a mark on its picture while a newer version waits for the player's
+    -- copy (NL.SyncCard keeps it current)
+    if entry.hasUpdate then
+        c.updMark = AT.NewChip(box, "NEW VERSION")
+        c.updMark:SetPoint("TOPRIGHT", -4, -4)
+        c.updMark:SetFrameLevel(box:GetFrameLevel() + 5)
+    end
+    -- the maker's link, boxed on the picture's corner (UI\AD_Spotlight.lua)
+    local SP = NS.Spotlight
+    c.link = SP and SP.LinkButton and SP.LinkButton(box, entry, true)
+    if c.link then
+        c.link:SetPoint("BOTTOMLEFT", 4, 4)
+        c.link:SetFrameLevel(box:GetFrameLevel() + 5)
+    end
+    NL.SyncCard(c)
     NL.Paint(c, false)
     c:SetScript("OnEnter", function(s)
         NL.Paint(s, true)
@@ -278,6 +314,17 @@ function NL.MakeCard(parent, entry)
     end)
     c:SetScript("OnClick", function() entry.pick() end)
     return c
+end
+
+-- What changes on a card while the window is open: an update button and mark
+-- that show only while the player's copy of the pack is older.
+function NL.SyncCard(c)
+    local e = c.entry
+    local upd = e.hasUpdate and e.hasUpdate() == true
+    if c.updMark then c.updMark:SetShown(upd) end
+    if c.secondaryBtn and e.secondary and e.secondary.visible then
+        c.secondaryBtn:SetShown(e.secondary.visible() == true)
+    end
 end
 
 -- Cards wrap to the page's width. A row sits 12 inside the page (box and row
@@ -304,7 +351,10 @@ function NL.CardRow(pg, entries)
     local row = NS.AT.AddRow(pg, NL.CARD_H + 18)
     row._cards = {}
     for i, e in ipairs(entries) do row._cards[i] = NL.MakeCard(row, e) end
-    row._sync = function() NL.Grid(row, pg:GetWidth() or 0) end
+    row._sync = function()
+        for _, c in ipairs(row._cards) do NL.SyncCard(c) end
+        NL.Grid(row, pg:GetWidth() or 0)
+    end
     return row
 end
 
@@ -315,6 +365,14 @@ function NL.Cards(list)
     local out = {}
     for _, t in ipairs(list) do
         if not t.class or t.class == class then
+            -- a pack's newer version: its own button, only while the player's
+            -- copy is older; the card's click still makes a fresh layout
+            local sec = t.secondary
+            if not sec and t.update and t.hasUpdate then
+                sec = { label = "Update my copy", pick = function() NL.HideBig() t.update() end,
+                    visible = t.hasUpdate,
+                    tip = "A newer version of this layout is out. Updates the layout you made from it; your own sizes and positions stay." }
+            end
             out[#out + 1] = {
                 title = t.title, desc = t.desc,
                 draw = function(stage) NL.DrawEntry(stage, t, NL.STAGE_W, NL.STAGE_H, true) end,
@@ -324,7 +382,9 @@ function NL.Cards(list)
                     local rec = t.make()
                     if rec then O.OpenLayout(rec) end
                 end,
-                secondary = t.secondary,
+                secondary = sec,
+                hasUpdate = t.hasUpdate,
+                link = t.link, linkLabel = t.linkLabel,
             }
         end
     end
@@ -342,12 +402,13 @@ function NL.Fill(pane)
     pg:SetPoint("BOTTOMRIGHT", 0, 0)
     pg:Show()
     NL.pg = pg
+    -- the packs the player has, and their updates, are on Home (UI\AD_Home.lua)
     AT.Section(pg, "Start from a template")
     NL.tplRow = NL.CardRow(pg, NL.Cards(NL.TEMPLATES))
     local spot = NL.Cards(NL.SPOTLIGHT)
     NL.spotRow = nil
     if #spot > 0 then
-        AT.Section(pg, "Spotlight Layouts")
+        AT.Section(pg, "Layout Packs")
         NL.spotRow = NL.CardRow(pg, spot)
     end
     AT.Section(pg, "Start blank or import")

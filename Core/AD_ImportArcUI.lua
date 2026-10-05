@@ -220,8 +220,8 @@ IA.ICON_MAP = {
     -- ready state (cooldown kinds) / aura active (aura icons)
     ["cooldownStateVisuals.readyState.alpha"] = { "states", "readyAlpha", "num", k = "cd",
         au = { "auraActive", "activeAlpha", "num" } },
-    ["cooldownStateVisuals.readyState.desaturate"] = { "auraActive", "activeDesaturate", "bool", k = "au",
-        gapcd = "no desaturate-while-ready look on cooldown icons" },
+    ["cooldownStateVisuals.readyState.desaturate"] = { "states", "readyDesaturate", "bool",
+        au = { "auraActive", "activeDesaturate", "bool" } },
     ["cooldownStateVisuals.readyState.noDesaturate"] = { gap = "no desaturate-while-ready look" },
     ["cooldownStateVisuals.readyState.preserveDurationText"] = { "states", "preserveDurationText", "bool", k = "cd",
         au = { "states", "preserveDurationText", "bool" } },
@@ -284,13 +284,13 @@ IA.ICON_MAP = {
     ["cooldownStateVisuals.cooldownState.glowCombatOnly"] = { gap = "no glow while on cooldown or inactive" },
     -- range, usability, proc glow: spell icons
     ["rangeIndicator.enabled"] = { "states", "rangeTint", "bool", k = "cd", sp = true },
-    ["rangeIndicator.alpha"] = { gap = "out of range only tints in Arc Auras (Out-of-range tint); no range alpha" },
-    ["rangeIndicator.desaturate"] = { gap = "out of range only tints in Arc Auras (Out-of-range tint); no range desaturation" },
-    ["spellUsability.enabled"] = { "states", "usabilityTint", "bool", k = "cd", sp = true },
+    ["rangeIndicator.alpha"] = { "states", "rangeAlpha", "num", k = "cd", sp = true },
+    ["rangeIndicator.desaturate"] = { "states", "rangeDesaturate", "bool", k = "cd", sp = true },
+    ["spellUsability.enabled"] = { "states", "unusableTintEnabled", "bool", k = "cd", sp = true },
     ["spellUsability.procOverride"] = { "states", "procOverride", "bool", k = "cd", sp = true },
     ["spellUsability.useNormalColor"] = { "states", "readyTintEnabled", "bool", k = "cd" },
     ["spellUsability.normalColor"] = { "states", "readyTintColor", "color", k = "cd" },
-    ["spellUsability.normalDesaturate"] = { gap = "Arc Auras has no desaturate-while-usable look" },
+    ["spellUsability.normalDesaturate"] = { special = "readyDesat", k = "cd" },
     ["spellUsability.useOnCooldownColor"] = { "states", "cooldownTintEnabled", "bool", k = "cd" },
     ["spellUsability.onCooldownColor"] = { "states", "cooldownTintColor", "color", k = "cd" },
     ["spellUsability.onCooldownDesaturate"] = { "states", "cooldownDesaturate", "bool", k = "cd" },
@@ -353,7 +353,7 @@ IA.ICON_MAP = {
     ["cooldownSwipe.auraSwipeColor"] = { "auraSwipe", "overlaySwipeColor", "color", k = "cd", sp = true },
     ["cooldownSwipe.reverseWhileAura"] = { "auraSwipe", "overlaySwipeReverse", "bool", k = "cd", sp = true },
     ["cooldownSwipe.ignoreAuraOverride"] = { special = "iao", k = "cd", sp = true },
-    ["cooldownSwipe.ignoreHardICD"] = { gap = "hard internal cooldowns are always drawn" },
+    ["cooldownSwipe.ignoreHardICD"] = { "states", "ignoreHardICD", "bool", k = "cd", sp = true },
     -- the aura on a cooldown icon (cooldown kinds) / the glow-when-missing suite (aura icons)
     ["auraActiveState.ignoreAuraOverride"] = { special = "iao", k = "cd", sp = true },
     ["auraActiveState.glow"] = { "auraActive", "activeGlow", "bool", k = "cd", sp = true, gapau = "no glow while the aura is missing" },
@@ -969,6 +969,16 @@ function IA.MapIcon(eff, kind, flags)
             if not skip then IA.MapRow(o, row, Leaf(eff, path), fam) end
         end
     end
+    -- v1's one usability switch served both usability tints
+    if o.states and o.states.unusableTintEnabled ~= nil then
+        Put(o, "states", "resourceTintEnabled", o.states.unusableTintEnabled)
+    end
+    -- v1 greyed a ready icon from its ready state or its usability look:
+    -- either one greys it
+    local su = eff.spellUsability
+    if fam == "cd" and type(su) == "table" and su.normalDesaturate == true then
+        Put(o, "states", "readyDesaturate", true)
+    end
     -- shadow: a Cooldown Manager icon wears the game's shadow unless v1 hid it
     if flags and flags.cdm then
         Put(o, "appearance", "shadowEnabled", eff.hideShadow ~= true)
@@ -1092,6 +1102,7 @@ IA.ICON_SPECIALS = {
     glowTime = "auraActive.activeGlowWhen = time + activeGlowTimeUnit / TimePct / TimeSec",
     glowCharges = "states.waitForNoCharges = true (the icon stays ready, glow and all, while a charge remains)",
     keepBrightAura = "auraMissing.missingDesaturate = false",
+    readyDesat = "states.readyDesaturate = true (on with the ready state's own grey out)",
 }
 
 -- v1's talent conditions -> the who keys

@@ -1,9 +1,9 @@
+-- Arc Auras, all rights reserved: do not copy or adapt this code into another addon without permission.
 -- Aura icons on the engine-owned AuraContainer, and the aura overlay on spell
 -- icons. The icon frame is a holder wearing the "missing" look; the engine
 -- button anchored over it shows while the aura is up and carries every Aura
 -- Active option (a gated glow rides a glow-only button, see Glow gates).
 -- Presence can be secret, so it is never read.
-
 local ADDON, NS = ...
 local Store = NS.Store
 local Events = NS.Events
@@ -57,9 +57,10 @@ end
 
 function Driver.EraserAvailable() return FB_OK and IS_121 end
 
--- True when the icon needs the eraser: only such an icon pays for a frame buffer.
+-- True when the icon needs its stage: only such an icon pays for one.
 function Driver.NeedsEraser(rec)
     if not (FB_OK and IS_121 and rec and rec.kind == "aura") then return false end
+    if Driver.TimeGateFrac(rec) then return true end
     if not Driver.GhostShown(rec) then return false end
     if Store.Resolve(rec, "appearance", "forceHideIcon") == true then return true end
     if (Store.Resolve(rec, "auraActive", "activeAlpha") or 1) < 1 then return true end
@@ -279,9 +280,46 @@ function Driver.GlowLaneOK(rec)
     return true
 end
 
--- "While the aura is missing" needs the eraser and an aura icon with its own button.
+-- Missing and Always glows: an aura icon's holder draws them, or its Dynamic
+-- group's row, so a group member takes them too.
+function Driver.HolderGlowOK(rec)
+    return IS_121 and rec ~= nil and rec.kind == "aura"
+end
+
 function Driver.MissingGlowOK(rec)
-    return FB_OK and Driver.GlowLaneOK(rec)
+    return FB_OK and Driver.HolderGlowOK(rec)
+end
+
+-- Glow for and Glow only in combat: a lane of the icon's own, or of its
+-- Dynamic group's row.
+function Driver.GlowGateOK(rec)
+    return Driver.HolderGlowOK(rec)
+end
+
+-- Show only when little time is left: an aura icon outside a Dynamic group,
+-- on one unit (a two-unit icon's ladder has no rung for it).
+function Driver.TimeGateOK(rec)
+    return FB_OK and Driver.GlowLaneOK(rec) and not TwoUnits(rec.driver)
+end
+
+-- The share of time left the live look shows under, or nil: off, or seconds
+-- with no length typed in (the icon then shows the whole time).
+function Driver.TimeGateFrac(rec)
+    if not (Driver.TimeGateOK(rec)
+        and Store.Resolve(rec, "auraActive", "activeTimeOnly") == true) then
+        return nil
+    end
+    local R = function(k) return Store.Resolve(rec, "auraActive", k) end
+    local frac
+    if (R("activeTimeUnit") or "pct") == "sec" then
+        local len = R("activeTimeLen") or 0
+        if len <= 0 then return nil end
+        frac = (R("activeTimeSec") or 3) / len
+    else
+        frac = (R("activeTimePct") or 30) / 100
+    end
+    if frac >= 1 then return nil end
+    return frac
 end
 
 function Driver.InCombat() return inCombat end
@@ -301,16 +339,24 @@ end
 
 -- The ids glow `slot` (default 1) follows on its own button, or nil: the glow
 -- is off, or it is glow 1 with no gate (a pick of every id counts as none),
--- which stays on the icon's button.
-local function GlowIDs(rec, slot)
+-- which stays on the icon's button. row: a Dynamic row's lane instead, whose
+-- button keeps every glow with no gate.
+local function LaneIDs(rec, slot, row)
     slot = slot or 1
-    if not Driver.GlowLaneOK(rec) then return nil end
+    if row then
+        if not Driver.HolderGlowOK(rec) then return nil end
+    elseif not Driver.GlowLaneOK(rec) then
+        return nil
+    end
     local suf = (slot > 1) and tostring(slot) or ""
     local R = function(k) return Store.Resolve(rec, "auraActive", k .. suf) end
     if R("activeGlow") ~= true then return nil end
+    -- With "Show only when little time is left", glow 1 leaves the icon's
+    -- button and an Always glow's live half rides a lane.
+    local timed = not row and Driver.TimeGateFrac(rec) ~= nil
     -- a Missing or Always glow is the holder's, not a button's
     local when = R("activeGlowWhen")
-    if when == "missing" or when == "both" then return nil end
+    if when == "missing" or (when == "both" and not timed) then return nil end
     local ids = TrackedIDs(rec.driver)
     local m, n = {}, 0
     local pick = tonumber(R("activeGlowFor")) or 0
@@ -325,12 +371,14 @@ local function GlowIDs(rec, slot)
     end
     if n == 0 or n == #ids then
         -- no pick, one the icon no longer tracks, or all of them
-        if slot == 1 and R("activeGlowCombatOnly") ~= true then return nil end
+        if (slot == 1 or row) and R("activeGlowCombatOnly") ~= true and not timed then return nil end
         m = IncludeMap(rec.driver)
     end
     return m
 end
+local function GlowIDs(rec, slot) return LaneIDs(rec, slot, false) end
 Driver.GlowIDs = GlowIDs
+function Driver.RowGlowIDs(rec, slot) return LaneIDs(rec, slot, true) end
 
 -- True when any glow wants a lane.
 local function AnyGlowWanted(rec)
@@ -358,6 +406,8 @@ local function GlowOpts(entry, base, g)
     for k, v in pairs(base) do o[k] = v end
     o.glowSlot = g.slot
     o.glowOn = GlowIDs(entry.rec, g.slot) ~= nil
+    -- a lane glows no sooner than its time-gated icon shows
+    o.glowCap = Driver.TimeGateFrac(entry.rec)
     return o
 end
 
@@ -366,20 +416,30 @@ end
 -- its button covers the cooldown while the aura is up, styled from the spell
 -- icon's record. The overlay table has the aura shape above.
 
+-- What a spell icon's overlay shows: the aura (the engine's), its totem or a
+-- set duration on cast (both Drivers\AD_DriverPhase.lua).
+local function OverlaySource(ov)
+    local s = type(ov) == "table" and ov.source
+    if s == "totem" or s == "cast" then return s end
+    return "aura"
+end
+Driver.OverlaySource = OverlaySource
+
 -- the aura shape an entry tracks: an aura icon's driver, a spell icon's
--- overlay while it is on, else nil
+-- overlay while it is on and shows an aura, else nil
 local function ShapeFor(rec)
     if not rec then return nil end
     if rec.kind == "aura" then return rec.driver or {} end
     local ov = rec.kind == "spell" and rec.driver and rec.driver.overlay
-    if type(ov) == "table" and ov.on == true then return ov end
+    if type(ov) == "table" and ov.on == true and OverlaySource(ov) == "aura" then return ov end
     return nil
 end
 Driver.ShapeFor = ShapeFor
 
--- a spell icon whose aura overlay is on and can run on this client
+-- a spell icon whose overlay is on (any source) and can run on this client
 function Driver.OverlayOn(rec)
-    return IS_121 and rec ~= nil and rec.kind == "spell" and ShapeFor(rec) ~= nil
+    local ov = IS_121 and rec ~= nil and rec.kind == "spell" and rec.driver and rec.driver.overlay
+    return type(ov) == "table" and ov.on == true
 end
 
 -- How far the holder's texts and glows sit up to stay over a two-unit icon's top button.
@@ -464,7 +524,7 @@ local function WireButton(btn)
     if btn._adWired then return end
     btn._adWired = true
 
-    -- Shown only while the stage buffers (StyleAuraButton, opts.erase).
+    -- StyleAuraButton shows it (opts.erase).
     local eraser = btn:CreateTexture(nil, "BACKGROUND", nil, -8)
     eraser:SetColorTexture(0, 0, 0, 0)
     eraser:SetBlendMode("DISABLE")
@@ -534,7 +594,7 @@ end
 Driver.WireButton = WireButton
 
 -- Ladder over the holder (Factory.AURA_LADDER: the missing look's border and
--- labels +1, its glows +2): button +3, swipe +4, texts +5.
+-- labels +1, its glows +2): button +3, swipe +4, texts +5, time-left bar +6.
 -- Anchored two-point, never reparented; re-asserted because holder levels move
 -- on reparenting and children do not follow a parent's SetFrameLevel. `lift`
 -- adds one for a spell overlay, leaving +3 for the spell's charge count.
@@ -550,6 +610,7 @@ local function AnchorButton(b, holder, lift)
     b._adLevel = lvl
     if b._adSwipe then b._adSwipe:SetFrameLevel(lvl + 1) end
     if b.TextOverlay then b.TextOverlay:SetFrameLevel(lvl + 2) end
+    if b._adTimeGate then b._adTimeGate:SetFrameLevel(lvl + 3) end
 end
 -- Exported: the editor preview's stand-in button takes the same ladder.
 Driver.AnchorButton = AnchorButton
@@ -602,7 +663,7 @@ local function StageLook(entry, on)
     end
 end
 
--- Buffer on before any eraser shows, off only after every button dropped it (DropBuffer).
+-- On before any button needs it, off only after every button dropped it (DropBuffer).
 local function BufferFor(entry, want)
     local st = entry.stage
     if want and not entry.fbOn and not StageLocked(st) then
@@ -706,7 +767,7 @@ local function EnsureSlots(iconId, rec, startParked)
     if AnyGlowWanted(rec) then EnsureGlowSlots(iconId, entry, startParked) end
 
     local d = ShapeFor(rec) or {}
-    -- Buttons know at birth whether they erase: in an instance they are never restyled.
+    -- Buttons are set at birth: in an instance they are never restyled.
     local stage = (rec.kind == "aura") and EnsureStage(entry, rec) or nil
     if stage then BufferFor(entry, Driver.NeedsEraser(rec)) end
     for _, lane in ipairs(LanesFor(d)) do
@@ -850,7 +911,7 @@ end
 
 -- Re-style live buttons where accessible; new ones style in initializeFrame.
 local function RestyleEntry(entry)
-    -- locked: something this pass could not reach, so the buffer stays on
+    -- locked: something this pass could not reach, so it stays on
     local locked = false
     if entry.stage then
         if AnchorStage(entry) then

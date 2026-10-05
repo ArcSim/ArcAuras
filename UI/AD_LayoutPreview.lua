@@ -210,8 +210,16 @@ function LP.Parts(text)
         LP.cache[text] = false
         return nil
     end
+    local parts = LP.PartsOf(payload.records)
+    LP.cache[text] = parts
+    return parts
+end
+
+-- The same from records in hand (a string's, or the player's own layout with
+-- the items it holds), read only and never cached.
+function LP.PartsOf(records)
     local recs, byId, members = {}, {}, {}
-    for _, r in ipairs(payload.records) do
+    for _, r in ipairs(records) do
         if type(r) == "table" and r.id ~= nil then
             recs[#recs + 1] = r
             byId[r.id] = r
@@ -288,7 +296,6 @@ function LP.Parts(text)
         busy[p] = nil
     end
     for _, p in ipairs(parts) do Place(p) end
-    LP.cache[text] = parts
     return parts
 end
 
@@ -326,7 +333,10 @@ end
 -- their fill colour over a dark back, icons as their art. Returns true when
 -- something was drawn.
 function LP.Draw(stage, text, w, h)
-    local parts = LP.Parts(text)
+    return LP.DrawParts(stage, LP.Parts(text), w, h)
+end
+
+function LP.DrawParts(stage, parts, w, h)
     if not parts or #parts == 0 then return false end
     local list, l, r, t, b = LP.Cluster(parts)
     if not list or r <= l or t <= b then return false end

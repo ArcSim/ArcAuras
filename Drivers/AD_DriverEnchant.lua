@@ -1,10 +1,10 @@
 -- Weapon enchant icons: what is on a weapon (an imbue, a poison, an oil, a
 -- stone), with its time left, charges and the missing look.
 -- Called through Driver.Attach / Detach / Refeed in AD_DriverCooldown.
--- C_Item.GetWeaponEnchantInfo carries no secret annotation on Forever and the
--- game's own buff frame does arithmetic on it, so it is read plain; a secret
--- answer anyway keeps the last look. The swipe runs on a duration object, so
--- nothing polls.
+-- C_Item.GetWeaponEnchantInfo (Forever) and C_PaperDollInfo's temporary
+-- enchant (retail) carry no secret annotation, so they are read plain; a
+-- secret answer anyway keeps the last look. The swipe runs on a duration
+-- object, so nothing polls.
 
 local ADDON, NS = ...
 local Store = NS.Store
@@ -57,6 +57,15 @@ function DE.ReadHand(handKey)
                 }
             end
         end
+        return out
+    end
+    -- retail: one temporary enchant per inventory slot
+    if C_PaperDollInfo and C_PaperDollInfo.GetTemporaryEnchantmentInfo then
+        local e = C_PaperDollInfo.GetTemporaryEnchantmentInfo(hand.inv)
+        if e == nil then return out end
+        if not Plain(e) or not Plain(e.remainingTimeMs, e.chargesRemaining, e.enchantID) then return nil end
+        out[1] = { id = tonumber(e.enchantID), left = (tonumber(e.remainingTimeMs) or 0) / 1000,
+            charges = tonumber(e.chargesRemaining) or 0 }
         return out
     end
     if GetWeaponEnchantInfo then

@@ -24,28 +24,35 @@ local COL = {
 local EPS, BIG = 0.001, 1e6
 -- Tick to icon in UI units; each further ability sits one icon further out.
 local GAP = 6
--- The editor preview's samples: 0 is the swing's start, 1 where it lands.
+-- The editor preview's samples: 0 is the swing's start, 1 where it lands;
+-- kind names the marker (its switch and its colour in L.col).
 local SAMPLES = {
     stay = {
-        { at = 0.28, color = "cyan" },
-        { at = 0.56, color = "amber", badge = "+1" },
-        { at = 0.84, color = "green" },
+        { at = 0.28, kind = "queued" },
+        { at = 0.56, kind = "later", badge = "+1" },
+        { at = 0.84, kind = "ready" },
     },
     jump = {
-        { at = 0.22, color = "gold" },
-        { at = 0.56, color = "amber", badge = "+1" },
-        { at = 1, color = "cyan" },
+        { at = 0.22, kind = "now" },
+        { at = 0.56, kind = "later", badge = "+1" },
+        { at = 1, kind = "queued" },
     },
     -- plus a queued one riding the preview's own fill
     follow = {
-        { at = 0.56, color = "amber", badge = "+1" },
-        { at = 0.84, color = "green" },
+        { at = 0.56, kind = "later", badge = "+1" },
+        { at = 0.84, kind = "ready" },
     },
 }
 local armed = false
 
 local function IsSecret(v)
     return issecretvalue ~= nil and issecretvalue(v) == true
+end
+
+-- A stored colour, else the default; opacity 1 when it gives none.
+local function ColorOf(c, d)
+    if type(c) ~= "table" then c = d end
+    return { tonumber(c[1]) or d[1], tonumber(c[2]) or d[2], tonumber(c[3]) or d[3], tonumber(c[4]) or 1 }
 end
 
 -- A secret boolean throws on a test, so it answers no.
@@ -82,16 +89,115 @@ end
 -- the swing colours find their ranks the same way
 SA.Resolve = Resolve
 
+-- Every rank of a spell the player knows, lowest first: { { id, rank } },
+-- rank nil when the game names none. Forever's spellbook lists every rank
+-- (Core\AD_SpellCatalog.lua relies on it); "<name>(Rank N)" through the
+-- resolver backs it up, kept only when the spell's own rank text agrees.
+-- Retail has no ranks: a spell is its one rank. Cached by name until the
+-- spellbook changes (SA.ForgetRanks).
+local MAX_RANK = 20
+local rankCache = {}
+
+local function RankText(v)
+    if IsSecret(v) or type(v) ~= "string" then return nil end
+    return tonumber(v:match("(%d+)"))
+end
+
+local function RankOf(sid)
+    return RankText(C_Spell.GetSpellSubtext and C_Spell.GetSpellSubtext(sid))
+end
+
+local function Ranks(id)
+    local sid = tonumber(id)
+    local nm = sid and C_Spell.GetSpellName and C_Spell.GetSpellName(sid)
+    if IsSecret(nm) or type(nm) ~= "string" or nm == "" then return {} end
+    if rankCache[nm] then return rankCache[nm] end
+    local out, seen = {}, {}
+    local function Add(rid, n)
+        if seen[rid] or not Known(rid) then return end
+        seen[rid] = true
+        out[#out + 1] = { id = rid, rank = n }
+    end
+    local SB = C_SpellBook
+    local bank = Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player
+    if bank and SB and SB.GetNumSpellBookSkillLines and SB.GetSpellBookSkillLineInfo and SB.GetSpellBookItemInfo then
+        for li = 1, SB.GetNumSpellBookSkillLines() or 0 do
+            local line = SB.GetSpellBookSkillLineInfo(li)
+            if line and line.itemIndexOffset and line.numSpellBookItems then
+                for i = line.itemIndexOffset + 1, line.itemIndexOffset + line.numSpellBookItems do
+                    local item = SB.GetSpellBookItemInfo(i, bank)
+                    local rid = item and (item.spellID or item.actionID)
+                    if type(rid) == "number" and not IsSecret(rid) and C_Spell.GetSpellName(rid) == nm then
+                        Add(rid, RankText(item.subName) or RankOf(rid))
+                    end
+                end
+            end
+        end
+    end
+    if C_Spell.GetSpellIDForSpellIdentifier then
+        for n = 1, MAX_RANK do
+            local rid = C_Spell.GetSpellIDForSpellIdentifier(("%s(Rank %d)"):format(nm, n))
+            if not IsSecret(rid) and type(rid) == "number" and rid > 0 then
+                local own = RankOf(rid)
+                if own == nil or own == n then Add(rid, n) end
+            end
+        end
+    end
+    table.sort(out, function(a, b) return (a.rank or MAX_RANK + 1) < (b.rank or MAX_RANK + 1) end)
+    rankCache[nm] = out
+    return out
+end
+SA.Ranks = Ranks
+
+function SA.ForgetRanks()
+    rankCache = {}
+end
+
+-- The spell IDs whose queue counts for an ability. pick: 0 (or nil) any rank
+-- the player knows, -1 the highest (the one its name resolves to), n that
+-- rank, the highest while that rank is not known.
+function SA.QueueIDs(id, pick)
+    local sid = Resolve(id)
+    if not sid then return {} end
+    pick = tonumber(pick) or 0
+    if pick == 0 then
+        local out, has = {}, false
+        for _, r in ipairs(Ranks(id)) do
+            out[#out + 1] = r.id
+            if r.id == sid then has = true end
+        end
+        if not has then out[#out + 1] = sid end
+        return out
+    elseif pick > 0 then
+        for _, r in ipairs(Ranks(id)) do
+            if r.rank == pick then return { r.id } end
+        end
+    end
+    return { sid }
+end
+
+-- Queued on the next swing at any of these ranks.
+local function Queued(ids)
+    if not (C_Spell.IsCurrentSpell and ids) then return false end
+    for _, q in ipairs(ids) do
+        if Yes(C_Spell.IsCurrentSpell(q)) then return true end
+    end
+    return false
+end
+
 -- list: every typed ability (the preview wears their icons); tracked: the
--- ones the player knows, one marker row each.
+-- ones the player knows, one marker row each. Each one's rank pick
+-- (rec.driver.swingAbilRanks, by position) says which queued ranks count.
 local function ResolveList(L, rec)
     local ids = rec.driver and rec.driver.swingAbilIDs
+    local picks = rec.driver and rec.driver.swingAbilRanks
     local list, tracked = {}, {}
     if type(ids) == "table" then
-        for _, id in ipairs(ids) do
+        for i, id in ipairs(ids) do
             local sid, known = Resolve(id)
             if sid then
-                local a = { sid = sid, icon = (C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(sid)) or 134400 }
+                local a = { sid = sid, icon = (C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(sid)) or 134400,
+                    qids = SA.QueueIDs(id, type(picks) == "table" and picks[i] or 0) }
                 list[#list + 1] = a
                 if known then tracked[#tracked + 1] = a end
             end
@@ -203,13 +309,24 @@ local function NewMark(L, row)
     return m
 end
 
-local function Paint(m, icon, color, badge)
-    m.tick:SetColorTexture(color[1], color[2], color[3], 0.95)
+-- The marker's colour on its tick and count; the icon wears it too, or keeps
+-- the spell's own colours with the marker's colour as its outline. The
+-- colour's opacity reaches all of them.
+local function Paint(L, m, icon, color, badge)
+    local a = color[4] or 1
+    m.tick:SetColorTexture(color[1], color[2], color[3], 0.95 * a)
     m.icon:SetTexture(icon)
-    m.icon:SetVertexColor(color[1], color[2], color[3])
+    if L.ownIcons then
+        m.icon:SetVertexColor(1, 1, 1)
+        m.rim:SetColorTexture(color[1], color[2], color[3], a)
+    else
+        m.icon:SetVertexColor(color[1], color[2], color[3])
+        m.rim:SetColorTexture(0, 0, 0, 0.9 * a)
+    end
+    m.icon:SetAlpha(a)
     if badge then
         m.badge:SetText(badge)
-        m.badge:SetTextColor(color[1], color[2], color[3])
+        m.badge:SetTextColor(color[1], color[2], color[3], a)
         m.badge:Show()
     else
         m.badge:Hide()
@@ -311,12 +428,16 @@ local function PaintSlot(L, i, a, sStart, sDur, now)
     elseif not S.readyAt or S.readyAt < S.lastCDSeen then
         S.readyAt = now
     end
-    local queued = C_Spell.IsCurrentSpell ~= nil and Yes(C_Spell.IsCurrentSpell(a.sid))
+    -- Queued (its marker on) or ready: one marker. A queued one with its
+    -- marker off shows as ready while it is off cooldown.
+    local queued = L.queuedOn and Queued(a.qids or { a.sid })
     if queued or not onCD then
         HideSlot(S)
+        if not (queued or L.readyOn) then return end
+        local col = queued and L.col.queued or L.col.ready
         -- riding: queued only; a ready one stays where it came back
         if queued and L.place == "follow" and L.rideTex then
-            Paint(S.ride, a.icon, COL.cyan, nil)
+            Paint(L, S.ride, a.icon, col, nil)
             Ride(L, S.ride, L.rideTex, L.rideRev)
             return
         end
@@ -328,11 +449,11 @@ local function PaintSlot(L, i, a, sStart, sDur, now)
             m, at = S.spot, 0
             if S.readyAt and S.readyAt > sStart then at = math.min(1, (S.readyAt - sStart) / sDur) end
         end
-        Paint(m, a.icon, queued and COL.cyan or COL.green, nil)
+        Paint(L, m, a.icon, col, nil)
         Place(m, at)
         return
     end
-    if not dur then
+    if not (dur and L.cdOn) then
         HideSlot(S)
         return
     end
@@ -347,7 +468,7 @@ local function PaintSlot(L, i, a, sStart, sDur, now)
         local lo, hi = k * sDur - e, (k + 1) * sDur - e
         m.bar:SetMinMaxValues(lo, hi)
         m.bar:SetValue(R)
-        Paint(m, a.icon, k == 0 and COL.gold or COL.amber, k > 0 and ("+" .. k) or nil)
+        Paint(L, m, a.icon, k == 0 and L.col.now or L.col.later, (k > 0 and L.badgeOn) and ("+" .. k) or nil)
         SetWindow(c, lo, hi)
         m:SetAlpha(dur:EvaluateRemainingDuration(c))
         m:Show()
@@ -358,7 +479,11 @@ local function PaintSlot(L, i, a, sStart, sDur, now)
     -- a queued one that just fired: its rider would keep following the fill
     S.ride:Hide()
     local far = S.endFar
-    Paint(far, a.icon, COL.red, nil)
+    if not L.farOn then
+        far:Hide()
+        return
+    end
+    Paint(L, far, a.icon, L.col.far, nil)
     far.bar:SetMinMaxValues(0, 1)
     far.bar:SetValue(1)
     SetWindow(S.farCurve, (n + 1) * sDur - e, BIG)
@@ -394,11 +519,13 @@ local function PaintLive(e)
     end
 end
 
+-- The samples follow the bar's switches and colours: a marker switched off
+-- has no sample.
 local function PaintPreview(L, e)
-    if L.place == "follow" then
+    if L.place == "follow" and L.queuedOn then
         L.pvRide = L.pvRide or NewMark(L, 1)
         local a = L.list[1]
-        Paint(L.pvRide, a and a.icon or 134400, COL.cyan, nil)
+        Paint(L, L.pvRide, a and a.icon or 134400, L.col.queued, nil)
         Ride(L, L.pvRide, e.shell.fill:GetStatusBarTexture(), L.mainRev)
     elseif L.pvRide then
         L.pvRide:Hide()
@@ -410,9 +537,13 @@ local function PaintPreview(L, e)
             m = NewMark(L, 1)
             L.pv[i] = m
         end
-        local a = L.list[i] or L.list[1]
-        Paint(m, a and a.icon or 134400, COL[s.color], s.badge)
-        Place(m, s.at)
+        if L.show[s.kind] then
+            local a = L.list[i] or L.list[1]
+            Paint(L, m, a and a.icon or 134400, L.col[s.kind], L.badgeOn and s.badge or nil)
+            Place(m, s.at)
+        else
+            m:Hide()
+        end
     end
     -- a shorter sample set leaves no sample from the last one behind
     for i = #set + 1, #L.pv do L.pv[i]:Hide() end
@@ -468,6 +599,7 @@ end
 -- A learned rank is a new spell ID.
 local function OnSpells()
     Events.Coalesce(KEY .. "_spells", function()
+        SA.ForgetRanks()
         K.ForEach("swing", function(e)
             if e.sa and e.sa.on then ResolveList(e.sa, e.rec) end
         end)
@@ -530,6 +662,22 @@ function SA.Styled(e)
     local drain = (K.R(rec, "fill", "fillMode") or "drain") == "drain"
     L.flip = (K.R(rec, "fill", "reverseFill") == true) ~= drain
     L.place = K.R(rec, "fill", "swingAbilPlace") or "stay"
+    -- which markers show (each on unless switched off), their colours and
+    -- whether the icons keep the spell's own colours
+    L.cdOn = K.R(rec, "fill", "swingAbilCD") ~= false
+    L.badgeOn = K.R(rec, "fill", "swingAbilBadge") ~= false
+    L.farOn = L.cdOn and K.R(rec, "fill", "swingAbilFar") ~= false
+    L.readyOn = K.R(rec, "fill", "swingAbilReady") ~= false
+    L.queuedOn = K.R(rec, "fill", "swingAbilQueued") ~= false
+    L.show = { now = L.cdOn, later = L.cdOn, ready = L.readyOn, queued = L.queuedOn }
+    L.ownIcons = K.R(rec, "fill", "swingAbilTint") == "own"
+    L.col = {
+        now = ColorOf(K.R(rec, "fill", "swingAbilColorNow"), COL.gold),
+        later = ColorOf(K.R(rec, "fill", "swingAbilColorLater"), COL.amber),
+        far = ColorOf(K.R(rec, "fill", "swingAbilColorFar"), COL.red),
+        ready = ColorOf(K.R(rec, "fill", "swingAbilColorReady"), COL.green),
+        queued = ColorOf(K.R(rec, "fill", "swingAbilColorQueued"), COL.cyan),
+    }
     L.follow = K.R(rec, "fill", "swingAbilFollow") or "mh"
     -- the real fill's direction: a riding tick sits on its moving edge
     L.mainRev = K.R(rec, "fill", "reverseFill") == true
@@ -556,4 +704,67 @@ function SA.Release(e)
     if e.sa then Stop(e.sa) end
     e.sa = nil
     SA.SyncEvents()
+end
+
+-- Editing a bar's own list: rec.driver.swingAbilIDs (spell IDs in order) and
+-- rec.driver.swingAbilRanks (each one's rank pick, by position, nil while
+-- every pick is "any rank"). Every edit marks the bar for one style refresh.
+function SA.Max()
+    return (NS.Schema and NS.Schema.SWING_ABIL_MAX) or 8
+end
+
+-- { { id, rank } } in order, rank 0 for any rank.
+function SA.List(rec)
+    local d = rec and rec.driver
+    local ids, picks = d and d.swingAbilIDs, d and d.swingAbilRanks
+    local out = {}
+    if type(ids) ~= "table" then return out end
+    for i, id in ipairs(ids) do
+        out[#out + 1] = { id = id, rank = (type(picks) == "table" and tonumber(picks[i])) or 0 }
+    end
+    return out
+end
+
+local function Write(rec, list)
+    rec.driver = rec.driver or {}
+    local ids, picks, any = {}, {}, false
+    for i, a in ipairs(list) do
+        ids[i], picks[i] = a.id, a.rank or 0
+        if picks[i] ~= 0 then any = true end
+    end
+    rec.driver.swingAbilIDs = (#ids > 0) and ids or nil
+    rec.driver.swingAbilRanks = any and picks or nil
+    if NS.Store and NS.Store.Dirty then NS.Store.Dirty("style", rec.id) end
+end
+
+-- false when the list is full or already holds that spell
+function SA.Add(rec, id)
+    id = tonumber(id)
+    if not (rec and id and id > 0) then return false end
+    local list = SA.List(rec)
+    if #list >= SA.Max() then return false end
+    for _, a in ipairs(list) do
+        if a.id == id then return false end
+    end
+    list[#list + 1] = { id = math.floor(id), rank = 0 }
+    Write(rec, list)
+    return true
+end
+
+function SA.Remove(rec, i)
+    local list = SA.List(rec)
+    if not list[i] then return false end
+    table.remove(list, i)
+    Write(rec, list)
+    return true
+end
+
+-- pick: 0 any rank, -1 the highest, n that rank
+function SA.SetRank(rec, i, pick)
+    local list = SA.List(rec)
+    pick = math.floor(tonumber(pick) or 0)
+    if not list[i] or list[i].rank == pick then return false end
+    list[i].rank = pick
+    Write(rec, list)
+    return true
 end

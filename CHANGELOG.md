@@ -1,5 +1,38 @@
 # Arc Auras
 
+## 2.1.0
+
+A Home page, the Conditions tab, more layout packs and a Missing Buffs group.
+
+### New Features
+
+- **Home page** - The options open on a front page with your layouts, updates and the Spotlight packs.
+- **Conditions tab** - Set each state's look, glow and sound in one place.
+- **More layout packs** - Emity's Hunter, Mage, Priest, Rogue, Warlock and Warrior layouts.
+- **Missing Buffs** - A group that shows only the buffs you're missing.
+- **Debuff colors** - Give each debuff type its own border, color or glow.
+- **New states** - Out of range and Toggled on (Shoot, Auto Shot, Attack) get their own look, and Ready can grey out.
+- **Red flash glow** - Any glow can use the action bar's red flash.
+- **Totem and cast timers** - Spell icons can show their totem's time, or a timer after you cast.
+- **Low time warning** - Aura icons can show only when they're about to run out.
+- **New conditions** - Pet is dead, Pet on Passive, Gear needs repair and Ready check.
+
+### Improvements
+
+- **Faster options** - The options window opens much faster.
+- **Pack updates** - Home tells you when a layout pack you use gets an update.
+- **Aura groups** - Icons can show while their aura is missing, and groups can add rows.
+- **Expressway and gradient bars** - Now built in.
+- **Item icons** - Can show only when you're out of the item.
+- **Group buffs** - Remind you when nobody in your group has your buff.
+- **Next swing** - Pick your abilities from a list, and which rank counts.
+- **Sharing** - A string made for the other game warns you before it imports.
+
+### Bug Fixes
+
+- **Pinned frames** - Items pinned to the Pet Frame and similar frames stay in place.
+- **Next-swing markers** - Lower ranks of an ability now show.
+
 ## 2.0.0
 
 Dynamic aura groups pack by row, Spotlight Layouts, and bars that pin to your action bars.

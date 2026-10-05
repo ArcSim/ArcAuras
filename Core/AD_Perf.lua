@@ -9,8 +9,8 @@ NS.Perf = Perf
 -- The modules a fight pays for. The options window, the theme and the tiny
 -- store accessors stay out: their cost folds into the callers' own time.
 Perf.MODULES = { "Anchor", "Bars", "Castbars", "Conditions", "DriverAura", "DriverAuraGroups",
-    "DriverCooldown", "DriverCustom", "DriverEnchant", "DriverRange", "DriverTotem", "DriverUnitAuras",
-    "DriverWarn", "EnchantBars", "Factory", "LayoutEngine", "PressHighlight", "RangeBars", "Reminders",
+    "DriverCooldown", "DriverCustom", "DriverEnchant", "DriverPhase", "DriverRange", "DriverToggle", "DriverTotem",
+    "DriverUnitAuras", "DriverWarn", "EnchantBars", "Factory", "LayoutEngine", "PressHighlight", "RangeBars", "Reminders",
     "Sounds", "Special", "SpecialIcon", "TextElements", "TooltipIDs" }
 Perf.TOP = 12
 Perf.TOP_AFTER = 6

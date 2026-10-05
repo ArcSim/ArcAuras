@@ -477,7 +477,7 @@ function M.StateShared(px, st)
         for _, c in ipairs(COLS) do
             local a, b = st[c], match[c]
             if (a == nil) ~= (b == nil) then return false end
-            if a and not (a[1] == b[1] and a[2] == b[2] and a.on == b.on and a.shared == b.shared) then
+            if a and not (a[1] == b[1] and a[2] == b[2] and a.on == b.on) then
                 return false
             end
         end
@@ -485,17 +485,18 @@ function M.StateShared(px, st)
     return true
 end
 
--- any cell of the state row reads differently across the records
+-- any cell of the state row, or the look it copies, reads differently across
+-- the records
 function M.StateMixed(px, st)
     for _, c in ipairs({ "alpha", "grey", "tint" }) do
         local spec = st[c]
         if spec then
-            for _, f in ipairs({ spec[2], spec.on, spec.shared }) do
+            for _, f in ipairs({ spec[2], spec.on }) do
                 if f and M.Mixed(px, spec[1], f) then return true end
             end
         end
     end
-    return false
+    return st.base ~= nil and M.Mixed(px, st.base[1], st.base[2]) == true
 end
 
 local function WrapStateRow(row)

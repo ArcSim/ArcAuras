@@ -186,7 +186,7 @@ function CO.TrackRows(pg, Rec, vis, owner, isBar)
         function(v) Set("showWhile", (v ~= "timer") and v or nil) end,
         Items(S.CUSTOM_SHOW_WHILE, S.CUSTOM_SHOW_WHILE_LABELS), vis)
     AT.RowDesc(pg, isBar and "Active: the bar shows (Hide when inactive hides it otherwise)."
-        or "Show & Hide sets its Active and Not active looks. With no rules yet it shows as active.",
+        or "Conditions sets its Active and Not active looks. With no rules yet it shows as active.",
         20, vis)
     AT.RowInput(pg, "Default seconds",
         function()

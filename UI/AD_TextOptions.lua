@@ -35,7 +35,7 @@ function TO.SourceItems()
             ok = C_Spell ~= nil and C_Spell.GetSpellCooldownDuration ~= nil
         elseif s == "spellCharges" then
             ok = C_Spell ~= nil and C_Spell.GetSpellCharges ~= nil
-        elseif s == "petMood" then
+        elseif s == "petMood" or s == "ammo" then
             ok = NS.IsForever == true
         end
         if ok then out[#out + 1] = { value = s, text = S.TEXT_SOURCE_LABELS[s] or s } end

@@ -496,9 +496,23 @@ SlashCmdList.ADKEYS = function(msg)
     if n == 0 then print("  not on any action bar button (Blizzard or addon)") end
 end
 
-local function PushState(a)
+-- The two shadows as the state reads them: m = every charge spent (or the
+-- cooldown runs), c = a charge coming back. A charge spell that locks itself
+-- after each cast (a hard ICD, Zenith) shows its main cooldown with a charge
+-- in hand; with Ignore hard ICD that reads as a charge coming back, unless the
+-- cast that started it spent the last of two charges (a.icdToZero).
+local function ShadowState(a)
     local m = a.sCD:IsShown() == true
     local c = a.isCharge and a.sCharge:IsShown() == true or false
+    if m and c and not a.icdToZero
+        and Store.Resolve(a.rec, "states", "ignoreHardICD") == true then
+        m = false
+    end
+    return m, c
+end
+
+local function PushState(a)
+    local m, c = ShadowState(a)
     -- m: the main cooldown runs (for a charge spell, every charge is spent).
     -- c: a charge is recharging. Dim on m, or on c unless waitForNoCharges.
     -- Desaturation follows m alone: a charge spell desaturates only when spent.
@@ -538,6 +552,7 @@ local function PushState(a)
     local f = a.frame
     UsabCfg(a)
     local sig = (dim and "d" or "-") .. (m and "m" or "-") .. (f._adProcOn and "p" or "-")
+        .. (f._adRecharging and "r" or "-")
         .. (InCombatLockdown() and "c" or "-") .. (f._adUsability or "") .. "|" .. (f._adGlowLaneOnly or "")
     if f._adStateSig ~= sig then
         f._adStateSig = sig
@@ -602,6 +617,13 @@ Feed = function(a)
     -- a new rank / override takes over the range check at the end of this feed
     local rangeMoved = a.rangeSid ~= nil and a.rangeSid ~= sid
     a.effSid = sid
+    -- charges are the current rank's or override's: re-read when it changes
+    if a.chargeSid ~= sid then
+        a.chargeSid = sid
+        local info = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
+        a.isCharge = (info and (info.maxCharges or 0) > 1) == true
+        a.maxCharges = info and info.maxCharges or nil
+    end
     -- the tooltip shows this rank / override too (our own frame field)
     a.frame._adEffSid = sid
 
@@ -645,8 +667,11 @@ Feed = function(a)
         end
     end
 
-    local m = a.sCD:IsShown() == true
-    local c = a.isCharge and a.sCharge:IsShown() == true or false
+    -- the last cast's verdict holds only while both shadows run
+    if not (a.sCD:IsShown() == true and a.isCharge and a.sCharge:IsShown() == true) then
+        a.icdToZero = nil
+    end
+    local m, c = ShadowState(a)
     -- How this GCD spin draws; the wand's lock has its own look.
     local look = Store.Resolve(a.rec, "swipe", wandGCD and "wandSwipe" or "gcdSwipe")
     local noGCD = (look or "hidden") == "hidden"
@@ -1059,7 +1084,15 @@ local function EnsureEvents()
         for _, a in pairs(attached) do
             -- the cast carries the rank / override id (Auto rank)
             if a.rec.driver and (a.rec.driver.spellID == spellID
-                or a.effSid == spellID) then Feed(a) end
+                or a.effSid == spellID) then
+                -- Before the feed, the shadows still hold the state the cast
+                -- came from: a cast while a charge was coming back spent the
+                -- last of two (the cooldown events only queue their feeds).
+                if a.isCharge and a.maxCharges == 2 then
+                    a.icdToZero = a.sCharge:IsShown() == true
+                end
+                Feed(a)
+            end
         end
     end)
     Events.On("BAG_UPDATE_COOLDOWN", "adcd", function()
@@ -1120,6 +1153,8 @@ local function EnsureEvents()
             local sid = a.effSid or (a.rec.driver and a.rec.driver.spellID)
             local info = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
             a.isCharge = (info and (info.maxCharges or 0) > 1) == true
+            a.maxCharges = info and info.maxCharges or nil
+            a.chargeSid = sid
         end
         Events.Coalesce("adcd_feedall", FeedAll)
     end)
@@ -1273,11 +1308,14 @@ function Driver.Attach(rec, f)
     else
         a.rec, a.frame = rec, f
     end
-    -- a (re)attach re-reads the settings and paints the usability in full
+    -- a (re)attach re-reads the settings and paints the usability in full;
+    -- the feed re-reads the charges from the current rank or override
     a.cfgGen = nil
-    local sid = rec.driver and rec.driver.spellID
+    a.chargeSid = nil
+    local sid = a.effSid or (rec.driver and rec.driver.spellID)
     local info = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
     a.isCharge = (info and (info.maxCharges or 0) > 1) == true
+    a.maxCharges = info and info.maxCharges or nil
     EnsureEvents()
     Feed(a)
     FeedUsability(a)
@@ -1287,12 +1325,15 @@ function Driver.Attach(rec, f)
     if NS.DriverAura and NS.DriverAura.AttachOverlay then
         NS.DriverAura.AttachOverlay(rec, f)
     end
+    -- its totem or a set duration instead: our own button (Drivers\AD_DriverPhase.lua)
+    if NS.DriverPhase then NS.DriverPhase.Attach(rec, f) end
 end
 
 function Driver.Detach(id)
     -- Every kind is released here. The aura driver parks its slots: engine
     -- slots cannot be destroyed.
     if NS.DriverAura then NS.DriverAura.Detach(id) end
+    if NS.DriverPhase then NS.DriverPhase.Detach(id) end
     if NS.AuraSounds then NS.AuraSounds.Detach(id) end
     attachedItems[id] = nil
     local at = attachedTotems[id]
@@ -1334,4 +1375,15 @@ function Driver.Refeed(id)
     if NS.DriverCustom then NS.DriverCustom.Refeed(id) end
     if NS.SpecialIcon then NS.SpecialIcon.Refeed(id) end
     if NS.DriverGroupBuff then NS.DriverGroupBuff.Refeed(id) end
+end
+
+-- A spell icon whose spell has charges (its current rank or override once
+-- fed): the options offer the Recharging look only there.
+function Driver.IsCharge(rec)
+    if not (rec and rec.kind == "spell") then return false end
+    local a = attached[rec.id]
+    if a and a.chargeSid then return a.isCharge == true end
+    local sid = rec.driver and tonumber(rec.driver.spellID)
+    local info = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
+    return (info and (info.maxCharges or 0) > 1) == true
 end

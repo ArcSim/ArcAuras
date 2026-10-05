@@ -56,8 +56,16 @@ local BUILTIN_TEXTURES = {
     ["Blizzard"] = "Interface\\TargetingFrame\\UI-StatusBar",
     ["Blizzard Raid"] = "Interface\\RaidFrame\\Raid-Bar-Hp-Fill",
     ["Character Skills"] = "Interface\\PaperDollInfoFrame\\UI-Character-Skills-Bar",
+    -- the addon's own (Textures\Bars), a gradient each way
+    ["Gradient Up"] = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Bars\\Gradient_Up",
+    ["Gradient Down"] = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Bars\\Gradient_Down",
+    ["Gradient Left"] = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Bars\\Gradient_Left",
+    ["Gradient Right"] = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Bars\\Gradient_Right",
 }
 Bars.BUILTIN_TEXTURES = BUILTIN_TEXTURES
+-- the order the texture pickers list them in
+Bars.BUILTIN_TEXTURE_ORDER = { "Flat", "Blizzard", "Blizzard Raid", "Character Skills",
+    "Gradient Up", "Gradient Down", "Gradient Left", "Gradient Right" }
 
 local function GetLSM()
     return LibStub and LibStub("LibSharedMedia-3.0", true) or nil
@@ -108,8 +116,10 @@ local BUILTIN_FONTS = {
     ["Arial Narrow"] = "Fonts\\ARIALN.TTF",
     ["Skurri"] = "Fonts\\skurri.ttf",
     ["Morpheus"] = "Fonts\\MORPHEUS.ttf",
+    -- ours: the face many UI packs use, so a layout matches them out of the box
+    ["Expressway"] = "Interface\\AddOns\\" .. ADDON .. "\\Fonts\\Expressway.ttf",
 }
-local BUILTIN_FONT_ORDER = { "Default", "Arial Narrow", "Skurri", "Morpheus" }
+local BUILTIN_FONT_ORDER = { "Default", "Arial Narrow", "Skurri", "Morpheus", "Expressway" }
 Bars.BUILTIN_FONTS = BUILTIN_FONTS
 Bars.BUILTIN_FONT_ORDER = BUILTIN_FONT_ORDER
 

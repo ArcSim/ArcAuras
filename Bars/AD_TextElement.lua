@@ -1,3 +1,4 @@
+-- Arc Auras, all rights reserved: do not copy or adapt this code into another addon without permission.
 -- Text elements (barKind "text"): one line of text in a box, fed by the source
 -- the player picks (words, power, health, combo points, ammo, pet happiness,
 -- the target's range band, the clock, a spell's cooldown or charges, an aura's
@@ -13,7 +14,6 @@ local K = Bars and Bars.Kit
 if not (Bars and K and Bars.RegisterKind) then return end
 local R = K.R
 local Schema = NS.Schema
-
 local TX = {}
 NS.TextElements = TX
 TX.KEY = "adbarstext"
@@ -25,7 +25,7 @@ TX.TICK = 0.1
 -- driver's fallback: the GCD spell's own numbers are dead on Forever)
 TX.GCD_RETRY = 0.3
 TX.MOOD = { [1] = "Unhappy", [2] = "Content", [3] = "Happy" }
--- the missing words' eraser reaches this far past the box (outline, shadow)
+-- how far past the box the missing words reach (outline, shadow)
 TX.ERASE_PAD = 4
 TX.UNITS = { "player", "target", "focus", "pet" }
 TX.fonts = {}      -- [name] = Font, one per element
@@ -832,7 +832,7 @@ function TX.ParkAura(sub)
         sub.container:SetAuraSlotCandidateFilters(sub.key, { includeSpellIDs = { [0] = true } })
     end
     sub.container:Hide()
-    -- missing words with no eraser running would stay up
+    -- the missing words would stay up otherwise
     if sub.stage then sub.stage:Hide() end
 end
 
@@ -938,7 +938,7 @@ function TX.EnsureAura(e)
     -- engine-drawn text through it
     local parent, stage, missFS = shell, nil, nil
     if mode == "missing" then
-        -- words and container share one stage, so the button's eraser reaches the words
+        -- words and container share one stage
         stage = CreateFrame("Frame", nil, shell)
         stage:SetAllPoints(shell)
         stage:SetFrameLevel(shell.overlay:GetFrameLevel() + 2)
@@ -1421,7 +1421,7 @@ function TX.Styled(e)
             TX.PlaceGate(sub, rec)
         end
     end
-    -- the missing words are ours, on our frame buffer: always styled
+    -- the missing words are ours: always styled
     if sub and sub.missFS then TX.StyleText(e, sub.missFS) end
 end
 

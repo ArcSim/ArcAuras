@@ -8,7 +8,7 @@ local AT = {}
 -- Other addons carry copies of this file, generated from it by the
 -- arc-theme-sync tool, which compares this number to find stale copies.
 -- Bump it on every change and never edit a copy.
-AT.VERSION = 20
+AT.VERSION = 21
 
 AT.WHITE = "Interface\\Buttons\\WHITE8X8"
 AT.DISCORD = "https://discord.gg/yMZmnFjUTd"
@@ -171,12 +171,21 @@ end
 
 -- Flat fill plus a one-pixel edge. The edge is four color-texture strips, not
 -- a backdrop edge: a backdrop edge drops a side when the frame rests at a
--- fractional pixel position, while plain textures stay whole. The frame's
--- SetBackdropBorderColor is replaced to recolor the strips.
+-- fractional pixel position, while plain textures stay whole. The fill is one
+-- texture too: SetBackdrop builds nine pieces per frame, and a panel skins
+-- thousands. The frame's SetBackdropColor and SetBackdropBorderColor are
+-- replaced to recolor them.
 local EDGE_KEYS = { "top", "bottom", "left", "right" }
 function AT.Skin(f, bg, borderCol)
     if not f._atEdges then
-        f:SetBackdrop({ bgFile = WHITE })
+        -- the backdrop's own center sat here: BACKGROUND, sublevel 0
+        local fill = f:CreateTexture(nil, "BACKGROUND")
+        fill:SetTexture(WHITE)
+        fill:SetAllPoints()
+        f._atFill = fill
+        f.SetBackdropColor = function(self, r, g, b, a)
+            self._atFill:SetVertexColor(r, g, b, a or 1)
+        end
         local e = {}
         for _, k in ipairs(EDGE_KEYS) do
             local t = f:CreateTexture(nil, "BORDER")
@@ -1490,7 +1499,8 @@ function AT.LayoutPage(pg)
     -- Something was laid out against an unresolved width, so run once more
     -- on the next frame. One re-pass is queued at a time, three in a row at
     -- most, so a page that can never resolve (hidden, zero-width parent)
-    -- doesn't spin. The count resets after a pass that resolves.
+    -- doesn't spin. The count resets after a pass that resolves. A page out
+    -- of sight skips it: showing it lays it out again.
     if pg._sizeUnresolved then
         if not pg._relayoutQueued and (pg._relayoutTries or 0) < 3 then
             pg._relayoutQueued = true
@@ -1498,7 +1508,7 @@ function AT.LayoutPage(pg)
             C_Timer.After(0, function()
                 pg._relayoutQueued = nil
                 pg._sizeUnresolved = nil
-                if pg:IsShown() then AT.LayoutPage(pg) end
+                if pg:IsVisible() then AT.LayoutPage(pg) end
             end)
         end
     else

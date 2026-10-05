@@ -1,10 +1,10 @@
+-- Arc Auras, all rights reserved: do not copy or adapt this code into another addon without permission.
 -- Totem out of range: a totem icon set to one totem wears its Out of range
 -- look (grey, tint, a glow, custom texts) while the totem is out and its buff
 -- is not on you. Buffs read secret in combat, so nothing is read: the look
--- sits in layers over the holder that a player aura slot on the buff clears
--- while the buff is up. Whether the totem is out is plain (the totem feed).
+-- sits in layers over the holder. Whether the totem is out is plain (the
+-- totem feed).
 -- Called from AD_DriverCooldown's totem feed, Driver.Attach and Driver.Detach.
-
 local ADDON, NS = ...
 local Store = NS.Store
 local Events = NS.Events
@@ -222,7 +222,7 @@ local function BuildLayer(rec, part, ids)
     st:SetSize(1, 1)
     st:SetPoint("TOP", UIParent, "TOP", 0, -80)
     st:SetFlattensRenderLayers(true)
-    -- Buffer on before any eraser can show.
+    -- set before any button exists
     st:SetIsFrameBuffer(true)
     st:SetAlpha(0)
     local c = DA.CreateIconContainer("player", st)
@@ -300,7 +300,8 @@ local function PaintArt(layer, rec, f, kS, a)
     art:ClearAllPoints()
     art:SetPoint("TOPLEFT", st, "TOPLEFT", pad, -pad)
     art:SetPoint("BOTTOMRIGHT", st, "BOTTOMRIGHT", -pad, pad)
-    art:SetDesaturated(R("states", "totemRangeDesaturate") == true)
+    -- the totem is out: Active's grey out and tint carry under this look
+    art:SetDesaturated(R("states", "totemRangeDesaturate") == true or R("states", "readyDesaturate") == true)
     local tc
     if R("states", "totemRangeTint") == true then
         tc = R("states", "totemRangeTintColor")

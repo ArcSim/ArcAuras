@@ -17,6 +17,7 @@ Names.maxGroups = 200       -- groups collected per query (the panel shows few)
 local runs                  -- { s1, e1, s2, e2, ... } once the probe is done
 local probe                 -- the probe in progress
 local job                   -- the query in progress
+local xjob                  -- the exact-name lookup in progress (Names.FindExact)
 local ticking = false
 
 local function Secret(v) return issecretvalue and issecretvalue(v) end
@@ -98,6 +99,43 @@ local function QueryStep(deadline)
     return true
 end
 
+-- One budgeted slice of the exact-name lookup; true = finished. A want with
+-- icons takes only the IDs that wear one of them.
+local function ExactStep(deadline)
+    local j = xjob
+    local GetName, GetTex = C_Spell.GetSpellName, C_Spell.GetSpellTexture
+    while j.ri <= #runs do
+        local e = runs[j.ri + 1]
+        local id = j.id or runs[j.ri]
+        while id <= e do
+            local nm = GetName(id)
+            local hit = (nm and not Secret(nm)) and j.byName[nm] or nil
+            if hit then
+                local tex
+                for _, i in ipairs(hit) do
+                    local icons = j.wants[i].icons
+                    if icons then
+                        if tex == nil then
+                            tex = GetTex(id)
+                            if tex == nil or Secret(tex) then tex = false end
+                        end
+                        if tex and icons[tex] then j.out[i][#j.out[i] + 1] = id end
+                    else
+                        j.out[i][#j.out[i] + 1] = id
+                    end
+                end
+            end
+            id = id + 1
+            if id % 256 == 0 and debugprofilestop() >= deadline then
+                j.id = id
+                return false
+            end
+        end
+        j.ri, j.id = j.ri + 2, nil
+    end
+    return true
+end
+
 -- Sort and hand the groups over: whole name, starts-with, contains; then the
 -- names you have a spell for; then more ranks; then A-Z. `pick` is the ID a
 -- one-ID field should take: the rank you cast, when it is in the group.
@@ -135,7 +173,7 @@ end
 
 Tick = function()
     ticking = false
-    if not job then return end
+    if not (job or xjob) then return end
     -- No scanning in combat; look again in a second.
     if InCombatLockdown and InCombatLockdown() then
         ticking = true
@@ -146,18 +184,24 @@ Tick = function()
     if not runs then
         if not probe then probe = { nextID = 1, list = {} } end
         if not ProbeStep(deadline) then
-            job.cb("loading", nil, Progress())
+            local pct = Progress()
+            if job then job.cb("loading", nil, pct) end
+            if xjob then xjob.cb("loading", nil, pct) end
             Kick()
             return
         end
     end
-    if QueryStep(deadline) then
+    if xjob and ExactStep(deadline) then
+        local x = xjob
+        xjob = nil
+        x.cb("done", x.out, 100)
+    end
+    if job and QueryStep(deadline) then
         local j = job
         job = nil
         Finish(j)
-        return
     end
-    Kick()
+    if job or xjob then Kick() end
 end
 
 -- query = the typed text; cb(state, results, pct) with state "loading"
@@ -172,6 +216,23 @@ function Names.Search(query, cb)
         return
     end
     job = { q = q, cb = cb, ri = 1, groups = {}, count = 0 }
+    Kick()
+end
+
+-- Every ID named exactly one of the wanted names, in one pass: the ranks and
+-- variants of spells already known by ID, whatever the client's language.
+-- wants[i] = { name = text, icons = { [texture] = true } or nil (any icon) };
+-- cb(state, out, pct): "loading" while the one-time probe runs, then "done"
+-- with out[i] = { ids }. A newer call replaces an unfinished one.
+function Names.FindExact(wants, cb)
+    local x = { wants = wants, cb = cb, ri = 1, out = {}, byName = {} }
+    for i, w in ipairs(wants) do
+        x.out[i] = {}
+        local list = x.byName[w.name] or {}
+        list[#list + 1] = i
+        x.byName[w.name] = list
+    end
+    xjob = x
     Kick()
 end
 

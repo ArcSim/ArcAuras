@@ -115,6 +115,9 @@ end
 function DT.Changed()
     local D = NS.DriverCooldown
     if D and D.FeedTotems then Events.Coalesce("adcd_feedtotems", D.FeedTotems) end
+    -- a spell icon showing its totem (Drivers\AD_DriverPhase.lua)
+    local P = NS.DriverPhase
+    if P and P.OnTotems then Events.Coalesce("adphase_totems", P.OnTotems) end
 end
 
 -- Every slot from scratch, from plain reads where the game allows them.

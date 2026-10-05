@@ -391,6 +391,24 @@ local function FoldGCDSwipe(rec)
     end
 end
 
+-- Folds the retired "Usability tints" switch into the switches of the two
+-- rows it served. It acts only while the old key exists, so it needs no
+-- version stamp.
+local function FoldUsabilityTintIn(st)
+    if not (st and st.usabilityTint ~= nil) then return end
+    if st.unusableTintEnabled == nil then st.unusableTintEnabled = st.usabilityTint end
+    if st.resourceTintEnabled == nil then st.resourceTintEnabled = st.usabilityTint end
+    st.usabilityTint = nil
+end
+
+local function FoldUsabilityTint(rec)
+    if rec.type == "icon" and rec.o.states then
+        FoldUsabilityTintIn(rec.o.states)
+    elseif rec.type == "layout" and rec.inh and rec.inh.icon and rec.inh.icon.states then
+        FoldUsabilityTintIn(rec.inh.icon.states)
+    end
+end
+
 local function FoldAuraLabels(rec)
     if rec.type ~= "icon" or rec.kind ~= "aura" then return end
     local lab = rec.o and rec.o.label
@@ -570,6 +588,27 @@ Store.ValidUid = ValidUid
 -- string wrongly, never for new settings an older one can simply skip.
 Store.FORMAT = 1
 
+-- The game a string is for: spell and item IDs differ between the two, so an
+-- import on the other one warns first. A string with no mark is Forever's
+-- (every one made before the mark was, no retail build having shipped).
+function Store.Game()
+    return NS.IsForever == true and "forever" or "retail"
+end
+
+Store.GAME_NAMES = { forever = "WoW Forever", retail = "Retail" }
+
+-- The game a string's payload was made for, when it is not this one.
+function Store.OtherGame(payload)
+    local g = type(payload) == "table" and payload.game or nil
+    if type(g) ~= "string" or g == "" then g = "forever" end
+    if g == Store.Game() then return nil end
+    return g
+end
+
+function Store.GameName(g)
+    return Store.GAME_NAMES[g] or tostring(g)
+end
+
 function Store.AddonVersion()
     local G = C_AddOns and C_AddOns.GetAddOnMetadata
     local v = G and G(ADDON, "Version")
@@ -597,13 +636,14 @@ end
 
 function Store.Normalize()
     -- Save-as-Default buckets are not records, so the loop below never sees
-    -- them: their one retired key is folded here.
+    -- them: their retired keys are folded here.
     local nd = DB.newDefaults and DB.newDefaults["iconGroup:cooldown"]
     if nd and nd.arrangement then FoldDynamicCooldowns(nd.arrangement) end
     for _, bucket in pairs(DB.newDefaults or {}) do
         if type(bucket) == "table" then
             FoldAbbrevIn(bucket.text)
             FoldGCDSwipeIn(bucket.swipe)
+            FoldUsabilityTintIn(bucket.states)
         end
     end
     -- A reminder lives only in a reminder group, and a reminder group holds
@@ -699,6 +739,8 @@ function Store.Normalize()
             -- usable (Bars\AD_SwingColors.lua reads them as they are).
             if rec.barKind == "swing" then
                 rec.driver.swingColors = Store.CleanSwingColors(rec.driver.swingColors)
+                rec.driver.swingAbilIDs, rec.driver.swingAbilRanks =
+                    Store.CleanSwingAbils(rec.driver.swingAbilIDs, rec.driver.swingAbilRanks)
                 -- the out-of-range check's own spell: a whole positive ID or none
                 local rs = tonumber(rec.driver.rangeSpell)
                 rec.driver.rangeSpell = (rs and rs > 0) and math.floor(rs) or nil
@@ -791,6 +833,7 @@ function Store.Normalize()
         FoldAuraLabels(rec)
         FoldDurationAbbrev(rec)
         FoldGCDSwipe(rec)
+        FoldUsabilityTint(rec)
         Schema.FoldUnitAuraCap(rec)
         -- A record from before every offset default went to 0 keeps its
         -- look: all of them once, then an import from an older string (it
@@ -1001,6 +1044,65 @@ end
 
 -- Resolution: record -> layout -> newDefaults -> schema default
 
+-- An icon of a Dynamic aura group (not one showing every aura on a unit),
+-- where a field's `dyn` default applies.
+function Store.InDynamicAuraGroup(rec)
+    local gid = rec and rec.type == "icon" and rec.groupId
+    local g = gid and DB.records[gid]
+    if not (g and g.type == "group" and g.groupKind == "aura") then return false end
+    if Store.Resolve(g, "arrangement", "dynamicLayout") ~= true then return false end
+    return not (Store.ShowsAll and Store.ShowsAll(g))
+end
+
+-- An aura icon set up for its missing state: Active hidden, a text or glow
+-- kept to the aura's absence, or its own Missing look changed.
+function Store.MissingSetUp(rec)
+    if not (rec and rec.kind == "aura") then return false end
+    local R = function(s, f) return Store.Resolve(rec, s, f) end
+    if (R("auraActive", "activeAlpha") or 1) <= 0 then return true end
+    for _, suf in ipairs({ "", "2", "3" }) do
+        local t = R("label", "labelText" .. suf)
+        if R("label", "labelMissingOnly" .. suf) == true and t ~= nil and t ~= "" then return true end
+    end
+    for k = 1, Schema.AURA_GLOW_SLOTS or 1 do
+        local suf = (k > 1) and tostring(k) or ""
+        if R("auraActive", "activeGlow" .. suf) == true and R("auraActive", "activeGlowWhen" .. suf) == "missing" then
+            return true
+        end
+    end
+    for f, v in pairs(rec.o.auraMissing or {}) do
+        if f ~= "showWhileMissing" and v ~= nil then return true end
+    end
+    return false
+end
+
+-- What `rec` reads for each field with a `dyn` default, so a move can keep it.
+function Store.DynReadings(rec)
+    local fam = rec and Schema[Store.FamilyOf(rec)]
+    if not fam then return nil end
+    local out
+    for section, sec in pairs(fam) do
+        if type(sec) == "table" and type(sec.fields) == "table" then
+            for field, def in pairs(sec.fields) do
+                if type(def) == "table" and def.dyn ~= nil then
+                    out = out or {}
+                    out[#out + 1] = { section, field, Store.Resolve(rec, section, field) }
+                end
+            end
+        end
+    end
+    return out
+end
+
+-- An icon brought into a Dynamic aura group keeps those readings (a missing
+-- icon dragged in stays one), stored only where the group's default differs.
+function Store.KeepDynReadings(rec, readings)
+    if not (readings and Store.InDynamicAuraGroup(rec)) then return end
+    for _, r in ipairs(readings) do
+        if Store.Resolve(rec, r[1], r[2]) ~= r[3] then Store.SetOverride(rec, r[1], r[2], r[3]) end
+    end
+end
+
 function Store.Resolve(rec, section, field)
     local o = rec.o[section]
     if o and o[field] ~= nil then return o[field] end
@@ -1019,6 +1121,10 @@ function Store.Resolve(rec, section, field)
     if nd and nd[field] ~= nil then return nd[field] end
     local fam = Schema[Store.FamilyOf(rec)]
     local def = fam and fam[section] and fam[section].fields[field]
+    -- The default inside a Dynamic aura group (`dyn`), same place and rules
+    -- as dk: such a group packs what shows, so a Missing look starts off.
+    if def and def.dyn ~= nil and Store.InDynamicAuraGroup(rec)
+        and not (def.dynUnless and def.dynUnless(rec)) then return def.dyn end
     -- Per-kind default (`dk = { kind = value }`), e.g. a swing bar fills while
     -- the other timed bars drain. It sits after the saved default and before
     -- the plain one, so a hand-set value wins and SetOverride, which compares
@@ -2689,6 +2795,28 @@ function Store.CleanSwingColors(list)
     return out
 end
 
+-- A swing bar's next-swing abilities: the spell IDs in order (whole positive
+-- ones; none = nil) and each one's rank pick by position (0 any rank, -1 the
+-- highest, 1..SWING_ABIL_MAX_RANK that rank; anything else reads 0), the picks
+-- nil while every one is "any rank". Nothing is capped: the list is the
+-- player's, the editor's limit only stops adding.
+function Store.CleanSwingAbils(ids, picks)
+    if type(ids) ~= "table" then return nil, nil end
+    local maxRank = Schema.SWING_ABIL_MAX_RANK or 20
+    local outI, outP, any = {}, {}, false
+    for i, id in ipairs(ids) do
+        local n = tonumber(id)
+        if n and n > 0 then
+            local p = math.floor(tonumber(type(picks) == "table" and picks[i] or 0) or 0)
+            if p < -1 or p > maxRank then p = 0 end
+            outI[#outI + 1], outP[#outP + 1] = math.floor(n), p
+            if p ~= 0 then any = true end
+        end
+    end
+    if #outI == 0 then return nil, nil end
+    return outI, any and outP or nil
+end
+
 -- A custom item's rules (rec.driver.rules on a timer icon or bar), cleaned: at
 -- most Schema.CUSTOM_MAX_RULES, each with a known trigger and action, every
 -- number in range. nil stays nil (a record that never had rules); an empty
@@ -3086,6 +3214,7 @@ function Store.MoveIcon(iconId, destGroupId, layoutId, pos, cell)
         local layout = Store.Get(layoutId)
         if not layout or layout.type ~= "layout" then return false end
     end
+    local keep = Store.DynReadings(rec)
     if rec.groupId then
         local g = Store.Get(rec.groupId)
         if g then removeFrom(g.members, iconId) end
@@ -3108,6 +3237,7 @@ function Store.MoveIcon(iconId, destGroupId, layoutId, pos, cell)
         local layout = Store.Get(layoutId)
         layout.members[#layout.members + 1] = iconId
     end
+    Store.KeepDynReadings(rec, keep)
     Store.Dirty("tree")
     return true
 end
@@ -3421,6 +3551,7 @@ function Store.CopyMany(ids, target)
         elseif t == "group" or t == "bar" or t == "icon" or t == "reminder" then
             local home, same = Home(rec)
             if home and home.members then
+                local keep = (t == "icon" and home.type == "group") and Store.DynReadings(rec) or nil
                 local c = CloneRecord(rec, map, made)
                 if same then c.name = tostring(rec.name or "") .. " copy" end
                 if t == "group" then
@@ -3448,6 +3579,7 @@ function Store.CopyMany(ids, target)
                 end
                 home.members[#home.members + 1] = c.id
                 DB.records[c.id] = c
+                Store.KeepDynReadings(c, keep)
                 copies[#copies + 1] = c
                 ok = true
             end
@@ -3469,9 +3601,25 @@ end
 -- shifts). The engine then moves the group half a step so the icons stay put.
 local GRID_MAX = 20   -- the schema's rows/cols max
 
+-- An aura group's rows also grow as its icons wrap, so its row arrows count
+-- the rows the editor draws (its icons as LayoutEngine's ShowsRec picks them).
+-- A group showing every aura on a unit keeps its Rows with its other settings.
 local function GridSize(g)
-    return math.max(1, Store.Resolve(g, "arrangement", "rows") or 1),
-        math.max(1, Store.Resolve(g, "arrangement", "cols") or 6)
+    if Store.ShowsAll(g) then
+        return math.max(1, Store.Resolve(g, "unitAuras", "rows") or 1),
+            math.max(1, Store.Resolve(g, "arrangement", "cols") or 6)
+    end
+    local rows = math.max(1, Store.Resolve(g, "arrangement", "rows") or 1)
+    local cols = math.max(1, Store.Resolve(g, "arrangement", "cols") or 6)
+    if g.groupKind == "aura" then
+        for _, rec in ipairs(Store.IconsOf(g)) do
+            local gp = rec.gpos
+            local drawn
+            if Store.IsLoaded(rec) then drawn = not Store.EditHidden(rec) else drawn = Store.UnloadedShown(rec) end
+            if drawn and gp and gp.row and gp.col and gp.col < cols and gp.row >= rows then rows = gp.row + 1 end
+        end
+    end
+    return rows, cols
 end
 
 -- axis ("row" | "col") and whether the edge is that axis's logical start
@@ -3484,20 +3632,28 @@ local function EdgeAxis(g, edge)
     return "col", leftFill
 end
 
--- can this arrow act? ok, reason ("max" | "min" | "full"), loaded count
+-- can this arrow act? ok, reason ("max" | "min" | "full" | "cap"), and the
+-- limit or the loaded count
 function Store.GridEdgeCheck(groupId, edge, add)
     local g = Store.Get(groupId)
     if not (g and g.type == "group") then return false end
     local rows, cols = GridSize(g)
     local axis = EdgeAxis(g, edge)
     local n = (axis == "row") and rows or cols
+    local showsAll = Store.ShowsAll(g)
     if add then
-        if n >= GRID_MAX then return false, "max" end
+        local max = (showsAll and axis == "row") and Schema.iconGroup.unitAuras.fields.rows.max or GRID_MAX
+        if n >= max then return false, "max", max end
+        -- past the most it shows, a new line would stay empty
+        if showsAll and rows * cols >= (Schema.UNIT_AURA_MAX or 40) then
+            return false, "cap", Schema.UNIT_AURA_MAX or 40
+        end
         return true
     end
     if n <= 1 then return false, "min" end
-    -- an aura group's live row simply wraps, so it never runs out of cells
-    if g.groupKind == "aura" then return true end
+    if showsAll then return true end
+    -- an aura group's icons wrap onto another row, so a column never runs out of cells
+    if g.groupKind == "aura" and axis == "col" then return true end
     -- Never shrink below the icons: the static grid would grow the line back,
     -- so the click would look like it did nothing. Unloaded icons do not
     -- count; they re-home when they return.
@@ -3518,6 +3674,16 @@ function Store.GridEdge(groupId, edge, add)
     local g = Store.Get(groupId)
     local rows, cols = GridSize(g)
     local axis, atStart = EdgeAxis(g, edge)
+    if Store.ShowsAll(g) then
+        -- no cells of its own: the counts are the grid
+        if axis == "row" then
+            Store.SetOverride(g, "unitAuras", "rows", rows + (add and 1 or -1))
+        else
+            Store.SetOverride(g, "arrangement", "cols", cols + (add and 1 or -1))
+        end
+        Store.Dirty("tree")
+        return true
+    end
     local field = (axis == "row") and "row" or "col"
     local last = ((axis == "row") and rows or cols) - 1
     for _, rec in ipairs(Store.IconsOf(g)) do
@@ -3816,9 +3982,10 @@ function Store.Export(ids, keep)
         DropPersonal(rec)
     end
     -- at: when it was made, so a later string can tell newer from older;
-    -- made / need: the version that made it and the format it needs
+    -- made / need: the version that made it and the format it needs;
+    -- game: the game it was made on
     local payload = { v = 1, kind = "adlayout", records = recs, at = time and time() or 0,
-        made = Store.AddonVersion(), need = Store.FORMAT }
+        made = Store.AddonVersion(), need = Store.FORMAT, game = Store.Game() }
     local out = {}
     SerVal(payload, out)
     local comp = LD:CompressDeflate(table.concat(out))
@@ -4069,7 +4236,7 @@ local PART_OF_SECTION = {
         thresholds = "appearance", ticks = "appearance", wheel = "appearance" },
     iconGroup = { anchor = "position", arrangement = "arrange", audio = "sounds", frame = "position",
         keybind = "text", look = "appearance", mouse = "position", pulse = "appearance",
-        unitAuras = "tracking" },
+        typeLook = "appearance", unitAuras = "tracking" },
     layout = { mouse = "position" },
     reminder = { pulse = "appearance" },
 }
@@ -4213,7 +4380,8 @@ function Store.PlanUpdate(text)
     local at = tonumber(payload.at)
     local plan = { payload = payload, items = {}, gone = {}, map = map,
         at = (at and at >= 0) and math.floor(at) or 0, made = payload.made,
-        newer = Store.NewerMaker(payload.made), matched = 0, changed = 0, new = 0, same = 0 }
+        newer = Store.NewerMaker(payload.made), otherGame = Store.OtherGame(payload),
+        matched = 0, changed = 0, new = 0, same = 0 }
     local localAt
     -- the layouts here that the string carries: an item under one of them was
     -- exported with its looks inherited, any other with them baked in

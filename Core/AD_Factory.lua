@@ -1,7 +1,7 @@
+-- Arc Auras, all rights reserved: do not copy or adapt this code into another addon without permission.
 -- Icon factory: builds and styles every icon frame, the aura engine's buttons
 -- included. Drivers never style anything; they report state (Factory.SetState)
 -- or feed the swipe (frame.cooldown). ApplyStyle is the only style writer.
-
 local ADDON, NS = ...
 local Store = NS.Store
 
@@ -707,8 +707,11 @@ function Factory.Release(id)
         if NS.IconScreen and NS.IconScreen.On(id) then NS.IconScreen.Stop() end
         Factory.StopGlow(f)   -- ready + proc + aura lanes
         Factory.StopUsableGlow(f)
+        Factory.StopRangeGlow(f)
+        Factory.StopRechargeGlow(f)
         f._adStateSig = nil   -- the lanes just stopped: the next feed repaints
         if NS.DriverWarn then NS.DriverWarn.Drop(f) end
+        if NS.DriverToggle then NS.DriverToggle.Drop(f) end
         f._adPureGCD = nil   -- pooled frames must not carry GCD presentation
         f._adPureWand = nil
         f._adRecharging = nil
@@ -1169,15 +1172,21 @@ function Factory.KeybindEnabled(rec)
         and Store.Resolve(g, "keybind", "showKeybinds") == true
 end
 
+-- An item its stock hides: out while it shows only in stock, or in stock while
+-- it shows only when out (a trinket is out while its slot is empty).
+function Factory.StockHidden(f, rec)
+    if not (rec.kind == "item" or rec.kind == "trinket" or rec.kind == "ammo") then return false end
+    if f._adItemEmpty then return Store.Resolve(rec, "outOfStock", "hideWhenMissing") == true end
+    return rec.kind ~= "trinket" and Store.Resolve(rec, "outOfStock", "showOnlyWhenOut") == true
+end
+
 -- The one frame-alpha writer: the icon's opacity times the conditions module's
--- (0 while inert, else its fade), and 0 for an item hidden while missing,
--- except in edit mode so it stays grabbable.
+-- (0 while inert, else its fade), and 0 for an item its stock hides, except in
+-- edit mode so it stays grabbable.
 function Factory.ApplyFrameAlpha(f, rec)
     local a = Store.Resolve(rec, "appearance", "alpha") or 1
     -- _adPassive: a passive trinket in a slot set to on-use trinkets only
-    if (rec.kind == "item" or rec.kind == "trinket" or rec.kind == "ammo")
-        and ((f._adItemEmpty and Store.Resolve(rec, "outOfStock", "hideWhenMissing") == true)
-            or (rec.kind == "trinket" and f._adPassive))
+    if (Factory.StockHidden(f, rec) or (rec.kind == "trinket" and f._adPassive))
         and not (NS.LayoutEngine and NS.LayoutEngine.IsEditMode
             and NS.LayoutEngine.IsEditMode()) then
         a = 0
@@ -1378,6 +1387,8 @@ function Factory.ApplyStyle(f, rec)
     -- Custom labels: styled here, shown per state in SetState.
     f._adLabels = f._adLabels or {}
     local labelFS = { f.labelText, f.labelText2, f.labelText3 }
+    -- under the time gate the button and the missing look carry every label
+    local split = rec.kind == "aura" and Factory.TimeGateFrac(rec) ~= nil
     for i, suf in ipairs({ "", "2", "3" }) do
         local fs = labelFS[i]
         local st = f._adLabels[i] or {}
@@ -1387,6 +1398,7 @@ function Factory.ApplyStyle(f, rec)
         st.cd = R("label", "labelShowCooldown" .. suf) ~= false
         st.activeOnly = rec.kind == "aura" and R("label", "labelActiveOnly" .. suf) == true
         st.missingOnly = rec.kind == "aura" and R("label", "labelMissingOnly" .. suf) == true
+        st.split = split
         local ltext = R("label", "labelText" .. suf)
         if fs and ltext and ltext ~= "" then
             StyleLabel(fs, rec, suf, kS, f)
@@ -1420,11 +1432,38 @@ function Factory.ApplyStyle(f, rec)
     Factory.SetState(f, rec, f._adOnCooldown, f._adDesatState)
     -- the warning glow follows the ammo and the pet, not the icon's state
     if NS.DriverWarn then NS.DriverWarn.Sync(f, rec) end
+    -- the toggle glow follows Shoot, Auto Shot or Attack being on
+    if NS.DriverToggle then NS.DriverToggle.Sync(f, rec) end
     -- a special icon's texts are its templates expanded, so it paints again
     if rec.kind == "special" and NS.SpecialIcon then NS.SpecialIcon.Restyle(f, rec) end
 end
 
--- A label kept to the aura's absence needs solid live art over it, or the eraser (NeedsEraser).
+-- Show only when little time is left (DriverAura): the share of the aura's
+-- time left the live look shows under, or nil.
+function Factory.TimeGateFrac(rec)
+    local D = NS.DriverAura
+    if not (D and D.TimeGateFrac) then return nil end
+    return D.TimeGateFrac(rec)
+end
+
+-- Where an aura icon's custom text `suf` shows: on the live button, with the
+-- missing look, or else on the holder in both states. Under the time gate a
+-- text shown in both states takes the first two, so its live half waits too.
+function Factory.LabelOnButton(rec, suf)
+    if not (rec and rec.kind == "aura") then return false end
+    if Store.Resolve(rec, "label", "labelActiveOnly" .. suf) == true then return true end
+    return Factory.TimeGateFrac(rec) ~= nil
+        and Store.Resolve(rec, "label", "labelMissingOnly" .. suf) ~= true
+end
+
+function Factory.LabelWithMissing(rec, suf)
+    if not (rec and rec.kind == "aura") then return false end
+    if Store.Resolve(rec, "label", "labelMissingOnly" .. suf) == true then return true end
+    return Factory.TimeGateFrac(rec) ~= nil
+        and Store.Resolve(rec, "label", "labelActiveOnly" .. suf) ~= true
+end
+
+-- A label kept to the aura's absence needs solid live art over it, or a stage (NeedsEraser).
 function Factory.MissingLabelsOK(rec)
     if not (rec ~= nil and rec.kind == "aura") then return false end
     local D = NS.DriverAura
@@ -1441,7 +1480,7 @@ function Factory.ApplyMissingLabels(f, rec, kS)
     local any = false
     for i, suf in ipairs({ "", "2", "3" }) do
         local ltext = R("label", "labelText" .. suf)
-        local want = ok and R("label", "labelMissingOnly" .. suf) == true
+        local want = ok and Factory.LabelWithMissing(rec, suf)
             and ltext ~= nil and ltext ~= ""
         if want and not clip then
             clip = CreateFrame("Frame", nil, f._adStage or f)
@@ -1535,11 +1574,57 @@ function Factory.AuraActiveAlpha(rec)
     return EditFloor(aA)
 end
 
+-- Show only when little time is left: a hidden bar the engine fills with the
+-- time left, over the live look. frac = the share it shows under (nil = off);
+-- w, h = the button; reach = how far its texts go. A button binds one
+-- duration bar (b._adBarOn), so glow 1 leaves it meanwhile (DriverAura).
+local function ApplyShowGate(b, frac, w, h, reach)
+    local gb = b._adTimeGate
+    local E = NS.LayoutEngine
+    local on = frac ~= nil and b.SetDurationBar ~= nil and Enum ~= nil
+        and Enum.StatusBarInterpolation ~= nil and Enum.StatusBarTimerDirection ~= nil
+        and Enum.StatusBarTimerDirection.RemainingTime ~= nil
+        and not (E ~= nil and E.IsEditMode ~= nil and E.IsEditMode() == true)
+    if not on then
+        if gb then gb:Hide() end
+        return
+    end
+    if not gb then
+        gb = CreateFrame("StatusBar", nil, b)
+        gb:SetStatusBarTexture(WHITE)
+        gb:SetMinMaxValues(0, 1)
+        gb:EnableMouse(false)
+        local fill = gb:GetStatusBarTexture()
+        fill:SetColorTexture(0, 0, 0, 0)
+        fill:SetBlendMode("DISABLE")
+        b._adTimeGate = gb
+    end
+    if b._adBarOn ~= gb then
+        b._adBarOn = gb
+        b:SetDurationBar(gb, {
+            interpolation = Enum.StatusBarInterpolation.Immediate,
+            direction = Enum.StatusBarTimerDirection.RemainingTime,
+        })
+    end
+    -- The fill spans the look and a margin while more than frac is left; the
+    -- look shows within gw / L of the aura's life once less is.
+    local m = math.max(w, h, reach or 0)
+    local gw, gh = w + 2 * m, h + 2 * m
+    local L = math.min(120000, gw / 0.0005)
+    gb:ClearAllPoints()
+    gb:SetSize(L, gh)
+    gb:SetPoint("LEFT", b, "CENTER", math.min(-gw / 2, gw / 2 - frac * L), 0)
+    if type(b._adLevel) == "number" then gb:SetFrameLevel(b._adLevel + 3) end
+    gb:Show()
+end
+
 -- The live engine button shows exactly while the aura is up: no presence read, nothing read off it.
 function Factory.StyleAuraButton(b, rec, px, opts)
     if not (b and rec) then return end
     opts = opts or {}
     local R = function(s, k) return Store.Resolve(rec, s, k) end
+    -- show only when little time is left (aura icons)
+    local timed = Factory.TimeGateFrac(rec)
     local kS = (px and px > 0) and (px / 36) or 1
     local forceHide = R("appearance", "forceHideIcon") == true
     local aA = Factory.AuraActiveAlpha(rec)
@@ -1597,7 +1682,7 @@ function Factory.StyleAuraButton(b, rec, px, opts)
             ic:SetVertexColor(1, 1, 1, artA)
         end
     end
-    -- Shown only while the stage buffers (opts.erase), sized to the missing look's reach.
+    -- Shown with opts.erase, as far as the missing look reaches.
     local er = b._adEraser
     if er then
         if opts.erase == true then
@@ -1610,7 +1695,7 @@ function Factory.StyleAuraButton(b, rec, px, opts)
             er:Hide()
         end
     end
-    -- The plate keeps a dimmed active icon from showing the missing look; the eraser replaces it.
+    -- The plate keeps a dimmed active icon from showing the missing look (not with opts.erase).
     local plate = b._adPlate
     if plate then
         if plate.SetIgnoreParentAlpha then plate:SetIgnoreParentAlpha(false) end
@@ -1695,8 +1780,7 @@ function Factory.StyleAuraButton(b, rec, px, opts)
     for i, suf in ipairs({ "", "2", "3" }) do
         local fs = b._adLabelFS[i]
         local ltext = R("label", "labelText" .. suf)
-        if rec.kind == "aura" and R("label", "labelActiveOnly" .. suf) == true
-            and ltext and ltext ~= "" then
+        if Factory.LabelOnButton(rec, suf) and ltext and ltext ~= "" then
             if not fs then
                 fs = lhost:CreateFontString(nil, "OVERLAY")
                 fs:SetDrawLayer("OVERLAY", 7)
@@ -1717,17 +1801,37 @@ function Factory.StyleAuraButton(b, rec, px, opts)
             fs:Hide()
         end
     end
-    -- opts.glowElsewhere: a glow gate moved the glow onto its own button
+    -- opts.rowGlows: a Dynamic row's button, which has no holder, so it draws
+    -- every glow but a Missing one (Always ones too) and those on its row's
+    -- lanes (opts.rowLanes, by slot)
+    local row = opts.rowGlows == true
+    local function Elsewhere(k)
+        if row then return Factory.MissingGlowOn(rec, k) or (opts.rowLanes ~= nil and opts.rowLanes[k] == true) end
+        -- under the time gate the editor's stand-in draws an Always glow too
+        if timed and opts.previewGlows == true then
+            return R("auraActive", "activeGlowWhen" .. ((k > 1) and k or "")) == "missing"
+        end
+        return Factory.HolderGlowOn(rec, k)
+    end
+    -- opts.glowElsewhere: a glow gate moved the glow onto its own button, as
+    -- the time gate always does but on the editor's stand-in
     Factory.SetAuraButtonGlow(b, rec, (not forceHide) and not opts.glowElsewhere
-        and R("auraActive", "activeGlow") == true and not Factory.HolderGlowOn(rec, 1),
+        and not (timed and opts.previewGlows ~= true)
+        and R("auraActive", "activeGlow") == true and not Elsewhere(1),
         opts.w or px, opts.h or px, aA)
     -- Glows 2-4 ride their own buttons in play; the editor preview's one
     -- stand-in draws them all (opts.previewGlows) and drops them otherwise,
     -- as it also serves spell icons.
     for k = 2, (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1 do
-        Factory.SetAuraButtonGlow(b, rec, opts.previewGlows == true and (not forceHide)
-            and R("auraActive", "activeGlow" .. k) == true and not Factory.HolderGlowOn(rec, k),
+        Factory.SetAuraButtonGlow(b, rec, (opts.previewGlows == true or row) and (not forceHide)
+            and R("auraActive", "activeGlow" .. k) == true and not Elsewhere(k),
             opts.w or px, opts.h or px, aA, k)
+    end
+    -- Show only when little time is left (opts.erase)
+    if timed and opts.erase == true then
+        ApplyShowGate(b, timed, opts.w or px, opts.h or px, Factory.LiveTextReach(rec, kS))
+    else
+        ApplyShowGate(b, nil)
     end
 end
 
@@ -1753,6 +1857,10 @@ local DASH_AUTO = 4
 -- on Forever. A client missing one draws the button style (DrawnGlowStyle).
 local ANTS_ATLAS = "rotationhelper_ants_flipbook"
 local FLASH_ATLAS = "UI-CooldownManager-VisualAlert-Glow"
+-- The action bar's attack flash: retail's atlas, the classic bars' file
+-- elsewhere (Forever runs the classic bars).
+local RED_FLASH_ATLAS = "UI-HUD-ActionBar-IconFrame-Flash"
+local RED_FLASH_FILE = "Interface\\Buttons\\UI-QuickslotRed"
 local BLIZZ_RATIO = 66 / 45
 local atlasOK = {}
 local function AtlasOK(name)
@@ -1767,7 +1875,7 @@ end
 -- the style a glow really draws: a known style, else button; ants / flash
 -- fall back to button where the client lacks their art
 local GLOW_STYLES_KNOWN = { pixel = true, autocast = true, button = true, proc = true,
-    procloop = true, ants = true, flash = true }
+    procloop = true, ants = true, flash = true, redflash = true }
 local function DrawnGlowStyle(gtype)
     if not GLOW_STYLES_KNOWN[gtype] then return "button" end
     if gtype == "ants" and not AtlasOK(ANTS_ATLAS) then return "button" end
@@ -1806,7 +1914,7 @@ end
 
 -- Set every build: whether children follow a parent's level is undocumented.
 local function LevelStyleFrames(host, L)
-    for _, k in ipairs({ "_adBtn", "_adProc", "_adAnts", "_adFlash" }) do
+    for _, k in ipairs({ "_adBtn", "_adProc", "_adAnts", "_adFlash", "_adRedFlash" }) do
         local fr = host[k]
         if fr then fr:SetFrameLevel(L + 1) end
     end
@@ -1842,6 +1950,10 @@ local function HideGlowParts(host, keep)
     if keep ~= "flash" and host._adFlash then
         host._adFlash.ag:Stop()
         host._adFlash:Hide()
+    end
+    if keep ~= "redflash" and host._adRedFlash then
+        host._adRedFlash.ag:Stop()
+        host._adRedFlash:Hide()
     end
 end
 
@@ -2016,7 +2128,7 @@ end
 local function GlowButton(host, fw, fh, r, g, bl, a, speed)
     local bt = host._adBtn
     if not bt then
-        bt = CreateFrame("Frame", nil, host)
+        bt = CreateFrame("Frame", nil, host, host._adOptIn)
         bt:SetPoint("CENTER", host, "CENTER", 0, 0)
         bt.outer = bt:CreateTexture(nil, "OVERLAY", nil, 6)
         bt.outer:SetTexture(ICON_ALERT)
@@ -2076,7 +2188,7 @@ end
 local function GlowProc(host, fw, fh, r, g, bl, a)
     local pr = host._adProc
     if not pr then
-        pr = CreateFrame("Frame", nil, host)
+        pr = CreateFrame("Frame", nil, host, host._adOptIn)
         pr:SetPoint("CENTER", host, "CENTER", 0, 0)
         pr.loop = pr:CreateTexture(nil, "OVERLAY", nil, 6)
         pr.loop:SetAtlas(PROC_LOOP)
@@ -2105,7 +2217,7 @@ end
 local function GlowAnts(host, fw, fh, r, g, bl, a)
     local at = host._adAnts
     if not at then
-        at = CreateFrame("Frame", nil, host)
+        at = CreateFrame("Frame", nil, host, host._adOptIn)
         at:SetPoint("CENTER", host, "CENTER", 0, 0)
         at.tex = at:CreateTexture(nil, "OVERLAY", nil, 7)
         at.tex:SetAtlas(ANTS_ATLAS)
@@ -2133,7 +2245,7 @@ end
 local function GlowFlash(host, fw, fh, r, g, bl, a, speed)
     local fl = host._adFlash
     if not fl then
-        fl = CreateFrame("Frame", nil, host)
+        fl = CreateFrame("Frame", nil, host, host._adOptIn)
         fl:SetPoint("CENTER", host, "CENTER", 0, 0)
         fl.tex = fl:CreateTexture(nil, "OVERLAY", nil, 7)
         fl.tex:SetAtlas(FLASH_ATLAS)
@@ -2165,6 +2277,44 @@ local function GlowFlash(host, fw, fh, r, g, bl, a, speed)
     fl.ag:Play()
 end
 
+-- The action bar's red flash over the icon itself, on and off every
+-- 0.1 / speed seconds: 0.4 at the default speed, the bars' own pace.
+local function GlowRedFlash(host, fw, fh, r, g, bl, a, speed)
+    local fl = host._adRedFlash
+    if not fl then
+        fl = CreateFrame("Frame", nil, host, host._adOptIn)
+        fl:SetPoint("CENTER", host, "CENTER", 0, 0)
+        fl.tex = fl:CreateTexture(nil, "OVERLAY", nil, 7)
+        if WOW_PROJECT_ID ~= nil and WOW_PROJECT_ID == WOW_PROJECT_MAINLINE and AtlasOK(RED_FLASH_ATLAS) then
+            fl.tex:SetAtlas(RED_FLASH_ATLAS)
+        else
+            fl.tex:SetTexture(RED_FLASH_FILE)
+        end
+        fl.tex:SetAllPoints(fl)
+        local ag = fl:CreateAnimationGroup()
+        ag:SetLooping("REPEAT")
+        fl.on = ag:CreateAnimation("Alpha")
+        fl.on:SetFromAlpha(1)
+        fl.on:SetToAlpha(1)
+        fl.on:SetOrder(1)
+        fl.off = ag:CreateAnimation("Alpha")
+        fl.off:SetFromAlpha(0)
+        fl.off:SetToAlpha(0)
+        fl.off:SetOrder(2)
+        fl.ag = ag
+        host._adRedFlash = fl
+    end
+    fl.ag:Stop()
+    fl:SetSize(fw, fh)
+    fl.tex:SetVertexColor(r, g, bl, a)
+    local t = 0.1 / math.max(0.05, speed or 0.25)
+    if t < 0.05 then t = 0.05 elseif t > 5 then t = 5 end
+    fl.on:SetDuration(t)
+    fl.off:SetDuration(t)
+    fl:Show()
+    fl.ag:Play()
+end
+
 -- Glow timing (auraActive.activeGlowWhen), all engine-driven:
 --   always    while the aura is up: the host is the button's child
 --   pandemic  the last 30%: Forever keeps no leftover time on a refresh, so
@@ -2191,6 +2341,8 @@ local function GlowTextures(host)
     if at then out[#out + 1] = { at.tex, at } end
     local fl = host._adFlash
     if fl then out[#out + 1] = { fl.tex, fl } end
+    local rf = host._adRedFlash
+    if rf then out[#out + 1] = { rf.tex, rf } end
     return out
 end
 
@@ -2229,6 +2381,10 @@ local function ApplyTimeGate(b, host, frac, W, H, mx, my)
             gb:SetStatusBarColor(1, 1, 1, 0)   -- never seen: its fill is only a rect
             gb:EnableMouse(false)
             b._adGateBar = gb
+        end
+        -- bound again after the show gate held the button's one duration bar
+        if b._adBarOn ~= gb then
+            b._adBarOn = gb
             b:SetDurationBar(gb, {
                 interpolation = Enum.StatusBarInterpolation.Immediate,
                 direction = Enum.StatusBarTimerDirection.ElapsedTime,
@@ -2256,9 +2412,9 @@ end
 -- On/off plus the recipe from the Aura Active glow fields. w, h = the plain
 -- button size; alphaMul = Active alpha; slot 2+ = a numbered glow (its own
 -- fields and host); levelTo = an exact level (a Missing glow, which must stay
--- under the live button), else the glow's own level over b. Accessible
--- passes only.
-function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo)
+-- under the live button), else the glow's own level over b; cap = a lane's
+-- icon shows only under this share of time left. Accessible passes only.
+function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, cap)
     if not b then return end
     local suf = (slot and slot > 1) and tostring(slot) or ""
     local hostKey, sigKey = "_adGlowHost" .. suf, "_adGlowSig" .. suf
@@ -2307,6 +2463,11 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo)
             frac = (R("auraActive", "activeGlowTimePct") or 30) / 100
         end
     end
+    -- no sooner than the icon shows (the editor shows it the whole time)
+    local LE = NS.LayoutEngine
+    if cap and not (LE ~= nil and LE.IsEditMode ~= nil and LE.IsEditMode() == true) then
+        frac = math.min(frac or 1, cap)
+    end
     -- A plain level: stamped by the single-icon driver when it anchors the
     -- button; group buttons read it, skipping a secret read (create window).
     local base = b._adLevel
@@ -2318,7 +2479,10 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo)
         lines, th, parts, scale, lvl, strata, base or -1,
         frac or -1, dash, mx, my, levelTo or -1 }, ":")
     if not host then
-        host = CreateFrame("Frame", nil, b)
+        -- b._adOptIn: a template b was made with (a Dynamic row's stage), which
+        -- every frame anchored to it needs too
+        host = CreateFrame("Frame", nil, b, b._adOptIn)
+        host._adOptIn = b._adOptIn
         host:EnableMouse(false)
         b[hostKey] = host
     end
@@ -2332,10 +2496,12 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo)
         W, H = w + 2 * xo, h + 2 * yo
     else
         -- button / proc lay their own 1.4x frame, ants / flash their
-        -- template's 66/45 box, offsets expanding either
+        -- template's 66/45 box, the red flash the icon itself, offsets
+        -- expanding any
         host:SetPoint("CENTER", b, "CENTER", mx, my)
         host:SetSize(w, h)
         local k = (gtype == "ants" or gtype == "flash") and BLIZZ_RATIO or 1.4
+        if gtype == "redflash" then k = 1 end
         W, H = w * k + 2 * xo, h * k + 2 * yo
     end
     if W < 1 then W = 1 end
@@ -2369,6 +2535,8 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo)
         GlowAnts(host, W, H, r, g, bl, a)
     elseif gtype == "flash" then
         GlowFlash(host, W, H, r, g, bl, a, speed)
+    elseif gtype == "redflash" then
+        GlowRedFlash(host, W, H, r, g, bl, a, speed)
     else
         GlowButton(host, W, H, r, g, bl, a, speed)
     end
@@ -2388,8 +2556,10 @@ end
 function Factory.MissingGlowOn(rec, slot)
     if not (rec and rec.kind == "aura") then return false end
     local suf = (slot and slot > 1) and tostring(slot) or ""
-    return Store.Resolve(rec, "auraActive", "activeGlow" .. suf) == true
-        and Store.Resolve(rec, "auraActive", "activeGlowWhen" .. suf) == "missing"
+    if Store.Resolve(rec, "auraActive", "activeGlow" .. suf) ~= true then return false end
+    local when = Store.Resolve(rec, "auraActive", "activeGlowWhen" .. suf)
+    -- under the time gate an Always glow is this half and a lane's
+    return when == "missing" or (when == "both" and Factory.TimeGateFrac(rec) ~= nil)
 end
 
 function Factory.HasMissingGlow(rec)
@@ -2405,6 +2575,7 @@ function Factory.AlwaysGlowOn(rec, slot)
     local suf = (slot and slot > 1) and tostring(slot) or ""
     return Store.Resolve(rec, "auraActive", "activeGlow" .. suf) == true
         and Store.Resolve(rec, "auraActive", "activeGlowWhen" .. suf) == "both"
+        and Factory.TimeGateFrac(rec) == nil
 end
 
 -- A glow the holder draws (Missing or Always), never the live button.
@@ -2417,26 +2588,44 @@ function Factory.HasMissingText(rec)
     if not (rec and rec.kind == "aura") then return false end
     for _, suf in ipairs({ "", "2", "3" }) do
         local t = Store.Resolve(rec, "label", "labelText" .. suf)
-        if Store.Resolve(rec, "label", "labelMissingOnly" .. suf) == true and t ~= nil and t ~= "" then
+        if Factory.LabelWithMissing(rec, suf) and t ~= nil and t ~= "" then
             return true
         end
     end
     return false
 end
 
--- Pixels past the icon those texts can reach (offsets plus a generous width), for the eraser.
-function Factory.MissingTextReach(rec, kS)
-    if not Factory.HasMissingText(rec) then return 0 end
-    kS = kS or 1
+-- Pixels past the icon the texts `pick` takes can reach (offsets plus a generous width).
+local function LabelReach(rec, kS, pick)
     local reach = 0
     for _, suf in ipairs({ "", "2", "3" }) do
         local t = Store.Resolve(rec, "label", "labelText" .. suf)
-        if Store.Resolve(rec, "label", "labelMissingOnly" .. suf) == true and t ~= nil and t ~= "" then
+        if pick(rec, suf) and t ~= nil and t ~= "" then
             local size = (Store.Resolve(rec, "label", "labelSize" .. suf) or 12) * kS
             local x = math.abs(Store.Resolve(rec, "label", "labelX" .. suf) or 0) * kS
             local y = math.abs(Store.Resolve(rec, "label", "labelY" .. suf) or 0) * kS
             reach = math.max(reach, math.max(x, y) + math.max(#t * size * 0.7, size))
         end
+    end
+    return reach
+end
+
+-- Pixels past the icon those texts can reach.
+function Factory.MissingTextReach(rec, kS)
+    if not Factory.HasMissingText(rec) then return 0 end
+    return math.ceil(LabelReach(rec, kS or 1, Factory.LabelWithMissing))
+end
+
+-- Pixels past the icon the live button's texts can reach: its labels, the
+-- countdown and the stack count.
+function Factory.LiveTextReach(rec, kS)
+    kS = kS or 1
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    local reach = LabelReach(rec, kS, Factory.LabelOnButton)
+    for _, t in ipairs({ { "duration", 5 }, { "stack", 3 } }) do
+        local p = t[1]
+        local off = math.max(math.abs(R("text", p .. "X") or 0), math.abs(R("text", p .. "Y") or 0))
+        reach = math.max(reach, (off + t[2] * (R("text", p .. "Size") or 14) * 0.7) * kS)
     end
     return math.ceil(reach)
 end
@@ -2445,8 +2634,8 @@ end
 function Factory.ApplyAlwaysGlows(f, rec, w, h, combat)
     local host = f._adAlwaysGlow
     local D = NS.DriverAura
-    local ok = rec ~= nil and rec.kind == "aura" and D ~= nil and D.GlowLaneOK ~= nil
-        and D.GlowLaneOK(rec) and Store.Resolve(rec, "appearance", "forceHideIcon") ~= true
+    local ok = rec ~= nil and rec.kind == "aura" and D ~= nil and D.HolderGlowOK ~= nil
+        and D.HolderGlowOK(rec) and Store.Resolve(rec, "appearance", "forceHideIcon") ~= true
     if not ok and not host then return end
     local lvl = f:GetFrameLevel()
     if type(lvl) ~= "number" or (issecretvalue and issecretvalue(lvl)) then lvl = nil end
@@ -2509,7 +2698,7 @@ function Factory.StyleAuraGlowButton(b, rec, px, opts)
     Factory.SetAuraButtonGlow(b, rec, opts.glowOn == true
         and R("appearance", "forceHideIcon") ~= true
         and R("auraActive", "activeGlow" .. ((slot > 1) and slot or "")) == true,
-        opts.w or px, opts.h or px, aA, slot)
+        opts.w or px, opts.h or px, aA, slot, nil, opts.glowCap)
 end
 
 -- State writer: drivers report, this paints. onCooldown picks the alpha bucket
@@ -2528,7 +2717,9 @@ function Factory.SetState(f, rec, onCooldown, desatState)
                     -- kept to the aura's time shows here only in the editor
                     -- preview's active phase; live, its copy rides the button.
                     -- A label kept to its absence has its copy under the button.
-                    st.fs:SetShown(not st.missingOnly and not (st.activeOnly and onCooldown))
+                    -- Under the time gate both copies carry every label.
+                    st.fs:SetShown(not st.missingOnly and not (st.activeOnly and onCooldown)
+                        and not st.split)
                 else
                     -- the kind's second state: on cooldown, or ammo's none left
                     local second = onCooldown
@@ -2559,20 +2750,36 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         return
     end
     local keepBright = R("appearance", "keepBright") == true
+    -- Recharging: a charge spell with a charge left and another on its way
+    -- (the driver's flag). Castable: ready, or recharging with that charge.
+    local recharging = f._adRecharging == true
+    local castable = not onCooldown or recharging
     if keepBright then
         f._adStateAlpha = 1
-    elseif onCooldown then
-        f._adStateAlpha = R("states", "cooldownAlpha") or 1
     else
-        f._adStateAlpha = R("states", "readyAlpha") or 1
-        -- Usability dim: an unusable or no-resource ready spell takes the lower
-        -- of the two alphas. Out of range never dims; its tint shows it.
-        local ucode = f._adUsability
+        if onCooldown then
+            f._adStateAlpha = R("states", "cooldownAlpha") or 1
+        else
+            f._adStateAlpha = R("states", "readyAlpha") or 1
+        end
+        -- its own alpha, switched on, over the look Wait for no charges picks
+        if recharging and R("states", "rechargeAlphaEnabled") == true then
+            f._adStateAlpha = R("states", "rechargeAlpha") or 1
+        end
+        -- Usability dim: an unusable, no-resource or out-of-range castable
+        -- spell takes the lower of the two alphas (out of range at full by default).
+        local ucode = castable and f._adUsability or nil
         if ucode == "unusable" then
             f._adStateAlpha = math.min(f._adStateAlpha, R("states", "unusableAlpha") or 1)
         elseif ucode == "nomana" then
             f._adStateAlpha = math.min(f._adStateAlpha, R("states", "resourceAlpha") or 1)
+        elseif ucode == "range" then
+            f._adStateAlpha = math.min(f._adStateAlpha, R("states", "rangeAlpha") or 1)
         end
+    end
+    -- Toggled on (Shoot, Auto Shot, Attack: Drivers\AD_DriverToggle.lua) has its own alpha.
+    if f._adToggled and not keepBright and R("states", "toggleAlphaEnabled") == true then
+        f._adStateAlpha = R("states", "toggleAlpha") or 1
     end
     -- A group buff in combat: nobody's buffs can be read, so its count and
     -- icon step aside (its driver's layers show instead, when switched on).
@@ -2581,9 +2788,11 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     if f._adProcOn and R("states", "procOverride") == true then
         f._adStateAlpha = 1
     end
-    -- usableOverride: full opacity while ready and usable (range is usable).
+    -- usableOverride: full opacity while ready and usable (range is usable,
+    -- unless out of range has a dim of its own).
     if not onCooldown and R("states", "usableOverride") == true
-        and (f._adUsability == nil or f._adUsability == "range") then
+        and (f._adUsability == nil or (f._adUsability == "range"
+            and (R("states", "rangeAlpha") or 1) >= 1)) then
         f._adStateAlpha = 1
     end
     -- preserveDurationText (on by default) keeps the texts out of the dim.
@@ -2592,18 +2801,25 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     local desatOK = not keepBright or R("appearance", "keepBrightAllowDesat") == true
     f.icon:SetDesaturated(desatOK and f._adDesatState
         and R("states", "cooldownDesaturate") == true or false)
-    -- A Custom Icon's Active look (the ready bucket) has its own grey out.
-    if desatOK and not f._adDesatState and rec.kind == "timer"
-        and R("states", "readyDesaturate") == true then
+    -- The ready look (a Custom Icon's Active) has its own grey out; a
+    -- recharging spell wears it only when it copies Ready.
+    if desatOK and not onCooldown and R("states", "readyDesaturate") == true then
         f.icon:SetDesaturated(true)
     end
-    -- No-resource or unusable can grey the icon apart from the cooldown desat.
-    if not onCooldown and desatOK then
+    if desatOK and recharging and R("states", "rechargeDesaturate") == true then
+        f.icon:SetDesaturated(true)
+    end
+    -- No-resource, unusable or out of range can grey a castable icon apart from the cooldown desat.
+    if castable and desatOK then
         local ucode = f._adUsability
         if (ucode == "nomana" and R("states", "resourceDesaturate") == true)
-            or (ucode == "unusable" and R("states", "unusableDesaturate") == true) then
+            or (ucode == "unusable" and R("states", "unusableDesaturate") == true)
+            or (ucode == "range" and R("states", "rangeDesaturate") == true) then
             f.icon:SetDesaturated(true)
         end
+    end
+    if desatOK and f._adToggled and R("states", "toggleDesaturate") == true then
+        f.icon:SetDesaturated(true)
     end
     -- "Desaturate while the aura is down" with an aura overlay: the art stays
     -- grey under the aura's button, so it reads grey exactly while the aura is
@@ -2613,18 +2829,21 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         f.icon:SetDesaturated(true)
     end
     -- Tint priority, as Blizzard's: range red, usability, state tints, white.
+    -- The usability tints show while it can be cast (a charge left counts).
     local tc
-    if not onCooldown then
-        local code = f._adUsability
-        if code == "range" and R("states", "rangeTint") ~= false then
-            tc = R("states", "rangeTintColor") or { 0.85, 0.2, 0.2, 1 }
-        elseif code == "nomana" and R("states", "usabilityTint") ~= false then
-            tc = R("states", "resourceTintColor") or { 0.35, 0.45, 1, 1 }
-        elseif code == "unusable" and R("states", "usabilityTint") ~= false then
-            tc = R("states", "unusableTintColor") or { 0.45, 0.45, 0.45, 1 }
-        elseif R("states", "readyTintEnabled") == true then
-            tc = R("states", "readyTintColor")
-        end
+    local code = castable and f._adUsability or nil
+    if code == "range" and R("states", "rangeTint") ~= false then
+        tc = R("states", "rangeTintColor") or { 0.85, 0.2, 0.2, 1 }
+    elseif code == "nomana" and R("states", "resourceTintEnabled") ~= false then
+        tc = R("states", "resourceTintColor") or { 0.35, 0.45, 1, 1 }
+    elseif code == "unusable" and R("states", "unusableTintEnabled") ~= false then
+        tc = R("states", "unusableTintColor") or { 0.45, 0.45, 0.45, 1 }
+    elseif castable and f._adToggled and R("states", "toggleTintEnabled") == true then
+        tc = R("states", "toggleTintColor") or { 1, 0.35, 0.35, 1 }
+    elseif recharging and R("states", "rechargeTintEnabled") == true then
+        tc = R("states", "rechargeTintColor") or { 1, 0.85, 0.4, 1 }
+    elseif not onCooldown then
+        if R("states", "readyTintEnabled") == true then tc = R("states", "readyTintColor") end
     elseif R("states", "cooldownTintEnabled") == true then
         tc = R("states", "cooldownTintColor")
     end
@@ -2657,7 +2876,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     if f._adRecId then
         local sig = (f._adOnCooldown and 1 or 0)
             + (((f._adStateAlpha or 1) <= 0) and 2 or 0)
-            + ((f._adItemEmpty and R("outOfStock", "hideWhenMissing") == true) and 4 or 0)
+            + (Factory.StockHidden(f, rec) and 4 or 0)
             + (f._adPassive and 8 or 0)
         if f._adDynSig ~= sig then
             f._adDynSig = sig
@@ -2667,6 +2886,8 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     Factory.UpdateGlow(f, rec, not onCooldown)
     Factory.UpdateUsableGlow(f, rec)
     Factory.UpdateCooldownGlow(f, rec)
+    Factory.UpdateRangeGlow(f, rec)
+    Factory.UpdateRechargeGlow(f, rec)
 end
 
 -- usability code from the driver: "range" | "nomana" | "unusable" | nil
@@ -2700,10 +2921,10 @@ local function GlowSig(f, gtype, color, speed, a, b, c2, d, xo, yo, lvl, strata,
 end
 
 -- Lane signature extras: dash length, Move X / Y, and for our own ants and
--- flash the icon size their box is baked from (library frames follow anchors).
+-- flashes the icon size their box is baked from (library frames follow anchors).
 local function LaneExt(f, gtype, len, mx, my)
     local s = (len or 0) .. ":" .. (mx or 0) .. ":" .. (my or 0)
-    if gtype == "ants" or gtype == "flash" then
+    if gtype == "ants" or gtype == "flash" or gtype == "redflash" then
         local w, h = f:GetSize()
         if type(w) ~= "number" or type(h) ~= "number"
             or (issecretvalue and (issecretvalue(w) or issecretvalue(h))) then
@@ -2716,8 +2937,8 @@ end
 
 -- Glow lanes: ready "ad", proc "adproc" and usable "adu", each under its own
 -- glow key so they never stop each other, all through StopLane and
--- StartLane so each offers every style. Ants and flash are our own builders on
--- a per-lane host (TexLaneStart), which every stop takes down too.
+-- StartLane so each offers every style. Ants and the flashes are our own
+-- builders on a per-lane host (TexLaneStart), which every stop takes down too.
 local function StopLane(f, key)
     local tg = f["_adTexGlow" .. key]
     if tg then
@@ -2782,8 +3003,9 @@ local function ShiftGlow(g, mx, my)
     for _, q in ipairs(pts) do g:SetPoint(q[1], q[2], q[3], q[4] + mx, q[5] + my) end
 end
 
--- Ants and flash on a cooldown lane: the aura-button builders on a per-lane
--- host at the lane's level and strata; the icon is ours, so groups just play.
+-- Ants and the flashes on a cooldown lane: the aura-button builders on a
+-- per-lane host at the lane's level and strata; the icon is ours, so groups
+-- just play.
 local function TexLaneStart(f, key, gtype, p)
     local host = f["_adTexGlow" .. key]
     if not host then
@@ -2811,11 +3033,15 @@ local function TexLaneStart(f, key, gtype, p)
         host._adStrataOverride = nil
     end
     HideGlowParts(host, gtype)
-    local W = math.max(1, w * BLIZZ_RATIO + 2 * (p.xo or 0))
-    local H = math.max(1, h * BLIZZ_RATIO + 2 * (p.yo or 0))
+    -- the red flash covers the icon itself, the others their template's box
+    local k = (gtype == "redflash") and 1 or BLIZZ_RATIO
+    local W = math.max(1, w * k + 2 * (p.xo or 0))
+    local H = math.max(1, h * k + 2 * (p.yo or 0))
     local c = p.color
     if gtype == "ants" then
         GlowAnts(host, W, H, c[1], c[2], c[3], c[4] or 1)
+    elseif gtype == "redflash" then
+        GlowRedFlash(host, W, H, c[1], c[2], c[3], c[4] or 1, p.speed)
     else
         GlowFlash(host, W, H, c[1], c[2], c[3], c[4] or 1, p.speed)
     end
@@ -2829,7 +3055,7 @@ local LCG_FIELD = { pixel = "_PixelGlow", autocast = "_AutoCastGlow",
     button = "_ButtonGlow", proc = "_ProcGlow", procloop = "_ProcGlow" }
 
 local function StartLane(f, key, gtype, p)
-    if gtype == "ants" or gtype == "flash" then
+    if gtype == "ants" or gtype == "flash" or gtype == "redflash" then
         TexLaneStart(f, key, gtype, p)
         return
     end
@@ -3076,10 +3302,11 @@ function Factory.UpdateUsableGlow(f, rec)
     local LCG = GetLCG()
     if not LCG then return end
     local R = function(s, k) return Store.Resolve(rec, s, k) end
+    -- castable: ready, or recharging with a charge left
     local want = rec.kind == "spell"
         and R("states", "usableGlow") == true
         and f._adUsability == nil
-        and not f._adOnCooldown
+        and (not f._adOnCooldown or f._adRecharging == true)
         and R("appearance", "forceHideIcon") ~= true
         and LaneAllowed(f, "usable")
     if want and R("states", "usableGlowCombatOnly") == true
@@ -3115,6 +3342,112 @@ function Factory.UpdateUsableGlow(f, rec)
         level = lvl, strata = strata, length = len, mx = mx, my = my })
     f._adUsableOn = true
     f._adUsableSig = sig
+end
+
+-- The recharging glow, key "adrc": lit while a charge spell has a charge left
+-- and another on its way (the driver's f._adRecharging). The options preview
+-- shows it while it is the lane on.
+function Factory.StopRechargeGlow(f)
+    if not f._adRechargeOn then return end
+    StopLane(f, "adrc")
+    f._adRechargeOn = false
+    f._adRechargeSig = nil
+end
+
+function Factory.UpdateRechargeGlow(f, rec)
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    local preview = f._adGlowLaneOnly == "recharge"
+    local want = rec.kind == "spell"
+        and R("states", "rechargeGlow") == true
+        and (preview or f._adRecharging == true)
+        and R("appearance", "forceHideIcon") ~= true
+        and LaneAllowed(f, "recharge")
+    if want and not preview and R("states", "rechargeGlowCombatOnly") == true
+        and not InCombatLockdown() then
+        want = false
+    end
+    if not want then
+        Factory.StopRechargeGlow(f)
+        return
+    end
+    local c = R("states", "rechargeGlowColor") or { 1, 0.85, 0.4, 1 }
+    local inten = R("states", "rechargeGlowIntensity") or 1
+    local color = { c[1], c[2], c[3], (c[4] or 1) * inten }
+    local gtype = DrawnGlowStyle(R("states", "rechargeGlowType") or "button")
+    local speed = R("states", "rechargeGlowSpeed") or 0.25
+    local xo = R("states", "rechargeGlowXOffset") or 0
+    local yo = R("states", "rechargeGlowYOffset") or 0
+    local lines = R("states", "rechargeGlowLines") or 8
+    local th = R("states", "rechargeGlowThickness") or 2
+    local parts = R("states", "rechargeGlowParticles") or 4
+    local scale = R("states", "rechargeGlowScale") or 1
+    local lvl = (R("states", "rechargeGlowLevel") or GLOW_LEVEL) + Factory.Rise(rec)
+    local strata = R("states", "rechargeGlowStrata") or "inherit"
+    local len = R("states", "rechargeGlowLength") or 0
+    local mx = R("states", "rechargeGlowMoveX") or 0
+    local my = R("states", "rechargeGlowMoveY") or 0
+    local sig = GlowSig(f, gtype, color, speed, lines, th, parts, scale, xo, yo, lvl, strata,
+        LaneExt(f, gtype, len, mx, my))
+    if f._adRechargeOn and f._adRechargeSig == sig then return end
+    Factory.StopRechargeGlow(f)
+    StartLane(f, "adrc", gtype, { color = color, speed = speed, lines = lines,
+        thickness = th, particles = parts, scale = scale, xo = xo, yo = yo,
+        level = lvl, strata = strata, length = len, mx = mx, my = my })
+    f._adRechargeOn = true
+    f._adRechargeSig = sig
+end
+
+-- The out-of-range glow, key "adr": lit while a castable spell's target is
+-- out of its range (a charge left counts), the state its alpha, grey and
+-- tint follow. The options preview shows it while it is the lane on.
+function Factory.StopRangeGlow(f)
+    if not f._adRangeOn then return end
+    StopLane(f, "adr")
+    f._adRangeOn = false
+    f._adRangeSig = nil
+end
+
+function Factory.UpdateRangeGlow(f, rec)
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    local preview = f._adGlowLaneOnly == "range"
+    local want = rec.kind == "spell"
+        and R("states", "rangeGlow") == true
+        and (preview or (f._adUsability == "range" and (not f._adOnCooldown or f._adRecharging == true)))
+        and R("appearance", "forceHideIcon") ~= true
+        and LaneAllowed(f, "range")
+    if want and not preview and R("states", "rangeGlowCombatOnly") == true
+        and not InCombatLockdown() then
+        want = false
+    end
+    if not want then
+        Factory.StopRangeGlow(f)
+        return
+    end
+    local c = R("states", "rangeGlowColor") or { 0.85, 0.2, 0.2, 1 }
+    local inten = R("states", "rangeGlowIntensity") or 1
+    local color = { c[1], c[2], c[3], (c[4] or 1) * inten }
+    local gtype = DrawnGlowStyle(R("states", "rangeGlowType") or "button")
+    local speed = R("states", "rangeGlowSpeed") or 0.25
+    local xo = R("states", "rangeGlowXOffset") or 0
+    local yo = R("states", "rangeGlowYOffset") or 0
+    local lines = R("states", "rangeGlowLines") or 8
+    local th = R("states", "rangeGlowThickness") or 2
+    local parts = R("states", "rangeGlowParticles") or 4
+    local scale = R("states", "rangeGlowScale") or 1
+    local lvl = (R("states", "rangeGlowLevel") or GLOW_LEVEL) + Factory.Rise(rec)
+    local strata = R("states", "rangeGlowStrata") or "inherit"
+    local len = R("states", "rangeGlowLength") or 0
+    local mx = R("states", "rangeGlowMoveX") or 0
+    local my = R("states", "rangeGlowMoveY") or 0
+    local sig = GlowSig(f, gtype, color, speed, lines, th, parts, scale, xo, yo, lvl, strata,
+        LaneExt(f, gtype, len, mx, my))
+    if f._adRangeOn and f._adRangeSig == sig then return end
+    Factory.StopRangeGlow(f)
+    StartLane(f, "adr", gtype, { color = color, speed = speed, lines = lines,
+        thickness = th, particles = parts, scale = scale, xo = xo, yo = yo,
+        level = lvl, strata = strata, length = len, mx = mx, my = my })
+    f._adRangeOn = true
+    f._adRangeSig = sig
 end
 
 -- The cooldown glow, key "adcdg": lit while the icon wears its cooldown look
@@ -3180,6 +3513,8 @@ function Factory.CombatGlows(f, rec)
     end
     if R("states", "usableGlowCombatOnly") == true then Factory.UpdateUsableGlow(f, rec) end
     if R("states", "cooldownGlowCombatOnly") == true then Factory.UpdateCooldownGlow(f, rec) end
+    if R("states", "rangeGlowCombatOnly") == true then Factory.UpdateRangeGlow(f, rec) end
+    if R("states", "rechargeGlowCombatOnly") == true then Factory.UpdateRechargeGlow(f, rec) end
 end
 
 -- Duration text visibility, re-applied per feed. Hiding while charges remain

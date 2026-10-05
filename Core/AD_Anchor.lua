@@ -28,7 +28,8 @@ end
 local NO_ID = { frame = true, nameplate = true, mouse = true, action = true, cdm = true }
 -- the kinds found by spell, whose spell ids sit in anchorTargetFrame
 local SPELL_KIND = { action = true, cdm = true }
--- the kinds whose target is one of the game's frames: nothing of ours hooks it
+-- the kinds whose target is one of the game's frames: never a size hook
+-- (a named frame gets only its show / hide watch, WatchFrame)
 local GAME_TARGET = { frame = true, action = true, cdm = true }
 
 -- May this record pick that target kind? Its family's schema list answers, so
@@ -275,6 +276,29 @@ function Anchor.FrameProblem(t)
     return nil
 end
 
+-- A named game frame shows and hides on its own (the pet frame with your pet),
+-- and what is pinned to it follows at once, not at the next rebuild. Its
+-- OnShow and OnHide are hooked once, out of combat: a hook runs after the
+-- game's own script and leaves it alone, and only our own frames move.
+local watchedFrames = {}   -- game frame -> true
+local function PlaceOnFrame(name)
+    for id, frame in pairs(sources) do
+        local rec = Store.Get(id)
+        if rec and frame:IsShown() and Anchor.IsFramePick(rec) and R(rec, "anchorTargetFrame") == name then
+            if not Anchor.Apply(rec, frame) and freePlacer then freePlacer(rec, frame) end
+        end
+    end
+end
+local function WatchFrame(t, name)
+    if watchedFrames[t] or InCombatLockdown() then return end
+    watchedFrames[t] = true
+    local function Changed()
+        NS.Events.Coalesce("adanchor_frame:" .. name, function() PlaceOnFrame(name) end)
+    end
+    t:HookScript("OnShow", Changed)
+    t:HookScript("OnHide", Changed)
+end
+
 -- the frame a source should pin to, or nil to fall back to free placement
 function Anchor.ResolveTarget(rec)
     if not Anchor.IsEnabled(rec) then return nil end
@@ -286,10 +310,15 @@ function Anchor.ResolveTarget(rec)
         local t = _G[name]
         -- a forbidden frame would taint us the moment we anchor to it
         if Anchor.FrameProblem(t) then return nil end
+        WatchFrame(t, name)
         -- an engine-owned frame's shown state can be secret
         local shown = t.IsShown and t:IsShown()
-        if Secret(shown) or not shown then return nil end
-        return t
+        if Secret(shown) then return nil end
+        if shown then return t end
+        -- hidden: what is pinned stays where the frame sits while that reads
+        -- plain, else it goes to its own spot
+        if Plain(t:GetLeft()) and Plain(t:GetBottom()) then return t end
+        return nil
     end
     if kind == "nameplate" then return Anchor.TargetPlate() end
     if kind == "mouse" then return EnsureMouseProxy() end
@@ -861,7 +890,12 @@ function Anchor.DescribePick(rec)
         if why == "missing" then return "No frame called " .. n .. " exists, so it stays free." end
         if why == "plate" then return n .. " is a nameplate, so it stays free." end
         if why then return "The game protects " .. n .. ", so it stays free." end
-        if Anchor.ResolveTarget(rec) == nil then return n .. " is hidden now, so it stays free." end
+        local t = Anchor.ResolveTarget(rec)
+        if t == nil then return n .. " is hidden now, so it stays free." end
+        local shown = t:IsShown()
+        if not Secret(shown) and not shown then
+            return "Anchored to the frame " .. n .. ". It is hidden now, so this stays where it sits."
+        end
         return "Anchored to the frame " .. n .. "."
     end
     local t = Store.Get(R(rec, "anchorTargetId") or 0)

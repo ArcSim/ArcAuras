@@ -69,6 +69,9 @@ local function Build(h, list)
             if id and id > 0 then
                 typed = true
                 rr.sid = Resolve(id)
+                -- queued at any rank the player knows (a down-ranked cast too)
+                local SA = Bars.SwingAbil
+                rr.qids = (SA and SA.QueueIDs) and SA.QueueIDs(id, 0) or { rr.sid }
                 local nm = CS and CS.GetSpellName and CS.GetSpellName(id)
                 if not IsSecret(nm) and type(nm) == "string" and nm ~= "" then rr.name = nm end
                 if rr.when == "cast" then
@@ -93,11 +96,19 @@ local function Queued(h, sid)
     return v
 end
 
+-- Queued at any of a rule's ranks.
+local function AnyQueued(h, r)
+    for _, q in ipairs(r.qids or { r.sid }) do
+        if Queued(h, q) then return true end
+    end
+    return false
+end
+
 -- The first rule that holds wins: the list order is the priority.
 local function Pick(h)
     for _, r in ipairs(h.rules) do
         if r.when == "queued" then
-            if Queued(h, r.sid) then return r.color end
+            if AnyQueued(h, r) then return r.color end
         elseif r.name and h.cast[r.name] then
             return r.color
         end
@@ -233,6 +244,8 @@ end
 -- A learned rank is a new spell ID.
 local function OnSpells()
     Events.Coalesce(KEY .. "_spells", function()
+        local SA = Bars.SwingAbil
+        if SA and SA.ForgetRanks then SA.ForgetRanks() end
         K.ForEach("swing", function(e)
             local h = e.acol
             local list = h and h.on and SW.RulesOf(e.rec)

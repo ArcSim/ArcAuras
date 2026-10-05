@@ -1,9 +1,11 @@
+-- Arc Auras, all rights reserved: do not copy or adapt this code into another addon without permission.
 -- Group Buff icons: how many in your party or raid have a buff (any rank the
 -- icon lists). Between pulls the count is read and shown as have / total; in
 -- combat buffs read secret, so the count stops and the icon steps aside.
--- With "Show in combat while anyone lacks it" the game draws it instead. Nothing is read in combat.
+-- With "Show in combat" the game draws it instead. Nothing is read in combat.
+-- Remind while Nobody has it: a buff you keep on one member (a beacon, a
+-- shield, a soulstone) shows while no one in the group carries it.
 -- Called through Driver.Attach / Detach / Refeed in AD_DriverCooldown.
-
 local ADDON, NS = ...
 local Store = NS.Store
 local Events = NS.Events
@@ -46,6 +48,16 @@ function GB.IDs(rec)
     return (DA and DA.SpellIDList) and DA.SpellIDList(rec.driver or {}) or {}
 end
 
+-- Remind while nobody has it (a buff kept on one member), else while anyone lacks it.
+function GB.Nobody(rec) return Store.Resolve(rec, "groupBuff", "remind") == "nobody" end
+
+-- Whose copy counts: nil (anyone), "mine" or "others", as an aura icon's Cast by.
+function GB.Caster(rec)
+    local c = rec.driver and rec.driver.caster
+    if c == "mine" or c == "others" then return c end
+    return nil
+end
+
 -- The group now: a raid's raid1..N (you among them), else you and party1-4;
 -- nil while the roster reads secret. Second value: a raid.
 function GB.Units()
@@ -75,26 +87,30 @@ function GB.Counted(unit)
     return on == true and not dead
 end
 
--- Carries any of the ids: true or false, nil while the answer is secret.
-function GB.Has(unit, ids)
+-- Carries any of the ids (cast as `caster` wants): true or false, nil while
+-- the answer is secret.
+function GB.Has(unit, ids, caster)
     local get = C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID
     if not get then return nil end
     for _, id in ipairs(ids) do
         local a = get(unit, id)
         if a ~= nil then
             if not Plain(a) then return nil end
-            return true
+            if caster == nil then return true end
+            local mine = a.isFromPlayerOrPlayerPet
+            if not Plain(mine) then return nil end
+            if (mine == true) == (caster == "mine") then return true end
         end
     end
     return false
 end
 
 -- One member's state: "has", "lacks", "out" (not counted), or nil (secret).
-local function Read(unit, ids)
+local function Read(unit, ids, caster)
     local c = GB.Counted(unit)
     if c == nil then return nil end
     if not c then return "out" end
-    local h = GB.Has(unit, ids)
+    local h = GB.Has(unit, ids, caster)
     if h == nil then return nil end
     return h and "has" or "lacks"
 end
@@ -112,12 +128,12 @@ end
 -- The whole group read again; a secret answer keeps the last count.
 function GB.Recount(a)
     if AurasSecret() then return end
-    local ids = GB.IDs(a.rec)
+    local ids, caster = GB.IDs(a.rec), GB.Caster(a.rec)
     local units = GB.Units()
     if #ids == 0 or not units then return end
     local state = {}
     for _, u in ipairs(units) do
-        local s = Read(u, ids)
+        local s = Read(u, ids, caster)
         if s == nil then return end
         state[u] = s
     end
@@ -128,11 +144,11 @@ end
 -- Only the members whose buffs changed.
 function GB.Update(a, dirty)
     if AurasSecret() or not a.roster then return end
-    local ids = GB.IDs(a.rec)
+    local ids, caster = GB.IDs(a.rec), GB.Caster(a.rec)
     local any = false
     for u in pairs(dirty) do
         if a.state[u] ~= nil then
-            local s = Read(u, ids)
+            local s = Read(u, ids, caster)
             if s == nil then return end
             if a.state[u] ~= s then
                 a.state[u] = s
@@ -156,7 +172,8 @@ end
 function GB.SampleText(rec) return GB.CountText(rec, 4, 5) end
 
 -- The icon: its count between pulls, and its two states (someone lacks it,
--- everyone has it). In combat the holder steps aside for the layers.
+-- everyone has it; or nobody has it, someone has it). In combat the holder
+-- steps aside for the layers.
 function GB.Paint(a)
     local rec, f = a.rec, a.frame
     f._adGBHidden = GB.inCombat or nil
@@ -166,6 +183,7 @@ function GB.Paint(a)
     end
     f.stackText:SetText(text)
     local all = a.total ~= nil and a.have >= a.total
+    if GB.Nobody(rec) then all = a.total ~= nil and a.have > 0 end
     Factory.SetState(f, rec, all, all)
     GB.SyncLayers(a)
 end
@@ -234,6 +252,15 @@ local function LayShare(pool, parent, anchor, kind, k, box, drawLayer)
     for i = n + 1, #pool do pool[i]:Hide() end
 end
 
+-- The set this icon needs: per member ("party" whole layers, "raid"
+-- stripes) while anyone lacks it, or one layer every member wipes
+-- ("anyParty", "anyRaid") while it reminds of nobody.
+function GB.KindFor(rec, raid)
+    if GB.Nobody(rec) then return raid and "anyRaid" or "anyParty" end
+    return raid and "raid" or "party"
+end
+local function ShareOf(kind) return (kind == "raid") and "raid" or "party" end
+
 local function IsAccessible(b)
     local DA = NS.DriverAura
     if DA and DA.IsAccessible then return DA.IsAccessible(b) end
@@ -251,7 +278,7 @@ local function StyleButton(slot, layer, set)
     b:SetFrameStrata(st:GetFrameStrata())
     b:SetFrameLevel(st:GetFrameLevel() + 2)
     slot.share = slot.share or {}
-    LayShare(slot.share, b, b, set.kind, slot.k, set.box or BOX0)
+    LayShare(slot.share, b, b, ShareOf(set.kind), slot.k, set.box or BOX0)
     return true
 end
 
@@ -262,20 +289,21 @@ function GB.BuildSet(a, kind)
     if GB.inCombat or InCombatLockdown() or AurasSecret() then return nil end
     local set = { kind = kind, layers = {}, parked = false }
     local units = {}
-    if kind == "party" then
+    if kind == "party" or kind == "anyParty" then
         units = { "player", "party1", "party2", "party3", "party4" }
     else
         for i = 1, 40 do units[i] = "raid" .. i end
     end
-    local per = (kind == "party") and 1 or GB.PER
+    local per = (kind == "party") and 1 or (kind == "raid") and GB.PER or #units
     local ids = DA.IncludeMap(a.rec.driver or {})
-    set.sig = DA.FilterSig(ids)
+    local filter = DA.FilterForLane(a.rec.driver or {}, { harmful = false })
+    set.sig, set.filter = DA.FilterSig(ids), filter
     for li = 1, math.ceil(#units / per) do
         local st = CreateFrame("Frame", nil, UIParent)
         st:SetSize(1, 1)
         st:SetPoint("TOP", UIParent, "TOP", 0, -80)
         st:SetFlattensRenderLayers(true)
-        -- Buffer on before any eraser can show.
+        -- set before any button exists
         st:SetIsFrameBuffer(true)
         st:SetAlpha(0)
         local art = st:CreateTexture(nil, "ARTWORK")
@@ -289,7 +317,7 @@ function GB.BuildSet(a, kind)
                 if c then
                     slot.container = c
                     slot.key = "adgb" .. tostring(a.rec.id) .. "_" .. unit
-                    c:AddAuraSlot(slot.key, "HELPFUL", {
+                    c:AddAuraSlot(slot.key, filter, {
                         maxFrameCount = 1,
                         initializeFrame = function(b)
                             b:EnableMouse(false)
@@ -312,12 +340,16 @@ local function AimSet(set, rec, parked)
     local DA = NS.DriverAura
     local ids = parked and { [0] = true } or DA.IncludeMap(rec.driver or {})
     local sig = DA.FilterSig(ids)
-    if set.sig == sig then return end
-    set.sig = sig
+    local filter = DA.FilterForLane(rec.driver or {}, { harmful = false })
+    if set.sig == sig and set.filter == filter then return end
+    local newIDs, newFilter = set.sig ~= sig, set.filter ~= filter
+    set.sig, set.filter = sig, filter
     for _, layer in ipairs(set.layers) do
         for _, slot in ipairs(layer.slots) do
-            if slot.container then
-                slot.container:SetAuraSlotCandidateFilters(slot.key, { includeSpellIDs = ids })
+            local c = slot.container
+            if c then
+                if newFilter and c.SetAuraSlotFilterString then c:SetAuraSlotFilterString(slot.key, filter) end
+                if newIDs then c:SetAuraSlotCandidateFilters(slot.key, { includeSpellIDs = ids }) end
             end
         end
     end
@@ -478,7 +510,7 @@ function GB.SyncLayers(a)
     local raid = IsInRaid and IsInRaid() or false
     if not Plain(raid) then raid = a.raid or false end
     a.raid = raid
-    local active = want and (raid and sets.raid or sets.party) or nil
+    local active = want and sets[GB.KindFor(a.rec, raid)] or nil
     local ea = a.frame:GetEffectiveAlpha()
     if type(ea) ~= "number" or not Plain(ea) then ea = 1 end
     local shown = GB.inCombat and a.frame:IsVisible()
@@ -511,7 +543,7 @@ function GB.EnsureSets(a)
     if want then
         local raid = IsInRaid and IsInRaid() or false
         if not Plain(raid) then return end
-        local kind = raid and "raid" or "party"
+        local kind = GB.KindFor(a.rec, raid)
         sets = sets or {}
         GB.sets[a.rec.id] = sets
         if not sets[kind] then
@@ -521,7 +553,7 @@ function GB.EnsureSets(a)
     end
     for kind, set in pairs(sets or {}) do
         local raid = IsInRaid and IsInRaid() or false
-        local live = want and Plain(raid) and ((raid and kind == "raid") or (not raid and kind == "party"))
+        local live = want and Plain(raid) and kind == GB.KindFor(a.rec, raid)
         AimSet(set, a.rec, not live)
         if live then PlaceSet(a, set) end
     end
@@ -646,7 +678,7 @@ function GB.Refeed(id)
 end
 
 -- The tooltip's lines under the buff's name: the last count, and who lacks it
--- when names read plain (between pulls).
+-- (who has it, while it reminds of nobody) when names read plain (between pulls).
 function GB.TooltipLines(rec)
     local a = GB.attached[rec.id]
     if not (a and a.total) then
@@ -658,14 +690,16 @@ function GB.TooltipLines(rec)
         GameTooltip:AddLine("In combat the count waits for the fight to end.", 0.7, 0.7, 0.7, true)
         return
     end
+    local nobody = GB.Nobody(rec)
+    local want = nobody and "has" or "lacks"
     local names = {}
     for _, u in ipairs(a.roster or {}) do
-        if a.state[u] == "lacks" then
+        if a.state[u] == want then
             local nm = UnitName(u)
             if type(nm) == "string" and Plain(nm) then names[#names + 1] = nm end
         end
     end
     if #names > 0 then
-        GameTooltip:AddLine("Missing: " .. table.concat(names, ", "), 1, 0.82, 0, true)
+        GameTooltip:AddLine((nobody and "Has it: " or "Missing: ") .. table.concat(names, ", "), 1, 0.82, 0, true)
     end
 end

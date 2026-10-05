@@ -329,12 +329,9 @@ local function DynBusy(rec, f)
 end
 
 local function DynDropsOut(rec, f, collapse)
-    -- Empty "Hide when missing" items, trinkets and ammo always close their
-    -- cell, and so does a passive trinket in an on-use-only slot.
-    if f._adItemEmpty
-        and Store.Resolve(rec, "outOfStock", "hideWhenMissing") == true then
-        return true
-    end
+    -- Items, trinkets and ammo their stock hides always close their cell, and
+    -- so does a passive trinket in an on-use-only slot.
+    if NS.Factory.StockHidden(f, rec) then return true end
     if rec.kind == "trinket" and f._adPassive then return true end
     -- An inert icon gives up its cell under any drop-out rule, aura icons too
     -- (conditions are plain reads). A faded icon keeps its cell.
@@ -1174,7 +1171,7 @@ end
 -- row, left and right a column (the title bar holds the top). The clicked edge
 -- moves while every icon stays put on screen. They are children of the group
 -- at chrome strata, so they hide with it and an anchored bar can't take the
--- click. Aura groups derive rows from columns, so they get only the side pairs.
+-- click. Every grid group gets all three pairs, aura groups included.
 local ARROW_SIZE, ARROW_GAP, ARROW_PAD = 14, 2, 3
 local ARROW_ADD = { 0.35, 0.90, 0.35 }
 local ARROW_REMOVE = { 0.95, 0.40, 0.40 }
@@ -1201,7 +1198,9 @@ local function ArrowTooltip(b)
         local line = (s.edge == "bottom") and "row" or "column"
         local why
         if b._adWhy == "max" then
-            why = "Groups stop at 20 " .. line .. "s."
+            why = "Groups stop at " .. (b._adCount or 20) .. " " .. line .. "s."
+        elseif b._adWhy == "cap" then
+            why = "This group shows up to " .. (b._adCount or 40) .. " auras already."
         elseif b._adWhy == "min" then
             why = "A group needs at least one " .. line .. "."
         elseif b._adWhy == "full" then
@@ -1246,10 +1245,22 @@ local function ArrowClick(gf, spec)
     local stepX, stepY = GroupStep(g)
     local rowsBefore = DrawnRows(g)
     local colsBefore = math.max(1, Store.Resolve(g, "arrangement", "cols") or 6)
+    -- a group showing every aura on a unit sizes its own box
+    local UA = Store.ShowsAll(g) and NS.DriverUnitAuras or nil
+    local box = UA and UA.Plan(g)
     -- An anchored group's position belongs to its anchor.
     local free = not (NS.Anchor and NS.Anchor.ResolveTarget(g))
     if not Store.GridEdge(g.id, spec.edge, spec.add) then return end
-    if free then
+    if free and box then
+        g.pos = g.pos or {}
+        local after = UA.Plan(g)
+        if spec.edge == "bottom" then
+            g.pos.y = (g.pos.y or 0) - (after.boxH - box.boxH) / 2
+        else
+            local dx = (after.boxW - box.boxW) / 2
+            g.pos.x = (g.pos.x or 0) + ((spec.edge == "left") and -dx or dx)
+        end
+    elseif free then
         g.pos = g.pos or {}
         if spec.edge == "bottom" then
             -- The box changed at the bottom: hold the top edge.
@@ -1303,15 +1314,18 @@ local function EnsureGroupArrows(gf)
 end
 
 local function UpdateGroupArrows(gf, rec)
-    -- a group that places itself (Engine.HandlerFor) has no grid to grow
+    -- a group that places itself (Engine.HandlerFor) has no grid to grow, but
+    -- one showing every aura on a unit grows its Rows and Columns (off plates)
+    local grows = not Engine.HandlerFor(rec)
+        or (Store.ShowsAll(rec) and Store.Resolve(rec, "unitAuras", "unit") ~= "nameplate")
     local want = editMode and Store.GetSetting("showLayoutArrows") ~= false
         and NS.Options ~= nil and NS.Options.SelectedGroupId ~= nil
         and NS.Options.SelectedGroupId() == rec.id
-        and not Engine.HandlerFor(rec)
+        and grows
     if not (want or gf._adArrows) then return end
     for _, b in ipairs(EnsureGroupArrows(gf)) do
         local s = b._adSpec
-        if want and not (s.edge == "bottom" and rec.groupKind == "aura") then
+        if want then
             b._adOK, b._adWhy, b._adCount = Store.GridEdgeCheck(rec.id, s.edge, s.add)
             b:SetAlpha(b._adOK and 1 or 0.35)
             b:SetFrameStrata(CHROME_STRATA)

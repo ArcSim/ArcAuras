@@ -327,6 +327,12 @@ function UA.AddDebuffs(g, rt, cfg)
     rt.hasD = true
 end
 
+-- After a button's look: the group's debuff type looks (Drivers\AD_TypeLooks.lua).
+function UA.AfterStyle(b, rt, rec, w, h)
+    local TL, g = NS.TypeLooks, Store.Get(rt.gid)
+    if TL and g then TL.Apply(b, g, rec, w, h) end
+end
+
 -- The group's runtime and its first container, built once.
 function UA.Build(g)
     local rt = UA.runtimes[g.id]
@@ -341,7 +347,7 @@ function UA.Build(g)
     local p = UA.Plan(g, cfg)
     rt = { cs = {}, buttons = {}, engines = {}, slotDims = {}, bound = {}, hostile = {},
         slotRecs = { UA.LookRec(g, cfg) }, cfg = { iconW = p.w, iconH = p.h, sx = p.sx, sy = p.sy },
-        mode = cfg.plates and "plates" or "unit", want = 1 }
+        mode = cfg.plates and "plates" or "unit", want = 1, gid = g.id, afterStyle = UA.AfterStyle }
     local c = UA.MakeContainer(g, rt, cfg, cfg.plates and UA.Token(1) or cfg.unit)
     if not c then return nil end
     rt.c, rt.sent = c, c._adSent

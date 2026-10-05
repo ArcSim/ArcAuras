@@ -98,22 +98,22 @@ function Options.EditingId()
 end
 
 -- Tabs by what you want to happen: what it tracks, the look that never
--- changes, when it shows, glows and sounds, then its texts and where it sits.
--- Kinds with no alerts have no Sounds; a tab with nothing for the icon drops
--- out (IconTabsFor).
+-- changes, how it looks and what it does in each state (Conditions: the state
+-- table, then each state's glows, sounds and art), then its texts and where
+-- it sits. A tab with nothing for the icon drops out (IconTabsFor).
 local KIND_TABS = {
-    spell   = { "Tracking", "Appearance", "Show & Hide", "Glows", "Sounds", "Text", "Position", "Load Conditions" },
-    aura    = { "Tracking", "Appearance", "Show & Hide", "Glows", "Sounds", "Text", "Position", "Load Conditions" },
-    trinket = { "Tracking", "Appearance", "Show & Hide", "Glows", "Sounds", "Text", "Position", "Load Conditions" },
-    item    = { "Tracking", "Appearance", "Show & Hide", "Glows", "Sounds", "Text", "Position", "Load Conditions" },
+    spell   = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    aura    = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    trinket = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    item    = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
     -- a Custom Icon: its rules on Triggers (UI\AD_CustomOptions.lua)
-    timer   = { "Tracking", "Triggers", "Appearance", "Show & Hide", "Glows", "Text", "Position", "Load Conditions" },
-    totem   = { "Tracking", "Appearance", "Show & Hide", "Glows", "Text", "Position", "Load Conditions" },
-    ammo    = { "Tracking", "Appearance", "Show & Hide", "Glows", "Text", "Position", "Load Conditions" },
-    enchant = { "Tracking", "Appearance", "Show & Hide", "Glows", "Sounds", "Text", "Position", "Load Conditions" },
-    special = { "Tracking", "Appearance", "Show & Hide", "Glows", "Sounds", "Text", "Position", "Load Conditions" },
+    timer   = { "Tracking", "Triggers", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    totem   = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    ammo    = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    enchant = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    special = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
     -- a Group Buff: its count and its two states, no glows or sounds
-    groupbuff = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
+    groupbuff = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
 }
 
 -- An aura-group icon is drawn by the group's engine rows, which cannot hide or
@@ -125,7 +125,7 @@ local function InAuraGroup(rec)
 end
 
 -- Options.iconTabEmpty(rec, tab), set by the icon editor, drops a tab none of
--- whose blocks apply (an ammo icon's Glows for a class with no warnings).
+-- whose blocks apply (none today: every kind has its state table).
 local function IconTabsFor(rec)
     -- several icons at once: the tabs every one of them has
     if rec._adMulti and Options.MultiSelect then return Options.MultiSelect.IconTabs(rec) end
@@ -144,7 +144,7 @@ local GREENC = { 0.482, 0.847, 0.561 }
 
 -- The icons' order: Appearance holds every fill colour (the old Color Changes),
 -- Show & Hide the state hides and the fade rules, and a kind's own tab
--- (Heals & Shields, Castbar) sits where an icon has Glows. An old pick lands
+-- (Heals & Shields, Castbar) sits right after it. An old pick lands
 -- on its new home (Options.EditorTabs.Home, UI\AD_EditorTabs.lua).
 local BAR_TABS = {
     cooldown = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
@@ -671,12 +671,6 @@ function Options.InfoMark(row, title, body, vis)
     row._adInfoMark = m
     return m
 end
--- Why a Dynamic aura group has no Aura Missing icons, on both of its switches.
-Options.DYN_MISSING_GROUP_TITLE = "Aura Missing icons disabled"
-Options.DYN_MISSING_GROUP = "Due to an API limitation, auras inside this group won't have Aura Missing icons while Dynamic is on."
-Options.DYN_MISSING_ICON_TITLE = "Aura Missing icon disabled"
-Options.DYN_MISSING_ICON = "Due to an API limitation, auras in a Dynamic group won't have Aura Missing icons. "
-    .. "Turn off Dynamic in the group's Appearance."
 -- Follow my rank: aura icons, the aura on a spell icon and aura bars (Forever).
 Options.FOLLOW_RANK_DESC = "Also watches the rank you know of each spell, so this keeps working when you train "
     .. "a new rank. The IDs you typed still count."
@@ -770,6 +764,50 @@ function Options.SetOverlayOn(rec, on)
         ov.on = nil
     end
     Store.Dirty("style", rec.id)
+end
+
+-- What shows over a spell icon's cooldown: nothing, the aura (the engine's),
+-- its totem or a set duration on cast (Drivers\AD_DriverPhase.lua). The aura
+-- shape stays on the overlay whatever the pick, so switching back keeps it.
+Options.OVERLAY_PICKS = {
+    { value = "none", text = "Nothing" },
+    { value = "aura", text = "An aura" },
+    { value = "totem", text = "Its totem" },
+    { value = "cast", text = "A set duration" },
+}
+function Options.OverlayPick(rec)
+    local ov = Options.OverlayOf(rec)
+    if not (type(ov) == "table" and ov.on == true) then return "none" end
+    return NS.DriverAura.OverlaySource(ov)
+end
+function Options.SetOverlayPick(rec, v)
+    if not rec then return end
+    if v == "none" then
+        Options.SetOverlayOn(rec, false)
+        return
+    end
+    Options.SetOverlayOn(rec, true)
+    local ov = Options.OverlayOf(rec)
+    if ov then ov.source = (v == "totem" or v == "cast") and v or nil end
+    Store.Dirty("style", rec.id)
+end
+-- The spells a totem or a set duration follows (overlay.spells), empty for
+-- the icon's own; one for a totem.
+function Options.OverlaySpellsText(rec)
+    local ov = Options.OverlayOf(rec)
+    return (ov and type(ov.spells) == "table") and table.concat(ov.spells, ", ") or ""
+end
+function Options.SetOverlaySpells(rec, text, one)
+    local ov = Options.OverlayOf(rec)
+    if not ov then return end
+    local ids = Options.ParseSpellIDs(text)
+    if one and #ids > 1 then ids = { ids[1] } end
+    ov.spells = (#ids > 0) and ids or nil
+    Store.Dirty("style", rec.id)
+end
+function Options.OverlaySpellHint(rec)
+    local sid = rec and rec.driver and tonumber(rec.driver.spellID)
+    return sid and ("this spell, " .. sid) or "this spell"
 end
 
 -- The rail's words for an aura icon's IDs: "aura 2825" or "auras 2825 +3".
@@ -1217,7 +1255,8 @@ function Options.MediaItems(kind, empty)
     if kind == "border" then
         for _, k in ipairs((NS.Bars and NS.Bars.BUILTIN_BORDER_ORDER) or {}) do add(k) end
     else
-        for _, k in ipairs({ "Blizzard", "Blizzard Raid", "Character Skills" }) do add(k) end
+        for _, k in ipairs((NS.Bars and NS.Bars.BUILTIN_TEXTURE_ORDER)
+            or { "Blizzard", "Blizzard Raid", "Character Skills" }) do add(k) end
     end
     local lsm = NS.Bars and NS.Bars.GetLSM and NS.Bars.GetLSM()
     if lsm then
@@ -1301,13 +1340,13 @@ function Options.FieldShows(rec, family, section, def, tier)
     return true
 end
 
--- A kind's first two states in its own words, as its Show & Hide table names
+-- A kind's first two states in its own words, as its Conditions table names
 -- them (ready / on cooldown, active / missing, in stock / out of stock ...).
 function Options.StateWords(rec)
     local ET = Options.EditorTabs
     local st = rec and ET and ET.STATES and ET.STATES[rec.kind]
-    local one = st and st[1] and st[1].label
-    local two = st and st[2] and st[2].label
+    local function W(e) return e and ((e.labelFn and e.labelFn(rec)) or e.label) end
+    local one, two = W(st and st[1]), W(st and st[2])
     return one and one:lower() or "ready", two and two:lower() or "on cooldown"
 end
 
@@ -1394,6 +1433,13 @@ local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
             end
             visible = fold:Add(baseVis, visible, function(r) return ET.Changed(r, section, field) end)
         end
+        -- opts.showWhen: a panel pick the row also waits on (the type picked in
+        -- a show-all group's strip). It is not a record gate, so the search
+        -- still finds the row; opts.reveal makes that pick before the jump.
+        if opts and opts.showWhen then
+            local inner = visible
+            visible = function() return opts.showWhen() and inner() end
+        end
         -- opts.labels: a block's own words for a shared field (a totem's
         -- "Active alpha" is the states section's ready alpha)
         local label = (opts and opts.labels and opts.labels[field]) or def.label or field
@@ -1401,7 +1447,12 @@ local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
         if def.t == "bool" and def.showPick then
             -- Two exclusive switches as one pick: Always (both off), While the
             -- aura is up (this one), While the aura is missing (its partner).
+            -- def.pickWords(rec) words them for a kind and may leave the second out.
             local other = def.showPick
+            local function Words(r)
+                return (def.pickWords and def.pickWords(r))
+                    or { up = "While the aura is up", missing = "While the aura is missing" }
+            end
             row = AT.RowDropdown(pg, win, label,
                 function()
                     local r = ctx()
@@ -1417,14 +1468,15 @@ local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
                     Store.SetOverride(r, section, other, v == "missing")
                 end,
                 function()
-                    return { { value = "always", text = "Always" },
-                        { value = "up", text = "While the aura is up" },
-                        { value = "missing", text = "While the aura is missing" } }
+                    local w = Words(ctx())
+                    local items = { { value = "always", text = "Always" }, { value = "up", text = w.up } }
+                    if w.missing then items[#items + 1] = { value = "missing", text = w.missing } end
+                    return items
                 end,
                 visible)
         elseif def.t == "bool" and def.statePick then
             -- Two state switches as one pick, in the kind's own words (its
-            -- first two Show & Hide states): Always (both on), while the
+            -- first two Conditions states): Always (both on), while the
             -- first (this one), while the second (its partner), Never. A
             -- totem set to one totem adds While out of range (def.rangePick),
             -- drawn by its Out of range look, so both switches go off.
@@ -1660,7 +1712,8 @@ local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
         if row then
             row._adMeta = { family = family, section = section, field = field,
                 def = def, baseVis = baseVis, layoutTier = tier or nil,
-                label = opts and opts.searchLabels and opts.labels and opts.labels[field] or nil }
+                label = opts and opts.searchLabels and opts.labels and opts.labels[field] or nil,
+                reveal = opts and opts.reveal or nil }
             -- the search opens the fold before it flashes the row
             if isAdv[field] then row._adFold = fold end
             -- "(mixed)" after the label while several records disagree
@@ -2118,6 +2171,7 @@ local function CondGrid(pg, ctx, visible, list)
             local r = ctx()
             return r ~= nil and offeredAny(r)
         end)
+        row._adCondGrid = cat.id
         -- the settings search lists every condition this row offers the
         -- record (the checkboxes carry no row label of their own)
         row._adSearch = function()
@@ -2134,33 +2188,42 @@ local function CondGrid(pg, ctx, visible, list)
         hdr:SetPoint("TOPLEFT", 6, -2)
         hdr:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
         hdr:SetText(cat.text)
-        local cells = {}
-        for _, d in ipairs(defs) do
-            local cell = CreateFrame("Frame", nil, row)
-            cell:SetHeight(COND_CELL_H)
-            local cb = AT.MakeCheckbox(cell)
-            cb:SetPoint("LEFT", 0, 0)
-            local fs = cell:CreateFontString(nil, "OVERLAY")
-            fs:SetFont(STANDARD_TEXT_FONT, 11, "")
-            fs:SetPoint("LEFT", cb, "RIGHT", 6, 0)
-            fs:SetJustifyH("LEFT")
-            fs:SetWordWrap(false)
-            fs:SetText(d.text)
-            fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
-            cb:SetScript("OnClick", function()
-                local r = ctx()
-                if r then C.Toggle(r, list, d.key) end
-                AT.LayoutPage(pg)
-                RefreshAll()
-            end)
-            cb:HookScript("OnEnter", function() cb:SetHover(true) end)
-            cb:HookScript("OnLeave", function() cb:SetHover(false) end)
-            cells[#cells + 1] = { f = cell, cb = cb, d = d }
+        -- the checkboxes come with the row's first showing, not with the
+        -- window: sixteen grids of them sit on tabs most opens never visit
+        local cells
+        local function BuildCells()
+            cells = {}
+            for _, d in ipairs(defs) do
+                local cell = CreateFrame("Frame", nil, row)
+                cell:SetHeight(COND_CELL_H)
+                local cb = AT.MakeCheckbox(cell)
+                cb:SetPoint("LEFT", 0, 0)
+                local fs = cell:CreateFontString(nil, "OVERLAY")
+                fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+                fs:SetPoint("LEFT", cb, "RIGHT", 6, 0)
+                fs:SetJustifyH("LEFT")
+                fs:SetWordWrap(false)
+                fs:SetText(d.text)
+                fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+                cb:SetScript("OnClick", function()
+                    local r = ctx()
+                    if r then C.Toggle(r, list, d.key) end
+                    AT.LayoutPage(pg)
+                    RefreshAll()
+                end)
+                cb:HookScript("OnEnter", function() cb:SetHover(true) end)
+                cb:HookScript("OnLeave", function() cb:SetHover(false) end)
+                cells[#cells + 1] = { f = cell, cb = cb, d = d }
+            end
         end
         -- measured placement; returns true when the row's height changed
         local function place()
             local r = ctx()
             if not r then return false end
+            if not cells then
+                if not row._visibleFn() then return false end
+                BuildCells()
+            end
             local w = row:GetWidth() or 0
             if w < 90 then w = (pg:GetWidth() or 0) - 24 end
             if w < 90 then return false end
@@ -2967,6 +3030,8 @@ local freeStripPool = {}
 local addWin
 
 local function ShowPane(name)
+    -- a pane no pick built yet (the picks build theirs behind the loader)
+    Options.EnsurePane(name)
     for n, f in pairs(panes) do f:SetShown(n == name) end
 end
 
@@ -3268,6 +3333,7 @@ local function PaintRailRow(row, selected, style)
     if row._multi and not selected then edge, ink = COL.arc, COL.arc end
     AT.Skin(row, fill, edge)
     row.name:SetTextColor(ink[1], ink[2], ink[3])
+    if row.glyph then row.glyph:SetColor(ink) end
     if row.accent then row.accent:SetShown((selected or row._multi) and true or false) end
 end
 
@@ -3835,6 +3901,8 @@ end
 
 local function RefreshRail()
     local list = BuildRailList()
+    -- layout id -> the layout pack whose newer version its copy lacks
+    local packUpd = Options.Home and Options.Home.UpdateByLayout() or nil
     -- inside the scrolling list, which starts under the LAYOUTS caption
     local y = -6
     -- Every thumbnail mode is centered in one 22px slot so the names line up. Call
@@ -3883,6 +3951,7 @@ local function RefreshRail()
         row.pill:Hide()
         row.eye:Hide()
         row.badge:Hide()
+        if row.upd then row.upd:Hide() end
         row.thumb:Hide()
         row.edit:Hide()
         row.export:Hide()
@@ -3929,7 +3998,17 @@ local function RefreshRail()
             -- 17: the list's and the row's insets; 128: the buttons, the eye, their gaps
             local want = math.min(92, bw + 2)
             local fit = math.min(want, (rail:GetWidth() or 0) - 17 - 22 - nw - 8 - 128)
-            if bw > 0 and (fit == want or fit >= 30) then
+            -- a newer version of the layout pack it came from takes the badge's
+            -- place: a "v2" tag whose click offers it (UI\AD_Home.lua)
+            local pe = packUpd and packUpd[rec.id]
+            if pe then
+                if not row.upd then row.upd = Options.Home.MakeRailTag(row) end
+                Options.Home.PaintRailTag(row.upd, pe)
+                row.upd:ClearAllPoints()
+                row.upd:SetPoint("RIGHT", row.eye, "LEFT", -4, 0)
+                row.upd:Show()
+                row.name:SetPoint("RIGHT", row.upd, "LEFT", -4, 0)
+            elseif bw > 0 and (fit == want or fit >= 30) then
                 row.badge:ClearAllPoints()
                 row.badge:SetPoint("RIGHT", row.eye, "LEFT", -4, 0)
                 row.badge:SetWidth(fit)
@@ -5445,10 +5524,18 @@ local function BuildLayoutPane()
     tabRow._strip:SetPoint("BOTTOMRIGHT", -8, 2)
     tabRow._sync = function()
         local h = tabRow._strip:Set(tabs, ui.layoutTab, function(name)
-            ui.layoutTab = name
-            -- leaving Load Conditions offers its changes to the items inside
-            if Options.LayoutFollow then Options.LayoutFollow.Sync(Options.LCLayoutId()) end
-            AT.LayoutPage(pg)
+            local function pick()
+                ui.layoutTab = name
+                -- leaving Load Conditions offers its changes to the items inside
+                if Options.LayoutFollow then Options.LayoutFollow.Sync(Options.LCLayoutId()) end
+                AT.LayoutPage(pg)
+            end
+            -- a look tab builds with the editors it mirrors, on its first pick
+            if name == "Icon Looks" or name == "Group Looks" or name == "Bar Looks" then
+                Options.WhenPane("looks", pick)
+            else
+                pick()
+            end
         end)
         -- wrapped chips grow the row (never overlap the content below)
         local want = (h or 24) + 6
@@ -5669,15 +5756,37 @@ local PREV_DRAGS = {
     { fs = "countdown",   name = "Duration text", sec = "text",    a = "durationAnchor", x = "durationX", y = "durationY" },
 }
 
--- One glow at a time: the first lane the icon has on, in a fixed order (the
--- Glows tab shows every card at once, so no one lane is "the one edited").
+-- One glow at a time. On Conditions with a state's glows open: the first of
+-- them switched on, else its first. Otherwise the first lane the icon has on,
+-- in a fixed order.
+Options.GLOW_LANE_OF = { ["states.readyGlow"] = "ready", ["states.procGlow"] = "proc",
+    ["states.usableGlow"] = "usable", ["states.cooldownGlow"] = "cooldown", ["states.rangeGlow"] = "range",
+    ["states.rechargeGlow"] = "recharge", ["states.warnGlow"] = "warn", ["states.toggleGlow"] = "toggle" }
 local function PreviewGlowLane(rec)
+    local ET = Options.EditorTabs
+    if ET and ui.icoTab == "Conditions" then
+        local _, kind, keys = ET.Open(rec)
+        if kind == "glow" then
+            local first
+            for _, key in ipairs(keys or {}) do
+                local lane = Options.GLOW_LANE_OF[key]
+                if lane then
+                    first = first or lane
+                    if ET.FxLit(rec, key) then return lane end
+                end
+            end
+            if first then return first end
+        end
+    end
     local R = function(k) return Store.Resolve(rec, "states", k) end
     if R("readyGlow") == true then return "ready" end
     if R("procGlow") == true then return "proc" end
     if R("usableGlow") == true then return "usable" end
     if R("cooldownGlow") == true then return "cooldown" end
+    if R("rangeGlow") == true then return "range" end
+    if R("rechargeGlow") == true then return "recharge" end
     if R("warnGlow") == true then return "warn" end
+    if R("toggleGlow") == true then return "toggle" end
     return "ready"
 end
 
@@ -5804,7 +5913,7 @@ local function PreviewRestyle(rec, f)
         ab = Options.PreviewAuraButton(f)
         NS.DriverAura.AnchorButton(ab, f)
         ab._adIcon:SetTexture(Factory.KindTexture(rec))
-        -- PreviewApplyMode hides the missing look where live needs the eraser, so no plate.
+        -- PreviewApplyMode hides the missing look itself there, so no plate.
         Factory.StyleAuraButton(ab, rec, h,
             { w = w, h = h, ghost = NS.DriverAura.GhostShown(rec) and not NS.DriverAura.NeedsEraser(rec),
               previewGlows = true })
@@ -5817,6 +5926,9 @@ local function PreviewRestyle(rec, f)
         NS.DriverAura.AnchorButton(ab, f, 1)
         local ov = rec.driver and rec.driver.overlay
         local aid = ov and ov.spellID
+        -- a totem or a set duration wears the spell it follows
+        local PH = NS.DriverPhase
+        if ov and PH and PH.Source(rec) then aid = PH.SpellOf(rec, ov) or aid end
         ab._adIcon:SetTexture((aid and C_Spell.GetSpellTexture(aid)) or Factory.KindTexture(rec))
         Factory.StyleAuraButton(ab, rec, h, { w = w, h = h, ghost = true })
         if ab._adStacks:IsShown() then ab._adStacks:SetText("2") end
@@ -6355,7 +6467,7 @@ local function BuildIconEditor(parent)
 
     -- Sub-tabs: every block names the sub-tab it sits on (def.sub), and a tab
     -- with two or more applicable sub-tabs shows them as a second chip row; one
-    -- renders plain. A tab whose blocks name none (Glows, Sounds) stacks them.
+    -- renders plain. A tab whose blocks name none would stack them.
     local SEC_LISTS = {}   -- [tabName] = ordered block defs
     local function BlockApplies(rec, def)
         -- several icons at once: a block they all have, never a per-item pane
@@ -6396,8 +6508,9 @@ local function BuildIconEditor(parent)
         end
         return out
     end
-    -- the tab lists leave out a tab none of whose blocks apply
-    local HIDE_EMPTY = { Glows = true, Sounds = true }
+    -- the tab lists leave out a tab none of whose blocks apply (no tab is on
+    -- this list today: Conditions always has the state table)
+    local HIDE_EMPTY = {}
     Options.iconTabEmpty = function(rec, tabName)
         if not HIDE_EMPTY[tabName] then return false end
         for _, def in ipairs(SEC_LISTS[tabName] or {}) do
@@ -6602,7 +6715,22 @@ local function BuildIconEditor(parent)
         gbVis,
         "Every rank of the buff, and its group version, separated by commas or spaces. A member counts as having it with any of them on.",
         "e.g. 10938, 21564")
-    SectionRows(pg, "icon", "groupBuff", SelIcon, gbVis, { "combatShow" })
+    local gbCaster = AT.RowDropdown(pg, win, "Cast by",
+        function()
+            local r = SelIcon()
+            return (r and NS.DriverGroupBuff and NS.DriverGroupBuff.Caster(r)) or "any"
+        end,
+        function(v)
+            local r = SelIcon()
+            if not r then return end
+            r.driver.caster = (v ~= "any") and v or nil
+            Store.Dirty("style", r.id)
+        end,
+        function() return Options.AURA_CASTER_ITEMS end,
+        gbVis)
+    AT.Tooltip(gbCaster, "Cast by",
+        "Anyone: any copy counts. Me: only yours, so your Beacon or Earth Shield, not another player's.")
+    SectionRows(pg, "icon", "groupBuff", SelIcon, gbVis, { "remind", "combatShow" })
     AT.RowToggle(pg, "Auto rank (follow my known rank)",
         function() local r = SelIcon() return r ~= nil and Store.AutoRankOn(r.driver) end,
         function(v)
@@ -6792,32 +6920,112 @@ local function BuildIconEditor(parent)
             return trackVis() and r ~= nil and r.kind == "ammo"
         end)
 
-    -- Aura on this icon: the switch, then the aura's tracking rows; its look is
-    -- on the Aura Active tab. Offered only with the game's aura container,
-    -- without which the overlay could not work in combat.
+    -- On this icon: what shows over the cooldown (an aura, its totem or a set
+    -- duration on cast), then that source's rows; the look is on the Show &
+    -- Hide, Glows and Swipe tabs. Offered only with the game's aura container,
+    -- without which the aura could not work in combat.
     local ovSecVis = function()
         local r = SelIcon()
         return trackVis() and r ~= nil and r.kind == "spell"
             and NS.DriverAura ~= nil and NS.DriverAura.IsAvailable() == true
     end
-    local ovVis = function()
-        return ovSecVis() and NS.DriverAura.OverlayOn(SelIcon()) == true
-    end
-    AT.Section(pg, "Aura on this icon", { visibleFn = ovSecVis })
-    AT.RowToggle(pg, "Show an aura on this icon",
-        function()
-            local r = SelIcon()
-            return r ~= nil and NS.DriverAura ~= nil and NS.DriverAura.OverlayOn(r) == true
-        end,
+    local function OvPick() return Options.OverlayPick(SelIcon()) end
+    local ovVis = function() return ovSecVis() and OvPick() == "aura" end
+    local ovTotemVis = function() return ovSecVis() and OvPick() == "totem" end
+    local ovCastVis = function() return ovSecVis() and OvPick() == "cast" end
+    AT.Section(pg, "On this icon", { visibleFn = ovSecVis })
+    local ovPickRow = AT.RowDropdown(pg, win, "Show on this icon",
+        function() return OvPick() end,
         function(v)
             local r = SelIcon()
             if not r then return end
-            Options.SetOverlayOn(r, v)
-            -- the aura's rows on Show & Hide, Glows and Swipe come and go with it
+            Options.SetOverlayPick(r, v)
+            -- the phase's rows on Conditions and Swipe come and go with it
             RefreshAll()
         end,
-        ovSecVis,
-        "While the aura is up, the game shows it on this icon: its time and stacks over the cooldown, in the look set on the Show & Hide and Glows tabs. When it ends, the cooldown shows again. It works in combat.")
+        function() return Options.OVERLAY_PICKS end,
+        ovSecVis)
+    AT.Tooltip(ovPickRow, "Show on this icon",
+        "Over the cooldown, in the look set on Conditions: an aura while it's up, its totem while down, or a set time after a cast.")
+    AT.RowInput(pg, "Totem from spell ID",
+        function() return Options.OverlaySpellsText(SelIcon()) end,
+        function(v) Options.SetOverlaySpells(SelIcon(), v, true) end,
+        ovTotemVis,
+        "The spell that puts the totem down, any rank. Empty: this icon's spell.",
+        function() return Options.OverlaySpellHint(SelIcon()) end)
+    AT.RowInput(pg, "Starts when you cast",
+        function() return Options.OverlaySpellsText(SelIcon()) end,
+        function(v) Options.SetOverlaySpells(SelIcon(), v) end,
+        ovCastVis,
+        "Spell IDs whose cast starts the time, any rank, separated by commas. Empty: this icon's spell.",
+        function() return Options.OverlaySpellHint(SelIcon()) end)
+    AT.RowInput(pg, "Lasts (seconds)",
+        function()
+            local ov = Options.OverlayOf(SelIcon())
+            return (ov and tonumber(ov.seconds)) and tostring(ov.seconds) or ""
+        end,
+        function(v)
+            local r = SelIcon()
+            local ov = Options.OverlayOf(r)
+            if not ov then return end
+            local n = tonumber(v)
+            ov.seconds = (n and n > 0) and math.min(n, 3600) or nil
+            Store.Dirty("style", r.id)
+        end,
+        ovCastVis,
+        "How long it shows after each cast.",
+        "e.g. 10")
+    local ovRecastRow = AT.RowDropdown(pg, win, "When cast again",
+        function()
+            local ov = Options.OverlayOf(SelIcon())
+            return (ov and ov.recast) or "restart"
+        end,
+        function(v)
+            local r = SelIcon()
+            local ov = Options.OverlayOf(r)
+            if not ov then return end
+            ov.recast = (v ~= "restart") and v or nil
+            Store.Dirty("style", r.id)
+        end,
+        function()
+            local out = {}
+            for _, k in ipairs(Schema.CUSTOM_START_MODES) do
+                out[#out + 1] = { value = k, text = Schema.CUSTOM_START_MODE_LABELS[k] }
+            end
+            return out
+        end,
+        ovCastVis)
+    AT.Tooltip(ovRecastRow, "When cast again",
+        "A cast while it runs: start it over, add the seconds to what is left, or leave it running as it is.")
+    AT.RowInput(pg, "Ends early when you cast",
+        function()
+            local ov = Options.OverlayOf(SelIcon())
+            return (ov and type(ov.endSpells) == "table") and table.concat(ov.endSpells, ", ") or ""
+        end,
+        function(v)
+            local r = SelIcon()
+            local ov = Options.OverlayOf(r)
+            if not ov then return end
+            local ids = Options.ParseSpellIDs(v)
+            ov.endSpells = (#ids > 0) and ids or nil
+            Store.Dirty("style", r.id)
+        end,
+        ovCastVis,
+        "Spell IDs whose cast ends it before its time, such as a spender. Optional.",
+        "optional")
+    AT.RowToggle(pg, "Ends when you die",
+        function()
+            local ov = Options.OverlayOf(SelIcon())
+            return ov ~= nil and ov.endOnDeath == true
+        end,
+        function(v)
+            local r = SelIcon()
+            local ov = Options.OverlayOf(r)
+            if not ov then return end
+            ov.endOnDeath = v and true or nil
+            Store.Dirty("style", r.id)
+        end,
+        ovCastVis)
     AT.RowInput(pg, "Aura spell IDs",
         function()
             local ov = Options.OverlayOf(SelIcon())
@@ -6937,9 +7145,24 @@ local function BuildIconEditor(parent)
             if not (r and BlockApplies(r, def)) then return false end
             return SubOpen(tabName, sub)
         end
+        -- An effect block of the Conditions tab: o.fx, its key in the states'
+        -- effect lists; o.fxKind, rows every state's effect shares (the sound
+        -- channel). Nothing is drawn here: the editor under a table row draws
+        -- it (UI\AD_EditorTabs.lua), from these: a card's switch (o.card), its
+        -- words (o.labels), its line's name (o.lineName, false for none), its
+        -- own lit test (o.lit), its note (o.note) and onOn.
+        if ET and (o.fx or o.fxKind) then
+            def.isCard = o.card ~= nil
+            def.labels, def.lit, def.onOn, def.note = o.labels, o.lit, o.onOn, o.note
+            def.lineName = o.lineName
+            if o.card then def.cardWhen, def.word = o.card.when, o.card.word end
+            if o.fx then ET.FxBlock(o.fx, def) else ET.FxKindBlock(o.fxKind, def) end
+            return def
+        end
         if o.card and ET then
             -- a card (o.card: its when words and the switch's name): the
             -- first field is the switch in its header, the rest dim while off
+            def.isCard = true
             local card = ET.CardStart(pg, { vis = def.vis, ctx = SelIcon, family = "icon",
                 section = section, switch = fields[1], name = title, when = o.card.when, word = o.card.word })
             local rest = {}
@@ -6949,7 +7172,10 @@ local function BuildIconEditor(parent)
             def.card = card
             return def
         end
-        AT.Section(pg, title, { visibleFn = def.vis })
+        -- o.side: "L" / "R", two blocks on one line (the R one titled " ",
+        -- named for the search by o.searchTitle)
+        AT.Section(pg, title, { visibleFn = def.vis, side = o.side })
+        if o.searchTitle then pg._curSection.searchTitle = o.searchTitle end
         SectionRows(pg, "icon", section, SelIcon, def.vis, fields,
             o.labels and { labels = o.labels, searchLabels = o.searchLabels } or nil)
         return def
@@ -7054,7 +7280,7 @@ local function BuildIconEditor(parent)
         "zoom", "aspectRatio", "alpha", "padding", "keepBright", "keepBrightAllowDesat",
     })
     Sub(lookDef, "Art", "appearance", { "forceHideIcon", "customIconFrom", "customIcon", "activeArt" })
-    AT.RowDesc(pg, "Show & Hide > By State sets the art while the aura is up or missing.", 20,
+    AT.RowDesc(pg, "Conditions > By State sets the art while the aura is up or missing.", 20,
         function()
             local r = SelIcon()
             return lookDef.vis() and r ~= nil and r.kind == "aura"
@@ -7083,10 +7309,11 @@ local function BuildIconEditor(parent)
     Block("Appearance", "Swipe", "Edge & finish", "swipe", {
         "showEdge", "edgeColor", "edgeScale", "edgeWaitForNoCharges", "showBling",
     })
-    -- The wand rows follow the schema's class gate, and so does the name: a
-    -- class that cannot use a wand gets plain "GCD".
+    -- The wand rows follow the schema's class and Forever gates, and so does
+    -- the name: elsewhere it is plain "GCD".
     local wandGate = Schema.icon.swipe.fields.wandSwipe.classOnly
-    local gcdTitle = (wandGate and wandGate[Store.ClassTag() or ""]) and "GCD & Wand" or "GCD"
+    local gcdTitle = (NS.IsForever == true and wandGate and wandGate[Store.ClassTag() or ""])
+        and "GCD & Wand" or "GCD"
     Block("Appearance", "Swipe", gcdTitle, "swipe", {
         "gcdSwipe", "gcdSwipeColor", "wandSwipe", "wandSwipeColor",
     })
@@ -7102,77 +7329,64 @@ local function BuildIconEditor(parent)
     Options.LookBlock("icon", "Appearance", "Aura swipe", "auraSwipe", { "swipeColor", "swipeReverse" })
     SubPush("Appearance", "Swipe")
 
-    -- Show & Hide > By State: every state the kind has in one table (opacity,
-    -- grey out, tint), the switches it needs, the rules for when states
-    -- overlap, then the art by state (UI\AD_EditorTabs.lua draws the table).
-    local stateTab = IconTabVisible("Show & Hide")
-    local stateDef = { tab = "Show & Hide", title = "How it looks in each state", sub = "By State",
+    -- Conditions > By State: every state the kind has in one table (opacity,
+    -- grey out, tint, its effects), the switches it needs, then the rules for
+    -- when states overlap. UI\AD_EditorTabs.lua draws the table and the editor
+    -- under a row; the effect blocks below are filed under the states' keys.
+    local stateTab = IconTabVisible("Conditions")
+    local stateDef = { tab = "Conditions", title = "How it looks in each state", sub = "By State",
         fields = {}, parts = {},
         applies = function(r) return ET ~= nil and ET.StatesFor(r) ~= nil end,
         partsFn = function(r) return ET.StateParts(r) end }
-    SEC_LISTS["Show & Hide"] = SEC_LISTS["Show & Hide"] or {}
-    table.insert(SEC_LISTS["Show & Hide"], stateDef)
+    SEC_LISTS["Conditions"] = SEC_LISTS["Conditions"] or {}
+    table.insert(SEC_LISTS["Conditions"], stateDef)
     stateDef.vis = function()
         if not stateTab() then return false end
         local r = SelIcon()
         if not (r and BlockApplies(r, stateDef)) then return false end
-        return SubOpen("Show & Hide", "By State")
+        return SubOpen("Conditions", "By State")
     end
     AT.Section(pg, stateDef.title, { visibleFn = stateDef.vis })
     if ET then
-        ET.StateTable(pg, SelIcon, stateDef.vis)
-        ET.StateLooks("Show & Hide")
+        ET.StateTable(pg, SelIcon, stateDef.vis, win)
+        ET.StateLooks("Conditions")
     end
-    -- One switch serves both usability tints: named once, under the table.
-    More(stateDef, "states", { "usabilityTint" }, { noLook = true,
-        labels = { usabilityTint = "Usability tints (Can't use it, Not enough resource)" } })
     More(stateDef, "auraMissing", { "showWhileMissing" }, { noLook = true })
-    -- A Dynamic aura group shows only the auras that are up: a "!" on the
-    -- switch says why, in place of a note line.
-    Options.InfoMark(Options.RowFor(pg, "auraMissing", "showWhileMissing"),
-        Options.DYN_MISSING_ICON_TITLE, Options.DYN_MISSING_ICON,
-        function()
-            if not stateDef.vis() then return false end
-            local r = SelIcon()
-            if not (r and r.kind == "aura" and r.groupId) then return false end
-            local g = Store.Get(r.groupId)
-            return g ~= nil and g.groupKind == "aura"
-                and Store.Resolve(g, "arrangement", "dynamicLayout") == true
-        end)
+    More(stateDef, "auraActive", { "activeTimeOnly", "activeTimeUnit", "activeTimePct", "activeTimeSec",
+        "activeTimeLen" }, { noLook = true })
     More(stateDef, "outOfStock", { "hideWhenMissing" }, { noLook = true })
-    Options.LookBlock("icon", "Show & Hide", "Missing", "auraMissing", { "showWhileMissing" })
-    Options.LookBlock("icon", "Show & Hide", "Out of stock", "outOfStock", { "hideWhenMissing" })
-    -- the rules that decide which look wins; an aura icon has its own
-    Block("Show & Hide", "By State", "When states overlap", "states", {
-        "procOverride", "usableOverride", "preserveDurationText", "waitForNoCharges",
-    }, { kindOnly = NOT_AURA, labels = {
-        procOverride = "A proc shows it at full opacity", usableOverride = "Usable shows it at full opacity",
-    } })
-    local keepDef = Block("Show & Hide", "By State", "When states overlap", "auraMissing", { "missingPreserveText" },
-        { kindOnly = "aura" })
-    More(keepDef, "auraActive", { "activePreserveText" })
-    -- the art while the aura is up or missing (a spell icon's aura phase too)
-    local artDef = Block("Show & Hide", "By State", "Art by state", "auraActive", {
-        "overlayArt", "activeIconFrom", "activeIcon",
-    })
-    More(artDef, "auraMissing", { "missingIconFrom", "missingIcon" })
-    SubPush("Show & Hide", "By State")
+    Options.LookBlock("icon", "Conditions", "Missing", "auraMissing", { "showWhileMissing" })
+    Options.LookBlock("icon", "Conditions", "Out of stock", "outOfStock", { "hideWhenMissing" })
+    -- An effect block shows for a record when its kind has it and, with a
+    -- switch, the switch's row would show; with none, a setting of it can
+    -- show (the missing art waits on Show while missing).
+    if ET then
+        ET.blockShows = function(r, def)
+            if not BlockApplies(r, def) then return false end
+            local sec = Schema.icon[def.section]
+            if def.isCard then
+                local sdef = sec and sec.fields[def.fields[1]]
+                return sdef ~= nil and Options.FieldShows(r, "icon", def.section, sdef) == true
+            end
+            for _, f in ipairs(def.fields) do
+                local fdef = sec and sec.fields[f]
+                if fdef and ET.PairShows(r, def, fdef) then return true end
+            end
+            return false
+        end
+    end
 
-    -- Show & Hide > Fade When: the fade rules. An aura-group member fades with
-    -- its group (InAuraGroup), so it has none.
-    VisibilityRows(pg, SelIcon, Pane("Show & Hide", "Fade When",
-        function(r) return not InAuraGroup(r) end))
-
-    -- Glows: one card per trigger, two to a line where they fit: the switch
-    -- and when it fires on top, then style, colour and gates, the tuning
-    -- folded away. One push bar for all.
+    -- Glows: one block per trigger, filed under its state (ET.STATES fx) for
+    -- the editor under the table row: the switch and when it fires, then
+    -- style, colour and gates, the tuning behind More.
     if ET then
         local W = ET.GLOW_WHEN
         local function Card(title, section, prefix, suffix, switch, when, o, extra)
             local fields, words = ET.GlowCard(section, prefix, suffix, switch, extra)
             o.labels = words
             o.card = { when = when, word = switch }
-            return Block("Glows", nil, title, section, fields, o)
+            o.fx = section .. "." .. prefix .. (suffix or "")
+            return Block("Conditions", "By State", title, section, fields, o)
         end
         Card("When ready", "states", "readyGlow", nil, "Glow when ready", W.ready,
             { kindOnly = { spell = true, item = true, trinket = true, special = true } })
@@ -7185,6 +7399,15 @@ local function BuildIconEditor(parent)
             { kindOnly = { totem = true }, noLook = true })
         Card("On proc", "states", "procGlow", nil, "Proc glow", W.proc, {})
         Card("When usable", "states", "usableGlow", nil, "Glow when usable", W.usable, {})
+        -- a spell's target out of range: the state the table styles too
+        Card("When out of range", "states", "rangeGlow", nil, "Glow while out of range", W.outrange,
+            { kindOnly = { spell = true }, noLook = true })
+        -- a charge spell with a charge left and another on its way
+        Card("While recharging", "states", "rechargeGlow", nil, "Glow while recharging", W.recharge,
+            { kindOnly = { spell = true }, noLook = true, applies = function(r)
+                local D = NS.DriverCooldown
+                return D ~= nil and D.IsCharge ~= nil and D.IsCharge(r)
+            end })
         Card("While on cooldown", "states", "cooldownGlow", nil, "Glow while on cooldown", W.cooldown,
             { kindOnly = { spell = true, item = true, trinket = true, special = true } })
         Card("While not active", "states", "cooldownGlow", nil, "Glow while not active", W.inactive,
@@ -7196,32 +7419,35 @@ local function BuildIconEditor(parent)
                 return r.kind ~= "aura" and Schema.WARN_CLASSES[Store.ClassTag() or ""] == true
             end }, {
             { "warnAmmoBelow", "Ammo at or below" },
-            { "warnPetHealth", "Pet health at or below (%)" },
+            { "warnPetHealth", "Pet health under (%)" },
             { "warnPetMood", "Glow while the pet is" },
         })
+        -- Shoot or Auto Shot repeating, melee Attack swinging
+        -- (Drivers\AD_DriverToggle.lua): on the spell icons that toggle
+        Card("While toggled on", "states", "toggleGlow", nil, "Glow while toggled on", W.toggle, { noLook = true,
+            applies = function(r)
+                return NS.DriverToggle ~= nil and NS.DriverToggle.IsToggle(r)
+            end })
         -- The aura's glows ride its engine button, so they work in combat and
         -- in aura groups: glow 1 (a layout's looks carry it) and glows 2-4 on
-        -- an aura icon, the aura phase's glow on a spell icon.
+        -- an aura icon, the aura phase's glow on a spell icon. An aura icon's
+        -- glow sits under Active or Missing by its Glow when; one switched on
+        -- under Missing glows while the aura is missing.
         Card("Aura active", "auraActive", "activeGlow", nil, "Glow while the aura is up", W.overlay,
             { kindOnly = "spell", noLook = true })
         Card("Glow 1", "auraActive", "activeGlow", nil, "Glow while active", ET.AuraGlowWhen(nil),
-            { kindOnly = "aura" })
+            { kindOnly = "aura", onOn = function(r) ET.AuraGlowAdded(r, nil) end })
         for k = 2, Schema.AURA_GLOW_SLOTS do
-            Card("Glow " .. k, "auraActive", "activeGlow", tostring(k), "Glow while active",
-                ET.AuraGlowWhen(tostring(k)), { kindOnly = "aura", noLook = true })
+            local sfx = tostring(k)
+            Card("Glow " .. k, "auraActive", "activeGlow", sfx, "Glow while active",
+                ET.AuraGlowWhen(sfx), { kindOnly = "aura", noLook = true,
+                    onOn = function(r) ET.AuraGlowAdded(r, sfx) end })
         end
-        SubPush("Glows", nil)
     end
 
-    -- Sounds: the channel, then one card per moment a sound can play. A
-    -- weapon enchant's two mark it going on and falling off (NS.DriverEnchant
-    -- plays them on a real change only).
-    local chDef = Block("Sounds", nil, "Channel", "alerts", { "soundChannel" })
-    AT.RowDesc(pg, "The game plays aura sounds itself, so they work in combat, for anyone's copy of the aura.", 20,
-        function()
-            local r = SelIcon()
-            return chDef.vis() and r ~= nil and r.kind == "aura"
-        end)
+    -- Sounds: one block per moment a sound can play, under its state, then the
+    -- channel under any state's Sound. A weapon enchant's two mark it going on
+    -- and falling off (NS.DriverEnchant plays them on a real change only).
     if ET then
         local CD_SOUNDS = { spell = true, item = true, trinket = true, timer = true }
         for _, s in ipairs({
@@ -7238,12 +7464,54 @@ local function BuildIconEditor(parent)
             { "When it gains a stack", "auraStackSound", "aura" },
             { "When the aura drops", "auraLostSound", "aura" },
         }) do
-            local en = s[2] .. "Enabled"
-            Block("Sounds", nil, s[1], "alerts", { en, s[2] }, { kindOnly = s[3], noLook = true,
-                labels = { [s[2]] = "Sound" }, card = {} })
+            local en, snd = s[2] .. "Enabled", s[2]
+            -- lit once it plays something: switched on with a sound picked
+            Block("Conditions", "By State", s[1], "alerts", { en, snd }, { kindOnly = s[3], noLook = true,
+                labels = { [snd] = "Sound" }, card = {}, fx = "alerts." .. en, lit = function(r)
+                    return Store.Resolve(r, "alerts", en) == true and (Store.Resolve(r, "alerts", snd) or "") ~= ""
+                end })
         end
     end
-    SubPush("Sounds", nil)
+    Block("Conditions", "By State", "Sound channel", "alerts", { "soundChannel" }, { fxKind = "sound",
+        lineName = false, note = function(r)
+            return r.kind == "aura" and "The game plays aura sounds itself, so they work in combat, for anyone's copy of the aura."
+                or nil
+        end })
+
+    -- Art: the picture while the aura is up (a spell icon's aura phase too)
+    -- or missing, lit while it is not the default.
+    Block("Conditions", "By State", "Art while active", "auraActive", {
+        "overlayArt", "activeIconFrom", "activeIcon",
+    }, { fx = "art.active", lineName = false,
+        labels = { overlayArt = "Show", activeIconFrom = "Icon from", activeIcon = "ID" }, lit = function(r)
+        return (tonumber(Store.Resolve(r, "auraActive", "activeIcon")) or 0) ~= 0
+            or (r.kind == "spell" and Store.Resolve(r, "auraActive", "overlayArt") == "aura")
+    end })
+    Block("Conditions", "By State", "Art while missing", "auraMissing", { "missingIconFrom", "missingIcon" },
+        { fx = "art.missing", lineName = false, labels = { missingIconFrom = "Icon from", missingIcon = "ID" },
+            lit = function(r)
+            return (tonumber(Store.Resolve(r, "auraMissing", "missingIcon")) or 0) ~= 0
+        end })
+
+    -- the rules that decide which look wins, two to a line (an aura icon has
+    -- its own pair). Wait for no charges is Recharging's look pick now.
+    Block("Conditions", "By State", "When states overlap", "states", { "procOverride", "usableOverride" },
+        { kindOnly = NOT_AURA, side = "L", labels = { procOverride = "A proc shows it at full opacity",
+            usableOverride = "Usable shows it at full opacity" } })
+    Block("Conditions", "By State", " ", "states", { "preserveDurationText", "ignoreHardICD" },
+        { kindOnly = NOT_AURA, side = "R", noLook = true, searchTitle = "When states overlap" })
+    Options.LookBlock("icon", "Conditions", "When states overlap", "states", { "preserveDurationText", "ignoreHardICD" })
+    Block("Conditions", "By State", "When states overlap", "auraMissing", { "missingPreserveText" },
+        { kindOnly = "aura", side = "L" })
+    Block("Conditions", "By State", " ", "auraActive", { "activePreserveText" },
+        { kindOnly = "aura", side = "R", noLook = true, searchTitle = "When states overlap" })
+    Options.LookBlock("icon", "Conditions", "When states overlap", "auraActive", { "activePreserveText" })
+    SubPush("Conditions", "By State")
+
+    -- Conditions > Fade When: the fade rules. An aura-group member fades with
+    -- its group (InAuraGroup), so it has none.
+    VisibilityRows(pg, SelIcon, Pane("Conditions", "Fade When",
+        function(r) return not InAuraGroup(r) end))
 
     -- Text > Duration
     local durDef = Block("Text", "Duration", "Duration text", "text", {
@@ -7403,8 +7671,10 @@ local function RefreshGroupStrip()
     for i = #icons + 1, #stripPool do stripPool[i]:Hide() end
     groupStrip.add:ClearAllPoints()
     groupStrip.add:SetPoint("LEFT", 8 + #icons * 37, 0)
-    -- a group showing every aura on a unit takes no icons
+    -- a group showing every aura on a unit takes no icons; its strip holds
+    -- the debuff type picks instead (UI\AD_UnitAuraOptions.lua)
     groupStrip.add:SetShown(not Store.ShowsAll(group))
+    if Options.TypeLookStrip then Options.TypeLookStrip(group, groupStrip) end
 end
 
 local function RefreshGroupPane()
@@ -7690,6 +7960,8 @@ local function BuildGroupPane()
         "smoothMovement", "smoothDuration" }
     local gridVis = GrpSec("Grid")
     AT.Section(pg, "Grid", { visibleFn = gridVis })
+    -- a group showing every aura on a unit: its own Rows, beside Columns
+    SectionRows(pg, "iconGroup", "unitAuras", SelGroup, gridVis, { "rows" })
     SectionRows(pg, "iconGroup", "arrangement", SelGroup, gridVis, GRID_FIELDS)
     -- A group showing every aura on a unit is always live, so its pin sits
     -- with the grid; a plate row stays on its plate's edge.
@@ -7719,12 +7991,8 @@ local function BuildGroupPane()
         return dynVis() and g ~= nil and g.groupKind ~= "aura"
     end
     SectionRows(pg, "iconGroup", "arrangement", SelGroup, dynVis, { "dynamicLayout" })
-    -- the one cost of Dynamic on an aura group, a "!" on the switch while on
-    Options.InfoMark(Options.RowFor(pg, "arrangement", "dynamicLayout"),
-        Options.DYN_MISSING_GROUP_TITLE, Options.DYN_MISSING_GROUP,
-        function() return dynAura() and dynOn() end)
     AT.RowDesc(pg, "Icons pack while you play; with this window open each keeps its own cell.", 20, dynCD)
-    AT.RowDesc(pg, "On: only the auras that are up show, packed. Off: every aura keeps its cell.", 20, dynAura)
+    AT.RowDesc(pg, "On: icons pack (Show while missing ones too). Off: every aura keeps its cell.", 20, dynAura)
     -- An aura group packs each grid row or column on its own
     -- (Drivers\AD_DriverAuraRows.lua): its direction, then Alignment in that
     -- direction's words, a row Left / Center / Right, a column Up / Center / Down.
@@ -7808,6 +8076,13 @@ local function BuildGroupPane()
         end
         return parts
     end, iconsVis)
+    -- a group showing every aura on a unit: its debuff type looks
+    if Options.TypeLookRows then
+        Options.TypeLookRows(pg, SelGroup, iconsVis, { SectionRows = SectionRows, openIcons = function()
+            ui.grpMode, ui.grpTab, ui.grpSec = "grp", "Appearance", "Icons"
+            RefreshAll()
+        end })
+    end
 
     -- Appearance > Container
     AT.Section(pg, "Container", { visibleFn = GrpSec("Container") })
@@ -9288,7 +9563,8 @@ local function BuildBarPane()
     -- built-ins plus every LibSharedMedia texture when LSM is loaded.
     local function BarTextureItems()
         local items, seen = {}, {}
-        for _, k in ipairs({ "Flat", "Blizzard", "Blizzard Raid", "Character Skills" }) do
+        for _, k in ipairs((NS.Bars and NS.Bars.BUILTIN_TEXTURE_ORDER)
+            or { "Flat", "Blizzard", "Blizzard Raid", "Character Skills" }) do
             items[#items + 1] = { value = k, text = k }
             seen[k] = true
         end
@@ -9534,7 +9810,8 @@ local function BuildBarPane()
     SubPush("Appearance", "Icon")
 
     -- Appearance > Swing (swing bars): the off-hand track, the closing fill and
-    -- its ticks, the spark and the next-swing abilities, as one sub-tab.
+    -- its ticks and the spark, as one sub-tab; the next-swing abilities have
+    -- their own (Next Swing, below).
     local SW = "Swing"
     local offVis = BarBlock("Off-hand", "fill", "Appearance", {
         "swingOffhandStyle", "swingOffhandColor",
@@ -9557,44 +9834,23 @@ local function BuildBarPane()
     BarBlock("Spark", "fill", "Appearance", {
         "edgeSpark", "edgeSparkColor", "edgeSparkWidth",
     }, function(r) return r.barKind == "swing" end, SW, true)
-    -- Main-hand swing bars: next-swing abilities marked where each comes off
-    -- cooldown. The spell IDs are the bar's own (rec.driver), like an aura
-    -- icon's, so that row is bespoke and stays out of the push list.
+    SubPush("Appearance", SW)
+    -- Appearance > Next Swing (main-hand swing bars, a sub-tab of its own):
+    -- next-swing abilities marked where each comes off cooldown.
+    -- The abilities and their rank picks are the bar's own (rec.driver), drawn
+    -- as a list by UI\AD_SwingAbilOptions.lua; not pushable.
     do
         local abilVis = BarBlock("Next Swing", "fill", "Appearance", { "swingAbilities" }, function(r)
             return ((r.driver and r.driver.swingType) or 0) == 0
-        end, SW)
-        local label = "Abilities (spell IDs)"
-        local idsRow = AT.RowInput(pg, label,
-            function()
-                local r = SelBar()
-                local ids = r and r.driver and r.driver.swingAbilIDs
-                return type(ids) == "table" and table.concat(ids, ", ") or ""
-            end,
-            function(v)
-                local r = SelBar()
-                if not (r and r.driver) then return end
-                local ids = Options.ParseSpellIDs(v)
-                local old = r.driver.swingAbilIDs
-                if table.concat(ids, ",") == (type(old) == "table" and table.concat(old, ",") or "") then return end
-                r.driver.swingAbilIDs = (#ids > 0) and ids or nil
-                Store.Dirty("style", r.id)
-            end,
-            function()
-                local r = SelBar()
-                -- the IDs are one bar's own: not over several at once
-                return abilVis() and r ~= nil and not r._adMulti
-                    and Store.Resolve(r, "fill", "swingAbilities") == true
-            end,
-            "Spell IDs of your next-swing abilities, separated by commas or spaces: Raptor Strike 2973, Heroic Strike 78, Cleave 845, Maul 6807. Any rank works; the marker follows the rank you know.",
-            "e.g. 2973, 78")
-        -- found by the search while the switch is off; the jump flashes the switch
-        idsRow._adMeta = { family = "bar", section = "fill", field = "swingAbilIDs",
-            def = { label = label, dep = { field = "swingAbilities" } }, baseVis = abilVis }
-        BarSub(abilVis, "Ability markers", "fill", { "swingAbilPlace", "swingAbilFollow", "swingAbilAhead",
-            "swingAbilIconSize" })
+        end)
+        if Options.SwingAbilRows then Options.SwingAbilRows(pg, SelBar, abilVis, win) end
+        -- which markers show and where, then how they look
+        BarSub(abilVis, "Markers", "fill", { "swingAbilCD", "swingAbilAhead", "swingAbilBadge", "swingAbilFar",
+            "swingAbilReady", "swingAbilQueued", "swingAbilPlace", "swingAbilFollow" })
+        BarSub(abilVis, "Icons and colors", "fill", { "swingAbilIconSize", "swingAbilTint", "swingAbilColorNow",
+            "swingAbilColorLater", "swingAbilColorFar", "swingAbilColorReady", "swingAbilColorQueued" })
     end
-    SubPush("Appearance", SW)
+    SubPush("Appearance", "Next Swing")
 
     -- Appearance > Ticks: tick marks for every counted bar ("Every point" draws
     -- one per unit from the live maximum), laid out once per size or setting
@@ -9920,6 +10176,17 @@ function Options.BuildNewLayoutPane()
     if NS.NewLayout then NS.NewLayout.Fill(pane) end
 end
 
+-- Home, the window's front page. The pane and its header are the host's; the
+-- page is UI\AD_Home.lua's.
+function Options.BuildHomePane()
+    local pane = CreateFrame("Frame", nil, content)
+    pane:SetAllPoints()
+    panes.home = pane
+    local h = MakeHeader(pane)
+    h.name:SetText("Home")
+    if Options.Home then Options.Home.Fill(pane, h) end
+end
+
 -- The "N selected" pane of a multi-selection: the pane and its header are the
 -- host's; UI\AD_MultiSelect.lua fills it and hosts the icon or bar editor
 -- page under its actions.
@@ -10159,9 +10426,10 @@ local function BuildAddWindow()
                 { value = "item", text = "Item" },
                 { value = "trinket", text = "Trinket" },
                 { value = "totem", text = "Totem / Guardian Duration" },
-                { value = "ammo", text = "Ammo" },
-                { value = "enchant", text = "Weapon Enchant" },
             }
+            -- retail has no ammo slot
+            if NS.IsForever == true then items[#items + 1] = { value = "ammo", text = "Ammo" } end
+            items[#items + 1] = { value = "enchant", text = "Weapon Enchant" }
             -- a Custom Icon: rules on plain events drive it (its engine loads first)
             if NS.DriverCustom then items[#items + 1] = { value = "timer", text = "Custom Icon" } end
             -- opened from a group's "+": only the kinds that group takes
@@ -10685,6 +10953,8 @@ local function BuildAddWindow()
         function()
             local items = { { value = "cooldown", text = "CD Group" }, { value = "aura", text = "Aura Group" } }
             if NS.Reminders then items[#items + 1] = { value = "reminder", text = "Reminder Group" } end
+            -- an aura group made from a template (UI\AD_MissingBuffs.lua)
+            if Options.MissingBuffsAddRows then items[#items + 1] = { value = "missing", text = "Missing Buffs" } end
             return items
         end,
         isCat("Group"))
@@ -10695,6 +10965,7 @@ local function BuildAddWindow()
         function(v) addState.fillFromBars = v end,
         function() return addState.cat == "Group" and (addState.groupKind or "cooldown") == "cooldown" end,
         "Opens a picker for this group's spells and items right after Create. Out of combat only.")
+    if Options.MissingBuffsAddRows then Options.MissingBuffsAddRows(pg, addWin, addState) end
     if Options.TextAddRows then Options.TextAddRows(pg, addWin, addState) end
     if Options.TextureAddRows then Options.TextureAddRows(pg, addWin, addState) end
     if Options.WheelAddRows then Options.WheelAddRows(pg, addWin, addState) end
@@ -10730,6 +11001,9 @@ local function BuildAddWindow()
     -- takes no click or hover, so the dim look holds.
     local function CanCreate()
         if not Store.Get(addState.layoutId) then return false end
+        if addState.cat == "Group" and addState.groupKind == "missing" then
+            return Options.MissingBuffsCanCreate ~= nil and Options.MissingBuffsCanCreate(addState)
+        end
         if addState.cat == "Special" then return Options.SpecialCanCreate ~= nil and Options.SpecialCanCreate(addState) end
         if addState.cat == "Icon" then
             local ik = addState.iconKind or "spell"
@@ -10999,6 +11273,16 @@ local function BuildAddWindow()
                 ExpandedSet()[layoutId] = true
                 Options.Select("bar", rec.id)
             end
+        elseif addState.cat == "Group" and addState.groupKind == "missing" then
+            Options.MissingBuffsCreate(addState, layoutId, function() AT.LayoutPage(pg) end, function(rec)
+                AT.LayoutPage(pg)
+                if rec then
+                    addWin:Hide()
+                    ExpandedSet()[layoutId] = true
+                    Options.Select("group", rec.id)
+                end
+            end)
+            AT.LayoutPage(pg)
         elseif addState.cat == "Group" then
             local rec = Store.NewGroup(layoutId, addState.groupName ~= "" and addState.groupName or nil,
                 addState.groupKind or "cooldown")
@@ -11084,10 +11368,12 @@ local railAddonRows = {}
 
 local function PaintAddonRows()
     for pane, r in pairs(railAddonRows) do
-        PaintRailRow(r, ui.selType == pane, "child")
+        PaintRailRow(r, ui.selType == pane, pane == "home" and "layout" or "child")
     end
     -- the Modules row's dot, while a module card still says NEW
     if Options.Modules then Options.Modules.PaintRailDot(railAddonRows.modules) end
+    -- the Home row's dot, while a layout pack update waits there
+    if Options.Home then Options.Home.PaintRailDot(railAddonRows.home) end
 end
 
 local function BuildSettingsPane()
@@ -11232,7 +11518,7 @@ local function BuildSettingsPane()
     AT.Tooltip(roundRow, "Round timer numbers",
         "How every Arc Auras countdown shows part of a second: icons, aura bars, timer bars and swing bars. Up: 13.2 seconds reads 14, the way action bar cooldowns count, so a running timer never reads 0. Down: 13.2 seconds reads 13, the way buff timers and most nameplates count. Decimals, where you turned them on, show the tenths either way.")
     -- The "Ammo is low" condition's line; icons keep their own thresholds.
-    local hunterVis = function() return Store.ClassTag() == "HUNTER" end
+    local hunterVis = function() return NS.IsForever == true and Store.ClassTag() == "HUNTER" end
     AT.Section(pg, "Ammo", { visibleFn = hunterVis })
     local ammoRow = AT.RowSlider(pg, "Ammo is low at or below",
         function() return Store.GetSetting("ammoLowAt") or NS.Conditions.AMMO_LOW_AT end,
@@ -11590,7 +11876,9 @@ local function BuildIEPane()
     impBtn:SetPoint("BOTTOMLEFT", 0, 4)
     impBtn.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
     -- a string whose items are here already (an earlier version of it) asks
-    -- first: update them, or import a copy; anything else imports at once
+    -- first: update them, or import a copy; anything else imports at once.
+    -- One made for the other game warns on the first press (the update
+    -- panel says it instead).
     impBtn:SetScript("OnClick", function()
         local text = ieBox and ieBox:GetText() or ""
         local plan, err = Store.PlanUpdate(text)
@@ -11598,6 +11886,12 @@ local function BuildIEPane()
             IE.SetStatus(err or "Import failed.", false)
             return
         end
+        if plan.relation == "new" and plan.otherGame and IE.gameAck ~= text then
+            IE.gameAck = text
+            IE.SetStatus(IE.GameNote(plan) .. " Press Import again to bring it in.", false)
+            return
+        end
+        IE.gameAck = nil
         if plan.relation == "new" then
             IE.DoImport(text, false, plan)
         else
@@ -11611,6 +11905,7 @@ local function BuildIEPane()
     clrBtn:SetScript("OnClick", function()
         ieBox:SetText("")
         IE.SetStatus("", true)
+        IE.gameAck = nil
         if IE.upd then IE.upd:Hide() end
     end)
 
@@ -11700,6 +11995,10 @@ end
 function IE.NewerNote(plan)
     return "Made with Arc Auras " .. tostring(plan.newer)
         .. ", newer than yours: update Arc Auras to get every setting in it."
+end
+
+function IE.GameNote(plan)
+    return "Made for " .. Store.GameName(plan.otherGame) .. ": some spells and items may not work here."
 end
 
 -- The update panel: over the pane while the player decides. Parts start as
@@ -11876,6 +12175,7 @@ function IE.ShowUpdate(plan, text)
     if plan.same > 0 then counts[#counts + 1] = plan.same .. " unchanged" end
     if goneN > 0 then counts[#counts + 1] = goneN .. (goneN == 1 and " pack item is" or " pack items are") .. " no longer in it" end
     if #counts > 0 then s[#s + 1] = table.concat(counts, ", ") .. "." end
+    if plan.otherGame then s[#s + 1] = IE.GameNote(plan) end
     if plan.newer then s[#s + 1] = IE.NewerNote(plan) end
     f.sum:SetText(table.concat(s, " "))
     -- how many items each part touches
@@ -12154,6 +12454,24 @@ function Options.OpenExport(id)
     Options.ExportSelected()
 end
 
+-- A pack's string offered from elsewhere (a Spotlight card's Update my copy):
+-- the Import page opens holding it, on its update plan when the player has an
+-- earlier version, else ready to import.
+function Options.ImportOffer(text)
+    Options.Open()
+    Options.Select("ie")
+    if not ieBox then return end
+    ieBox:SetText(text)
+    local plan, err = Store.PlanUpdate(text)
+    if not plan then
+        IE.SetStatus(err or "Import failed.", false)
+    elseif plan.relation == "new" then
+        IE.SetStatus("Press Import to bring it in.", true)
+    else
+        IE.ShowUpdate(plan, text)
+    end
+end
+
 function Options.Select(selType, id)
     -- The QOL page folded into Modules: a pick of it lands there.
     if selType == "qol" then selType, id = "modules", nil end
@@ -12161,6 +12479,13 @@ function Options.Select(selType, id)
     local L = Options.Loader
     if L and L.Busy() and not L.InBuild() then
         L.Then(function() Options.Select(selType, id) end)
+        return
+    end
+    -- an editor not built yet builds first, and the pick lands after it
+    local need = (selType == "layout" or selType == "group" or selType == "free" or selType == "bar"
+        or selType == "multi") and selType or nil
+    if need and not Options.PaneBuilt(need) then
+        Options.WhenPane(need, function() Options.Select(selType, id) end)
         return
     end
     -- a single pick ends a multi-selection (UI\AD_MultiSelect.lua)
@@ -12185,7 +12510,8 @@ function Options.Select(selType, id)
     -- the grow arrows follow the editor's open group (no rebuild needed)
     if Engine and Engine.RefreshArrows then Engine.RefreshArrows() end
     -- id on "modules": the module whose page opens, nil for the cards
-    if selType == "ie" or selType == "settings" or selType == "modules" or selType == "newlayout" then
+    if selType == "ie" or selType == "settings" or selType == "modules" or selType == "newlayout"
+        or selType == "home" then
         ShowPane(selType)
         RefreshAll()
         return
@@ -12213,6 +12539,13 @@ end
 
 local function RefreshPane()
     if not win or not win:IsShown() then return end
+    -- a look tab open before its rows exist (they build on the tab's pick)
+    local lt = ui.layoutTab
+    if ui.selType == "layout" and (lt == "Icon Looks" or lt == "Group Looks" or lt == "Bar Looks")
+        and not Options.PaneBuilt("looks") then
+        Options.WhenPane("looks", RefreshPane)
+        return
+    end
     if ui.selType == "layout" then RefreshLayoutPane()
     elseif ui.selType == "group" then RefreshGroupPane()
     elseif ui.selType == "free" then RefreshFreePane()
@@ -12223,7 +12556,8 @@ local function RefreshPane()
     elseif ui.selType == "modules" then
         if Options.Modules then Options.Modules.Refresh() end
     elseif ui.selType == "ie" then IE.Refresh()
-    elseif ui.selType == "newlayout" and NS.NewLayout then NS.NewLayout.Refresh() end
+    elseif ui.selType == "newlayout" and NS.NewLayout then NS.NewLayout.Refresh()
+    elseif ui.selType == "home" and Options.Home then Options.Home.Refresh() end
     -- after the pane: it can re-pick the icon it shows
     if Engine and Engine.RefreshEditing then Engine.RefreshEditing() end
 end
@@ -12490,6 +12824,8 @@ end
 function Options.Search.SecTitle(sec)
     -- a card (AT.Card) names itself in its header, in its own words
     if sec.card then return sec.card.title:GetText() end
+    -- a section titled " " (the right half of a pair) is named for the search
+    if sec.searchTitle then return sec.searchTitle end
     local t = sec.title and sec.title:GetText()
     if type(t) ~= "string" or t == "" then return nil end
     if sec.hit then return t end
@@ -12550,6 +12886,10 @@ function Options.Search.WalkSample(fam, rec, add)
         setTab = function(t) ui.barTab = t end
         setSub = function(t, s) ui.barSec[t] = s end
     end
+    -- a panel pick (the Conditions tab's state and effect) stands aside, so
+    -- every block a sample has is walked
+    local was = S.indexing
+    S.indexing = true
     for _, tab in ipairs(tabs or {}) do
         setTab(tab)
         local subs = (src.subs and src.subs(tab)) or {}
@@ -12563,6 +12903,7 @@ function Options.Search.WalkSample(fam, rec, add)
             end)
         end
     end
+    S.indexing = was
 end
 
 -- "Appearance  >  Fill": tab, sub-panel, section - each once
@@ -12741,6 +13082,10 @@ function Options.Search.BuildIndex()
         -- a section entry flashes its first row; that row's dep is not the
         -- section's
         e.dep = (not e.isSection) and S.DepNote(e.row) or nil
+        -- a setting on a row of several (an effect editor's) has its own
+        if e.dep == nil and not e.isSection and e.row._adDepNoteFor then
+            e.dep = e.row._adDepNoteFor(e.label, e.recs[1])
+        end
         e.hay = (e.label .. " " .. e.path .. (e.words and (" " .. e.words) or "")):lower()
     end
     S.idx = idx
@@ -12802,7 +13147,7 @@ function Options.Search.ShowSelPane()
     if ui.selType == "qol" then ui.selType, ui.selId = "modules", nil end
     local t = ui.selType
     if t == "layout" or t == "group" or t == "free" or t == "bar" or t == "multi"
-        or t == "ie" or t == "settings" or t == "modules" then
+        or t == "ie" or t == "settings" or t == "modules" or t == "home" then
         ShowPane(t)
     else
         ShowPane("empty")
@@ -12817,6 +13162,11 @@ function Options.Search.Changed()
     if S.quiet then return end
     RefreshRail()
     if S.Norm(ui.search) ~= "" then
+        -- the settings search walks every editor: the first one builds them
+        if not Options.PaneBuilt("all") then
+            Options.WhenPane("all", function() S.Changed() end)
+            return
+        end
         if not S.page then Options.BuildSearchPane() end
         S.showing = true
         ShowPane("search")
@@ -12936,6 +13286,12 @@ function Options.Search.Reveal(e)
     end
     -- so does a More options fold holding it
     if e.row._adFold then e.row._adFold:Open() end
+    -- and the panel pick the row waits on (SectionRows' opts.reveal)
+    local m = e.row._adMeta
+    if m and m.reveal then m.reveal() end
+    -- a row holding several settings opens the one the hit names (the
+    -- Conditions table's editor under a state row)
+    if e.row._adRevealFor then e.row._adRevealFor(e.label) end
     AT.LayoutPage(pg)
     local target = e.row
     -- a row in a switched-off card shows dimmed: its switch flashes instead
@@ -13145,6 +13501,89 @@ end
 function Options.BuildYield() end
 function Options.BuildStep() end
 
+-- The light panes build with the window; the heavy ones (`lazy`: the layout
+-- pane, the editors, the layout's look tabs) on their first pick, each after
+-- what it needs: the free pane shows the group pane's icon editor, the multi
+-- pane hosts both editors' pages, the look tabs mirror the editors' blocks,
+-- and `all` (the settings search walks every editor) is them all. Without the
+-- loader (the harnesses) every pane builds with the window, as before.
+local PANE_BUILD = {
+    empty = { BuildEmptyPane },
+    home = { function() Options.BuildHomePane() end },
+    newlayout = { function() Options.BuildNewLayoutPane() end },
+    layout = { BuildLayoutPane, lazy = true },
+    group = { BuildGroupPane, lazy = true },
+    free = { BuildFreePane, lazy = true, needs = { "group" } },
+    bar = { BuildBarPane, lazy = true },
+    multi = { function() Options.BuildMultiPane() end, lazy = true, needs = { "group", "bar" } },
+    looks = { function() Options.BuildLayoutLooks() end, lazy = true, needs = { "layout", "group", "bar" } },
+    settings = { BuildSettingsPane },
+    modules = { function() Options.BuildModulesPane() end },
+    ie = { BuildIEPane },
+    all = { lazy = true, needs = { "layout", "group", "free", "bar", "multi", "looks" } },
+}
+-- the build order of old, kept for the panes that build together
+local PANE_ORDER = { "empty", "home", "newlayout", "layout", "group", "free", "bar", "multi", "looks",
+    "settings", "modules", "ie" }
+local paneBuilt = {}    -- name -> "building" | true
+
+-- Builds a pane, and what it needs, once. One made while the window shows
+-- builds behind a hidden content area and stays hidden for ShowPane.
+function Options.EnsurePane(name)
+    local p = PANE_BUILD[name]
+    if not p or paneBuilt[name] then return end
+    paneBuilt[name] = "building"
+    for _, dep in ipairs(p.needs or {}) do Options.EnsurePane(dep) end
+    if p[1] then
+        local hide = win ~= nil and win:IsShown() and content:IsShown()
+        if hide then content:Hide() end
+        p[1]()
+        if panes[name] then panes[name]:Hide() end
+        if hide then content:Show() end
+    end
+    paneBuilt[name] = true
+end
+
+function Options.PaneBuilt(name) return paneBuilt[name] == true end
+
+-- the panes still to build for `name`, what they need first
+local function PanePlan(name, out, seen)
+    out, seen = out or {}, seen or {}
+    if seen[name] or paneBuilt[name] then return out end
+    seen[name] = true
+    local p = PANE_BUILD[name]
+    for _, dep in ipairs(p and p.needs or {}) do PanePlan(dep, out, seen) end
+    out[#out + 1] = name
+    return out
+end
+
+-- Runs fn once pane `name` exists. Inside a build, or with no loader, it
+-- builds now; otherwise the loader builds it in slices behind its bar and fn
+-- waits for the end.
+function Options.WhenPane(name, fn)
+    local L = Options.Loader
+    if L and L.Busy() and not L.InBuild() then
+        L.Then(function() Options.WhenPane(name, fn) end)
+        return
+    end
+    if paneBuilt[name] == true then
+        fn()
+    elseif not L or L.InBuild() then
+        Options.EnsurePane(name)
+        fn()
+    else
+        local plan = PanePlan(name)
+        L.Start(function()
+            Options.BuildStep(0, #plan)
+            for i, n in ipairs(plan) do
+                Options.EnsurePane(n)
+                Options.BuildStep(i, #plan)
+            end
+        end)
+        L.Then(fn)
+    end
+end
+
 local built
 local function Build()
     if built then return end
@@ -13162,6 +13601,9 @@ local function Build()
     win:HookScript("OnShow", function()
         Engine.SetEditMode(true)
         if Options.LayoutFollow then Options.LayoutFollow.Sync(Options.LCLayoutId()) end
+        -- a layout pack version the player has not been shown: open on Home
+        -- (UI\AD_Home.lua)
+        if Options.Home then Options.Home.OnOpen() end
     end)
     win:HookScript("OnHide", function()
         -- closing the window leaves an open Load Conditions page too
@@ -13213,16 +13655,37 @@ local function Build()
     Options.Search.box = search
     AT.Tooltip(search, "Search", "Finds your layouts, groups, icons and bars by name or by spell, item or icon ID, and every option by its name. Click a result to jump straight to it. Enter opens the top result, Esc clears.")
 
+    -- Home, the front page (UI\AD_Home.lua), under the search box
+    -- a raised button like a layout's header card, with a house, so it reads
+    -- as a place to go even when it is not the open page
+    local home = CreateFrame("Button", nil, rail, "BackdropTemplate")
+    home:SetHeight(28)
+    home:SetPoint("TOPLEFT", 6, -34)
+    home:SetPoint("TOPRIGHT", -6, -34)
+    AT.Skin(home, COL.panel, COL.line)
+    home.name = home:CreateFontString(nil, "OVERLAY")
+    home.name:SetFont(STANDARD_TEXT_FONT, 13, "")
+    home.name:SetPoint("LEFT", 29, 0)
+    home.name:SetText("Home")
+    if Options.Home then
+        home.glyph = Options.Home.MakeHouse(home)
+        home.glyph:SetPoint("LEFT", 9, 0)
+    end
+    RailChrome(home)
+    PaintRailRow(home, false, "layout")
+    home:SetScript("OnClick", function() Options.Select("home") end)
+    railAddonRows.home = home
+
     local cat = rail:CreateFontString(nil, "OVERLAY")
     cat:SetFont(STANDARD_TEXT_FONT, 9, "")
-    cat:SetPoint("TOPLEFT", 10, -40)
+    cat:SetPoint("TOPLEFT", 10, -70)
     cat:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     cat:SetText("LAYOUTS")
 
     -- The layouts tree scrolls from under the caption down to the ADDON foot's
     -- hairline (the foot is 104 tall); RefreshRail fills it, Options.RailFit sizes it.
     local railHost, railList = AT.MakeScroll(rail)
-    railHost:SetPoint("TOPLEFT", 0, -58)
+    railHost:SetPoint("TOPLEFT", 0, -88)
     railHost:SetPoint("BOTTOMRIGHT", -6, 105)
     railHost:HookScript("OnSizeChanged", function(_, w)
         if w and w > 0 then railList:SetWidth(w) end
@@ -13346,19 +13809,17 @@ local function Build()
     AddonRow("Import / Export", "ie", 32)
     AddonRow("Settings", "settings", 6)
 
-    -- The panes in build order; each is one step of the loading bar.
-    local steps = {
-        BuildEmptyPane, Options.BuildNewLayoutPane, BuildLayoutPane, BuildGroupPane, BuildFreePane, BuildBarPane,
-        -- after both editors: the multi-selection pane hosts their pages
-        Options.BuildMultiPane,
-        -- after the editors: the layout's look tabs mirror their blocks
-        Options.BuildLayoutLooks,
-        BuildSettingsPane, Options.BuildModulesPane, BuildIEPane,
-    }
-    Options.BuildStep(0, #steps)
-    for i, buildPane in ipairs(steps) do
-        buildPane()
-        Options.BuildStep(i, #steps)
+    -- The panes that build with the window, in the old order; each is one step
+    -- of the loading bar. With the loader the heavy ones wait for their pick.
+    local L = Options.Loader
+    local first = {}
+    for _, name in ipairs(PANE_ORDER) do
+        if not (L and PANE_BUILD[name].lazy) then first[#first + 1] = name end
+    end
+    Options.BuildStep(0, #first)
+    for i, name in ipairs(first) do
+        Options.EnsurePane(name)
+        Options.BuildStep(i, #first)
     end
     AT.AddDiscordFooter(win, "ArcUIv2DiscordCopy")
 
@@ -13375,8 +13836,12 @@ local function Build()
         end
     end)
 
+    -- The first open after a login or /reload lands on Home; later opens stay
+    -- where you were.
     local layouts = Store.Layouts()
-    if layouts[1] then
+    if Options.Home then
+        Options.Select("home")
+    elseif layouts[1] then
         Options.Select("layout", layouts[1].id)
     else
         ShowPane("empty")
@@ -13400,9 +13865,11 @@ end
 
 function Options.Toggle()
     local L = Options.Loader
-    -- A second press while it loads closes it; the build finishes quietly.
+    -- A second press while it loads closes it (the window too, while a pane
+    -- builds behind it); the build finishes quietly.
     if L and L.Busy() then
         L.Cancel()
+        if win and win:IsShown() then win:Hide() end
         return
     end
     Options.WhenBuilt(function()

@@ -30,6 +30,8 @@ end
 -- InCombatLockdown still reads false while PLAYER_REGEN_DISABLED is delivered.
 local inCombat = false
 local encounterActive = false
+-- a ready check under way; the number tells a late fallback timer it is stale
+local readyCheck, readyCheckNo = false, 0
 -- worn pieces per item set, counted once per pass
 local setMemo = {}
 
@@ -198,6 +200,80 @@ local function AmmoLow()
 end
 Conditions.AMMO_LOW_AT = 400
 
+-- UnitIsDead has no secrecy annotation; Plain keeps the last real answer anyway.
+local function HasPet()
+    return Plain("hasPet", UnitExists and UnitExists("pet"))
+end
+
+local function PetDead()
+    return HasPet() and Plain("petDead", UnitIsDead and UnitIsDead("pet"))
+end
+
+-- The pet bar's stance buttons carry tokens; the lit one is the stance.
+Conditions.PET_SLOTS = 10
+local function PetPassive()
+    if not GetPetActionInfo then return false end
+    for i = 1, Conditions.PET_SLOTS do
+        local name, _, isToken, isActive = GetPetActionInfo(i)
+        if IsSecret(name) or IsSecret(isToken) or IsSecret(isActive) then
+            return lastPlain.petPassive == true
+        end
+        if isToken and name == "PET_MODE_PASSIVE" then
+            lastPlain.petPassive = isActive and true or false
+            return lastPlain.petPassive
+        end
+    end
+    lastPlain.petPassive = false
+    return false
+end
+
+-- A warlock's demon by spells only it brings to the pet spellbook, a plain
+-- read: the pet's family reads secret in instances. Retail's IDs.
+Conditions.DEMONS = {
+    imp = { 89808, 3110 },          -- Singe Magic, Firebolt
+    voidwalker = { 17767, 17735 },  -- Shadow Bulwark, Suffering
+    felhunter = { 19647, 19505 },   -- Spell Lock, Devour Magic
+    sayaad = { 6358 },              -- Seduction
+    felguard = { 89766, 30213 },    -- Axe Toss, Legion Strike
+}
+local function DemonIs(name)
+    return function()
+        local SB = C_SpellBook
+        local bank = Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Pet
+        if not (SB and SB.IsSpellInSpellBook and bank) or not HasPet() then return false end
+        for _, id in ipairs(Conditions.DEMONS[name]) do
+            if Plain("demon" .. id, SB.IsSpellInSpellBook(id, bank)) then return true end
+        end
+        return false
+    end
+end
+
+-- The game's own armor figure: any of its slots marked damaged or broken. Off
+-- where the game's rules turn repairs off.
+Conditions.ALERT_SLOTS = 11
+local function NeedsRepair()
+    local GR = C_GameRules
+    local rule = Enum and Enum.GameRule and Enum.GameRule.RepairArmorDisabled
+    if GR and GR.IsGameRuleActive and rule then
+        local off = GR.IsGameRuleActive(rule)
+        if not IsSecret(off) and off == true then return false end
+    end
+    if not GetInventoryAlertStatus then return false end
+    for i = 1, Conditions.ALERT_SLOTS do
+        local st = GetInventoryAlertStatus(i)
+        if IsSecret(st) then return lastPlain.repair == true end
+        if type(st) == "number" and st > 0 then
+            lastPlain.repair = true
+            return true
+        end
+    end
+    lastPlain.repair = false
+    return false
+end
+
+-- How long a ready check may stay open when its own time left reads secret.
+Conditions.READY_CHECK_MAX = 40
+
 -- Rows of one game version key off the flavor flag, never an API probe:
 -- Forever ships most retail APIs and answers nothing useful through them.
 local function Retail() return NS.IsForever ~= true end
@@ -290,6 +366,10 @@ local DEAD_EV = { "PLAYER_DEAD", "PLAYER_ALIVE", "PLAYER_UNGHOST" }
 local VEHICLE_EV = { "UNIT_ENTERED_VEHICLE", "UNIT_EXITED_VEHICLE",
     "PLAYER_CONTROL_LOST", "PLAYER_CONTROL_GAINED", "VEHICLE_UPDATE" }
 local MOOD_EV = { "UNIT_HAPPINESS", "UNIT_PET" }
+local PET_HP_EV = { "UNIT_PET", "UNIT_HEALTH" }
+local PET_BAR_EV = { "UNIT_PET", "PET_BAR_UPDATE", "PET_UI_UPDATE" }
+local DEMON_EV = { "UNIT_PET", "PET_BAR_UPDATE", "SPELLS_CHANGED" }
+local REPAIR_EV = { "UPDATE_INVENTORY_ALERTS", "UPDATE_INVENTORY_DURABILITY" }
 local AMMO_EV = { "UNIT_INVENTORY_CHANGED", "BAG_UPDATE_DELAYED", "PLAYER_EQUIPMENT_CHANGED" }
 local DIFF_EV = { "PLAYER_DIFFICULTY_CHANGED", "ZONE_CHANGED_NEW_AREA" }
 local KEY_EV = { "CHALLENGE_MODE_START", "CHALLENGE_MODE_COMPLETED",
@@ -332,8 +412,19 @@ local VOCAB = {
     { key = "casting", cat = "player", text = "Casting", ev = CAST_EV, read = Casting },
     { key = "notCasting", cat = "player", text = "Not casting", ev = CAST_EV,
         read = function() return not Casting() end },
-    { key = "hasPet", cat = "player", text = "Pet is out", ev = { "UNIT_PET" },
-        read = function() return Plain("hasPet", UnitExists and UnitExists("pet")) end },
+    { key = "hasPet", cat = "player", text = "Pet is out", ev = { "UNIT_PET" }, read = HasPet },
+    { key = "petDead", cat = "player", text = "Pet is dead", ev = PET_HP_EV, read = PetDead },
+    { key = "petPassive", cat = "player", text = "Pet is on Passive", ev = PET_BAR_EV, read = PetPassive },
+    { key = "demonImp", cat = "player", class = "WARLOCK", text = "Imp is out", avail = Retail,
+        ev = DEMON_EV, read = DemonIs("imp") },
+    { key = "demonVoidwalker", cat = "player", class = "WARLOCK", text = "Voidwalker is out", avail = Retail,
+        ev = DEMON_EV, read = DemonIs("voidwalker") },
+    { key = "demonFelhunter", cat = "player", class = "WARLOCK", text = "Felhunter is out", avail = Retail,
+        ev = DEMON_EV, read = DemonIs("felhunter") },
+    { key = "demonSayaad", cat = "player", class = "WARLOCK", text = "Sayaad is out", avail = Retail,
+        ev = DEMON_EV, read = DemonIs("sayaad") },
+    { key = "demonFelguard", cat = "player", class = "WARLOCK", text = "Felguard is out", avail = Retail,
+        ev = DEMON_EV, read = DemonIs("felguard") },
     -- pet mood and ammo are Forever's: retail has neither
     { key = "petHappy", cat = "player", class = "HUNTER", text = "Pet is happy", ev = MOOD_EV,
         avail = Forever, read = function() return Conditions.PetMood() == 3 end },
@@ -350,6 +441,7 @@ local VOCAB = {
     { key = "pvp", cat = "player", text = "PvP flagged",
         ev = { "UNIT_FACTION", "PLAYER_FLAGS_CHANGED" },
         read = function() return Plain("pvp", UnitIsPVP and UnitIsPVP("player")) end },
+    { key = "needsRepair", cat = "player", text = "Gear needs repair", ev = REPAIR_EV, read = NeedsRepair },
     { key = "hasTarget", cat = "target", text = "Have a target", ev = TARGET_EV,
         read = HasTarget },
     { key = "noTarget", cat = "target", text = "No target", ev = TARGET_EV,
@@ -382,6 +474,7 @@ local VOCAB = {
         read = RoleIs("DAMAGER") },
     { key = "groupLeader", cat = "group", text = "Group leader", avail = Retail, ev = LEADER_EV,
         read = Leader },
+    { key = "readyCheck", cat = "group", text = "Ready check", read = function() return readyCheck end },
     { key = "instance", cat = "place", text = "In an instance", ev = PLACE_EV,
         read = function() return InstanceType() ~= "none" end },
     { key = "openWorld", cat = "place", text = "Open world", ev = PLACE_EV,
@@ -819,11 +912,13 @@ local UNIT_ARG = {
     UNIT_SPELLCAST_CHANNEL_START = "player", UNIT_SPELLCAST_CHANNEL_STOP = "player",
     UNIT_SPELLCAST_EMPOWER_START = "player", UNIT_SPELLCAST_EMPOWER_STOP = "player",
     UNIT_PET = "player", UNIT_INVENTORY_CHANGED = "player",
-    UNIT_HAPPINESS = "pet", PLAYER_SPECIALIZATION_CHANGED = "player",
+    UNIT_HAPPINESS = "pet", UNIT_HEALTH = "pet", PLAYER_SPECIALIZATION_CHANGED = "player",
     UNIT_FACTION = "either",   -- the PvP flag (player) or hostility (target)
 }
 
 local function OnEvent(event, unit)
+    -- a secret token is never one of ours
+    if IsSecret(unit) then return end
     local want = UNIT_ARG[event]
     if want == "player" and unit ~= "player" then return end
     if want == "pet" and unit ~= "pet" then return end
@@ -1244,6 +1339,33 @@ function Conditions.Init()
         encounterActive = EncounterNow()
         Conditions.Queue()
     end)
+    -- A ready check: open from its start to its end. The time it gives (or
+    -- READY_CHECK_MAX while that reads secret) closes one whose end never came.
+    if EventValid("READY_CHECK") then
+        Events.On("READY_CHECK", "adcond_base", function(_, _, left)
+            readyCheckNo = readyCheckNo + 1
+            local no = readyCheckNo
+            readyCheck = true
+            local t = Conditions.READY_CHECK_MAX
+            if not IsSecret(left) and type(left) == "number" and left > 0 then t = math.min(left, 60) end
+            C_Timer.After(t + 1, function()
+                if readyCheck and readyCheckNo == no then
+                    readyCheck = false
+                    Conditions.Queue()
+                end
+            end)
+            Conditions.Queue()
+        end)
+    end
+    for _, e in ipairs({ "READY_CHECK_FINISHED", "GROUP_LEFT" }) do
+        if EventValid(e) then
+            Events.On(e, "adcond_base", function()
+                if not readyCheck then return end
+                readyCheck = false
+                Conditions.Queue()
+            end)
+        end
+    end
     -- The one way faction changes mid-session (a Pandaren choosing). It is a
     -- "who" condition, so this is a full load pass.
     if EventValid("NEUTRAL_FACTION_SELECT_RESULT") then

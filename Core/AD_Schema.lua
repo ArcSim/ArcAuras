@@ -74,6 +74,11 @@ Schema.RANGE_MAX_CHECKS = 4
 -- keeps, and the colour a new rule starts with.
 Schema.SWING_COLOR_MAX = 8
 Schema.SWING_COLOR_DEFAULT = { 1, 0.55, 0.15, 1 }
+-- A main-hand swing bar's next-swing abilities (rec.driver.swingAbilIDs and
+-- their rank picks, swingAbilRanks): how many the editor's list adds, and the
+-- highest rank a pick can name.
+Schema.SWING_ABIL_MAX = 8
+Schema.SWING_ABIL_MAX_RANK = 20
 -- A reminder's triggers (rec.triggers on a reminder record, Store.CleanTriggers),
 -- ArcUI v1's Cooldown Reminder list: when each fires, and the looks it can pick.
 -- Every trigger reads a value that stays plain in combat (a cooldown shadow's
@@ -204,7 +209,7 @@ local CDG = { spell = true, item = true, trinket = true, timer = true, special =
 -- An ammo count: the ammo icon's stack text, a spell icon's ammo text.
 local AMMO_CT = { ammo = true, spell = true }
 -- The kinds whose custom texts follow their two states (the first two rows
--- of their Show & Hide table: ready / on cooldown, active / missing, ...).
+-- of their Conditions table: ready / on cooldown, active / missing, ...).
 local TWO = { spell = true, item = true, trinket = true, timer = true, totem = true, ammo = true,
     enchant = true, special = true, groupbuff = true }
 -- "Minutes and seconds" cutoffs in seconds, for icons and bars alike.
@@ -234,17 +239,18 @@ local ICON_FROM_LABELS = { icon = "Icon ID", spell = "Spell ID", item = "Item ID
 
 -- Glow styles for all four glows (ready, proc, usable, aura active): procloop
 -- is the proc glow without its opening burst, ants Blizzard's marching ants,
--- flash the Cooldown Manager's flash. Proc, proc loop and ants run at
--- Blizzard's fixed pace, so Speed shows only for GLOW_SPEED_STYLES.
-local GLOW_STYLES = { "button", "pixel", "autocast", "proc", "procloop", "ants", "flash" }
-local PROC_GLOW_STYLES = { "proc", "procloop", "button", "pixel", "autocast", "ants", "flash" }
+-- flash the Cooldown Manager's flash, redflash the action bar's blinking red
+-- (white keeps its own red). Proc, proc loop and ants run at Blizzard's fixed
+-- pace, so Speed shows only for GLOW_SPEED_STYLES.
+local GLOW_STYLES = { "button", "pixel", "autocast", "proc", "procloop", "ants", "flash", "redflash" }
+local PROC_GLOW_STYLES = { "proc", "procloop", "button", "pixel", "autocast", "ants", "flash", "redflash" }
 -- The aura active glow never opens with a burst, so Proc already draws the loop
 -- alone there and its twin would only repeat it.
-local AURA_GLOW_STYLES = { "button", "pixel", "autocast", "proc", "ants", "flash" }
+local AURA_GLOW_STYLES = { "button", "pixel", "autocast", "proc", "ants", "flash", "redflash" }
 local GLOW_STYLE_LABELS = { button = "Button", pixel = "Pixel", autocast = "Autocast",
     proc = "Proc", procloop = "Proc loop (no burst)", ants = "Marching ants",
-    flash = "Cooldown Manager flash" }
-local GLOW_SPEED_STYLES = { button = true, pixel = true, autocast = true, flash = true }
+    flash = "Cooldown Manager flash", redflash = "Action bar red flash" }
+local GLOW_SPEED_STYLES = { button = true, pixel = true, autocast = true, flash = true, redflash = true }
 
 -- What lights the warning glow (Drivers\AD_DriverWarn.lua). Ammo counts and pet
 -- happiness are plain in combat; pet health is secret, so a curve sets that
@@ -256,6 +262,29 @@ Schema.WARN_WHEN_LABELS = { ammo = "Ammo is low", petHealth = "Pet health is low
 -- retail the three classes with a lasting pet (a death knight's is Unholy's).
 Schema.WARN_CLASSES = NS.IsForever == true and { HUNTER = true, WARLOCK = true }
     or { HUNTER = true, WARLOCK = true, DEATHKNIGHT = true }
+-- Retail has no ammo or pet happiness: only pet health warns there.
+local function ForeverWarn() return NS.IsForever == true end
+Schema.WARN_WHEN_IF = { ammo = ForeverWarn, petMood = ForeverWarn }
+
+-- The toggle glow's rows show on a spell icon whose spell toggles: Shoot,
+-- Auto Shot or melee Attack (Drivers\AD_DriverToggle.lua).
+local function ToggleShows(rec)
+    local DT = NS.DriverToggle
+    return DT ~= nil and DT.IsToggle ~= nil and DT.IsToggle(rec)
+end
+
+-- The Recharging rows show on a spell icon whose spell has charges
+-- (Drivers\AD_DriverCooldown.lua IsCharge).
+local function ChargeShows(rec)
+    local D = NS.DriverCooldown
+    return D ~= nil and D.IsCharge ~= nil and D.IsCharge(rec)
+end
+
+-- "Show only when little time is left" needs the icon's own button.
+local function TimeGateShows(rec)
+    local DA = NS.DriverAura
+    return DA ~= nil and DA.TimeGateOK ~= nil and DA.TimeGateOK(rec)
+end
 
 -- The ammo count's own threshold colours show with the text that carries the
 -- count: the ammo icon's stack text, a spell icon's ammo text.
@@ -336,8 +365,8 @@ Schema.icon = {
         cooldownAlpha = { d = 1.0, dk = { groupbuff = 0 }, t = "num", min = 0, max = 1, kinds = CDGB,
             label = "On cooldown alpha" },
         cooldownDesaturate = { d = true, t = "bool", kinds = CDGB, label = "Desaturate on cooldown" },
-        -- A Custom Icon's Active look is the ready bucket: it can grey out too.
-        readyDesaturate = { d = false, t = "bool", kinds = { timer = true }, label = "Grey out while active" },
+        -- the ready look (a Custom Icon's Active) can grey out too
+        readyDesaturate = { d = false, t = "bool", kinds = CD, label = "Desaturate when ready" },
         -- On: duration, stack and label texts stay bright while the icon dims.
         -- Off: they follow the state alpha.
         preserveDurationText = { d = true, t = "bool", label = "Keep texts bright while dimmed" },
@@ -348,6 +377,11 @@ Schema.icon = {
         -- A recharging spell uses the cooldown alpha unless this waits for the
         -- last charge. Desaturation only ever happens at zero charges.
         waitForNoCharges = { d = false, t = "bool", kinds = SP, label = "Wait for no charges" },
+        -- A charge spell that locks itself after each cast (Zenith): its main
+        -- cooldown with a charge in hand reads as recharging, unless the cast
+        -- spent the last of two (Drivers\AD_DriverCooldown.lua ShadowState).
+        ignoreHardICD = { d = false, t = "bool", kinds = SP, showIf = ChargeShows, label = "Ignore hard ICD",
+            desc = "For a charge spell that also locks for a while after each cast: show its charges and recharge, not that lock." },
         readyGlow = { d = false, t = "bool", kinds = CD, label = "Glow when ready" },
         readyGlowType = { d = "button", t = "enum", values = GLOW_STYLES, labels = GLOW_STYLE_LABELS, kinds = CD, label = "Glow style", dep = { field = "readyGlow" } },
         readyGlowColor = { d = { 0.95, 0.95, 0.32, 1 }, t = "color", kinds = CD, label = "Glow color", dep = { field = "readyGlow" } },
@@ -450,11 +484,12 @@ Schema.icon = {
         procGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = SP, label = "Proc glow frame level",
             dep = { field = "procGlow" } },
         -- On by default, like Blizzard's action buttons.
-        usabilityTint = { d = true, t = "bool", kinds = SP, label = "Usability tints" },
-        resourceTintColor = { d = { 0.35, 0.45, 1, 1 }, t = "color", kinds = SP, label = "No-resource tint", dep = { field = "usabilityTint" } },
-        resourceDesaturate = { d = false, t = "bool", kinds = SP, label = "Desaturate on no resource", dep = { field = "usabilityTint" } },
-        unusableTintColor = { d = { 0.45, 0.45, 0.45, 1 }, t = "color", kinds = SP, label = "Unusable tint", dep = { field = "usabilityTint" } },
-        unusableDesaturate = { d = false, t = "bool", kinds = SP, label = "Desaturate while unusable", dep = { field = "usabilityTint" } },
+        resourceTintEnabled = { d = true, t = "bool", kinds = SP, label = "No-resource tint" },
+        resourceTintColor = { d = { 0.35, 0.45, 1, 1 }, t = "color", kinds = SP, label = "No-resource tint color", dep = { field = "resourceTintEnabled" } },
+        resourceDesaturate = { d = false, t = "bool", kinds = SP, label = "Desaturate on no resource" },
+        unusableTintEnabled = { d = true, t = "bool", kinds = SP, label = "Unusable tint" },
+        unusableTintColor = { d = { 0.45, 0.45, 0.45, 1 }, t = "color", kinds = SP, label = "Unusable tint color", dep = { field = "unusableTintEnabled" } },
+        unusableDesaturate = { d = false, t = "bool", kinds = SP, label = "Desaturate while unusable" },
         -- A reactive ability is ready nearly always but usable only briefly; at
         -- 0 it shows only while it can be pressed. Applies as the lower of this
         -- and the ready alpha; out of range never dims. The usability flags are
@@ -498,7 +533,8 @@ Schema.icon = {
         -- Glows while the ammo runs low, the pet's health is low or the pet is
         -- not happy (Drivers\AD_DriverWarn.lua), whatever the icon's own state.
         warnGlow = { d = false, t = "bool", kinds = NA, classOnly = Schema.WARN_CLASSES, label = "Warning glow" },
-        warnGlowWhen = { d = "ammo", t = "enum", values = Schema.WARN_WHEN, labels = Schema.WARN_WHEN_LABELS,
+        warnGlowWhen = { d = NS.IsForever == true and "ammo" or "petHealth", t = "enum", values = Schema.WARN_WHEN,
+            labels = Schema.WARN_WHEN_LABELS, valueIf = Schema.WARN_WHEN_IF,
             kinds = NA, classOnly = Schema.WARN_CLASSES, label = "Glow when", dep = { field = "warnGlow" } },
         warnAmmoBelow = { d = 400, t = "int", min = 1, max = 2000, kinds = NA, classOnly = Schema.WARN_CLASSES,
             label = "Ammo at or below", dep = { { field = "warnGlow" }, { field = "warnGlowWhen", value = "ammo" } } },
@@ -543,8 +579,138 @@ Schema.icon = {
             classOnly = Schema.WARN_CLASSES, label = "Warning glow strata", dep = { field = "warnGlow" } },
         warnGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = NA, classOnly = Schema.WARN_CLASSES,
             label = "Warning glow frame level", dep = { field = "warnGlow" } },
+        -- Glows while the spell's toggle is on, as the action bar flashes it:
+        -- Shoot or Auto Shot repeating, melee Attack swinging. White keeps the
+        -- red flash's own red.
+        toggleGlow = { d = false, t = "bool", kinds = SP, showIf = ToggleShows, label = "Glow while toggled on",
+            desc = "Glows while Shoot, Auto Shot or melee Attack is on, as your action bar flashes it." },
+        toggleGlowType = { d = "redflash", t = "enum", values = GLOW_STYLES, labels = GLOW_STYLE_LABELS, kinds = SP,
+            showIf = ToggleShows, label = "Toggle glow style", dep = { field = "toggleGlow" } },
+        toggleGlowColor = { d = { 1, 1, 1, 1 }, t = "color", kinds = SP, showIf = ToggleShows,
+            label = "Toggle glow color", dep = { field = "toggleGlow" } },
+        toggleGlowSpeed = { adv = "glow", d = 0.25, t = "num", min = 0.05, max = 1, kinds = SP, showIf = ToggleShows,
+            label = "Toggle glow speed",
+            dep = { { field = "toggleGlow" }, { field = "toggleGlowType", anyOf = GLOW_SPEED_STYLES } } },
+        toggleGlowLines = { adv = "glow", d = 8, t = "int", min = 1, max = 16, kinds = SP, showIf = ToggleShows,
+            label = "Toggle glow lines", dep = { { field = "toggleGlow" }, { field = "toggleGlowType", value = "pixel" } } },
+        toggleGlowThickness = { adv = "glow", d = 2, t = "int", min = 1, max = 20, kinds = SP, showIf = ToggleShows,
+            label = "Toggle glow thickness", dep = { { field = "toggleGlow" }, { field = "toggleGlowType", value = "pixel" } } },
+        toggleGlowLength = { adv = "glow", d = 0, t = "int", min = 0, max = 40, kinds = SP, showIf = ToggleShows,
+            label = "Toggle glow line length (0 = auto)",
+            dep = { { field = "toggleGlow" }, { field = "toggleGlowType", value = "pixel" } } },
+        toggleGlowParticles = { adv = "glow", d = 4, t = "int", min = 1, max = 16, kinds = SP, showIf = ToggleShows,
+            label = "Toggle glow particles", dep = { { field = "toggleGlow" }, { field = "toggleGlowType", value = "autocast" } } },
+        toggleGlowScale = { adv = "glow", d = 1, t = "num", min = 0.5, max = 2, kinds = SP, showIf = ToggleShows,
+            label = "Toggle glow size", dep = { { field = "toggleGlow" }, { field = "toggleGlowType", value = "autocast" } } },
+        toggleGlowIntensity = { adv = "glow", d = 1, t = "num", min = 0.1, max = 1, kinds = SP, showIf = ToggleShows,
+            label = "Toggle glow intensity", dep = { field = "toggleGlow" } },
+        toggleGlowXOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, showIf = ToggleShows,
+            label = "Toggle glow X offset", dep = { field = "toggleGlow" } },
+        toggleGlowYOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, showIf = ToggleShows,
+            label = "Toggle glow Y offset", dep = { field = "toggleGlow" } },
+        toggleGlowMoveX = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, showIf = ToggleShows,
+            label = "Toggle glow move X", dep = { field = "toggleGlow" } },
+        toggleGlowMoveY = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, showIf = ToggleShows,
+            label = "Toggle glow move Y", dep = { field = "toggleGlow" } },
+        toggleGlowStrata = { adv = "glow", d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" },
+            kinds = SP, showIf = ToggleShows, label = "Toggle glow strata", dep = { field = "toggleGlow" } },
+        toggleGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = SP, showIf = ToggleShows,
+            label = "Toggle glow frame level", dep = { field = "toggleGlow" } },
+        -- Toggled on as a state of its own: Shoot, Auto Shot or Attack on.
+        toggleAlphaEnabled = { d = false, t = "bool", kinds = SP, showIf = ToggleShows, label = "Toggled-on alpha" },
+        toggleAlpha = { d = 1, t = "num", min = 0, max = 1, kinds = SP, showIf = ToggleShows, label = "Toggled-on alpha value",
+            dep = { field = "toggleAlphaEnabled" } },
+        toggleDesaturate = { d = false, t = "bool", kinds = SP, showIf = ToggleShows, label = "Desaturate while toggled on" },
+        toggleTintEnabled = { d = false, t = "bool", kinds = SP, showIf = ToggleShows, label = "Toggled-on tint" },
+        toggleTintColor = { d = { 1, 0.35, 0.35, 1 }, t = "color", kinds = SP, showIf = ToggleShows,
+            label = "Toggled-on tint color", dep = { field = "toggleTintEnabled" } },
         rangeTint = { d = false, t = "bool", kinds = SP, label = "Out-of-range tint" },
         rangeTintColor = { d = { 0.85, 0.2, 0.2, 1 }, t = "color", kinds = SP, label = "Out-of-range color", dep = { field = "rangeTint" } },
+        -- Out of range as a full state: its own alpha (full by default, so a
+        -- ready spell still never dims for range alone), grey out and glow.
+        rangeAlpha = { d = 1, t = "num", min = 0, max = 1, kinds = SP, label = "Out-of-range alpha" },
+        rangeDesaturate = { d = false, t = "bool", kinds = SP, label = "Desaturate while out of range" },
+        rangeGlow = { d = false, t = "bool", kinds = SP, label = "Glow while out of range" },
+        rangeGlowType = { d = "button", t = "enum", values = GLOW_STYLES, labels = GLOW_STYLE_LABELS, kinds = SP,
+            label = "Out-of-range glow style", dep = { field = "rangeGlow" } },
+        rangeGlowColor = { d = { 0.85, 0.2, 0.2, 1 }, t = "color", kinds = SP, label = "Out-of-range glow color",
+            dep = { field = "rangeGlow" } },
+        rangeGlowSpeed = { adv = "glow", d = 0.25, t = "num", min = 0.05, max = 1, kinds = SP, label = "Out-of-range glow speed",
+            dep = { { field = "rangeGlow" }, { field = "rangeGlowType", anyOf = GLOW_SPEED_STYLES } } },
+        rangeGlowLines = { adv = "glow", d = 8, t = "int", min = 1, max = 16, kinds = SP, label = "Out-of-range glow lines",
+            dep = { { field = "rangeGlow" }, { field = "rangeGlowType", value = "pixel" } } },
+        rangeGlowThickness = { adv = "glow", d = 2, t = "int", min = 1, max = 20, kinds = SP, label = "Out-of-range glow thickness",
+            dep = { { field = "rangeGlow" }, { field = "rangeGlowType", value = "pixel" } } },
+        rangeGlowLength = { adv = "glow", d = 0, t = "int", min = 0, max = 40, kinds = SP,
+            label = "Out-of-range glow line length (0 = auto)",
+            dep = { { field = "rangeGlow" }, { field = "rangeGlowType", value = "pixel" } } },
+        rangeGlowParticles = { adv = "glow", d = 4, t = "int", min = 1, max = 16, kinds = SP, label = "Out-of-range glow particles",
+            dep = { { field = "rangeGlow" }, { field = "rangeGlowType", value = "autocast" } } },
+        rangeGlowScale = { adv = "glow", d = 1, t = "num", min = 0.5, max = 2, kinds = SP, label = "Out-of-range glow size",
+            dep = { { field = "rangeGlow" }, { field = "rangeGlowType", value = "autocast" } } },
+        rangeGlowIntensity = { adv = "glow", d = 1, t = "num", min = 0.1, max = 1, kinds = SP, label = "Out-of-range glow intensity",
+            dep = { field = "rangeGlow" } },
+        rangeGlowXOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Out-of-range glow X offset",
+            dep = { field = "rangeGlow" } },
+        rangeGlowYOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Out-of-range glow Y offset",
+            dep = { field = "rangeGlow" } },
+        rangeGlowMoveX = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Out-of-range glow move X",
+            dep = { field = "rangeGlow" } },
+        rangeGlowMoveY = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, label = "Out-of-range glow move Y",
+            dep = { field = "rangeGlow" } },
+        rangeGlowCombatOnly = { d = false, t = "bool", kinds = SP, label = "Out-of-range glow only in combat",
+            dep = { field = "rangeGlow" } },
+        rangeGlowStrata = { adv = "glow", d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" },
+            kinds = SP, label = "Out-of-range glow strata", dep = { field = "rangeGlow" } },
+        rangeGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = SP, label = "Out-of-range glow frame level",
+            dep = { field = "rangeGlow" } },
+        -- Recharging: a charge spell with a charge left and another on its way.
+        -- Off, it looks as On cooldown (or Ready with Wait for no charges).
+        rechargeAlphaEnabled = { d = false, t = "bool", kinds = SP, showIf = ChargeShows, label = "Recharging alpha" },
+        rechargeAlpha = { d = 1, t = "num", min = 0, max = 1, kinds = SP, showIf = ChargeShows,
+            label = "Recharging alpha value", dep = { field = "rechargeAlphaEnabled" } },
+        rechargeDesaturate = { d = false, t = "bool", kinds = SP, showIf = ChargeShows, label = "Desaturate while recharging" },
+        rechargeTintEnabled = { d = false, t = "bool", kinds = SP, showIf = ChargeShows, label = "Recharging tint" },
+        rechargeTintColor = { d = { 1, 0.85, 0.4, 1 }, t = "color", kinds = SP, showIf = ChargeShows,
+            label = "Recharging tint color", dep = { field = "rechargeTintEnabled" } },
+        rechargeGlow = { d = false, t = "bool", kinds = SP, showIf = ChargeShows, label = "Glow while recharging" },
+        rechargeGlowType = { d = "button", t = "enum", values = GLOW_STYLES, labels = GLOW_STYLE_LABELS, kinds = SP,
+            showIf = ChargeShows, label = "Recharging glow style", dep = { field = "rechargeGlow" } },
+        rechargeGlowColor = { d = { 1, 0.85, 0.4, 1 }, t = "color", kinds = SP, showIf = ChargeShows,
+            label = "Recharging glow color", dep = { field = "rechargeGlow" } },
+        rechargeGlowSpeed = { adv = "glow", d = 0.25, t = "num", min = 0.05, max = 1, kinds = SP, showIf = ChargeShows,
+            label = "Recharging glow speed",
+            dep = { { field = "rechargeGlow" }, { field = "rechargeGlowType", anyOf = GLOW_SPEED_STYLES } } },
+        rechargeGlowLines = { adv = "glow", d = 8, t = "int", min = 1, max = 16, kinds = SP, showIf = ChargeShows,
+            label = "Recharging glow lines", dep = { { field = "rechargeGlow" }, { field = "rechargeGlowType", value = "pixel" } } },
+        rechargeGlowThickness = { adv = "glow", d = 2, t = "int", min = 1, max = 20, kinds = SP, showIf = ChargeShows,
+            label = "Recharging glow thickness",
+            dep = { { field = "rechargeGlow" }, { field = "rechargeGlowType", value = "pixel" } } },
+        rechargeGlowLength = { adv = "glow", d = 0, t = "int", min = 0, max = 40, kinds = SP, showIf = ChargeShows,
+            label = "Recharging glow line length (0 = auto)",
+            dep = { { field = "rechargeGlow" }, { field = "rechargeGlowType", value = "pixel" } } },
+        rechargeGlowParticles = { adv = "glow", d = 4, t = "int", min = 1, max = 16, kinds = SP, showIf = ChargeShows,
+            label = "Recharging glow particles",
+            dep = { { field = "rechargeGlow" }, { field = "rechargeGlowType", value = "autocast" } } },
+        rechargeGlowScale = { adv = "glow", d = 1, t = "num", min = 0.5, max = 2, kinds = SP, showIf = ChargeShows,
+            label = "Recharging glow size",
+            dep = { { field = "rechargeGlow" }, { field = "rechargeGlowType", value = "autocast" } } },
+        rechargeGlowIntensity = { adv = "glow", d = 1, t = "num", min = 0.1, max = 1, kinds = SP, showIf = ChargeShows,
+            label = "Recharging glow intensity", dep = { field = "rechargeGlow" } },
+        rechargeGlowXOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, showIf = ChargeShows,
+            label = "Recharging glow X offset", dep = { field = "rechargeGlow" } },
+        rechargeGlowYOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, showIf = ChargeShows,
+            label = "Recharging glow Y offset", dep = { field = "rechargeGlow" } },
+        rechargeGlowMoveX = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, showIf = ChargeShows,
+            label = "Recharging glow move X", dep = { field = "rechargeGlow" } },
+        rechargeGlowMoveY = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = SP, showIf = ChargeShows,
+            label = "Recharging glow move Y", dep = { field = "rechargeGlow" } },
+        rechargeGlowCombatOnly = { d = false, t = "bool", kinds = SP, showIf = ChargeShows,
+            label = "Recharging glow only in combat", dep = { field = "rechargeGlow" } },
+        rechargeGlowStrata = { adv = "glow", d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" },
+            kinds = SP, showIf = ChargeShows, label = "Recharging glow strata", dep = { field = "rechargeGlow" } },
+        rechargeGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = SP, showIf = ChargeShows,
+            label = "Recharging glow frame level", dep = { field = "rechargeGlow" } },
         -- A totem's Out of range look: while the totem is out and its buff is
         -- not on you (Drivers\AD_TotemRange.lua). The game draws it, so it
         -- holds in combat.
@@ -722,9 +888,16 @@ Schema.icon = {
         outDesaturate = { d = true, t = "bool", kinds = { item = true, ammo = true }, label = "Desaturate when out of stock" },
         outAlphaEnabled = { d = false, t = "bool", kinds = { item = true, ammo = true }, label = "Out-of-stock alpha" },
         outAlpha = { d = 0.4, t = "num", min = 0, max = 1, kinds = { item = true, ammo = true }, label = "Out-of-stock alpha value", dep = { field = "outAlphaEnabled" } },
-        -- Hide instead of dimming. An item is missing when its guarded bag
-        -- count is empty, a trinket when nothing is equipped in its slot.
-        hideWhenMissing = { d = false, t = "bool", label = "Hide when missing" },
+        -- Show: Always, while in stock (hidden while missing) or only when out
+        -- (its partner). An item is missing when its guarded bag count is
+        -- empty, a trinket when nothing is equipped in its slot.
+        hideWhenMissing = { d = false, t = "bool", label = "Show", showPick = "showOnlyWhenOut",
+            pickWords = function(rec)
+                if rec and rec.kind == "trinket" then return { up = "While equipped" } end
+                return { up = "While in stock", missing = "Only when out of stock" }
+            end },
+        showOnlyWhenOut = { d = false, t = "bool", kinds = { item = true, ammo = true },
+            label = "Only when out of stock", pickedBy = "hideWhenMissing" },
     } },
     -- A trinket slot that shows only on-use trinkets: a passive one (no use
     -- spell) hides and gives up its cell in a dynamic group, as a missing one.
@@ -733,8 +906,12 @@ Schema.icon = {
     } },
     -- A group buff (Drivers\AD_DriverGroupBuff.lua): counted between pulls, secret in combat.
     groupBuff = { push = true, kinds = { groupbuff = true }, fields = {
-        combatShow = { d = false, t = "bool", label = "Show in combat while anyone lacks it",
-            desc = "In combat the game hides buffs, so the count stops; this shows the icon, without a count, while anyone lacks the buff." },
+        -- a buff the whole group needs, or one kept on one member
+        remind = { d = "lacks", t = "enum", values = { "lacks", "nobody" },
+            labels = { lacks = "Anyone lacks it", nobody = "Nobody has it" }, label = "Remind while",
+            desc = "Anyone lacks it: a buff the whole group needs. Nobody has it: a buff you keep on one member, such as Beacon of Light, Earth Shield, Source of Magic or a Soulstone." },
+        combatShow = { d = false, t = "bool", label = "Show in combat",
+            desc = "In combat the game hides buffs, so the count stops; this shows the icon, without a count, while it reminds, drawn by the game." },
         -- the count text's words: have / total, how many lack it, or have
         countShows = { d = "haveTotal", t = "enum", values = { "haveTotal", "missing", "have" },
             labels = { haveTotal = "Have / total (3/5)", missing = "Missing (2)", have = "Have (3)" },
@@ -790,9 +967,10 @@ Schema.icon = {
             kinds = { spell = true }, label = "GCD" },
         gcdSwipeColor = { d = { 0, 0, 0, 0.5 }, t = "color", alpha = true, kinds = { spell = true },
             label = "GCD swipe color", dep = { field = "gcdSwipe", anyOf = GCD_SWIPE_DRAWN } },
-        wandSwipe = { d = "hidden", t = "enum", values = GCD_LOOKS, labels = GCD_LOOK_LABELS,
+        -- a wand shot exists on WoW Forever only
+        wandSwipe = { foreverOnly = true, d = "hidden", t = "enum", values = GCD_LOOKS, labels = GCD_LOOK_LABELS,
             kinds = { spell = true }, classOnly = WAND_CLASSES, label = "Wand GCD" },
-        wandSwipeColor = { d = { 0, 0, 0, 0.5 }, t = "color", alpha = true, kinds = { spell = true },
+        wandSwipeColor = { foreverOnly = true, d = { 0, 0, 0, 0.5 }, t = "color", alpha = true, kinds = { spell = true },
             classOnly = WAND_CLASSES, label = "Wand swipe color",
             dep = { field = "wandSwipe", anyOf = GCD_SWIPE_DRAWN } },
         -- While a charge spell still has a charge (recharging), these two hold
@@ -816,7 +994,10 @@ Schema.icon = {
             dep = { { field = "showSwipe" }, { field = "separateInsets" } } },
     } },
     auraMissing = { push = true, inherit = true, kinds = AU, fields = {
-        showWhileMissing = { d = true, t = "bool", label = "Show while missing" },
+        -- dyn: a Dynamic aura group packs what shows, so there it starts off,
+        -- unless the icon is set up for its missing state (Store.MissingSetUp)
+        showWhileMissing = { d = true, dyn = false, t = "bool", label = "Show while missing",
+            dynUnless = function(rec) return NS.Store.MissingSetUp(rec) end },
         -- Art while missing: 0 falls back to Appearance's Custom icon, then the
         -- first tracked spell's art.
         missingIconFrom = { inherit = false, d = "icon", t = "enum", values = ICON_FROM, labels = ICON_FROM_LABELS,
@@ -859,15 +1040,33 @@ Schema.icon = {
         activeDesaturate = { d = false, t = "bool", label = "Desaturate while active" },
         activeTintEnabled = { d = false, t = "bool", label = "Active tint" },
         activeTintColor = { d = { 1, 1, 1, 1 }, t = "color", label = "Active tint color", dep = { field = "activeTintEnabled" } },
+        -- Engine-driven like the glow's time gate (DriverAura.TimeGateFrac):
+        -- not in a Dynamic group, nor on a "you, then your target" icon.
+        activeTimeOnly = { d = false, t = "bool", kinds = AU, showIf = TimeGateShows,
+            label = "Show only when little time is left",
+            desc = "While the aura is up, the icon stays hidden until little time is left. Works in combat." },
+        activeTimeUnit = { d = "pct", t = "enum", values = { "pct", "sec" }, kinds = AU, showIf = TimeGateShows,
+            labels = { pct = "Percent of the aura", sec = "Seconds" },
+            label = "Time left in", dep = { field = "activeTimeOnly" } },
+        activeTimePct = { d = 30, t = "int", min = 1, max = 99, kinds = AU, showIf = TimeGateShows,
+            label = "Show under this % left",
+            dep = { { field = "activeTimeOnly" }, { field = "activeTimeUnit", value = "pct" } } },
+        activeTimeSec = { d = 3, t = "num", min = 0.5, max = 120, step = 0.5, fmt = "%g", kinds = AU,
+            showIf = TimeGateShows, label = "Show under this many seconds left",
+            dep = { { field = "activeTimeOnly" }, { field = "activeTimeUnit", value = "sec" } } },
+        activeTimeLen = { d = 0, t = "int", min = 0, max = 600, kinds = AU, showIf = TimeGateShows,
+            label = "The aura lasts (seconds)",
+            desc = "The aura's full length, which the game keeps from addons: seconds need it, percent does not. 0 = not set: always shown.",
+            dep = { { field = "activeTimeOnly" }, { field = "activeTimeUnit", value = "sec" } } },
         activeGlow = { d = false, t = "bool", label = "Glow while active" },
-        -- The gates need the icon's own button (DriverAura.GlowLaneOK), never a
-        -- Dynamic aura group's rows. The pick is one of the icon's spells, its
+        -- The gates ride a lane: the icon's own (DriverAura) or its Dynamic
+        -- row's (AD_DriverAuraRows). The pick is one of the icon's spells, its
         -- ranks by name; 0 = any of them.
         activeGlowFor = { inherit = false, d = 0, t = "id", auraSpellPick = true,
             kinds = AU, label = "Glow for",
             showIf = function(rec)
                 local DA = NS.DriverAura
-                return DA ~= nil and DA.GlowLaneOK(rec) and #DA.GlowSpellGroups(rec.driver) > 1
+                return DA ~= nil and DA.GlowGateOK(rec) and #DA.GlowSpellGroups(rec.driver) > 1
             end,
             desc = "Any of the icon's spells, or only one of them (its ranks together). Works in combat.",
             dep = { { field = "activeGlow" }, { field = "activeGlowWhen", notValue = "missing" },
@@ -876,7 +1075,7 @@ Schema.icon = {
             label = "Glow only in combat",
             showIf = function(rec)
                 local DA = NS.DriverAura
-                return DA ~= nil and DA.GlowLaneOK(rec)
+                return DA ~= nil and DA.GlowGateOK(rec)
             end,
             desc = "The glow waits for combat; out of combat the icon shows without it.",
             dep = { field = "activeGlow" } },
@@ -891,7 +1090,7 @@ Schema.icon = {
                 end,
                 both = function(r)
                     local DA = NS.DriverAura
-                    return DA ~= nil and DA.GlowLaneOK ~= nil and DA.GlowLaneOK(r)
+                    return DA ~= nil and DA.HolderGlowOK ~= nil and DA.HolderGlowOK(r)
                 end },
             desc = "While the aura is up, only once little time is left, only while the aura is missing, or always. Works in combat.",
             label = "Glow when", dep = { field = "activeGlow" } },
@@ -1047,39 +1246,39 @@ Schema.icon = {
         -- The equipped ammo count on a spell icon, styled apart from the stack
         -- text: a charge spell can show both, hence the opposite corner. The
         -- count is plain in combat (no secrecy annotation; Blizzard's item
-        -- buttons compare it).
-        ammoText = { d = false, t = "bool", kinds = SP, label = "Ammo stack text" },
-        ammoSize = { d = 14, t = "int", min = 6, max = 32, kinds = SP, label = "Ammo text size", dep = { field = "ammoText" } },
-        ammoColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, kinds = SP, label = "Ammo text color", dep = { field = "ammoText" } },
-        ammoOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = SP, label = "Ammo text outline", dep = { field = "ammoText" } },
-        ammoFont = { d = "", t = "text", font = true, kinds = SP, label = "Ammo text font", dep = { field = "ammoText" } },
-        ammoAnchor = { d = "BOTTOMLEFT", t = "enum",
+        -- buttons compare it). Ammo exists on WoW Forever only.
+        ammoText = { foreverOnly = true, d = false, t = "bool", kinds = SP, label = "Ammo stack text" },
+        ammoSize = { foreverOnly = true, d = 14, t = "int", min = 6, max = 32, kinds = SP, label = "Ammo text size", dep = { field = "ammoText" } },
+        ammoColor = { foreverOnly = true, d = { 1, 1, 1, 1 }, t = "color", alpha = true, kinds = SP, label = "Ammo text color", dep = { field = "ammoText" } },
+        ammoOutline = { foreverOnly = true, adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = SP, label = "Ammo text outline", dep = { field = "ammoText" } },
+        ammoFont = { foreverOnly = true, d = "", t = "text", font = true, kinds = SP, label = "Ammo text font", dep = { field = "ammoText" } },
+        ammoAnchor = { foreverOnly = true, d = "BOTTOMLEFT", t = "enum",
             values = { "BOTTOMRIGHT", "BOTTOMLEFT", "TOPRIGHT", "TOPLEFT", "TOP", "BOTTOM", "CENTER" },
             kinds = SP, label = "Ammo text anchor", dep = { field = "ammoText" } },
-        ammoX = { adv = "text", d = 0, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text X", dep = { field = "ammoText" } },
-        ammoY = { adv = "text", d = 0, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text Y", dep = { field = "ammoText" } },
-        ammoShadow = { adv = "text", d = false, t = "bool", kinds = SP, label = "Ammo text shadow", dep = { field = "ammoText" } },
+        ammoX = { foreverOnly = true, adv = "text", d = 0, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text X", dep = { field = "ammoText" } },
+        ammoY = { foreverOnly = true, adv = "text", d = 0, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text Y", dep = { field = "ammoText" } },
+        ammoShadow = { foreverOnly = true, adv = "text", d = false, t = "bool", kinds = SP, label = "Ammo text shadow", dep = { field = "ammoText" } },
         -- Threshold colours for the ammo count (Factory.AmmoCountColor). The
         -- count is plain in combat, so Lua compares it; the lowest threshold
         -- it is at or below wins.
-        ammoCountColors = { d = false, t = "bool", kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
+        ammoCountColors = { foreverOnly = true, d = false, t = "bool", kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
             label = "Color by ammo count" },
-        ammoCountSteps = { d = 1, t = "int", min = 1, max = 3, kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
+        ammoCountSteps = { foreverOnly = true, d = 1, t = "int", min = 1, max = 3, kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
             adds = "threshold", label = "Number of ammo thresholds", dep = { field = "ammoCountColors" } },
-        ammoCount1 = { d = 400, t = "int", min = 1, max = 2000, kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
+        ammoCount1 = { foreverOnly = true, d = 400, t = "int", min = 1, max = 2000, kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
             label = "First ammo threshold (at or below)", dep = { field = "ammoCountColors" } },
-        ammoCount1Color = { d = { 1, 0.55, 0.1, 1 }, t = "color", kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
+        ammoCount1Color = { foreverOnly = true, d = { 1, 0.55, 0.1, 1 }, t = "color", kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
             label = "First ammo threshold color", dep = { field = "ammoCountColors" } },
-        ammoCount2 = { d = 200, t = "int", min = 1, max = 2000, kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
+        ammoCount2 = { foreverOnly = true, d = 200, t = "int", min = 1, max = 2000, kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
             label = "Second ammo threshold (at or below)",
             dep = { { field = "ammoCountColors" }, { field = "ammoCountSteps", min = 2 } } },
-        ammoCount2Color = { d = { 1, 0.15, 0.15, 1 }, t = "color", kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
+        ammoCount2Color = { foreverOnly = true, d = { 1, 0.15, 0.15, 1 }, t = "color", kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
             label = "Second ammo threshold color",
             dep = { { field = "ammoCountColors" }, { field = "ammoCountSteps", min = 2 } } },
-        ammoCount3 = { d = 100, t = "int", min = 1, max = 2000, kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
+        ammoCount3 = { foreverOnly = true, d = 100, t = "int", min = 1, max = 2000, kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
             label = "Third ammo threshold (at or below)",
             dep = { { field = "ammoCountColors" }, { field = "ammoCountSteps", min = 3 } } },
-        ammoCount3Color = { d = { 0.65, 0, 0, 1 }, t = "color", kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
+        ammoCount3Color = { foreverOnly = true, d = { 0.65, 0, 0, 1 }, t = "color", kinds = AMMO_CT, showIf = Schema.AmmoCountShown,
             label = "Third ammo threshold color",
             dep = { { field = "ammoCountColors" }, { field = "ammoCountSteps", min = 3 } } },
     } },
@@ -1137,7 +1336,7 @@ Schema.icon = {
 
 -- Glows 2 to 4 on an aura icon: glow 1's fields again, numbered and per icon
 -- (a layout's looks carry glow 1 only). Each rides its own glow lane
--- (DriverAura), so each needs the icon's own button.
+-- (DriverAura); in a Dynamic aura group the row's button draws them.
 Schema.AURA_GLOW_SLOTS = 4
 Schema.AURA_GLOW_FIELDS = {
     "activeGlow", "activeGlowFor", "activeGlowCombatOnly",
@@ -1153,9 +1352,9 @@ do
     local fields = Schema.icon.auraActive.fields
     local isGlow = {}
     for _, name in ipairs(Schema.AURA_GLOW_FIELDS) do isGlow[name] = true end
-    local function laneOK(rec)
+    local function glowOK(rec)
         local DA = NS.DriverAura
-        return DA ~= nil and DA.GlowLaneOK(rec)
+        return DA ~= nil and DA.HolderGlowOK(rec)
     end
     local function copy(v)
         if type(v) ~= "table" then return v end
@@ -1188,7 +1387,7 @@ do
                 def.dep = {}
                 for i, d in ipairs(src.dep) do def.dep[i] = own(d) end
             end
-            def.showIf = src.showIf or laneOK
+            def.showIf = src.showIf or glowOK
             fields[name .. suf] = def
         end
     end
@@ -1257,9 +1456,9 @@ end
 Schema.iconGroup = {
     -- The grid kinds only: a reminder group has no cells.
     arrangement = { push = true, inherit = true, kinds = { cooldown = true, aura = true }, fields = {
-        -- Rows is cooldown-only: the aura flow wraps by itself. Columns and the
-        -- two growth fields drive the aura flow too.
-        rows = { inherit = false, d = 1, t = "int", min = 1, max = 20, kinds = GK_CD, label = "Rows" },
+        rows = { inherit = false, d = 1, t = "int", min = 1, max = 20, label = "Rows",
+            desc = "At least this many rows: icons that do not fit add more.",
+            showIf = function(rec) return not (NS.Store.ShowsAll and NS.Store.ShowsAll(rec)) end },
         cols = { inherit = false, d = 6, t = "int", min = 1, max = 20, label = "Columns" },
         -- iconSize is a scale in 36ths (36 = 100%) over the base width/height.
         iconSize = { d = 36, t = "int", min = 16, max = 128, label = "Icon scale" },
@@ -1360,7 +1559,7 @@ Schema.iconGroup = {
             dep = { field = "shows", value = "unit" } },
         -- The grid: Rows by the arrangement's Columns is the cap, per half.
         rows = { d = 1, t = "int", min = 1, max = 10, label = "Rows",
-            desc = "How many rows of auras show, each Columns wide (Appearance, Grid); up to 40 auras. The rest show as others end.",
+            desc = "How many rows of auras show, each Columns wide; up to 40 auras. The rest show as others end.",
             dep = { field = "shows", value = "unit" } },
         fill = { d = "across", t = "enum", values = { "across", "down" },
             labels = { across = "Fill across first", down = "Fill down first" }, label = "Fill order",
@@ -1400,6 +1599,28 @@ Schema.iconGroup = {
             dep = { { field = "shows", value = "unit" }, { field = "unit", value = "nameplate" } } },
         plateY = { d = 0, t = "int", min = -200, max = 200, label = "Offset Y",
             dep = { { field = "shows", value = "unit" }, { field = "unit", value = "nameplate" } } },
+    } },
+    -- Debuff type looks on a group showing every aura on a unit: parts the game
+    -- shows on its buttons only for the dispel types given them
+    -- (Drivers\AD_TypeLooks.lua). Per group: no layout look, no push. Each
+    -- type's own fields are added after this table from Schema.TYPE_LOOKS.
+    typeLook = { kinds = GK_AU, fields = {
+        looks = { d = "off", t = "enum", values = { "off", "parts" },
+            labels = { off = "Off", parts = "Colors and badges" }, label = "Debuff type looks",
+            desc = "Colors and badges: each debuff type can have its own border, badge, color wash, label and glow, in the order the game shows them. Click a type's icon at the top of the group.",
+            dep = { section = "unitAuras", field = "shows", value = "unit" } },
+        washAlpha = { d = 0.3, t = "num", min = 0.05, max = 1, step = 0.05, label = "Color wash strength",
+            dep = { { field = "looks", value = "parts" }, { section = "unitAuras", field = "shows", value = "unit" } } },
+        labelSize = { d = 12, t = "int", min = 6, max = 32, label = "Label size",
+            dep = { { field = "looks", value = "parts" }, { section = "unitAuras", field = "shows", value = "unit" } } },
+        labelAnchor = { d = "BOTTOMRIGHT", t = "enum", values = POINTS,
+            labels = { TOPLEFT = "Top left", TOP = "Top", TOPRIGHT = "Top right", LEFT = "Left", CENTER = "Center",
+                RIGHT = "Right", BOTTOMLEFT = "Bottom left", BOTTOM = "Bottom", BOTTOMRIGHT = "Bottom right" },
+            label = "Label position",
+            dep = { { field = "looks", value = "parts" }, { section = "unitAuras", field = "shows", value = "unit" } } },
+        glowSize = { d = 1.4, t = "num", min = 1, max = 2.5, step = 0.05, fmt = "%.2f", label = "Glow size",
+            desc = "How far the glow reaches past the icon: 1 sits on its edge.",
+            dep = { { field = "looks", value = "parts" }, { section = "unitAuras", field = "shows", value = "unit" } } },
     } },
     -- A reminder group's pulse (Drivers\AD_DriverReminders.lua), ArcUI v1's
     -- Cooldown Reminder window: each reminder that fires pulses at the group's
@@ -1520,6 +1741,41 @@ Schema.iconGroup = {
             label = "Show tooltips" },
     } },
 }
+
+-- The dispel types a group's type looks know, in the strip's order, with the
+-- game's own colours (Blizzard's debuff type colours). "None" is an aura with
+-- no type; it has no badge art.
+Schema.TYPE_LOOKS = {
+    { key = "Magic", label = "Magic", color = { 0.2, 0.6, 1, 1 } },
+    { key = "Curse", label = "Curse", color = { 0.6, 0, 1, 1 } },
+    { key = "Disease", label = "Disease", color = { 0.6, 0.4, 0, 1 } },
+    { key = "Poison", label = "Poison", color = { 0, 0.6, 0, 1 } },
+    { key = "None", label = "No type", color = { 0.8, 0, 0, 1 }, noBadge = true },
+}
+do
+    local fields = Schema.iconGroup.typeLook.fields
+    local dep = { { field = "looks", value = "parts" }, { section = "unitAuras", field = "shows", value = "unit" } }
+    local never = function() return false end
+    for _, t in ipairs(Schema.TYPE_LOOKS) do
+        local k, name = t.key, t.label
+        fields["border" .. k] = { d = t.noBadge and "normal" or "color", t = "enum",
+            values = { "normal", "color", "blizzard", "blizzardBadge", "badge" },
+            labels = { normal = "Normal look", color = "Your color", blizzard = "Blizzard border",
+                blizzardBadge = "Blizzard border with badge", badge = "Badge only" },
+            valueIf = t.noBadge and { blizzardBadge = never, badge = never } or nil,
+            label = name .. " border",
+            desc = "Normal look keeps the group's border. Your color uses this type's color below. The Blizzard ones are the game's own debuff borders.",
+            dep = dep }
+        fields["color" .. k] = { d = { t.color[1], t.color[2], t.color[3], 1 }, t = "color", label = name .. " color",
+            desc = "This type's border, color wash, label and glow use it.", dep = dep }
+        fields["wash" .. k] = { d = false, t = "bool", label = name .. " color wash",
+            desc = "Tints the icon in this type's color. Color wash strength is under All.", dep = dep }
+        fields["label" .. k] = { d = "", t = "text", label = name .. " label", hint = "A short word, like " .. name:sub(1, 1),
+            desc = "A word on the icon in this type's color. Size and position are under All.", dep = dep }
+        fields["glow" .. k] = { d = false, t = "bool", label = name .. " glow",
+            desc = "A soft glow around the icon in this type's color. Glow size is under All.", dep = dep }
+    end
+end
 
 -- A reminder group plays on the same channels as the alerts.
 do
@@ -1787,10 +2043,25 @@ Schema.bar = {
         -- cooldown (Bars\AD_SwingAbilities.lua). The spell IDs live on the driver
         -- (rec.driver.swingAbilIDs), so the editor draws that row itself.
         swingAbilities = { d = false, t = "bool", kinds = { swing = true }, label = "Show next-swing abilities" },
+        -- Which markers show (all of them unless switched off) and what each
+        -- looks like; a colour's opacity reaches its tick, icon and count.
+        swingAbilCD = { d = true, t = "bool", kinds = { swing = true }, dep = { field = "swingAbilities" },
+            label = "Cooldown markers",
+            desc = "Where an ability comes off cooldown: this swing, or a later one marked +1, +2." },
+        swingAbilBadge = { d = true, t = "bool", kinds = { swing = true },
+            dep = { { field = "swingAbilities" }, { field = "swingAbilCD" } }, label = "Swing count (+1, +2)",
+            desc = "The number beside a marker that comes back in a later swing." },
+        swingAbilFar = { d = true, t = "bool", kinds = { swing = true },
+            dep = { { field = "swingAbilities" }, { field = "swingAbilCD" } }, label = "Further out marker",
+            desc = "At the end of the swing while an ability comes back later than the swings you look ahead." },
+        swingAbilReady = { d = true, t = "bool", kinds = { swing = true }, dep = { field = "swingAbilities" },
+            label = "Ready marker", desc = "Once an ability is off cooldown." },
+        swingAbilQueued = { d = true, t = "bool", kinds = { swing = true }, dep = { field = "swingAbilities" },
+            label = "Queued marker", desc = "While an ability waits to go off with your next swing." },
         swingAbilPlace = { d = "stay", t = "enum", values = { "stay", "jump", "follow" },
             labels = { stay = "Stays where it came back", jump = "Jumps to where the swing lands",
                 follow = "Queued rides the swing" },
-            kinds = { swing = true }, dep = { field = "swingAbilities" }, label = "Ready or queued marker" },
+            kinds = { swing = true }, dep = { field = "swingAbilities" }, label = "Ready and queued place" },
         -- The swing a queued marker rides; asked only with the off-hand track on.
         swingAbilFollow = { d = "mh", t = "enum", values = { "mh", "oh", "first" },
             labels = { mh = "Main hand", oh = "Off hand", first = "Whichever lands first" },
@@ -1800,9 +2071,25 @@ Schema.bar = {
             label = "Queued rides" },
         swingAbilAhead = { d = 4, t = "enum", values = { 1, 2, 3, 4, 5, 6 },
             labels = { "1 swing", "2 swings", "3 swings", "4 swings", "5 swings", "6 swings" },
-            kinds = { swing = true }, dep = { field = "swingAbilities" }, label = "Swings to look ahead" },
+            kinds = { swing = true }, dep = { { field = "swingAbilities" }, { field = "swingAbilCD" } },
+            label = "Swings to look ahead" },
         swingAbilIconSize = { d = 25, t = "int", min = 8, max = 48, kinds = { swing = true },
             dep = { field = "swingAbilities" }, label = "Ability icon size" },
+        swingAbilTint = { d = "state", t = "enum", values = { "state", "own" },
+            labels = { state = "Marker color", own = "Spell's own colors" },
+            kinds = { swing = true }, dep = { field = "swingAbilities" }, label = "Icon color",
+            desc = "Marker color tints the icon. Spell's own colors keeps the real icon, with the marker color as its outline." },
+        swingAbilColorNow = { d = { 1, 0.82, 0.2, 1 }, t = "color", alpha = true, kinds = { swing = true },
+            dep = { { field = "swingAbilities" }, { field = "swingAbilCD" } }, label = "This swing color" },
+        swingAbilColorLater = { d = { 1, 0.55, 0.15, 1 }, t = "color", alpha = true, kinds = { swing = true },
+            dep = { { field = "swingAbilities" }, { field = "swingAbilCD" } }, label = "Later swings color" },
+        swingAbilColorFar = { d = { 0.9, 0.25, 0.25, 1 }, t = "color", alpha = true, kinds = { swing = true },
+            dep = { { field = "swingAbilities" }, { field = "swingAbilCD" }, { field = "swingAbilFar" } },
+            label = "Further out color" },
+        swingAbilColorReady = { d = { 0.3, 0.95, 0.35, 1 }, t = "color", alpha = true, kinds = { swing = true },
+            dep = { { field = "swingAbilities" }, { field = "swingAbilReady" } }, label = "Ready color" },
+        swingAbilColorQueued = { d = { 0.247, 0.788, 0.949, 1 }, t = "color", alpha = true, kinds = { swing = true },
+            dep = { { field = "swingAbilities" }, { field = "swingAbilQueued" } }, label = "Queued color" },
         -- Stack bars use this for the slot recharge animation too.
         smoothing   = { d = true, t = "bool", kinds = BK_SMOOTH, label = "Smooth fill" },
         useGradient = { d = true, t = "bool", label = "Gradient fill" },
@@ -2228,37 +2515,38 @@ Schema.bar = {
         predictAlpha = { d = 0.5, t = "num", min = 0.1, max = 1, label = "Cost opacity", dep = { field = "predictEnabled" } },
     } },
     -- Mana bars: the five-second rule, a spark crossing the bar while spirit
-    -- regen waits after a spell that costs mana (Bars\AD_ManaRegen.lua).
+    -- regen waits after a spell that costs mana (Bars\AD_ManaRegen.lua). WoW
+    -- Forever only: retail mana regen neither pauses nor ticks.
     regen = { push = true, inherit = true, kinds = BK_RES, fields = {
-        fsrOn = { d = false, t = "bool", label = "Five-second rule",
+        fsrOn = { foreverOnly = true, d = false, t = "bool", label = "Five-second rule",
             desc = "After a spell that costs mana, a spark crosses the bar for the 5 seconds before spirit regen resumes." },
-        fsrShow = { d = "always", t = "enum", values = { "always", "ooc" },
+        fsrShow = { foreverOnly = true, d = "always", t = "enum", values = { "always", "ooc" },
             labels = { always = "Always", ooc = "Only out of combat" }, label = "Show", dep = { field = "fsrOn" } },
-        fsrColor = { d = { 1, 0.82, 0.25, 0.95 }, t = "color", alpha = true, label = "Spark color", dep = { field = "fsrOn" } },
-        fsrWidth = { d = 2, t = "int", min = 1, max = 12, label = "Spark width", dep = { field = "fsrOn" } },
-        fsrDir = { d = "down", t = "enum", values = { "down", "up" },
+        fsrColor = { foreverOnly = true, d = { 1, 0.82, 0.25, 0.95 }, t = "color", alpha = true, label = "Spark color", dep = { field = "fsrOn" } },
+        fsrWidth = { foreverOnly = true, d = 2, t = "int", min = 1, max = 12, label = "Spark width", dep = { field = "fsrOn" } },
+        fsrDir = { foreverOnly = true, d = "down", t = "enum", values = { "down", "up" },
             labels = { down = "Counting down", up = "Counting up" }, label = "Spark moves",
             desc = "Counting down: the spark starts at the bar's full end and moves back. Counting up: the other way.",
             dep = { field = "fsrOn" } },
-        fsrSound = { d = "", t = "sound", label = "Sound when regen resumes", dep = { field = "fsrOn" } },
-        fsrText = { d = false, t = "bool", label = "Countdown text", dep = { field = "fsrOn" } },
-        fsrTextPos = { d = "right", t = "enum", values = { "left", "center", "right" },
+        fsrSound = { foreverOnly = true, d = "", t = "sound", label = "Sound when regen resumes", dep = { field = "fsrOn" } },
+        fsrText = { foreverOnly = true, d = false, t = "bool", label = "Countdown text", dep = { field = "fsrOn" } },
+        fsrTextPos = { foreverOnly = true, d = "right", t = "enum", values = { "left", "center", "right" },
             labels = { left = "Left", center = "Center", right = "Right" }, label = "Countdown position",
             dep = { { field = "fsrOn" }, { field = "fsrText" } } },
-        fsrTextSize = { d = 11, t = "int", min = 6, max = 24, label = "Countdown size",
+        fsrTextSize = { foreverOnly = true, d = 11, t = "int", min = 6, max = 24, label = "Countdown size",
             dep = { { field = "fsrOn" }, { field = "fsrText" } } },
         -- The regen ticks, every 2 s: found from mana events away from your
         -- casts; the next tick's mana comes from GetManaRegen, fed unread.
-        tickSpark = { d = false, t = "bool", label = "Tick spark",
+        tickSpark = { foreverOnly = true, d = false, t = "bool", label = "Tick spark",
             desc = "A spark crosses the bar every 2 seconds and lands on each mana tick." },
-        tickSparkColor = { d = { 0.9, 0.95, 1, 0.9 }, t = "color", alpha = true, label = "Tick spark color",
+        tickSparkColor = { foreverOnly = true, d = { 0.9, 0.95, 1, 0.9 }, t = "color", alpha = true, label = "Tick spark color",
             dep = { field = "tickSpark" } },
-        tickSparkWidth = { d = 2, t = "int", min = 1, max = 12, label = "Tick spark width", dep = { field = "tickSpark" } },
-        incoming = { d = false, t = "bool", label = "Incoming mana",
+        tickSparkWidth = { foreverOnly = true, d = 2, t = "int", min = 1, max = 12, label = "Tick spark width", dep = { field = "tickSpark" } },
+        incoming = { foreverOnly = true, d = false, t = "bool", label = "Incoming mana",
             desc = "The mana the next tick adds glows past the fill, brightens as the tick nears, then lands. Empty while the five-second rule runs." },
-        incomingColor = { d = { 0.52, 0.72, 0.92, 0.85 }, t = "color", alpha = true, label = "Incoming color",
+        incomingColor = { foreverOnly = true, d = { 0.52, 0.72, 0.92, 0.85 }, t = "color", alpha = true, label = "Incoming color",
             dep = { field = "incoming" } },
-        incomingFlash = { d = false, t = "bool", label = "Flash when a tick lands", dep = { field = "incoming" } },
+        incomingFlash = { foreverOnly = true, d = false, t = "bool", label = "Flash when a tick lands", dep = { field = "incoming" } },
     } },
     -- Health bars: heals, shields and heal absorbs at the health edge. Every
     -- amount is secret, so each overlay is a StatusBar with the health bar's

@@ -1,22 +1,21 @@
 name: Package and release
 
 # Fires when a version tag (e.g. 1.4.0) is pushed. The BigWigs packager builds
-# the addon per .pkgmeta (a folder named ArcAuras with ArcAuras.toc only),
-# uploads it to CurseForge (project read from ArcAuras.toc's X-Curse-Project-ID)
-# and Wago (X-Wago-ID), and creates the GitHub release.
+# the addon, uploads it to CurseForge (project read from ArcAuras.toc's
+# X-Curse-Project-ID) and Wago (X-Wago-ID), and creates the GitHub release.
 #
-# WoW FOREVER ONLY: ArcAuras.toc lists retail (120100) and Forever (16001), so
-# one source folder loads on both clients. `-g forever` builds this upload for
-# Forever alone: the shipped toc is rewritten to 16001, the file is filed as
-# game type `forever` (CurseForge game 88568, Wago patch 1.60.1) and the ArcUI
-# stand-in ships beside it as before. Without `-g` the packager would tag the
-# zip for retail too, and the stand-in would overwrite retail players' Arc UI.
+# ONE TOC, TWO BUILDS: ArcAuras.toc lists retail (120100) and Forever (16001),
+# so one source folder loads on both clients. Each step builds one flavor:
+# - Forever: `-g forever` rewrites the shipped toc to 16001, files the upload as
+#   game type `forever` (CurseForge game 88568, Wago patch 1.60.1) and ships the
+#   ArcUI stand-in beside it (.pkgmeta move-folders). Label ArcAuras-x.y.z-forever.
+# - Retail: `-g retail -m .pkgmeta-retail` rewrites the toc to the retail number
+#   and ships the ArcAuras folder alone (no stand-in: it would overwrite retail
+#   players' ArcUI). Label ArcAuras-x.y.z-retail. Notes from CHANGELOG-retail.md.
 # Never pin an older packager: v2.5.1 labels 16001 as Retail.
 #
-# LABEL: the default zip name already ends in {classic} ("-forever"); the
-# display label below carries it too, so the file reads ArcAuras-1.4.0-forever.
-# Tag with the plain version (1.4.0): the packager adds "-forever" itself
-# unless the tag has it.
+# Every tag builds both flavors, Forever then retail, from the same commit. The
+# packager adds the label suffix itself: tag with the plain version (2.2.0).
 on:
   push:
     tags:
@@ -34,7 +33,7 @@ jobs:
         with:
           fetch-depth: 0   # full history + tags, needed for version/changelog detection
 
-      - name: Package and release
+      - name: Package and release (Forever)
         uses: BigWigsMods/packager@v2.6.1
         with:
           args: '-g forever -n ":{package-name}-{project-version}{classic}"'
@@ -42,3 +41,12 @@ jobs:
           CF_API_KEY: ${{ secrets.CF_API_KEY }}         # CurseForge upload token (repo secret)
           WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }} # Wago upload (uses ## X-Wago-ID in ArcAuras.toc)
           GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}     # auto-provided; for the GitHub release
+
+      - name: Package and release (retail)
+        uses: BigWigsMods/packager@v2.6.1
+        with:
+          args: '-g retail -m .pkgmeta-retail -n ":{package-name}-{project-version}-{game-type}"'
+        env:
+          CF_API_KEY: ${{ secrets.CF_API_KEY }}
+          WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}
+          GITHUB_OAUTH: ${{ secrets.GITHUB_TOKEN }}

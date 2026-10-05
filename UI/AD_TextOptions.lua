@@ -601,7 +601,7 @@ function Options.TextAddRows(pg, owner, addState)
         function() return addState.textPower or -1 end,
         function(v) addState.textPower = tonumber(v) end,
         function()
-            if Options.PowerItems then return Options.PowerItems(addState.textPower) end
+            if Options.PowerItems then return Options.PowerItems(addState.textPower, true) end
             return { { value = -1, text = "Automatic (current power)" } }
         end,
         InfoIs("power"))
@@ -996,7 +996,7 @@ function Options.TextTrackRows(pg, ctx, trackVis, owner, kit)
         function(v) Set("powerType", (tonumber(v) and tonumber(v) >= 0) and tonumber(v) or nil) end,
         function()
             local r = Rec()
-            if Options.PowerItems then return Options.PowerItems(r and r.driver.powerType) end
+            if Options.PowerItems then return Options.PowerItems(r and r.driver.powerType, true) end
             return { { value = -1, text = "Automatic (current power)" } }
         end,
         Is("power"))

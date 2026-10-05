@@ -434,13 +434,18 @@ local function ApplyPlate(rec, frame)
     return true
 end
 
+-- Half a pixel is a tie that a float rect read tips either way, so rounding
+-- leans up by a sliver no common pixel fraction lands on: one spot always
+-- snaps to one pixel, as the layout engine's Snap does.
+local TIE = 0.0058
+
 -- A matched size on this frame's physical pixel grid, so its border stays sharp.
 local function SnapSize(frame, v)
     local _, sh = GetPhysicalScreenSize()
     local es = frame:GetEffectiveScale()
     if type(sh) ~= "number" or type(es) ~= "number" or sh <= 0 or es <= 0 then return v end
     local ppu = sh / 768 * es
-    return math.floor(v * ppu + 0.5) / ppu
+    return math.floor(v * ppu + 0.5 + TIE) / ppu
 end
 
 -- A group's container padding on each side, which a match leaves out: the
@@ -495,8 +500,10 @@ local function SnapAnchored(rec, frame, target)
     local _, physH = GetPhysicalScreenSize()
     if not (left and bottom and s and physH) or s <= 0 or physH <= 0 then return end
     local px = (768 / physH) / s
-    local dx = left - math.floor(left / px + 0.5) * px
-    local dy = bottom - math.floor(bottom / px + 0.5) * px
+    -- the left edge leans left at a tie and the bottom up, as the engine's
+    -- SnapPlacement: a centred frame's spare pixel falls right and below
+    local dx = left - math.floor(left / px + 0.5 - TIE) * px
+    local dy = bottom - math.floor(bottom / px + 0.5 + TIE) * px
     if dx ~= 0 or dy ~= 0 then frame:SetPoint(src, target, dst, x - dx, y - dy) end
 end
 
@@ -542,6 +549,8 @@ local function RaiseOver(frame, target)
         if (frame:GetFrameLevel() or 0) < want then frame:SetFrameLevel(want) end
     end
 end
+-- a pinned text's carrier draws over its target the same way (Core\AD_TextAnchor.lua)
+Anchor.RaiseOver = RaiseOver
 
 -- Places one source. Returns true when it anchored, false when the caller
 -- should fall back to its own free placement.
@@ -868,8 +877,15 @@ function Anchor.DescribePick(rec)
         local SA = NS.SpellAnchor
         local p = SA and SA.Parse(R(rec, "anchorTargetFrame"))
         if not p then return "No spell entered yet, so it stays at its own spot." end
-        local nm = SA.NameOf(p.list[1]) or ("spell " .. p.list[1])
         local t = Anchor.ResolveTarget(rec)
+        if p.cid then
+            if R(rec, "anchorTargetKind") ~= "cdm" then
+                return "A cooldown ID names a Cooldown Manager icon, so it stays at its own spot."
+            end
+            if t then return "On the Cooldown Manager icon with cooldown ID " .. p.cid .. "." end
+            return "No Cooldown Manager icon with cooldown ID " .. p.cid .. " is shown now, so it stays at its own spot."
+        end
+        local nm = SA.NameOf(p.list[1]) or ("spell " .. p.list[1])
         if R(rec, "anchorTargetKind") == "action" then
             if t then
                 local n = t.GetName and t:GetName()

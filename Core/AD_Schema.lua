@@ -11,6 +11,13 @@ NS.Schema = Schema
 
 Schema.VERSION = 1
 
+-- Retail 12.1.0's aura engine lacks three things 12.1.5 and Forever have: the
+-- per-type art style, an applications window on stack bars, and removal of a
+-- dispel texture by the texture. Options that need them hide on it.
+NS.OldAuraEngine = NS.IsForever ~= true and Enum ~= nil
+    and Enum.CustomAuraButtonDispelTypeTextureStyle ~= nil
+    and Enum.CustomAuraButtonDispelTypeTextureStyle.CustomAsset == nil
+
 Schema.ICON_KINDS = { "spell", "item", "trinket", "timer", "totem", "aura", "ammo", "enchant", "special", "groupbuff" }
 -- A reminder group (Drivers\AD_DriverReminders.lua) is a pulse window: its
 -- members are reminder records, never icons.
@@ -20,7 +27,7 @@ Schema.GROUP_KINDS = { "cooldown", "aura", "reminder" }
 -- kind stays valid everywhere, so sync never rewrites a record. Legacy "timer"
 -- and "stack" (power) bars stay legal but cannot be created.
 Schema.BAR_KINDS = { "cooldown", "aura", "swing", "resource", "health", "cast", "enchant", "range", "text", "texture",
-    "wheel" }
+    "wheel", "special", "sound" }
 -- A text element's sources (rec.driver.source, Bars\AD_TextElement.lua): each
 -- reads plain in combat or reaches the screen through a text sink only.
 Schema.TEXT_SOURCES = { "static", "power", "health", "name", "combo", "ammo", "petMood", "range", "clock",
@@ -158,6 +165,8 @@ Schema.CUSTOM_TRIGGER_LABELS = {
     target_dodge = "Your attack was dodged", target_parry = "Your attack was parried",
     target_block = "Your attack was blocked", target_miss = "Your attack missed",
     target_hit = "You hit the target", target_crit = "You crit the target",
+    cond_on = "A condition turns on", cond_off = "A condition turns off",
+    aura_gain = "An aura appears", aura_stack = "An aura gains a stack", aura_lost = "An aura drops",
 }
 Schema.CUSTOM_ACTIONS = { "start", "stop", "add", "remove", "set", "reset", "sound", "speak" }
 Schema.CUSTOM_ACTION_LABELS = { start = "Start the timer", stop = "Stop the timer", add = "Add stacks",
@@ -171,6 +180,20 @@ Schema.CUSTOM_COMBAT_LABELS = { any = "In or out of combat", ["in"] = "In combat
 Schema.CUSTOM_TIMER_STATES = { "any", "running", "idle" }
 Schema.CUSTOM_TIMER_STATE_LABELS = { any = "Running or not", running = "The timer is running",
     idle = "The timer is not running" }
+-- The Sound item (bar kind "sound", Bars\AD_SoundItem.lua): rules on the same
+-- engine whose only actions are a sound or a spoken line. Its triggers are the
+-- Custom ones plus a condition's edge (r.cond, a Conditions key) and an aura's
+-- moments, which the game plays itself (r.unit, r.auraIDs; Drivers\AD_AuraSounds.lua).
+Schema.SOUND_TRIGGER_GROUPS = (function()
+    local out = {}
+    for _, g in ipairs(Schema.CUSTOM_TRIGGER_GROUPS) do out[#out + 1] = g end
+    out[#out + 1] = { key = "cond", label = "Conditions", list = { "cond_on", "cond_off" } }
+    out[#out + 1] = { key = "aura", label = "Auras", list = { "aura_gain", "aura_stack", "aura_lost" } }
+    return out
+end)()
+Schema.SOUND_ACTIONS = { "sound", "speak" }
+Schema.SOUND_AURA_UNITS = { "player", "target", "focus", "pet" }
+Schema.SOUND_AURA_UNIT_LABELS = { player = "You", target = "Your target", focus = "Your focus", pet = "Your pet" }
 
 -- enchant: a weapon enchant, timed on the swipe; its sounds say applied and
 -- fell off (NS.DriverEnchant).
@@ -221,6 +244,18 @@ local ABBREV_LABELS = { [0] = "Off", [120] = "Under 2 minutes", [300] = "Under 5
 local GCD_LOOKS = { "hidden", "edge", "swipe", "both" }
 local GCD_LOOK_LABELS = { hidden = "Hidden", edge = "Edge only", swipe = "Swipe", both = "Swipe and edge" }
 local GCD_SWIPE_DRAWN = { swipe = true, both = true }
+-- Where a text sits (Core\AD_TextAnchor.lua): its own spot, or riding a named
+-- frame, the action button holding a spell, or a Cooldown Manager icon (by
+-- spell or by cooldown ID). The frame name, spells or "cd:<id>" ride in the
+-- text's PinTarget field.
+Schema.PIN_TO = { "own", "frame", "action", "cdm" }
+-- A resource bar's own look per power (a druid's forms), per spec, or with and
+-- without a talent (Core\AD_Looks.lua). Its place, size and rules are the
+-- bar's in every look.
+Schema.LOOK_MODES = { "power", "spec", "talent" }
+Schema.LOOK_SKIP = { size = true, frame = true, anchor = true, behavior = true, mouse = true }
+Schema.PIN_LABELS = { own = "Its own spot", frame = "A named frame", action = "An action button",
+    cdm = "A Cooldown Manager icon" }
 -- The classes that shoot a wand; the wand rows show only there.
 local WAND_CLASSES = { PRIEST = true, MAGE = true, WARLOCK = true }
 
@@ -318,7 +353,7 @@ Schema.icon = {
         borderInset = { d = 0, t = "int", min = -20, max = 20, label = "Border offset", dep = { field = "borderEnabled" } },
         -- Aura icons: the engine colours the border through the button's own
         -- dispel-type textures. No Lua reads the type, so it works in combat.
-        dispelBorder = { d = false, t = "bool", kinds = AU, label = "Border colour by dispel type",
+        dispelBorder = { d = false, t = "bool", kinds = AU, newAuraEngine = true, label = "Border colour by dispel type",
             desc = "While the aura is up, its border takes the game's colour for its type: Magic, Curse, Disease or Poison. Auras without a type keep the border color." },
         shadowEnabled = { d = false, t = "bool", label = "Icon shadow",
             desc = "The Cooldown Manager's soft shadow frame around the icon art." },
@@ -758,9 +793,27 @@ Schema.icon = {
     -- Up to three custom texts per icon, each shown or hidden by state.
     label = { push = true, inherit = true, fields = {
         labelText = { inherit = false, d = "", t = "text", label = "Custom text" },
-        -- One font for all three labels.
+        -- Custom text 1's font; texts 2 and 3 use it until they pick their own.
         labelFont = { d = "", t = "text", font = true, label = "Custom text font",
             dep = { field = "labelText", nonempty = true } },
+        labelFont2 = { d = "", t = "text", font = true, label = "Custom text 2 font",
+            dep = { field = "labelText2", nonempty = true } },
+        labelFont3 = { d = "", t = "text", font = true, label = "Custom text 3 font",
+            dep = { field = "labelText3", nonempty = true } },
+        -- Each text may ride another frame (Schema.PIN_TO); its offsets then
+        -- count from that frame's anchor point.
+        labelPinTo = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS,
+            label = "Custom text pinned to", dep = { field = "labelText", nonempty = true } },
+        labelPinTarget = { inherit = false, d = "", t = "text", label = "Custom text pin target",
+            dep = { field = "labelText", nonempty = true } },
+        labelPinTo2 = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS,
+            label = "Custom text 2 pinned to", dep = { field = "labelText2", nonempty = true } },
+        labelPinTarget2 = { inherit = false, d = "", t = "text", label = "Custom text 2 pin target",
+            dep = { field = "labelText2", nonempty = true } },
+        labelPinTo3 = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS,
+            label = "Custom text 3 pinned to", dep = { field = "labelText3", nonempty = true } },
+        labelPinTarget3 = { inherit = false, d = "", t = "text", label = "Custom text 3 pin target",
+            dep = { field = "labelText3", nonempty = true } },
         labelSize = { d = 12, t = "int", min = 6, max = 32, label = "Custom text size", dep = { field = "labelText", nonempty = true } },
         labelColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Custom text color", dep = { field = "labelText", nonempty = true } },
         labelAnchor = { d = "CENTER", t = "enum",
@@ -881,6 +934,10 @@ Schema.icon = {
             label = "Keybind anchor", dep = { field = "keybindEnabled" } },
         keybindX = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Keybind X", dep = { field = "keybindEnabled" } },
         keybindY = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Keybind Y", dep = { field = "keybindEnabled" } },
+        keybindPinTo = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS,
+            label = "Keybind pinned to", dep = { field = "keybindEnabled" } },
+        keybindPinTarget = { inherit = false, d = "", t = "text", label = "Keybind pin target",
+            dep = { field = "keybindEnabled" } },
     } },
     -- Things that run out: an item's bag count, the quiver. Counts are compared
     -- only when plain; a secret count keeps the last known state.
@@ -1221,6 +1278,13 @@ Schema.icon = {
         stackX = { adv = "text", d = 0, t = "int", min = -200, max = 200, kinds = STK, label = "Stack text X", dep = { field = "stackText" } },
         stackY = { adv = "text", d = 0, t = "int", min = -200, max = 200, kinds = STK, label = "Stack text Y", dep = { field = "stackText" } },
         stackShadow = { adv = "text", d = false, t = "bool", kinds = STK, label = "Stack text shadow", dep = { field = "stackText" } },
+        -- not an aura's: the game's button draws that count, and it cannot move in combat
+        stackPinTo = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS,
+            kinds = { spell = true, item = true, timer = true, ammo = true, enchant = true, special = true, groupbuff = true },
+            label = "Stack text pinned to", dep = { field = "stackText" } },
+        stackPinTarget = { inherit = false, d = "", t = "text",
+            kinds = { spell = true, item = true, timer = true, ammo = true, enchant = true, special = true, groupbuff = true },
+            label = "Stack text pin target", dep = { field = "stackText" } },
         hideChargeAtZero = { d = false, t = "bool", kinds = SP, label = "Hide charge count at zero", dep = { field = "stackText" } },
         -- The engine prints an aura's count only above 1 unless it is handed a
         -- NumericRuleFormatter. The same formatter carries a color escape per
@@ -1389,6 +1453,44 @@ do
             end
             def.showIf = src.showIf or glowOK
             fields[name .. suf] = def
+        end
+    end
+end
+
+-- A special icon's own texts (Core\AD_SpecialIcon.lua): label slots 4 to 6,
+-- the proc count (a counter's count), the chance and the violations, so its
+-- three custom texts stay free. Custom text 2's fields again, numbered and
+-- worded; special icons only, never a layout's look.
+Schema.SPECIAL_TEXTS = {
+    { suf = "4", word = "Proc count text", anchor = "CENTER" },
+    { suf = "5", word = "Proc chance text", anchor = "TOP" },
+    { suf = "6", word = "Violations text", anchor = "BOTTOM" },
+}
+do
+    local fields = Schema.icon.label.fields
+    local BASES = { "labelText", "labelFont", "labelPinTo", "labelPinTarget", "labelSize", "labelColor",
+        "labelAnchor", "labelX", "labelY", "labelShowReady", "labelShowCooldown" }
+    for _, t in ipairs(Schema.SPECIAL_TEXTS) do
+        local suf = t.suf
+        for _, base in ipairs(BASES) do
+            local src = fields[base .. "2"]
+            local def = {}
+            for k, v in pairs(src) do def[k] = v end
+            if type(src.d) == "table" then
+                def.d = {}
+                for i, v in ipairs(src.d) do def.d[i] = v end
+            end
+            def.inherit = false
+            def.kinds = SPC
+            local lbl = (src.label or base):gsub("^Custom text 2", t.word, 1)
+            def.label = (lbl:gsub("custom text 2", t.word:lower(), 1))
+            if src.dep then def.dep = { field = "labelText" .. suf, nonempty = true } end
+            if base == "labelAnchor" then def.d = t.anchor end
+            if base == "labelShowReady" then
+                def.statePick, def.rangePick = "labelShowCooldown" .. suf, nil
+            end
+            if base == "labelShowCooldown" then def.pickedBy = "labelShowReady" .. suf end
+            fields[base .. suf] = def
         end
     end
 end
@@ -1605,7 +1707,7 @@ Schema.iconGroup = {
     -- (Drivers\AD_TypeLooks.lua). Per group: no layout look, no push. Each
     -- type's own fields are added after this table from Schema.TYPE_LOOKS.
     typeLook = { kinds = GK_AU, fields = {
-        looks = { d = "off", t = "enum", values = { "off", "parts" },
+        looks = { d = "off", t = "enum", values = { "off", "parts" }, newAuraEngine = true,
             labels = { off = "Off", parts = "Colors and badges" }, label = "Debuff type looks",
             desc = "Colors and badges: each debuff type can have its own border, badge, color wash, label and glow, in the order the game shows them. Click a type's icon at the top of the group.",
             dep = { section = "unitAuras", field = "shows", value = "unit" } },
@@ -1815,6 +1917,31 @@ local BK_CAST = { cast = true }
 local BK_DURC = { cooldown = true, aura = true, timer = true, swing = true, cast = true, enchant = true }
 local BK_RES  = { resource = true }
 local BK_HP   = { health = true }
+
+-- A resource bar's chosen power (nil: Automatic, or not a resource bar), and
+-- the gates its power-specific rows read.
+function Schema.ResPower(rec)
+    if not rec or rec.barKind ~= "resource" then return nil end
+    local pt = rec.driver and tonumber(rec.driver.powerType)
+    if pt == nil or pt < 0 then return nil end
+    return pt
+end
+-- runes and essence come back one point at a time
+function Schema.Recharges(rec)
+    local pt = Schema.ResPower(rec)
+    return pt == 5 or pt == 19
+end
+-- point powers that fold: not those whose cells run timers or fill in tenths
+function Schema.Foldable(rec)
+    local pt = Schema.ResPower(rec)
+    local RP = NS.Bars and NS.Bars.ResPowers
+    return pt ~= nil and pt ~= 5 and pt ~= 19 and pt ~= 7 and RP ~= nil and RP.IsPoint(pt)
+end
+function Schema.HasBlizzardBar(rec)
+    local pt = Schema.ResPower(rec)
+    local RC = NS.Bars and NS.Bars.ResCells
+    return pt ~= nil and RC ~= nil and RC.HasBlizzardBar(pt)
+end
 -- Timer (custom) bars write their rule-driven stacks as the stack text.
 local BK_CST  = { cooldown = true, stack = true, aura = true, enchant = true, timer = true }
 -- Hide-at-zero needs our own writer to pass the count through the secret-safe
@@ -1823,7 +1950,7 @@ local BK_STKZ = { cooldown = true, stack = true, timer = true }
 local BK_TMSW = { timer = true, swing = true, aura = true, enchant = true }
 -- Aura bars too: SetDurationBar takes direction and interpolation from the
 -- caller, so fillMode and smoothing work on aura duration bars.
-local BK_FILL = { cooldown = true, timer = true, swing = true, aura = true, enchant = true }
+local BK_FILL = { cooldown = true, timer = true, swing = true, aura = true, enchant = true, special = true }
 -- Smoothing also reaches resource and health bars (StatusBar:SetValue takes an
 -- interpolation on 12.x). Timer and swing fills are per-frame GetTime math with
 -- nothing to interpolate, so they are left out.
@@ -1831,11 +1958,15 @@ local BK_SMOOTH = { cooldown = true, aura = true, resource = true, health = true
 -- Every kind but range bars, whose plate is always full in its band's colour: no
 -- fill colour, fill direction or tick marks there.
 local BK_NOTRANGE = { cooldown = true, aura = true, timer = true, stack = true, swing = true,
+    resource = true, health = true, cast = true, enchant = true, special = true }
+-- The kinds whose tick marks follow the tick mode; a deck bar's marks are its
+-- procs (Bars\AD_SpecialBar.lua), so it has no mode to pick.
+local BK_TICKMODE = { cooldown = true, aura = true, timer = true, stack = true, swing = true,
     resource = true, health = true, cast = true, enchant = true }
 -- Every kind that draws a bar: a text element (Bars\AD_TextElement.lua) is one
 -- string in a box, with no fill, chrome or text runs of the bar's.
 local BK_DRAWN = { cooldown = true, aura = true, timer = true, stack = true, swing = true,
-    resource = true, health = true, cast = true, enchant = true, range = true }
+    resource = true, health = true, cast = true, enchant = true, range = true, special = true }
 
 local BAR_ANCHORS ={ "LEFT", "CENTER", "RIGHT", "TOPLEFT", "TOP", "TOPRIGHT",
     "BOTTOMLEFT", "BOTTOM", "BOTTOMRIGHT" }
@@ -1904,6 +2035,12 @@ Schema.MaxStacksFn = function(rec)
     return (B and B.MaxStacksFor and B.MaxStacksFor(rec)) or 5
 end
 
+-- An aura bar's max-stacks fill needs the applications window 12.1.0 lacks;
+-- a resource bar draws its own and keeps it.
+Schema.NewEngineFill = function(rec)
+    return not (NS.OldAuraEngine and NS.Store and NS.Store.KindOf(rec) == "aura")
+end
+
 -- A text element's format rows show by its source (a count, an amount, a time):
 -- the runtime classifies (Bars\AD_TextElement.lua); without it every row shows.
 local function TextSourceIs(what)
@@ -1921,6 +2058,20 @@ Schema.TextValue = TextSourceIs("ValueSource")
 local READOUT_VALUES = { "value", "abbreviated", "valuemax", "percent", "none" }
 local READOUT_LABELS = { value = "Value", abbreviated = "Short value (5.2k)", valuemax = "Value / max",
     percent = "Percent", none = "Nothing" }
+
+-- A deck bar's fill wears its procs' colours while Color by procs used is on,
+-- so its own Fill color shows only with that off (Bars\AD_SpecialBar.lua).
+Schema.DeckFillColorShows = function(rec)
+    if not (rec and rec.barKind == "special") then return true end
+    return NS.Store ~= nil and NS.Store.Resolve(rec, "deck", "stateFill") == false
+end
+-- What an empty deck text template shows: the tracker's own words.
+Schema.DeckTemplateHint = function(which)
+    return function(rec)
+        local SBm = NS.SpecialBars
+        return SBm and SBm.TemplateHint(rec, which) or ""
+    end
+end
 
 Schema.bar = {
     size = { push = true, fields = {
@@ -1944,7 +2095,7 @@ Schema.bar = {
         -- Only used while colorMode is "fill"; every other bar kind resolves
         -- colorMode to that default.
         color       = { inherit = false, d = { 0.247, 0.788, 0.949, 1 }, t = "color", alpha = true, label = "Fill color",
-            kinds = BK_NOTRANGE, dep = { field = "colorMode", value = "fill" } },
+            kinds = BK_NOTRANGE, dep = { field = "colorMode", value = "fill" }, showIf = Schema.DeckFillColorShows },
         gradLowColor = { d = { 1, 0.15, 0.15, 1 }, t = "color", alpha = true, kinds = BK_HP, label = "Empty health color",
             dep = { field = "colorMode", value = "gradient" } },
         gradMidColor = { d = { 1, 0.82, 0.1, 1 }, t = "color", alpha = true, kinds = BK_HP, label = "Half health color",
@@ -2173,9 +2324,51 @@ Schema.bar = {
         -- default, leaves the Background colour reading as itself.
         pipEmptyTint = { d = 0, t = "num", min = 0, max = 1, label = "Empty pip tint",
             dep = { field = "style", value = "pips" } },
+        -- Runes: Blizzard's order (ready first, then the soonest back) or rune
+        -- i in cell i.
+        runeOrder = { d = "ready", t = "enum", values = { "ready", "fixed" },
+            labels = { ready = "Ready runes first", fixed = "Rune 1 to 6" }, label = "Rune order",
+            showIf = function(rec) return Schema.ResPower(rec) == 5 end },
+        -- A recharging rune or the essence point that is filling, in either
+        -- style: how it fills, which way, and its colour (off = the point's
+        -- own colour at half brightness).
+        rechargeFill = { d = "up", t = "enum", values = { "up", "down" },
+            labels = { up = "Fills up", down = "Empties" }, label = "Recharge fill",
+            showIf = function(rec) return Schema.Recharges(rec) end },
+        rechargeDir = { d = "bar", t = "enum", values = { "bar", "right", "left", "up", "down" },
+            labels = { bar = "With the bar", right = "Left to right", left = "Right to left",
+                up = "Bottom to top", down = "Top to bottom" }, label = "Recharge direction",
+            showIf = function(rec) return Schema.Recharges(rec) end },
+        rechargeColorEnabled = { d = false, t = "bool", label = "Recharge color",
+            desc = "Off: a recharging point is its own color at half brightness.",
+            showIf = function(rec) return Schema.Recharges(rec) end },
+        rechargeColor = { d = { 0.4, 0.4, 0.4, 1 }, t = "color", alpha = true, label = "Recharge color value",
+            dep = { field = "rechargeColorEnabled" },
+            showIf = function(rec) return Schema.Recharges(rec) end },
+        -- Rogue charged combo points: lit in this colour, and at half
+        -- brightness while not yet reached.
+        chargedShow = { d = false, t = "bool", label = "Charged points",
+            showIf = function(rec) return Schema.ResPower(rec) == 4 and NS.IsForever ~= true end },
+        chargedColor = { d = { 0.169, 0.733, 0.992, 1 }, t = "color", alpha = true, label = "Charged color",
+            dep = { field = "chargedShow" },
+            showIf = function(rec) return Schema.ResPower(rec) == 4 and NS.IsForever ~= true end },
+        -- Half the points, the second half lit over the first in its own
+        -- colour (Maelstrom Weapon's 5 + 5).
+        foldOn = { d = false, t = "bool", label = "Fold in half",
+            desc = "Half the points; past the middle they light again in the second half color.",
+            showIf = function(rec) return Schema.Foldable(rec) end },
+        foldColor = { d = { 1, 0.5, 0, 1 }, t = "color", alpha = true, label = "Second half color",
+            dep = { field = "foldOn" }, showIf = function(rec) return Schema.Foldable(rec) end },
+        -- Blizzard's own class bar under the player frame, faded out while
+        -- this bar is loaded.
+        hideBlizzard = { inherit = false, d = false, t = "bool", label = "Hide Blizzard's class bar",
+            desc = "Fades out the game's own bar for this resource while this bar is loaded.",
+            showIf = function(rec) return Schema.HasBlizzardBar(rec) end },
     } },
-    -- Side icon. On a cast bar it shows the spell being cast.
-    icon = { push = true, inherit = true, kinds = { cooldown = true, aura = true, cast = true, enchant = true, timer = true }, fields = {
+    -- Side icon. On a cast bar it shows the spell being cast, on a deck bar its
+    -- tracker's art.
+    icon = { push = true, inherit = true, kinds = { cooldown = true, aura = true, cast = true, enchant = true, timer = true,
+        special = true }, fields = {
         iconShow = { d = false, t = "bool", label = "Icon" },
         -- Off: the icon keeps its own size; on: it follows the bar's thickness.
         iconFollowBar = { d = false, t = "bool", label = "Match the bar's size", dep = { field = "iconShow" } },
@@ -2191,7 +2384,7 @@ Schema.bar = {
         iconBorderThickness = { d = 1, t = "int", min = 1, max = 10, label = "Icon border thickness",
             dep = { { field = "iconShow" }, { field = "iconBorderEnabled" } } },
         -- Not on cast bars: their icon is whatever is being cast.
-        iconOverride = { inherit = false, d = 0, t = "id", kinds = { cooldown = true, aura = true, timer = true },
+        iconOverride = { inherit = false, d = 0, t = "id", kinds = { cooldown = true, aura = true, timer = true, special = true },
             label = "Icon override (spell/texture ID)", dep = { field = "iconShow" } },
         -- Cast bars: a shield on the icon (or the bar's start without one) for
         -- casts that cannot be interrupted. The flag is secret for a target in
@@ -2215,6 +2408,8 @@ Schema.bar = {
         durAnchor = { d = "RIGHT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS, kinds = BK_DURC, label = "Duration anchor" },
         durOffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_DURC, label = "Duration offset X" },
         durOffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_DURC, label = "Duration offset Y" },
+        durPinTo = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS, kinds = BK_DURC, label = "Duration text pinned to" },
+        durPinTarget = { inherit = false, d = "", t = "text", kinds = BK_DURC, label = "Duration text pin target" },
         durColor = { d = { 0.95, 0.97, 1, 1 }, t = "color", alpha = true, kinds = BK_DURC, label = "Duration color" },
         -- Decimals: cooldown bars render C-side from the real remaining time
         -- (the shared CooldownFormatter); timer and swing bars use plain math.
@@ -2231,6 +2426,8 @@ Schema.bar = {
         stkAnchor = { d = "LEFT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS, kinds = BK_CST, label = "Stack anchor" },
         stkOffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_CST, label = "Stack offset X" },
         stkOffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_CST, label = "Stack offset Y" },
+        stkPinTo = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS, kinds = BK_CST, label = "Stack text pinned to" },
+        stkPinTarget = { inherit = false, d = "", t = "text", kinds = BK_CST, label = "Stack text pin target" },
         stkColor = { d = { 0.95, 0.97, 1, 1 }, t = "color", alpha = true, kinds = BK_CST, label = "Stack color" },
         stkHideAtZero = { d = true, t = "bool", kinds = BK_STKZ, label = "Stack hides at zero" },
         -- The "/max" suffix, built by the stack-mode slot pass. maxCharges is
@@ -2245,6 +2442,8 @@ Schema.bar = {
         resAnchor = { d = "CENTER", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS, kinds = BK_RES, label = "Resource anchor" },
         resOffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Resource offset X" },
         resOffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Resource offset Y" },
+        resPinTo = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS, kinds = BK_RES, label = "Resource text pinned to" },
+        resPinTarget = { inherit = false, d = "", t = "text", kinds = BK_RES, label = "Resource text pin target" },
         -- What text 1 says. abbreviated takes secrets; percent runs a 0..100
         -- curve and a rule formatter; valuemax formats the value against the
         -- plain max. All of it works in combat.
@@ -2270,6 +2469,33 @@ Schema.bar = {
             kinds = BK_RES, label = "Text 3 anchor", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
         res3OffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Text 3 offset X", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
         res3OffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Text 3 offset Y", dep = { { field = "resShow" }, { field = "resCount", min = 3 } } },
+        -- Destruction reads its shards in tenths (3.4); this keeps whole shards.
+        resWholeShards = { d = false, t = "bool", kinds = BK_RES, label = "Whole shards only",
+            showIf = function(rec) return Schema.ResPower(rec) == 7 end },
+        -- Runes and essence: each recharging point counts down on its own cell
+        -- (pips) or its stretch of the bar, rendered C-side from the same timer
+        -- that fills it.
+        rcShow = { d = false, t = "bool", kinds = BK_RES, label = "Recharge text",
+            showIf = function(rec) return Schema.Recharges(rec) end },
+        rcSize = { d = 12, t = "int", min = 6, max = 32, kinds = BK_RES, label = "Recharge text size",
+            dep = { field = "rcShow" }, showIf = function(rec) return Schema.Recharges(rec) end },
+        rcOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = BK_RES,
+            label = "Recharge outline", dep = { field = "rcShow" }, showIf = function(rec) return Schema.Recharges(rec) end },
+        rcShadow = { adv = "text", d = false, t = "bool", kinds = BK_RES, label = "Recharge shadow",
+            dep = { field = "rcShow" }, showIf = function(rec) return Schema.Recharges(rec) end },
+        rcColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, kinds = BK_RES, label = "Recharge text color",
+            dep = { field = "rcShow" }, showIf = function(rec) return Schema.Recharges(rec) end },
+        rcAnchor = { d = "CENTER", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS, kinds = BK_RES,
+            label = "Recharge text anchor", dep = { field = "rcShow" }, showIf = function(rec) return Schema.Recharges(rec) end },
+        rcOffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Recharge offset X",
+            dep = { field = "rcShow" }, showIf = function(rec) return Schema.Recharges(rec) end },
+        rcOffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Recharge offset Y",
+            dep = { field = "rcShow" }, showIf = function(rec) return Schema.Recharges(rec) end },
+        rcDecimalsEnabled = { d = false, t = "bool", kinds = BK_RES, label = "Recharge decimals",
+            dep = { field = "rcShow" }, showIf = function(rec) return Schema.Recharges(rec) end },
+        rcDecimalThreshold = { d = 3, t = "int", min = 2, max = 60, kinds = BK_RES, label = "Decimals below (s)",
+            dep = { { field = "rcShow" }, { field = "rcDecimalsEnabled" } },
+            showIf = function(rec) return Schema.Recharges(rec) end },
         -- Health bars. Health is secret: only SetText, SetFormattedText and
         -- AbbreviateNumbers handle it, never Lua maths.
         hpShow = { d = true, t = "bool", kinds = BK_HP, label = "Health text" },
@@ -2284,6 +2510,8 @@ Schema.bar = {
         hpAnchor = { d = "RIGHT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS, kinds = BK_HP, label = "Health anchor" },
         hpOffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Health offset X" },
         hpOffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_HP, label = "Health offset Y" },
+        hpPinTo = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS, kinds = BK_HP, label = "Health text pinned to" },
+        hpPinTarget = { inherit = false, d = "", t = "text", kinds = BK_HP, label = "Health text pin target" },
         hpShadow = { adv = "text", d = false, t = "bool", kinds = BK_HP, label = "Health shadow" },
         -- Texts 2 and 3, as on resource bars.
         hpCount = { inherit = false, d = 1, t = "int", min = 1, max = 3, kinds = BK_HP, adds = "health text",
@@ -2329,6 +2557,8 @@ Schema.bar = {
         nameAnchor = { d = "OUTERTOPLEFT", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS, label = "Name anchor" },
         nameOffsetX = { adv = "text", d = 0, t = "int", min = -100, max = 100, label = "Name offset X" },
         nameOffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, label = "Name offset Y" },
+        namePinTo = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS, label = "Name text pinned to" },
+        namePinTarget = { inherit = false, d = "", t = "text", label = "Name text pin target" },
         nameColor = { d = { 0.7, 0.78, 0.88, 1 }, t = "color", alpha = true, label = "Name color" },
         readyShow = { d = false, t = "bool", kinds = BK_CD, label = "Ready text" },
         readyText = { inherit = false, d = "Ready", t = "text", kinds = BK_CD, label = "Ready text string", dep = { field = "readyShow" } },
@@ -2396,7 +2626,8 @@ Schema.bar = {
     stackcolors = { push = true, kinds = { aura = true, resource = true }, modes = { stack = true }, fields = {
         -- On: each cell keeps its band's colour by position. Off (default): the
         -- whole fill takes a band's colour once the count reaches it.
-        scPosition = { d = false, t = "bool", kinds = { aura = true }, label = "Keep each stack's own color (segmented)" },
+        scPosition = { d = false, t = "bool", kinds = { aura = true }, newAuraEngine = true,
+            label = "Keep each stack's own color (segmented)" },
         scEnabled = { d = false, t = "bool", label = "Color by stack count" },
         -- Colour 1 is the fill colour; each extra colour takes over from a
         -- stack count, on a slider from 2 to the bar's maximum (maxFn).
@@ -2411,8 +2642,9 @@ Schema.bar = {
             dep = { { field = "scEnabled" }, { field = "scCount", min = 3 } } },
         sc4Color = { d = { 0, 1, 0, 1 }, t = "color", alpha = true, label = "Color 4",
             dep = { { field = "scEnabled" }, { field = "scCount", min = 3 } } },
-        maxColorEnabled = { d = false, t = "bool", label = "Max stacks color" },
-        maxColor = { d = { 0, 1, 0, 1 }, t = "color", alpha = true, label = "Max stacks color value", dep = { field = "maxColorEnabled" } },
+        maxColorEnabled = { d = false, t = "bool", showIf = Schema.NewEngineFill, label = "Max stacks color" },
+        maxColor = { d = { 0, 1, 0, 1 }, t = "color", alpha = true, showIf = Schema.NewEngineFill,
+            label = "Max stacks color value", dep = { field = "maxColorEnabled" } },
     } },
     -- Primary resource bars: colour by power percent. UnitPowerPercent
     -- evaluates a colour curve client-side, so the possibly secret value never
@@ -2473,18 +2705,19 @@ Schema.bar = {
     -- have none: their slot gaps are the marks.
     ticks = { push = true, inherit = true, kinds = BK_NOTRANGE, kindModes = { cooldown = { duration = true } }, fields = {
         ticksShow = { inherit = false, d = false, t = "bool", label = "Tick marks" },
-        tickMode = { inherit = false, d = "percent", t = "enum", values = { "all", "percent", "custom", "pertick" }, label = "Tick mode", dep = { field = "ticksShow" },
+        -- A deck bar's marks are its procs: the mode and its values are not its.
+        tickMode = { inherit = false, kinds = BK_TICKMODE, d = "percent", t = "enum", values = { "all", "percent", "custom", "pertick" }, label = "Tick mode", dep = { field = "ticksShow" },
             labels = { all = "Every point", percent = "Every X percent", custom = "Custom values", pertick = "One per tick" },
             -- valueIf (record -> bool) hides a value from the editor's list. A target's or
             -- focus's channel is secret in combat, so only a player castbar can mark ticks.
             valueIf = { pertick = function(r) return r.barKind == "cast" and ((r.driver and r.driver.unit) or "player") == "player" end } },
-        tickPercent = { inherit = false, d = 25, t = "int", min = 5, max = 50, label = "Tick every (%)",
+        tickPercent = { inherit = false, kinds = BK_TICKMODE, d = 25, t = "int", min = 5, max = 50, label = "Tick every (%)",
             dep = { { field = "ticksShow" }, { field = "tickMode", value = "percent" } } },
-        tickValues = { inherit = false, d = "", t = "text", label = "Custom ticks (comma list)",
+        tickValues = { inherit = false, kinds = BK_TICKMODE, d = "", t = "text", label = "Custom ticks (comma list)",
             dep = { { field = "ticksShow" }, { field = "tickMode", value = "custom" } } },
-        tickAsPercent = { inherit = false, d = false, t = "bool", label = "Custom ticks are percent",
+        tickAsPercent = { inherit = false, kinds = BK_TICKMODE, d = false, t = "bool", label = "Custom ticks are percent",
             dep = { { field = "ticksShow" }, { field = "tickMode", value = "custom" } } },
-        tickScale = { inherit = false, d = 0, t = "int", min = 0, max = 3600, label = "Custom tick scale (0 = auto)",
+        tickScale = { inherit = false, kinds = BK_TICKMODE, d = 0, t = "int", min = 0, max = 3600, label = "Custom tick scale (0 = auto)",
             dep = { { field = "ticksShow" }, { field = "tickMode", value = "custom" } } },
         tickSpells = { inherit = false, d = "", t = "text", kinds = BK_RES, label = "Cost ticks from spell IDs", dep = { field = "ticksShow" } },
         -- Cost-tick spells show their icon at the tick, optionally dimmed below
@@ -2506,6 +2739,84 @@ Schema.bar = {
         tickThickness = { d = 2, t = "int", min = 2, max = 10, label = "Tick thickness", dep = { field = "ticksShow" } },
         tickHeight = { d = 100, t = "int", min = 10, max = 100, label = "Tick height (%)", dep = { field = "ticksShow" } },
         tickHeightAnchor = { d = "center", t = "enum", values = { "center", "start", "end" }, label = "Tick height anchor", dep = { field = "ticksShow" } },
+    } },
+    -- Deck bars (Bars\AD_SpecialBar.lua): a Special Aura tracker's deck. The fill
+    -- colour by procs used, a mark where each proc landed, and two texts (the
+    -- deck position and the proc count), each with its own font, place and
+    -- colours. "state" colours: none used / some used / all used. An empty
+    -- template shows the tracker's own text.
+    deck = { push = true, kinds = { special = true }, fields = {
+        stateFill = { d = true, t = "bool", label = "Color by procs used",
+            desc = "The fill shows how many of this deck's procs are used: none, some or all. Off: the Fill color." },
+        emptyColor = { d = { 0, 1, 0, 1 }, t = "color", alpha = true, label = "No procs used color", dep = { field = "stateFill" } },
+        halfColor = { d = { 1, 0.82, 0, 1 }, t = "color", alpha = true, label = "Some procs used color", dep = { field = "stateFill" } },
+        fullColor = { d = { 1, 0, 0, 1 }, t = "color", alpha = true, label = "All procs used color", dep = { field = "stateFill" } },
+        texEmptyEnabled = { d = false, t = "bool", label = "Dim fill while no procs used", dep = { field = "stateFill" } },
+        texEmptyColor = { d = { 0.15, 0.15, 0.15, 0.6 }, t = "color", alpha = true, label = "Dim fill color",
+            dep = { { field = "stateFill" }, { field = "texEmptyEnabled" } } },
+        procTicks = { d = true, t = "bool", label = "Mark each proc",
+            desc = "A tick where each proc of this deck landed. A new deck clears them.",
+            dep = { section = "ticks", field = "ticksShow" } },
+        posShow = { d = false, t = "bool", label = "Deck position text" },
+        posTemplate = { inherit = false, d = "", t = "text", label = "Deck position shows", dep = { field = "posShow" },
+            hintFn = Schema.DeckTemplateHint("pos"),
+            desc = "Tokens: {left} {drawn} {size} {procs} {procsLeft} {max} {chance} {viol} {count}. Empty: the tracker's own." },
+        posFont = { d = "", t = "text", font = true, label = "Deck position font", dep = { field = "posShow" } },
+        posSize = { d = 14, t = "int", min = 6, max = 64, label = "Deck position size", dep = { field = "posShow" } },
+        posOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" },
+            labels = { OUTLINE = "Outline", THICKOUTLINE = "Thick outline", NONE = "None" },
+            label = "Deck position outline", dep = { field = "posShow" } },
+        posShadow = { adv = "text", d = false, t = "bool", label = "Deck position shadow", dep = { field = "posShow" } },
+        posAnchor = { d = "CENTER", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS,
+            label = "Deck position anchor", dep = { field = "posShow" } },
+        posOffsetX = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Deck position offset X",
+            dep = { field = "posShow" } },
+        posOffsetY = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Deck position offset Y",
+            dep = { field = "posShow" } },
+        posPinTo = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS,
+            label = "Deck position pinned to", dep = { field = "posShow" } },
+        posPinTarget = { inherit = false, d = "", t = "text", label = "Deck position pin target", dep = { field = "posShow" } },
+        posColorMode = { d = "fixed", t = "enum", values = { "fixed", "state" },
+            labels = { fixed = "One color", state = "Procs used" }, label = "Deck position color by",
+            dep = { field = "posShow" } },
+        posColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Deck position color",
+            dep = { { field = "posShow" }, { field = "posColorMode", value = "fixed" } } },
+        posEmptyColor = { d = { 0, 1, 0, 1 }, t = "color", alpha = true, label = "Deck position, no procs used",
+            dep = { { field = "posShow" }, { field = "posColorMode", value = "state" } } },
+        posHalfColor = { d = { 1, 0.82, 0, 1 }, t = "color", alpha = true, label = "Deck position, some procs used",
+            dep = { { field = "posShow" }, { field = "posColorMode", value = "state" } } },
+        posFullColor = { d = { 1, 0, 0, 1 }, t = "color", alpha = true, label = "Deck position, all procs used",
+            dep = { { field = "posShow" }, { field = "posColorMode", value = "state" } } },
+        procShow = { d = true, t = "bool", label = "Proc count text" },
+        procTemplate = { inherit = false, d = "", t = "text", label = "Proc count shows", dep = { field = "procShow" },
+            hintFn = Schema.DeckTemplateHint("proc"),
+            desc = "Tokens: {left} {drawn} {size} {procs} {procsLeft} {max} {chance} {viol} {count}. Empty: the tracker's own." },
+        procFont = { d = "", t = "text", font = true, label = "Proc count font", dep = { field = "procShow" } },
+        procSize = { d = 14, t = "int", min = 6, max = 64, label = "Proc count size", dep = { field = "procShow" } },
+        procOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" },
+            labels = { OUTLINE = "Outline", THICKOUTLINE = "Thick outline", NONE = "None" },
+            label = "Proc count outline", dep = { field = "procShow" } },
+        procShadow = { adv = "text", d = false, t = "bool", label = "Proc count shadow", dep = { field = "procShow" } },
+        procAnchor = { d = "TOP", t = "enum", values = TEXT_ANCHORS, labels = TEXT_ANCHOR_LABELS,
+            label = "Proc count anchor", dep = { field = "procShow" } },
+        procOffsetX = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Proc count offset X",
+            dep = { field = "procShow" } },
+        procOffsetY = { adv = "text", d = 2, t = "int", min = -200, max = 200, label = "Proc count offset Y",
+            dep = { field = "procShow" } },
+        procPinTo = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS,
+            label = "Proc count pinned to", dep = { field = "procShow" } },
+        procPinTarget = { inherit = false, d = "", t = "text", label = "Proc count pin target", dep = { field = "procShow" } },
+        procColorMode = { d = "state", t = "enum", values = { "fixed", "state" },
+            labels = { fixed = "One color", state = "Procs used" }, label = "Proc count color by",
+            dep = { field = "procShow" } },
+        procColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Proc count color",
+            dep = { { field = "procShow" }, { field = "procColorMode", value = "fixed" } } },
+        procEmptyColor = { d = { 0, 1, 0, 1 }, t = "color", alpha = true, label = "Proc count, no procs used",
+            dep = { { field = "procShow" }, { field = "procColorMode", value = "state" } } },
+        procHalfColor = { d = { 1, 0.82, 0, 1 }, t = "color", alpha = true, label = "Proc count, some procs used",
+            dep = { { field = "procShow" }, { field = "procColorMode", value = "state" } } },
+        procFullColor = { d = { 1, 0, 0, 1 }, t = "color", alpha = true, label = "Proc count, all procs used",
+            dep = { { field = "procShow" }, { field = "procColorMode", value = "state" } } },
     } },
     -- Primary resource bars: the cost of the spell being cast, anchored to the
     -- fill's edge rather than computed from the secret value.

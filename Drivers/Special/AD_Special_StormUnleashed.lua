@@ -25,6 +25,8 @@ local suSnapTotal = 0
 local suProcThisConsume = false
 local suLastProcTime = 0
 local suEnabled = false
+-- talented once this session: ProcTracker's deck registration, sticky from then on
+local registered = false
 local sucWatchUntil = 0
 local sucGainFired = false
 local MSW = nil
@@ -73,6 +75,8 @@ local function OnSUC(sid)
     sucGainFired = true
 end
 
+-- The event listens while a window is open, and a window outlives a stop, as
+-- ProcTracker's always-on watcher did.
 local function OnMSWConsumed(stacksSpent, spenderID, ascActive)
     if not suEnabled then return end
     suSnapTotal = suTotalStacks
@@ -80,8 +84,10 @@ local function OnMSWConsumed(stacksSpent, spenderID, ascActive)
     suProcThisConsume = false
     sucGainFired = false
     sucWatchUntil = GetTime() + PROC_WINDOW
+    SP.Listen("SPELL_UPDATE_COOLDOWN", "su_watch", OnSUC)
     C_Timer.After(PROC_WINDOW, function()
         sucWatchUntil = 0
+        SP.Unlisten("SPELL_UPDATE_COOLDOWN", "su_watch")
         if not suEnabled then return end
         if sucGainFired then OnSUGain() else SP.Update("stormunleashed") end
     end)
@@ -110,6 +116,7 @@ local function Reset()
     suLastProcTime = 0
     sucGainFired = false
     sucWatchUntil = 0
+    SP.Unlisten("SPELL_UPDATE_COOLDOWN", "su_watch")
     SP.Update("stormunleashed")
 end
 
@@ -122,8 +129,18 @@ local function IsSUTalented()
     return true
 end
 
-local function Sync()
-    MSW = NS.SpecialMSW
+-- ProcTracker's registration: once talented, the deck draws
+local function TryRegister()
+    if registered or not IsSUTalented() then return end
+    registered = true
+    suEnabled = true
+    MSW.Subscribe("OnConsumed", OnMSWConsumed)
+    MSW.InitFromLive()
+end
+
+-- the talent API is not ready on a zone change: leave the state alone then
+local function ApplyTalentVisibility()
+    if not registered then return end
     if not SP.ConfigID() then return end
     local track = IsSUTalented() and SP.Wanted("stormunleashed")
     if not track then
@@ -136,19 +153,20 @@ local function Sync()
     end
 end
 
-local function Start()
+local function Sync()
     MSW = NS.SpecialMSW
-    suEnabled = true
-    MSW.Subscribe("OnConsumed", OnMSWConsumed)
-    SP.Listen("SPELL_UPDATE_COOLDOWN", "su_watch", OnSUC)
-    MSW.InitFromLive()
+    TryRegister()
+    ApplyTalentVisibility()
 end
 
+local function Start()
+    MSW = NS.SpecialMSW
+end
+
+-- nothing reads the deck any more: it stops drawing, its open window runs out
 local function Stop()
     suEnabled = false
     if MSW then MSW.Unsubscribe("OnConsumed", OnMSWConsumed) end
-    SP.Unlisten("SPELL_UPDATE_COOLDOWN", "su_watch")
-    sucWatchUntil = 0
 end
 
 local function Save()
@@ -174,12 +192,16 @@ end
 
 SP.Register({
     id = "stormunleashed", name = "Storm Unleashed", class = "SHAMAN", specs = { 263 },
+    talentGate = { node = SU_NODE_ID },
     icon = SU_ICON, size = DECK_SIZE, procs = DECK_PROCS,
     isTimer = false, bar = true, sound = false, chanceSpend = true, chanceForecast = false, viol = true,
     words = { pos = "Deck position", procs = "Proc count" },
     tokens = SP.DECK_TOKENS,
     labels = { "{procsLeft}", "{chance}", "{viol}" },
     stack = "{left}",
+    -- ProcTracker's talent frame for this deck, plus its login pass
+    syncEvents = { TRAIT_CONFIG_UPDATED = true, PLAYER_TALENT_UPDATE = true, ACTIVE_COMBAT_CONFIG_CHANGED = true,
+        ACTIVE_TALENT_GROUP_CHANGED = true, PLAYER_SPECIALIZATION_CHANGED = true, PLAYER_LOGIN = true },
     Gate = IsSUTalented, Read = Read, Start = Start, Stop = Stop, Sync = Sync, Reset = Reset,
     Save = Save, Load = Load, Status = Status,
 })

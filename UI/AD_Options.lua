@@ -164,6 +164,10 @@ local BAR_TABS = {
     texture  = { "Tracking", "Triggers", "Appearance", "Show & Hide", "Position", "Load Conditions" },
     -- a wheel opens at the cursor: no place, chrome or show rules (Bars\AD_Wheel.lua)
     wheel    = { "Wheel", "Appearance", "Load Conditions" },
+    -- a Special Aura's deck (Bars\AD_SpecialBar.lua, rows in UI\AD_SpecialOptions.lua)
+    special  = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
+    -- a Sound item draws nothing: its rules, and when it loads (Bars\AD_SoundItem.lua)
+    sound    = { "Tracking", "Load Conditions" },
 }
 
 -- C_SwingTimer swing types; the API exists only on WoW Forever.
@@ -283,6 +287,9 @@ local function BarPillText(barKind, barMode)
     if barKind == "text" then return "Text", { 0.93, 0.84, 0.58 } end
     if barKind == "texture" then return "Texture", { 0.66, 0.55, 0.98 } end
     if barKind == "wheel" then return "Wheel", { 0.98, 0.78, 0.2 } end
+    if barKind == "sound" then return "Sound", { 0.56, 0.82, 1 } end
+    -- the Special Aura family's amber, as on its icon pill
+    if barKind == "special" then return "Deck Bar", Options.ICON_PILL_COLORS.special end
     return "CD " .. mode, YELLOW
 end
 
@@ -857,7 +864,9 @@ local function PowerValue(v)
     if not v or v < 0 then return nil end
     return v
 end
-local function PowerItems(keep)
+-- textOnly: the Text element's list, which reads enum powers only (stagger and
+-- the aura-held resources have no power events to repaint it)
+local function PowerItems(keep, textOnly)
     local items = { { value = POWER_AUTO, text = "Automatic (current power)" } }
     local B = NS.Bars
     local info = B and B.POWER_INFO
@@ -865,6 +874,13 @@ local function PowerItems(keep)
         -- retail: the powers this character has (Bars\AD_ResourcePowers.lua);
         -- Forever keeps its client-filtered list
         local ids = B.ResPowers and B.ResPowers.Offered and B.ResPowers.Offered()
+        if ids and textOnly then
+            local enum = {}
+            for _, id in ipairs(ids) do
+                if not B.ResPowers.Pseudo(id) then enum[#enum + 1] = id end
+            end
+            ids = enum
+        end
         if not ids then
             ids = {}
             for id in pairs(info) do ids[#ids + 1] = id end
@@ -1334,6 +1350,7 @@ function Options.FieldShows(rec, family, section, def, tier)
     if co and co ~= Store.ClassTag()
         and not (type(co) == "table" and co[Store.ClassTag() or ""]) then return false end
     if def.foreverOnly and NS.IsForever ~= true then return false end
+    if def.newAuraEngine and NS.OldAuraEngine then return false end
     if def.groupOnly and not rec.groupId and not tier then return false end
     -- def.showIf(rec): a record-shaped gate (a layout sets it for all)
     if def.showIf and not tier and not def.showIf(rec) then return false end
@@ -1346,7 +1363,13 @@ function Options.StateWords(rec)
     local ET = Options.EditorTabs
     local st = rec and ET and ET.STATES and ET.STATES[rec.kind]
     local function W(e) return e and ((e.labelFn and e.labelFn(rec)) or e.label) end
-    local one, two = W(st and st[1]), W(st and st[2])
+    -- the ready and cooldown states by key where a kind has them (a charge
+    -- spell lists Recharging between them), else its first two
+    local a, b
+    for _, e in ipairs(st or {}) do
+        if e.key == "ready" then a = e elseif e.key == "cooldown" then b = e end
+    end
+    local one, two = W(a or (st and st[1])), W(b or (st and st[2]))
     return one and one:lower() or "ready", two and two:lower() or "on cooldown"
 end
 
@@ -1744,15 +1767,31 @@ local TPPaint, TPLayout
 
 local function TPRecord() return tpCtx and tpCtx() end
 
+-- the nodes picked: a record's load talents, or a talent target's one pick
+-- (Options.TalentPickRow)
+local function TPChosen(rec)
+    if not rec then return {} end
+    if not rec.talentTarget then return rec.c.talents or {} end
+    local out = {}
+    for _, p in ipairs(rec.List()) do out[p.nodeID] = true end
+    return out
+end
+
 TPPaint = function()
     if not (tpWin and tpWin:IsShown()) then return end
     local rec = TPRecord()
-    local chosen = (rec and rec.c.talents) or {}
+    local chosen = TPChosen(rec)
     local q = tpQuery:lower():gsub("^%s+", ""):gsub("%s+$", "")
     local n = 0
     for _ in pairs(chosen) do n = n + 1 end
-    tpCount:SetText(n == 0 and "Nothing required yet - click a talent to add it."
-        or (n == 1 and "1 talent required" or (n .. " talents required")))
+    if rec and rec.talentTarget then
+        local node = next(chosen)
+        tpCount:SetText(node and ("Picked: " .. (Options.TalentPickName(node) or ""))
+            or "Nothing picked yet - click a talent to pick it.")
+    else
+        tpCount:SetText(n == 0 and "Nothing required yet - click a talent to add it."
+            or (n == 1 and "1 talent required" or (n .. " talents required")))
+    end
     for _, node in ipairs(tpNodes) do
         local e = node.entry
         if e and node.btn:IsShown() then
@@ -1878,9 +1917,10 @@ local function TPNode(i)
         end
         GameTooltip:AddLine(" ")
         local rec = TPRecord()
-        local on = rec and rec.c.talents and rec.c.talents[e.nodeID]
-        GameTooltip:AddLine(on and "Click to stop requiring this talent."
-            or "Click to require this talent.", 0.247, 0.788, 0.949)
+        local on = TPChosen(rec)[e.nodeID]
+        local one = rec ~= nil and rec.talentTarget == true
+        GameTooltip:AddLine(on and (one and "Picked: click to drop it." or "Click to stop requiring this talent.")
+            or (one and "Click to pick this talent." or "Click to require this talent."), 0.247, 0.788, 0.949)
         GameTooltip:AddLine("Node " .. e.nodeID, 0.4, 0.47, 0.57)
         GameTooltip:Show()
     end)
@@ -1891,7 +1931,11 @@ local function TPNode(i)
     btn:SetScript("OnClick", function()
         local rec, e = TPRecord(), node.entry
         if not (rec and e) then return end
-        Store.ToggleTalent(rec, e.nodeID)
+        if rec.talentTarget then
+            rec.Set(e.nodeID, (not TPChosen(rec)[e.nodeID]) and "req" or nil)
+        else
+            Store.ToggleTalent(rec, e.nodeID)
+        end
         TPPaint()
         RefreshAll()
     end)
@@ -2087,7 +2131,7 @@ local function TPBuild()
     clear:SetScript("OnClick", function()
         local rec = TPRecord()
         if not rec then return end
-        Store.ClearTalents(rec)
+        if rec.talentTarget then rec.Clear() else Store.ClearTalents(rec) end
         TPPaint()
         RefreshAll()
     end)
@@ -2139,6 +2183,60 @@ end
 local function CloseTalentPicker()
     if tpWin and tpWin:IsShown() then tpWin:Hide() end
     if Options.CloseRetailTalentPicker then Options.CloseRetailTalentPicker() end
+end
+
+-- A picked talent in words: the option's name on a choice node, else the
+-- node's (its options together), or its number when this tree lacks it.
+function Options.TalentPickName(nodeID, entryID)
+    if not nodeID then return nil end
+    local T = NS.TalentCatalog
+    local e = T and T.Known and T.Known(nodeID)
+    if type(e) ~= "table" then return "Talent " .. nodeID end
+    if type(e.entries) == "table" then
+        local names = {}
+        for _, opt in ipairs(e.entries) do
+            if entryID and opt.entryID == entryID then return tostring(opt.name) end
+            names[#names + 1] = tostring(opt.name)
+        end
+        return table.concat(names, " / ")
+    end
+    return e.name and tostring(e.name) or ("Talent " .. nodeID)
+end
+
+-- One talent picked on the Load Conditions talent tree for a setting of its
+-- own (a rule's guard, a look's talent). target() builds, for the record
+-- being edited, { talentTarget = true, State(node) -> state, entry;
+-- Set(node, state, entry); List() -> { { nodeID, excluded } }; Clear();
+-- noExclude = true when it has no Not taken }. A press pins that record.
+function Options.TalentPickRow(pg, label, target, visibleFn, tip)
+    local row = AT.RowButton(pg, "Choose talent", function()
+        local t = target()
+        if t then OpenTalentPicker(function() return t end) end
+    end, visibleFn, 120, label)
+    row._adTalentTarget = target
+    local fs = row:CreateFontString(nil, "OVERLAY")
+    fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    fs:SetPoint("LEFT", row.button, "RIGHT", 10, 0)
+    fs:SetPoint("RIGHT", row, "RIGHT", -8, 0)
+    fs:SetJustifyH("LEFT")
+    fs:SetWordWrap(false)
+    row._adPickText = fs
+    row._sync = function()
+        local t = target()
+        local pick = t and t.List()[1]
+        if not pick then
+            fs:SetText("Nothing picked")
+            fs:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
+            return
+        end
+        local _, entry = t.State(pick.nodeID)
+        local name = Options.TalentPickName(pick.nodeID, entry) or ""
+        fs:SetText(pick.excluded and ("Not taken: " .. name) or name)
+        local c = pick.excluded and { 0.95, 0.38, 0.38 } or COL.ink
+        fs:SetTextColor(c[1], c[2], c[3])
+    end
+    if tip then AT.Tooltip(row.button, "Choose talent", tip) end
+    return row
 end
 
 -- Condition rows (Core\AD_Conditions.lua), shared by the Load Conditions and
@@ -3170,6 +3268,7 @@ local function MakeThumb(parent, size, groupSize)
     function t:SetBar(rec, width, spellTex)
         if rec.barKind == "text" then return self:SetText(rec, width, spellTex) end
         if rec.barKind == "wheel" then return self:SetIcon(Options.WheelThumb and Options.WheelThumb(rec) or 134400) end
+        if rec.barKind == "sound" then return self:SetIcon(Options.SoundThumb and Options.SoundThumb(rec) or 134400) end
         width = width or size
         self:SetSize(width, size)
         local lead = (width >= 40) and spellTex
@@ -3295,6 +3394,8 @@ local function BarTexture(rec)
     if rec.barKind == "cooldown" or rec.barKind == "aura" then
         return d.spellID and C_Spell.GetSpellTexture(d.spellID) or nil
     end
+    -- a deck bar wears its tracker's art
+    if rec.barKind == "special" and NS.SpecialIcon then return NS.SpecialIcon.Texture(rec) end
     -- a text for a spell or an aura wears its art under its letters
     local TO = Options.TextElement
     if rec.barKind == "text" and TO and TO.Subject(d.source) ~= "other" then
@@ -4556,7 +4657,7 @@ function Options.FillLayoutTile(t, rec)
         th:SetPoint("TOP", 0, -20)
         th:Show()
         kindLine = (rec.barKind == "text") and "Text element" or (rec.barKind == "texture") and "Texture"
-            or (rec.barKind == "wheel") and "Wheel"
+            or (rec.barKind == "wheel") and "Wheel" or (rec.barKind == "sound") and "Sound"
             or (text:find("Bar") and text or (text .. " bar"))
         t._open = function() Options.Select("bar", rec.id) end
     end
@@ -4782,6 +4883,10 @@ local function RefreshLayoutPane()
             row.sub:SetText("Texture  -  " .. (Options.TextureWhat and Options.TextureWhat(b) or "texture"))
         elseif b.barKind == "wheel" then
             row.sub:SetText("Wheel  -  " .. (Options.WheelWhat and Options.WheelWhat(b) or "wheel"))
+        elseif b.barKind == "sound" then
+            row.sub:SetText("Sound  -  " .. (Options.SoundWhat and Options.SoundWhat(b) or "sound"))
+        elseif b.barKind == "special" then
+            row.sub:SetText("Deck bar  -  " .. (Options.SpecialBarWhat and Options.SpecialBarWhat(b) or "special aura"))
         else
             row.sub:SetText("Cooldown bar  -  " .. (b.barMode == "stack" and "charges" or "duration")
                 .. " of spell " .. tostring(d.spellID or "?"))
@@ -5743,6 +5848,13 @@ local PREV_MODES = {
       tip = "The aura comes up with a fake duration (swipe and duration text), drops to its missing look, and comes back." },
     { key = "amiss", set = "aura", text = "Aura missing", w = 100,
       tip = "The look while the aura is missing: the ghost with its Missing icon, alpha and desaturation." },
+    -- a Custom Icon's own two states
+    { key = "tact",  set = "timer", text = "Active",     w = 64,
+      tip = "The Active look, its timer running with its swipe and duration text. Drag any text on the icon to place it." },
+    { key = "tina",  set = "timer", text = "Not active", w = 86,
+      tip = "The Not active look, with no timer running." },
+    { key = "tloop", set = "timer", text = "Timer loop", w = 90,
+      tip = "Not active, then a timer starts and runs out, then Not active again." },
 }
 -- which text drags which fields; the countdown text is the swipe widget's
 -- own fontstring, fetched when the handles sync
@@ -5795,9 +5907,13 @@ end
 function Options.PreviewMode(rec)
     local m = ui.prevMode or "off"
     local auraKey = (m == "aup" or m == "aloop" or m == "amiss")
+    local timerKey = (m == "tact" or m == "tina" or m == "tloop")
     local aura = rec ~= nil and rec.kind == "aura"
+    local timer = rec ~= nil and rec.kind == "timer"
     if aura and not auraKey then return "aup" end
+    if timer and not timerKey then return "tact" end
     if (not aura) and auraKey then return "off" end
+    if (not timer) and timerKey then return "off" end
     if m == "ovup" and not (NS.DriverAura and NS.DriverAura.OverlayOn(rec)) then return "off" end
     return m
 end
@@ -5834,6 +5950,7 @@ end
 -- afresh (a frozen Aura up swipe thaws).
 function Options.PreviewReset(f)
     if not f then return end
+    if f.cooldown.Resume then f.cooldown:Resume() end
     f.cooldown:Clear()
     local ab = f._adAuraBtn
     if ab then
@@ -5968,6 +6085,25 @@ local function PreviewApplyMode(rec, f)
         if f == prevIcon then PreviewSyncHandles() end
         return
     end
+    if rec.kind == "timer" then
+        -- A Custom Icon: Active runs a timer, frozen at 60% left so its swipe
+        -- and time text show; Not active has none. The loop's second phase is
+        -- the timer the tick started.
+        f._adGlowLaneOnly = nil
+        Factory.SetProcGlow(f, rec, false)
+        if f.cooldown.Resume then f.cooldown:Resume() end
+        local active = (mode == "tact") or (mode == "tloop" and prevPhase == "cd")
+        if mode == "tact" then
+            f.cooldown:SetCooldown(GetTime() - PREV_CD * 0.4, PREV_CD)
+            if f.cooldown.Pause then f.cooldown:Pause() end
+        elseif not active then
+            f.cooldown:Clear()
+        end
+        Factory.SetState(f, rec, not active, not active)
+        Factory.UpdateGlow(f, rec, active)
+        if f == prevIcon then PreviewSyncHandles() end
+        return
+    end
     if mode == "ovup" then
         -- A spell icon's aura while up: the cooldown underneath with the stand-in
         -- aura button over it, as live.
@@ -6035,7 +6171,7 @@ local function PreviewTick(_, dt)
         -- ApplyStyle re-runs the ready and usable lanes on its own; the proc
         -- lane is event-driven, so it is re-asserted here (idempotent). An
         -- aura icon's holder has no proc lane.
-        if not aura then
+        if not aura and rec.kind ~= "timer" then
             Factory.SetProcGlow(prevIcon, rec, prevPhase == "ready")
             if copy then Factory.SetProcGlow(copy, rec, prevPhase == "ready") end
         end
@@ -6359,8 +6495,8 @@ local function AttachPreview(parent, y, shown)
         return 0
     end
     local mode = Options.PreviewMode(rec)
-    prevBand:SetScript("OnUpdate", (mode == "loop" or mode == "aloop") and PreviewTick or nil)
-    local set = (rec.kind == "aura") and "aura" or "cd"
+    prevBand:SetScript("OnUpdate", (mode == "loop" or mode == "aloop" or mode == "tloop") and PreviewTick or nil)
+    local set = (rec.kind == "aura") and "aura" or (rec.kind == "timer") and "timer" or "cd"
     local ov = set == "cd" and NS.DriverAura ~= nil and NS.DriverAura.OverlayOn(rec) == true
     local shownChips, total = {}, -6
     for _, m in ipairs(PREV_MODES) do
@@ -7388,8 +7524,24 @@ local function BuildIconEditor(parent)
             o.fx = section .. "." .. prefix .. (suffix or "")
             return Block("Conditions", "By State", title, section, fields, o)
         end
+        -- a special icon's glows in its states' words: a deck's procs, or
+        -- Nature's Guardian's timer (it keeps When ready). An applies stands
+        -- in for the kind check, so each names its kinds.
+        local function SpecialTimer(r)
+            local SI = NS.SpecialIcon
+            local d = SI and SI.Def and SI.Def(r)
+            return d ~= nil and d.isTimer == true
+        end
+        local function Deck(r) return r.kind == "special" and not SpecialTimer(r) end
+        local function Timer(r) return r.kind == "special" and SpecialTimer(r) end
         Card("When ready", "states", "readyGlow", nil, "Glow when ready", W.ready,
-            { kindOnly = { spell = true, item = true, trinket = true, special = true } })
+            { kindOnly = { spell = true, item = true, trinket = true, special = true },
+                applies = function(r)
+                    local k = r.kind
+                    return k == "spell" or k == "item" or k == "trinket" or Timer(r)
+                end })
+        Card("While procs are left", "states", "readyGlow", nil, "Glow while procs are left",
+            "a proc is still in the deck", { kindOnly = { special = true }, noLook = true, applies = Deck })
         -- a totem or an enchant is up or gone, a Custom Icon active or not:
         -- the same glows, worded so
         Card("While active", "states", "readyGlow", nil, "Glow while active", W.active,
@@ -7408,8 +7560,20 @@ local function BuildIconEditor(parent)
                 local D = NS.DriverCooldown
                 return D ~= nil and D.IsCharge ~= nil and D.IsCharge(r)
             end })
+        -- a charge spell's cooldown is every charge spent: Depleted
         Card("While on cooldown", "states", "cooldownGlow", nil, "Glow while on cooldown", W.cooldown,
-            { kindOnly = { spell = true, item = true, trinket = true, special = true } })
+            { kindOnly = { spell = true, item = true, trinket = true }, applies = function(r)
+                local k = r.kind
+                return (k == "spell" and not ET.IsCharge(r)) or k == "item" or k == "trinket"
+            end })
+        Card("While depleted", "states", "cooldownGlow", nil, "Glow while depleted", "every charge is spent",
+            { kindOnly = { spell = true }, noLook = true, applies = function(r)
+                return r.kind == "spell" and ET.IsCharge(r)
+            end })
+        Card("While all procs are used", "states", "cooldownGlow", nil, "Glow while all procs are used",
+            "every proc in the deck is used", { kindOnly = { special = true }, noLook = true, applies = Deck })
+        Card("While the timer runs", "states", "cooldownGlow", nil, "Glow while the timer runs",
+            "its internal cooldown runs", { kindOnly = { special = true }, noLook = true, applies = Timer })
         Card("While not active", "states", "cooldownGlow", nil, "Glow while not active", W.inactive,
             { kindOnly = { timer = true }, noLook = true })
         -- ammo and pet warnings (Drivers\AD_DriverWarn.lua), for the classes
@@ -7450,9 +7614,13 @@ local function BuildIconEditor(parent)
     -- and falling off (NS.DriverEnchant plays them on a real change only).
     if ET then
         local CD_SOUNDS = { spell = true, item = true, trinket = true, timer = true }
+        -- a charge spell's cooldown starts with its last charge spent
+        local function NotCharge(r) return CD_SOUNDS[r.kind] == true and not (r.kind == "spell" and ET.IsCharge(r)) end
+        local function Charge(r) return r.kind == "spell" and ET.IsCharge(r) end
         for _, s in ipairs({
             { "When ready", "readySound", CD_SOUNDS },
-            { "When the cooldown starts", "cooldownSound", CD_SOUNDS },
+            { "When the cooldown starts", "cooldownSound", CD_SOUNDS, NotCharge },
+            { "When the last charge is spent", "cooldownSound", CD_SOUNDS, Charge },
             { "When recharging starts", "rechargeSound", CD_SOUNDS },
             { "When a charge returns", "chargeGainedSound", CD_SOUNDS },
             { "When usable", "usableSound", CD_SOUNDS },
@@ -7466,7 +7634,7 @@ local function BuildIconEditor(parent)
         }) do
             local en, snd = s[2] .. "Enabled", s[2]
             -- lit once it plays something: switched on with a sound picked
-            Block("Conditions", "By State", s[1], "alerts", { en, snd }, { kindOnly = s[3], noLook = true,
+            Block("Conditions", "By State", s[1], "alerts", { en, snd }, { kindOnly = s[3], applies = s[4], noLook = true,
                 labels = { [snd] = "Sound" }, card = {}, fx = "alerts." .. en, lit = function(r)
                     return Store.Resolve(r, "alerts", en) == true and (Store.Resolve(r, "alerts", snd) or "") ~= ""
                 end })
@@ -7529,6 +7697,17 @@ local function BuildIconEditor(parent)
         "durBand3Sec", "durBand3Color",
         "durBandCount",
     })
+    -- a special icon's deck or counter has no time left: only Nature's
+    -- Guardian (a timer) keeps Duration. The block's own test, kept.
+    do
+        local plain = { section = durDef.section, fields = durDef.fields, parts = durDef.parts }
+        durDef.applies = function(r)
+            if r.kind == "special" and not (Options.SpecialIsTimer and Options.SpecialIsTimer(r)) then
+                return false
+            end
+            return BlockApplies(r, plain)
+        end
+    end
     SubPush("Text", "Duration")
 
     -- Text > Stacks: the count, its colours, and a spell's ammo text. An ammo
@@ -7537,7 +7716,14 @@ local function BuildIconEditor(parent)
         "stackText", "stackFont", "stackSize", "stackColor", "stackOutline", "stackShadow",
         "stackAnchor", "stackX", "stackY", "hideChargeAtZero",
         "stackShowSingle",
-    }, { kindOnly = { spell = true, item = true, timer = true, aura = true, enchant = true, special = true } })
+    }, { kindOnly = { spell = true, item = true, timer = true, aura = true, enchant = true } })
+    -- an aura's count is the game button's, which cannot move in combat
+    if Options.TextPinRows then
+        Options.TextPinRows(pg, SelIcon, function()
+            local r = SelIcon()
+            return stackDef.vis() and r ~= nil and r.kind ~= "aura" and Store.Resolve(r, "text", "stackText") ~= false
+        end, "icon", "text", "stackPinTo", "stackPinTarget", win, "Stack text")
+    end
     Sub(stackDef, "Color by count", "text", {
         "stackColorBands",
         "stkBand1Min", "stkBand1Color", "stkBand2Min", "stkBand2Color",
@@ -7559,7 +7745,6 @@ local function BuildIconEditor(parent)
         local r = SelIcon()
         return ammoDef.vis() and r ~= nil and Schema.AmmoCountShown(r)
     end })
-    if Options.SpecialTextBlocks then Options.SpecialTextBlocks(Block, "Stacks", pg, SelIcon) end
     SubPush("Text", "Stacks")
 
     -- Text > Count: an ammo icon's and a group buff's number, in their words.
@@ -7586,26 +7771,46 @@ local function BuildIconEditor(parent)
     }, { noLook = true, labels = CountLabels("Count text"), searchLabels = true })
     SubPush("Text", "Count")
 
+    -- Text > a special icon's own texts: Deck Position, Proc Count, Counter,
+    -- Proc Chance (UI\AD_SpecialOptions.lua)
+    if Options.SpecialTextTabs then
+        Options.SpecialTextTabs({ Block = Block, More = More, SubPush = SubPush, pg = pg, ctx = SelIcon, win = win })
+    end
+
     -- Text > Custom Text & Keybind: texts on the icon, each short until used.
-    Block("Text", "Custom Text & Keybind", "Custom text 1", "label", {
+    -- each custom text and the keybind may ride another frame (TextPinRows)
+    local function LabelPins(def, suf, word)
+        if not Options.TextPinRows then return end
+        Options.TextPinRows(pg, SelIcon, function()
+            local r = SelIcon()
+            local t = r and Store.Resolve(r, "label", "labelText" .. suf)
+            return def.vis() and t ~= nil and t ~= ""
+        end, "icon", "label", "labelPinTo" .. suf, "labelPinTarget" .. suf, win, word)
+    end
+    LabelPins(Block("Text", "Custom Text & Keybind", "Custom text 1", "label", {
         "labelText", "labelFont", "labelSize", "labelColor", "labelAnchor",
         "labelX", "labelY", "labelShowReady", "labelShowCooldown", "labelActiveOnly", "labelMissingOnly",
-    })
-    Block("Text", "Custom Text & Keybind", "Custom text 2", "label", {
-        "labelText2", "labelSize2", "labelColor2", "labelAnchor2",
+    }), "", "Custom text")
+    LabelPins(Block("Text", "Custom Text & Keybind", "Custom text 2", "label", {
+        "labelText2", "labelFont2", "labelSize2", "labelColor2", "labelAnchor2",
         "labelX2", "labelY2", "labelShowReady2", "labelShowCooldown2", "labelActiveOnly2", "labelMissingOnly2",
-    })
-    Block("Text", "Custom Text & Keybind", "Custom text 3", "label", {
-        "labelText3", "labelSize3", "labelColor3", "labelAnchor3",
+    }), "2", "Custom text 2")
+    LabelPins(Block("Text", "Custom Text & Keybind", "Custom text 3", "label", {
+        "labelText3", "labelFont3", "labelSize3", "labelColor3", "labelAnchor3",
         "labelX3", "labelY3", "labelShowReady3", "labelShowCooldown3", "labelActiveOnly3", "labelMissingOnly3",
-    })
+    }), "3", "Custom text 3")
     local kbDef = Block("Text", "Custom Text & Keybind", "Keybind", "keybind", {
         "keybindEnabled", "keybindByName", "keybindFont", "keybindSize", "keybindColor",
         "keybindAnchor", "keybindX", "keybindY",
     })
+    if Options.TextPinRows then
+        Options.TextPinRows(pg, SelIcon, function()
+            local r = SelIcon()
+            return kbDef.vis() and r ~= nil and Factory.KeybindEnabled(r)
+        end, "icon", "keybind", "keybindPinTo", "keybindPinTarget", win, "Keybind")
+    end
     AT.RowDesc(pg, "Match by spell name finds this spell's key at any rank on your bars.", 20,
         function() return kbDef.vis() and NS.IsForever == true end)
-    if Options.SpecialTextBlocks then Options.SpecialTextBlocks(Block, "Custom Text & Keybind", pg, SelIcon) end
     SubPush("Text", "Custom Text & Keybind")
 
     -- Position > Position: a free icon's screen spot (a group member's cell
@@ -8598,7 +8803,7 @@ end
 function barPrev.Attach(parent, y)
     local rec, B, band = SelBar(), NS.Bars, barPrev.band
     -- a wheel has no bar to preview: its editor draws the wheel itself
-    if not (band and rec and B and B.PreviewBuild) or rec.barKind == "wheel" then
+    if not (band and rec and B and B.PreviewBuild) or rec.barKind == "wheel" or rec.barKind == "sound" then
         if band then
             band:Hide()
             band:SetScript("OnUpdate", nil)
@@ -9338,6 +9543,10 @@ local function BuildBarPane()
     if Options.TextureTrackRows then Options.TextureTrackRows(pg, SelBar, BarTabVisible("Tracking"), win) end
     -- a wheel's key, spots and editor (UI\AD_WheelOptions.lua)
     if Options.WheelRows then Options.WheelRows(pg, SelBar, BarTabVisible("Wheel"), win) end
+    -- a Sound item's play-in switches and rules (UI\AD_SoundOptions.lua)
+    if Options.SoundRows then Options.SoundRows(pg, SelBar, BarTabVisible("Tracking"), win) end
+    -- a deck bar's tracker, status and Reset (UI\AD_SpecialOptions.lua)
+    if Options.SpecialBarRows then Options.SpecialBarRows(pg, SelBar, trackVis) end
 
     ConditionRows(pg, SelBar, BarTabVisible("Load Conditions"))
 
@@ -9526,7 +9735,7 @@ local function BuildBarPane()
     -- Appearance > Size & Frame. A resource bar's style (a bar or a row of
     -- cells) and a range bar's (how its bands draw) lead: they decide the frame.
     local styleVis = BarBlock("Style", "resource", "Appearance", {
-        "style", "usePowerColor",
+        "style", "usePowerColor", "runeOrder",
     }, nil, SF)
     BarSub(styleVis, "Pips", "resource", {
         "pipShape", "pipWidth", "pipHeight", "pipSpacing", "pointColor", "pipEmptyTint",
@@ -9657,6 +9866,17 @@ local function BuildBarPane()
     -- every rule that recolours it, each its own section.
     -- Pips style: the row's direction (the fill's orientation fields; the Fill
     -- block hides in this style) and the pip texture.
+    -- A resource bar's look per power or spec leads the colours it changes
+    -- (UI\AD_LooksOptions.lua); the Text tab repeats its Editing row.
+    local appTabVis = BarTabVisible("Appearance")
+    local function LookVis()
+        local r = SelBar()
+        return appTabVis() and SubOpen("Appearance", FC) and r ~= nil and not r._adMulti and r.barKind == "resource"
+    end
+    if Options.LooksRows then
+        AT.Section(pg, "Look per form or spec", { visibleFn = LookVis })
+        Options.LooksRows(pg, SelBar, LookVis, win, true)
+    end
     local dirVis = BarBlock("Direction", "fill", "Appearance", {
         "orientation", "reverseFill",
     }, IsPips, FC)
@@ -9708,6 +9928,17 @@ local function BuildBarPane()
             baseVis = orientVis }
     end
     BarSub(fillVis, "Gradient", "fill", { "useGradient", "gradientDir", "gradientColor" })
+    -- Runes and essence, either style: how a point that is coming back fills
+    -- and its shade. Charged combo points and the fold each have their own.
+    BarBlock("Recharge", "resource", "Appearance", {
+        "rechargeFill", "rechargeDir", "rechargeColorEnabled", "rechargeColor",
+    }, function(r) return Schema.Recharges(r) end, FC)
+    BarBlock("Charged Points", "resource", "Appearance", {
+        "chargedShow", "chargedColor",
+    }, function(r) return Schema.ResPower(r) == 4 and NS.IsForever ~= true end, FC)
+    BarBlock("Fold", "resource", "Appearance", {
+        "foldOn", "foldColor",
+    }, function(r) return Schema.Foldable(r) end, FC)
     -- Pips style: the cells' banding by position (an aura stack bar's is
     -- Stack Colors below).
     local pointVis = BarBlock("Point Colors", "stackcolors", "Appearance", {
@@ -9770,6 +10001,8 @@ local function BuildBarPane()
     BarBlock("Spark", "fill", "Appearance", {
         "edgeSpark", "edgeSparkColor", "edgeSparkWidth",
     }, function(r) return r.barKind ~= "swing" end, FC)
+    -- a deck bar's colours by procs used (UI\AD_SpecialOptions.lua)
+    if Options.SpecialBarBlocks then Options.SpecialBarBlocks(FC, BarBlock, PushBar, pg, SelBar) end
     SubPush("Appearance", FC)
 
     -- Appearance > Cost & Regen, resource bars: what a cast will take and when
@@ -9865,6 +10098,8 @@ local function BuildBarPane()
     BarSub(tickVis, "Marks", "ticks", {
         "tickChannelOnly", "tickColor", "tickThickness", "tickHeight", "tickHeightAnchor",
     })
+    -- a deck bar marks its procs (UI\AD_SpecialOptions.lua)
+    if Options.SpecialBarBlocks then Options.SpecialBarBlocks("Ticks", BarBlock, PushBar, pg, SelBar) end
     SubPush("Appearance", "Ticks")
 
     -- Appearance (text elements): one page, the one string's font, size and
@@ -9924,6 +10159,15 @@ local function BuildBarPane()
 
     -- Text: the bar's one font first, then one chip per text run.
     local textTabVis = BarTabVisible("Text")
+    if Options.LooksRows then
+        local function TextLookVis()
+            local r = SelBar()
+            return textTabVis() and r ~= nil and not r._adMulti and r.barKind == "resource"
+                and r.looks ~= nil and r.looks.by ~= nil
+        end
+        AT.Section(pg, "Look per form or spec", { visibleFn = TextLookVis })
+        Options.LooksRows(pg, SelBar, TextLookVis, win, false)
+    end
     AT.Section(pg, "Font", { visibleFn = textTabVis })
     AT.RowDropdown(pg, win, "Font",
         function()
@@ -9959,12 +10203,25 @@ local function BuildBarPane()
     Options.LookBlock("bar", "Text", "Font", "text", { "font" })
     -- the font is tab-wide (every run shares it): its own push bar
     PushBar(pg, SelBar, "text", textTabVis, { "font" })
+    -- a deck bar's two texts, each with its own font (UI\AD_SpecialOptions.lua)
+    if Options.SpecialBarBlocks then Options.SpecialBarBlocks("Text", BarBlock, PushBar, pg, SelBar, win) end
     -- one push bar per text run (each scoped to its own rows through
     -- Options.blockFields - the runs share the one `text` section)
     local durVis = BarBlock("Duration", "text", "Text", {
         "durShow", "durRounding", "durSize", "durOutline", "durShadow", "durColor", "durAnchor",
         "durOffsetX", "durOffsetY",
     })
+    -- A run may ride another frame (TextPinRows). Not an aura bar's duration
+    -- or stack (the game's button draws them) nor a cooldown bar's countdown.
+    local function BarPins(blockVis, pin, show, word, allow)
+        if not Options.TextPinRows then return end
+        Options.TextPinRows(pg, SelBar, function()
+            local r = SelBar()
+            return blockVis() and r ~= nil and Store.Resolve(r, "text", show) ~= false and (not allow or allow(r))
+        end, "bar", "text", pin .. "PinTo", pin .. "PinTarget", win, word)
+    end
+    BarPins(durVis, "dur", "durShow", "Duration text",
+        function(r) return r.barKind ~= "aura" and r.barKind ~= "cooldown" end)
     BarSub(durVis, "Format", "text", { "durAbbrev", "durDecimalsEnabled", "durDecimalThreshold" })
     AT.Section(pg, nil, { visibleFn = durVis })   -- push bar below the subs (BarSub)
     PushBar(pg, SelBar, "text", durVis)
@@ -9976,10 +10233,12 @@ local function BuildBarPane()
         local info = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
         return ((info and info.maxCharges) or 0) > 1
     end
-    PushBar(pg, SelBar, "text", BarBlock("Stack", "text", "Text", {
+    local stkVis = BarBlock("Stack", "text", "Text", {
         "stkShow", "stkShowMax", "stkSize", "stkOutline", "stkShadow", "stkColor",
         "stkAnchor", "stkOffsetX", "stkOffsetY", "stkHideAtZero",
-    }, StackTextExists))
+    }, StackTextExists)
+    BarPins(stkVis, "stk", "stkShow", "Stack text", function(r) return r.barKind ~= "aura" end)
+    PushBar(pg, SelBar, "text", stkVis)
     -- Resource and health texts: text 1, texts 2 and 3 in their own boxes,
     -- then the count as "+ Add" / "Remove last" buttons (the schema's adds)
     -- under the last box, in the untitled section that keeps the push bar out
@@ -9989,9 +10248,10 @@ local function BuildBarPane()
     -- count out of a box visibleFn: the settings search skips hidden boxes.
     do
         local resTextVis = BarBlock("Resource", "text", "Text", {
-            "resShow", "resFormat", "resSize", "resOutline", "resShadow", "resColor",
+            "resShow", "resFormat", "resWholeShards", "resSize", "resOutline", "resShadow", "resColor",
             "resAnchor", "resOffsetX", "resOffsetY",
         })
+        BarPins(resTextVis, "res", "resShow", "Resource text")
         BarSub(resTextVis, "Resource text 2", "text",
             { "res2Format", "res2Size", "res2Color", "res2Anchor", "res2OffsetX", "res2OffsetY" })
         BarSub(resTextVis, "Resource text 3", "text",
@@ -10001,10 +10261,18 @@ local function BuildBarPane()
         local resList = Options.blockFields[resTextVis]
         if resList then resList[#resList + 1] = "resCount" end
         PushBar(pg, SelBar, "text", resTextVis)
+        -- runes and essence: each recharging point's own countdown
+        local rcVis = BarBlock("Recharge", "text", "Text", {
+            "rcShow", "rcSize", "rcOutline", "rcShadow", "rcColor", "rcAnchor", "rcOffsetX", "rcOffsetY",
+        }, function(r) return Schema.Recharges(r) end)
+        BarSub(rcVis, "Recharge format", "text", { "rcDecimalsEnabled", "rcDecimalThreshold" })
+        AT.Section(pg, nil, { visibleFn = rcVis })   -- push bar below the sub (BarSub)
+        PushBar(pg, SelBar, "text", rcVis)
         local hpTextVis = BarBlock("Health", "text", "Text", {
             "hpShow", "hpFormat", "hpSize", "hpOutline", "hpShadow", "hpColor",
             "hpAnchor", "hpOffsetX", "hpOffsetY",
         })
+        BarPins(hpTextVis, "hp", "hpShow", "Health text")
         BarSub(hpTextVis, "Health text 2", "text",
             { "hp2Format", "hp2Size", "hp2Color", "hp2Anchor", "hp2OffsetX", "hp2OffsetY" })
         BarSub(hpTextVis, "Health text 3", "text",
@@ -10028,6 +10296,7 @@ local function BuildBarPane()
         if list then
             for _, f in ipairs(rest) do list[#list + 1] = f end
         end
+        BarPins(nameVis, "name", "nameShow", "Name text")
         PushBar(pg, SelBar, "text", nameVis)
     end
     PushBar(pg, SelBar, "text", BarBlock("Ready", "text", "Text", {
@@ -10090,6 +10359,10 @@ local function BuildBarPane()
     end
     -- Show & Hide > Fade When: the fade rules.
     VisibilityRows(pg, SelBar, BarPane("Fade When", "Show & Hide"))
+    -- Show & Hide > Blizzard's Bar (resource bars): the game's own class bar,
+    -- faded while this bar is loaded. Per bar: no push bar.
+    BarBlock("Blizzard's Bar", "resource", "Show & Hide", { "hideBlizzard" },
+        function(r) return Schema.HasBlizzardBar(r) end)
 
     -- Heals & Shields (health bars): one page of titled sections, one per
     -- overlay, and one push bar. A health bar's colour is on Fill & Colors and
@@ -10374,6 +10647,8 @@ local function BuildAddWindow()
     if Options.TextureAddRows then TABS[#TABS + 1] = "Texture" end
     -- a wheel's tab (UI\AD_WheelOptions.lua)
     if Options.WheelAddRows then TABS[#TABS + 1] = "Wheel" end
+    -- a Sound item's tab (UI\AD_SoundOptions.lua)
+    if Options.SoundAddRows then TABS[#TABS + 1] = "Sound" end
     if Options.SpecialAddTab then Options.SpecialAddTab(TABS) end
     -- Opened for a Reminder group it makes a reminder: one tab, and the icon
     -- form's spell and item rows (addState.remGroupId).
@@ -10432,6 +10707,9 @@ local function BuildAddWindow()
             items[#items + 1] = { value = "enchant", text = "Weapon Enchant" }
             -- a Custom Icon: rules on plain events drive it (its engine loads first)
             if NS.DriverCustom then items[#items + 1] = { value = "timer", text = "Custom Icon" } end
+            -- a Special Aura (retail), the Special tab's grid under it
+            local SO = Options.Special
+            if SO and SO.On and SO.On() then items[#items + 1] = { value = "special", text = "Special Aura" } end
             -- opened from a group's "+": only the kinds that group takes
             local g = addState.groupOnly and addState.destGroupId and Store.Get(addState.destGroupId)
             if g then
@@ -10619,6 +10897,9 @@ local function BuildAddWindow()
             end
             -- a Custom Bar: rules on plain events drive it (its engine loads first)
             if NS.DriverCustom then items[#items + 1] = { value = "timer", text = "Custom Bar" } end
+            -- a Special Aura's deck bar (retail), the Special tab's grid under it
+            local SO = Options.Special
+            if SO and SO.On and SO.On() then items[#items + 1] = { value = "special", text = "Special Aura (deck bar)" } end
             return items
         end,
         isCat("Bar"))
@@ -10969,13 +11250,18 @@ local function BuildAddWindow()
     if Options.TextAddRows then Options.TextAddRows(pg, addWin, addState) end
     if Options.TextureAddRows then Options.TextureAddRows(pg, addWin, addState) end
     if Options.WheelAddRows then Options.WheelAddRows(pg, addWin, addState) end
+    if Options.SoundAddRows then Options.SoundAddRows(pg, addWin, addState) end
 
     -- only icons pick a destination: bars are always free, groups have none
     AT.RowDropdown(pg, addWin, "Add to",
         function() return addState.destGroupId or 0 end,
         function(v) addState.destGroupId = v ~= 0 and v or nil AT.LayoutPage(pg) end,
         AddDestItems,
-        function() return (addState.cat == "Icon" or addState.cat == "Special") and not addState.remGroupId end)
+        function()
+            -- a Special tab pick made as a deck bar is a bar: always free
+            if addState.cat == "Special" and Options.SpecialMakesBar and Options.SpecialMakesBar(addState) then return false end
+            return (addState.cat == "Icon" or addState.cat == "Special") and not addState.remGroupId
+        end)
     -- The Dynamic aura-group play-mode limit, said before the icon is made.
     AT.RowDesc(pg, "A Dynamic aura group only tracks you, your pet and your target.", 20,
         function()
@@ -11004,7 +11290,11 @@ local function BuildAddWindow()
         if addState.cat == "Group" and addState.groupKind == "missing" then
             return Options.MissingBuffsCanCreate ~= nil and Options.MissingBuffsCanCreate(addState)
         end
-        if addState.cat == "Special" then return Options.SpecialCanCreate ~= nil and Options.SpecialCanCreate(addState) end
+        -- a Special Aura, from its tab or as an icon or bar kind
+        if addState.cat == "Special" or (addState.cat == "Icon" and addState.iconKind == "special")
+            or (addState.cat == "Bar" and addState.barKind == "special") then
+            return Options.SpecialCanCreate ~= nil and Options.SpecialCanCreate(addState)
+        end
         if addState.cat == "Icon" then
             local ik = addState.iconKind or "spell"
             if ik == "spell" then return (addState.spellID or "") ~= "" end
@@ -11038,6 +11328,8 @@ local function BuildAddWindow()
             return Options.TextureCanCreate ~= nil and Options.TextureCanCreate(addState)
         elseif addState.cat == "Wheel" then
             return Options.WheelCreate ~= nil
+        elseif addState.cat == "Sound" then
+            return Options.SoundCreate ~= nil
         end
         return true
     end
@@ -11175,7 +11467,8 @@ local function BuildAddWindow()
         elseif iconKind == "timer" then
             local rec = Options.CustomCreate and Options.CustomCreate(addState, dest, layoutId)
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
-        elseif addState.cat == "Special" then
+        elseif addState.cat == "Special" or iconKind == "special"
+            or (addState.cat == "Bar" and addState.barKind == "special") then
             local rec = Options.SpecialCreate and Options.SpecialCreate(addState, dest, layoutId)
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
         elseif addState.cat == "Bar" then
@@ -11273,6 +11566,13 @@ local function BuildAddWindow()
                 ExpandedSet()[layoutId] = true
                 Options.Select("bar", rec.id)
             end
+        elseif addState.cat == "Sound" then
+            local rec = Options.SoundCreate and Options.SoundCreate(addState, layoutId)
+            if rec then
+                addWin:Hide()
+                ExpandedSet()[layoutId] = true
+                Options.Select("bar", rec.id)
+            end
         elseif addState.cat == "Group" and addState.groupKind == "missing" then
             Options.MissingBuffsCreate(addState, layoutId, function() AT.LayoutPage(pg) end, function(rec)
                 AT.LayoutPage(pg)
@@ -11340,6 +11640,12 @@ function Options.SelectIconHome(rec)
         ui.selRemId, ui.grpMode = rec.id, "rem"
         ExpandedSet()[rec.groupId] = true
         Options.Select("group", rec.groupId)
+        return
+    end
+    -- a deck bar made on the Special tab opens in the bar editor
+    if rec.type == "bar" then
+        ExpandedSet()[rec.layoutId] = true
+        Options.Select("bar", rec.id)
         return
     end
     ui.selIconId = rec.id
@@ -12481,6 +12787,12 @@ function Options.Select(selType, id)
         L.Then(function() Options.Select(selType, id) end)
         return
     end
+    -- A pick before the window exists (a popup outside the panel) builds the
+    -- window first: a pane built without it has no parent and covers the screen.
+    if not win then
+        Options.WhenBuilt(function() if win then Options.Select(selType, id) end end)
+        return
+    end
     -- an editor not built yet builds first, and the pick lands after it
     local need = (selType == "layout" or selType == "group" or selType == "free" or selType == "bar"
         or selType == "multi") and selType or nil
@@ -12598,7 +12910,7 @@ Options.Search = {
         bar = { cooldown = "cooldown bars", aura = "aura bars", timer = "custom bars",
             stack = "stack bars", swing = "swing bars", resource = "resource bars",
             health = "health bars", enchant = "enchant bars", range = "range bars",
-            text = "text elements", texture = "textures", wheel = "wheels" },
+            text = "text elements", texture = "textures", wheel = "wheels", special = "deck bars", sound = "sounds" },
         group = { aura = "aura groups", cooldown = "CD groups", reminder = "reminder groups" },
     },
     -- the ui fields a sample walk moves (put back by RestoreUI)
@@ -13558,12 +13870,18 @@ local function PanePlan(name, out, seen)
 end
 
 -- Runs fn once pane `name` exists. Inside a build, or with no loader, it
--- builds now; otherwise the loader builds it in slices behind its bar and fn
--- waits for the end.
+-- builds now; otherwise the loader builds it in slices and fn waits for the
+-- end. The loading bar is the first open's only: a pane picked later builds
+-- in a few frames, quietly.
 function Options.WhenPane(name, fn)
     local L = Options.Loader
     if L and L.Busy() and not L.InBuild() then
         L.Then(function() Options.WhenPane(name, fn) end)
+        return
+    end
+    -- never a pane before its window (see Options.Select)
+    if not win then
+        Options.WhenBuilt(function() if win then Options.WhenPane(name, fn) end end)
         return
     end
     if paneBuilt[name] == true then
@@ -13579,7 +13897,7 @@ function Options.WhenPane(name, fn)
                 Options.EnsurePane(n)
                 Options.BuildStep(i, #plan)
             end
-        end)
+        end, true)
         L.Then(fn)
     end
 end

@@ -98,18 +98,20 @@ end
 
 -- Starts `build` as a coroutine resumed once per frame. coroutine.wrap lets an
 -- error in the build reach the normal error handler, nothing catches it.
-function Loader.Start(build)
+-- quiet: a pane built after the first open, a few frames at most, so no bar.
+function Loader.Start(build, quiet)
     if step then return end
     step = coroutine.wrap(function()
         co = coroutine.running()
         build()
         return true
     end)
+    Loader.quiet = quiet == true
     Options.ApplySavedScale()
     EnsureView()
     view:SetScale(AT.FitScale(VIEW_W, VIEW_H))
     Loader.Paint(0, 1)
-    view:Show()
+    view:SetShown(not Loader.quiet)
     driver = driver or CreateFrame("Frame")
     driver:SetScript("OnUpdate", Tick)
 end
@@ -120,7 +122,7 @@ function Loader.InBuild() return co ~= nil and coroutine.running() == co end
 function Loader.Then(fn)
     after[#after + 1] = fn
     -- a new open after a cancel shows the bar again
-    if step and view then view:Show() end
+    if step and view and not Loader.quiet then view:Show() end
 end
 
 -- The player closed it while it loaded: drop the queued work, keep building

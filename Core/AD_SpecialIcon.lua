@@ -9,12 +9,10 @@ NS.SpecialIcon = SI
 
 SI.live = {}   -- [recId] = { rec, f, id, read, sure, cdKey }
 
--- the registry entries whose icon is a spell id; the rest are file ids or paths
-SI.ICON_IS_SPELL = { tempest = true, elemtempest = true, pi = true }
-
 -- the tokens that make a label the proc count, and the one that makes it the chance
 local PROC_TOKENS = { procs = true, procsLeft = true, count = true }
-local SUFFIX = { "", "2", "3" }
+-- custom texts 1 to 3, then the special icon's own slots 4 to 6 (proc count, chance, violations)
+local SUFFIX = { "", "2", "3", "4", "5", "6" }
 
 local function Hub() return NS.Special end
 
@@ -29,13 +27,14 @@ function SI.Def(rec)
     return (SP and id) and SP.Get(id) or nil
 end
 
--- The tracker's own art: a spell's texture, a file id, or a path.
+-- The tracker's own art: a path, or a number tried as a spell first and then
+-- as a file, as ProcTracker drew it.
 function SI.ArtOf(def)
     if not def then return nil end
     local icon = def.icon
     if type(icon) == "string" then return icon end
     if type(icon) ~= "number" then return nil end
-    if SI.ICON_IS_SPELL[def.id] and C_Spell and C_Spell.GetSpellTexture then
+    if C_Spell and C_Spell.GetSpellTexture then
         return C_Spell.GetSpellTexture(icon) or icon
     end
     return icon
@@ -145,8 +144,9 @@ function SI.ChanceColor(rec, read)
         local pct = tonumber(read.chance) or 0
         local low = tonumber(Store.Resolve(rec, "special", "chanceLowPct")) or 3
         local high = tonumber(Store.Resolve(rec, "special", "chanceHighPct")) or 10
-        if pct < low then return Color(Store.Resolve(rec, "special", "chanceColdColor"), { 0.6, 0.6, 0.6 }) end
+        -- the hot cut first, as ProcTracker reads them, so crossed cuts agree too
         if pct >= high then return Color(Store.Resolve(rec, "special", "chanceHotColor"), { 0, 1, 0 }) end
+        if pct < low then return Color(Store.Resolve(rec, "special", "chanceColdColor"), { 0.6, 0.6, 0.6 }) end
         return Color(Store.Resolve(rec, "special", "chanceMidColor"), { 1, 0.82, 0 })
     end
     return nil
@@ -192,6 +192,36 @@ local function PaintSwipe(e, read, def)
     end
 end
 
+-- A tracker that cannot read what it counts says so on the icon, as
+-- ProcTracker did: a yellow tint and "!" over the art (never on text only).
+local function PaintWarn(f, rec, on)
+    on = on and NS.Store.Resolve(rec, "appearance", "forceHideIcon") ~= true
+    local w = f._adSpecialWarn
+    if not on then
+        if w then w:Hide() end
+        return
+    end
+    if not w then
+        w = CreateFrame("Frame", nil, f)
+        w:EnableMouse(false)
+        local tint = w:CreateTexture(nil, "OVERLAY")
+        tint:SetAllPoints()
+        tint:SetColorTexture(1, 0.85, 0, 0.25)
+        local mark = w:CreateFontString(nil, "OVERLAY")
+        mark:SetFont(STANDARD_TEXT_FONT, 22, "OUTLINE")
+        mark:SetPoint("CENTER")
+        mark:SetTextColor(1, 0.85, 0, 1)
+        mark:SetText("!")
+        f._adSpecialWarn = w
+    end
+    w:ClearAllPoints()
+    w:SetAllPoints(f.icon or f)
+    -- over the art and the swipe, under the glows and texts
+    local lvl = f:GetFrameLevel()
+    if type(lvl) == "number" and not (issecretvalue and issecretvalue(lvl)) then w:SetFrameLevel(lvl + 3) end
+    w:Show()
+end
+
 local function PlayAlert(rec, enKey, soundKey)
     local D = NS.DriverCooldown
     if D and D.PlayAlert then D.PlayAlert(rec, enKey, soundKey) end
@@ -205,8 +235,9 @@ function SI.Paint(e)
     if f.stackText and Store.Resolve(rec, "text", "stackText") ~= false then
         f.stackText:SetText(SI.Expand(SI.StackTemplate(rec, def), read, rec, def))
     end
-    for i = 1, 3 do PaintLabel(f, i, rec, read, def) end
+    for i = 1, #SUFFIX do PaintLabel(f, i, rec, read, def) end
     PaintSwipe(e, read, def)
+    PaintWarn(f, rec, read.cdmWarn == true)
     local spent = SI.Spent(read, def)
     if Factory and Factory.SetState then Factory.SetState(f, rec, spent, spent) end
     -- the "guaranteed next" edge: never on the first paint
@@ -250,6 +281,8 @@ function SI.Detach(id)
     local e = SI.live[id]
     if not e then return end
     SI.live[id] = nil
+    -- the frame may serve another icon next
+    if e.f and e.f._adSpecialWarn then e.f._adSpecialWarn:Hide() end
     local SP = Hub()
     if SP then SP.Detach(id) end
 end

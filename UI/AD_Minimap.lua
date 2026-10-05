@@ -11,7 +11,9 @@ local btn
 
 local function Angle()
     local a = NS.Store and NS.Store.GetSetting and NS.Store.GetSetting("minimapAngle")
-    return (type(a) == "number") and a or 220
+    if type(a) == "number" then return a end
+    -- retail ArcUI's button sits near 225
+    return NS.IsForever and 220 or 195
 end
 
 local function Reposition(angle)

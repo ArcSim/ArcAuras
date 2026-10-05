@@ -116,9 +116,9 @@ Driver.LaneOf = LaneOf
 
 -- "You, then your target", the Cooldown Manager's rule: your buff on you, and
 -- while you have none, the aura on your target. Your button sits RISE levels
--- above the target's (button, swipe and texts each take one), so it covers it
--- whenever both are up; presence is never read.
-local RISE = 3
+-- above the target's (one over its whole stack: Factory.BUTTON_STACK.gate + 1),
+-- so it covers it whenever both are up; presence is never read.
+local RISE = 11
 Driver.RISE = RISE
 
 local function TwoUnits(d)
@@ -486,9 +486,18 @@ local function ArmTargetSwapRefresh()
                 rc.frame:UpdateAllAuras()
             end
         end
+        Driver.SyncUnitAlpha(unit)
     end
     OnIfValid("PLAYER_TARGET_CHANGED", "adaura_swap", function() Refresh("target") end)
     OnIfValid("PLAYER_FOCUS_CHANGED", "adaura_swap", function() Refresh("focus") end)
+    if NS.OldAuraEngine then
+        -- 12.1.0 containers never re-read a side change (a duel, mind control) themselves
+        local function Turned(_, unit)
+            if unit == "target" or unit == "focus" then Refresh(unit) end
+        end
+        OnIfValid("UNIT_FACTION", "adaura_swap", Turned)
+        OnIfValid("UNIT_FLAGS", "adaura_swap", Turned)
+    end
     OnIfValid("UNIT_PET", "adaura_swap", function(_, unit)
         if unit == nil or unit == "player" then Refresh("pet") end
     end)
@@ -593,8 +602,9 @@ end
 -- Exported: aura group rows wire their engine buttons with the same recipe.
 Driver.WireButton = WireButton
 
--- Ladder over the holder (Factory.AURA_LADDER: the missing look's border and
--- labels +1, its glows +2): button +3, swipe +4, texts +5, time-left bar +6.
+-- Ladder over the holder (Factory.AURA_LADDER: the missing look's border +1,
+-- glows +2, texts +3): the button +4, then its stack (Factory.BUTTON_STACK):
+-- swipe, its glows, texts over them, the time-left bar over those.
 -- Anchored two-point, never reparented; re-asserted because holder levels move
 -- on reparenting and children do not follow a parent's SetFrameLevel. `lift`
 -- adds one for a spell overlay, leaving +3 for the spell's charge count.
@@ -608,9 +618,10 @@ local function AnchorButton(b, holder, lift)
     -- A plain copy for the glow host's level: a read off the button can be
     -- secret inside the create window.
     b._adLevel = lvl
-    if b._adSwipe then b._adSwipe:SetFrameLevel(lvl + 1) end
-    if b.TextOverlay then b.TextOverlay:SetFrameLevel(lvl + 2) end
-    if b._adTimeGate then b._adTimeGate:SetFrameLevel(lvl + 3) end
+    local S = Factory.BUTTON_STACK
+    if b._adSwipe then b._adSwipe:SetFrameLevel(lvl + S.swipe) end
+    if b.TextOverlay then b.TextOverlay:SetFrameLevel(lvl + S.text) end
+    if b._adTimeGate then b._adTimeGate:SetFrameLevel(lvl + S.gate) end
 end
 -- Exported: the editor preview's stand-in button takes the same ladder.
 Driver.AnchorButton = AnchorButton
@@ -860,6 +871,21 @@ local function IsAccessible(b)
 end
 Driver.IsAccessible = IsAccessible
 
+-- 12.1.0 skips the spell-ID filter on a debuff of a unit you can assist and on
+-- a buff of one you cannot, then shows whatever aura comes first (12.1.5 shows
+-- nothing there). Such a target or focus lane stays hidden until the unit turns.
+local function LaneBlind(unit, harmful, rec)
+    if not NS.OldAuraEngine or (unit ~= "target" and unit ~= "focus") then return false end
+    if not (UnitExists and UnitCanAssist) then return false end
+    local on = UnitExists(unit)
+    if (issecretvalue and issecretvalue(on)) or on ~= true then return false end
+    local assist = UnitCanAssist("player", unit, true, true)
+    if issecretvalue and issecretvalue(assist) then return false end
+    if (assist == true) ~= (harmful == true) then return false end
+    return not Driver.IDsNeverSecret(ShapeFor(rec) or {})
+end
+Driver.LaneBlind = LaneBlind
+
 -- The button hangs off its container, not the holder, so the container mirrors the holder's alpha.
 local function SyncEntryAlpha(entry)
     local holder = entry.holder
@@ -879,7 +905,9 @@ local function SyncEntryAlpha(entry)
         entry.stage:SetAlpha((vis and entry.staged) and ea or 0)
     end
     for _, sub in ipairs(entry.subs) do
-        if sub.inStage then
+        if LaneBlind(sub.unit, sub.harmful, entry.rec) then
+            sub.container:SetAlpha(0)
+        elseif sub.inStage then
             sub.container:SetAlpha(a > 0 and 1 or 0)
         else
             sub.container:SetAlpha(a)
@@ -891,13 +919,28 @@ local function SyncEntryAlpha(entry)
         local rec = entry.rec
         local suf = (g.slot > 1) and tostring(g.slot) or ""
         local ga = a
-        if not GlowIDs(rec, g.slot) then
+        if not GlowIDs(rec, g.slot) or LaneBlind(g.unit, g.harmful, rec) then
             ga = 0
         elseif not GlowsForCombat()
             and Store.Resolve(rec, "auraActive", "activeGlowCombatOnly" .. suf) == true then
             ga = 0
         end
         g.container:SetAlpha(ga)
+    end
+end
+
+-- A target or focus swap, or its side turning, on 12.1.0: re-judge its lanes.
+function Driver.SyncUnitAlpha(unit)
+    if not NS.OldAuraEngine then return end
+    for _, entry in pairs(entries) do
+        if entry.holder and not entry.off then
+            for _, sub in ipairs(entry.subs) do
+                if sub.unit == unit then
+                    SyncEntryAlpha(entry)
+                    break
+                end
+            end
+        end
     end
 end
 

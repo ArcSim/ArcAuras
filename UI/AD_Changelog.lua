@@ -1,6 +1,7 @@
 -- What's New window. On Forever it opens by itself once per base version;
--- retail ArcUI shows its own. State lives in Store.UI(), so marking a version
--- seen doesn't dirty the store into a full rebuild.
+-- retail ArcUI shows its own, and on retail this window and Home read the
+-- retail notes. State lives in Store.UI(), so marking a version seen doesn't
+-- dirty the store into a full rebuild.
 
 local ADDON, NS = ...
 local AT = NS.AT
@@ -11,6 +12,48 @@ NS.Changelog = CL
 
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
+    {
+        version = "2.2.0",
+        intro = "Texts you can pin anywhere, a Sound item, a tidier Home page and pixel-perfect spacing.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Pin any text",
+                    desc = "Stack counts, custom texts, keybinds and bar texts can sit on an action button or any named frame." },
+                { title = "Sound item",
+                    desc = "A sound or spoken line with nothing on screen, on the same triggers as Custom Icons, a condition, or an aura gained, stacking or fading." },
+                { title = "A look per form or talent",
+                    desc = "A resource bar can keep its own colors, texts and ticks for each druid form, or with and without a talent." },
+                { title = "New conditions",
+                    desc = "You have aggro, High threat and Raid encounter, for Load When, Fade When and Sound items." },
+                { title = "Shaman layout",
+                    desc = "Emity's Shaman layout joins the Layout Spotlight, and Emity's other layouts have an update." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Home page",
+                    desc = "Updates show one at a time beside your layouts, with Update all, and the Layout Spotlight follows your layouts." },
+                { title = "A font per text",
+                    desc = "Custom texts 2 and 3 can each use their own font." },
+                { title = "Talents on the tree",
+                    desc = "A Custom Icon rule's talent and a bar's talent look are picked on the same talent tree as Load Conditions." },
+                { title = "Custom Icon preview",
+                    desc = "Shows the Active and Not active looks and a timer loop." },
+                { title = "Quicker options",
+                    desc = "Only the first open shows the loading bar." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Pixel-perfect spacing",
+                    desc = "Every gap between icons, groups and bars is the same whole number of pixels at any UI scale, and nothing shifts when you log in, change your resolution or UI scale, or open and close the options." },
+                { title = "Centered aura rows",
+                    desc = "Icons in Dynamic aura groups sit exactly in the middle of their row, with no gap where an aura is missing." },
+                { title = "Texts over glows",
+                    desc = "Custom texts, keybinds, stack counts and durations draw above the icon's glows." },
+                { title = "Hidden icons stay hidden",
+                    desc = "A state at 0% opacity now hides the icon's glows too." },
+                { title = "Sound pick",
+                    desc = "The sound list under a state no longer runs past the window." },
+            } },
+        },
+    },
     {
         version = "2.1.0",
         intro = "A Home page, the Conditions tab, more layout packs and a Missing Buffs group.",
@@ -622,7 +665,50 @@ CL.versions = {
         },
     },
 }
+CL.retailVersions = {
+    {
+        version = "2.2.0",
+        intro = "The first retail release of Arc Auras. Feedback is welcome on Discord.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Arc Auras on retail",
+                    desc = "Icons, icon groups and bars for your cooldowns, auras and resources, set up from one panel." },
+                { title = "Import from ArcUI ProcTracker",
+                    desc = "Bring your trackers over, switched-off ones too, with the same looks, sounds and counts. Each one you import is switched off in ArcUI ProcTracker, so nothing shows twice. Arc Auras offers it when it finds ProcTracker set up." },
+                { title = "Special Auras",
+                    desc = "Doom Winds, Tempest, Storm Unleashed, Elemental Tempest, Deeply Rooted Elements, Soulburst, Nature's Guardian and Power Infusion, as icons or deck bars. Talent decks load only with their talent." },
+                { title = "Pin any text",
+                    desc = "Stack counts, custom texts, keybinds and bar texts can sit on an action button, a Cooldown Manager icon or any named frame." },
+                { title = "Cooldown ID pins",
+                    desc = "Pin to one exact Cooldown Manager icon, even when two icons share a spell." },
+                { title = "Resource bars",
+                    desc = "Rune and Essence recharge countdowns, bar-style slots, charged combo points, fold in half, and an option to hide Blizzard's class bar." },
+                { title = "A look per form, spec or talent",
+                    desc = "A resource bar can keep its own colors, texts and ticks for each druid form, each spec, or with and without a talent." },
+                { title = "Sound item",
+                    desc = "A sound or spoken line with nothing on screen, on the same triggers as Custom Icons, a condition, or an aura gained, stacking or fading." },
+                { title = "Conditions",
+                    desc = "Load, fade or play a sound by combat, aggro, mounted, group, instance, raid encounter and more." },
+                { title = "Charge spells",
+                    desc = "Their states read Ready, Recharging and Depleted." },
+                { title = "Totem slots",
+                    desc = "An empty slot shows the totem icon." },
+            } },
+            { header = "Known Issues", items = {
+                { title = "Waiting for patch 12.1.5",
+                    desc = "Debuff-colored borders, stack colors on aura bars and debuff type looks are hidden until then." },
+                { title = "Sound item aura rules",
+                    desc = "Until patch 12.1.5, Quiet for does not limit them, so they play every time." },
+                { title = "/arcauras",
+                    desc = "With ArcUI installed, /arcauras opens ArcUI. Use /arcui2 instead." },
+            } },
+        },
+    },
+}
 -- @whatsnew-end
+
+-- Retail shows its own notes; everything older is Forever's history.
+if not NS.IsForever and CL.retailVersions then CL.versions = CL.retailVersions end
 
 function CL.CurrentVersion()
     local v = C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version")

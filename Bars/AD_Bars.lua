@@ -16,7 +16,8 @@ NS.Bars = Bars
 -- after the built-in kinds. Optional fields: Build(e) (widgets, once per entry,
 -- live and preview), Ensure(e) (after ApplyStyle), Refresh(e), Relayout(e)
 -- (size change), Release(e) (after leaving `live`), TickUnit(e) -> max,
--- integerUnit, ownsName (writes the Name text itself), Styled(e) (end of
+-- integerUnit, TickFractions(e) -> the marks themselves (fractions from the
+-- fill's start, nil = none), ownsName (writes the Name text itself), Styled(e) (end of
 -- ApplyStyle), Diag(e) -> one /adbars diag line, PreviewModes(rec),
 -- PreviewBuild(e), PreviewApply(e, loop, t, fresh).
 Bars.KINDS = {}
@@ -369,7 +370,8 @@ local function StackLayerPlan(rec, maxStacks, segmented)
             end
         end
     end
-    if R(rec, "stackcolors", "maxColorEnabled") == true then
+    -- 12.1.0 has no applications window, so a max layer would paint from zero
+    if R(rec, "stackcolors", "maxColorEnabled") == true and not NS.OldAuraEngine then
         -- continuous: the whole fill at max; segmented: the last segment
         layers[#layers + 1] = { kind = "max", minA = M - 1, maxA = M,
             x0 = segmented and (M - 1) / M or 0, x1 = 1,
@@ -466,35 +468,36 @@ local function TickFractions(rec, unitMax, integerUnit, costs)
 end
 Bars.TickFractions = TickFractions
 
--- Text runs: flat-prefixed fields in Schema.bar.text
+-- Text runs: flat-prefixed fields in Schema.bar.text. pin: the run whose
+-- PinTo / PinTarget it follows (Ready and texts 2 and 3 ride with their first).
 
 local TEXT_DEFS = {
-    { key = "dur",   show = "durShow",   size = "durSize",   anchor = "durAnchor",
+    { key = "dur",   pin = "dur", show = "durShow",   size = "durSize",   anchor = "durAnchor",
       x = "durOffsetX", y = "durOffsetY", colour = "durColor", outline = "durOutline", shadow = "durShadow" },
-    { key = "stk",   show = "stkShow",   size = "stkSize",   anchor = "stkAnchor",
+    { key = "stk",   pin = "stk", show = "stkShow",   size = "stkSize",   anchor = "stkAnchor",
       x = "stkOffsetX", y = "stkOffsetY", colour = "stkColor", outline = "stkOutline", shadow = "stkShadow" },
-    { key = "name",  show = "nameShow",  size = "nameSize",  anchor = "nameAnchor",
+    { key = "name",  pin = "name", show = "nameShow",  size = "nameSize",  anchor = "nameAnchor",
       x = "nameOffsetX", y = "nameOffsetY", colour = "nameColor", outline = "nameOutline", shadow = "nameShadow" },
     -- ready shares the duration text's styling
-    { key = "ready", show = "readyShow", size = "durSize",   anchor = "durAnchor",
+    { key = "ready", pin = "dur", show = "readyShow", size = "durSize",   anchor = "durAnchor",
       x = "durOffsetX", y = "durOffsetY", colour = "readyColor", outline = "durOutline", shadow = "durShadow" },
     -- own run: a resource bar has no duration run to borrow and no stack run
-    { key = "res",   show = "resShow",   size = "resSize",   anchor = "resAnchor",
+    { key = "res",   pin = "res", show = "resShow",   size = "resSize",   anchor = "resAnchor",
       x = "resOffsetX", y = "resOffsetY", colour = "resColor", outline = "resOutline", shadow = "resShadow" },
-    { key = "hp",    show = "hpShow",    size = "hpSize",    anchor = "hpAnchor",
+    { key = "hp",    pin = "hp", show = "hpShow",    size = "hpSize",    anchor = "hpAnchor",
       x = "hpOffsetX", y = "hpOffsetY", colour = "hpColor", outline = "hpOutline", shadow = "hpShadow" },
     -- Texts 2 and 3 of a resource or health bar, shown while its text count
     -- reaches them; they share text 1's outline and shadow.
-    { key = "res2", show = "resShow", countField = "resCount", count = 2, size = "res2Size",
+    { key = "res2", pin = "res", show = "resShow", countField = "resCount", count = 2, size = "res2Size",
       anchor = "res2Anchor", x = "res2OffsetX", y = "res2OffsetY", colour = "res2Color",
       outline = "resOutline", shadow = "resShadow" },
-    { key = "res3", show = "resShow", countField = "resCount", count = 3, size = "res3Size",
+    { key = "res3", pin = "res", show = "resShow", countField = "resCount", count = 3, size = "res3Size",
       anchor = "res3Anchor", x = "res3OffsetX", y = "res3OffsetY", colour = "res3Color",
       outline = "resOutline", shadow = "resShadow" },
-    { key = "hp2", show = "hpShow", countField = "hpCount", count = 2, size = "hp2Size",
+    { key = "hp2", pin = "hp", show = "hpShow", countField = "hpCount", count = 2, size = "hp2Size",
       anchor = "hp2Anchor", x = "hp2OffsetX", y = "hp2OffsetY", colour = "hp2Color",
       outline = "hpOutline", shadow = "hpShadow" },
-    { key = "hp3", show = "hpShow", countField = "hpCount", count = 3, size = "hp3Size",
+    { key = "hp3", pin = "hp", show = "hpShow", countField = "hpCount", count = 3, size = "hp3Size",
       anchor = "hp3Anchor", x = "hp3OffsetX", y = "hp3OffsetY", colour = "hp3Color",
       outline = "hpOutline", shadow = "hpShadow" },
 }
@@ -577,6 +580,8 @@ local OUTER_POINTS = {
     OUTERTOPLEFT = { "BOTTOMLEFT", "TOPLEFT" }, OUTERTOPRIGHT = { "BOTTOMRIGHT", "TOPRIGHT" },
     OUTERBOTTOMLEFT = { "TOPLEFT", "BOTTOMLEFT" }, OUTERBOTTOMRIGHT = { "TOPRIGHT", "BOTTOMRIGHT" },
 }
+-- a kind's pinned text keeps the same point pairs (Bars\AD_SpecialBar.lua)
+Bars.OUTER_POINTS = OUTER_POINTS
 local function PlaceText(fs, host, anchor, x, y)
     fs:ClearAllPoints()
     local o = OUTER_POINTS[anchor]
@@ -673,8 +678,19 @@ local function ApplyTexts(entry)
                     R(rec, "text", def.shadow) == true)
                 local c = R(rec, "text", def.colour) or { 1, 1, 1, 1 }
                 fs:SetTextColor(c[1], c[2], c[3], c[4] or 1)
-                PlaceText(fs, shell.overlay, R(rec, "text", def.anchor) or "CENTER",
-                    R(rec, "text", def.x), R(rec, "text", def.y))
+                local an = R(rec, "text", def.anchor) or "CENTER"
+                local tx, ty = R(rec, "text", def.x) or 0, R(rec, "text", def.y) or 0
+                -- a run may ride another frame (Core\AD_TextAnchor.lua); the
+                -- editor's preview bar always keeps it on the bar
+                local TA = (not entry.isPreview) and NS.TextAnchor or nil
+                if TA then
+                    local o = OUTER_POINTS[an]
+                    TA.Place(fs, shell, "bar:" .. def.key, R(rec, "text", def.pin .. "PinTo"),
+                        R(rec, "text", def.pin .. "PinTarget"), o and o[1] or an, o and o[2] or an, tx, ty,
+                        function() PlaceText(fs, shell.overlay, an, tx, ty) end)
+                else
+                    PlaceText(fs, shell.overlay, an, tx, ty)
+                end
                 fs:Show()
             else
                 fs:SetText("")
@@ -2027,6 +2043,11 @@ local POWER_ALL = {
     [19] = { token = "ESSENCE",        name = "Essence",        color = { 0, 0.8, 0.8 },         frequent = true },
     -- stagger: a pseudo id (no Enum.PowerType), read against the player's health
     [100] = { token = "STAGGER",       name = "Stagger",        color = { 0.52, 1, 0.52 } },
+    -- pseudo ids for the resources the game keeps as an aura or a spell count
+    -- (Bars\AD_ResourcePowers.lua reads them); their tokens never match a power event
+    [101] = { token = "MAELSTROM_WEAPON", name = "Maelstrom Weapon", color = { 0, 0.5, 1 } },
+    [102] = { token = "SOUL_FRAGMENTS",   name = "Soul Fragments",   color = { 0.34, 0.06, 0.46 } },
+    [103] = { token = "SOUL_FRAGMENTS_DEVOURER", name = "Soul Fragments", color = { 0.35, 0.25, 0.73 } },
 }
 Bars.POWER_ALL = POWER_ALL
 -- seconds after your cast for the second combo point read (a late server update)
@@ -2105,6 +2126,8 @@ local function TickUnit(entry)
         return tonumber(rec.driver and rec.driver.duration), true
     elseif kind == "resource" then
         local range = Bars.PlainMax(entry)
+        -- folded: "Every point" marks the half the fill shows
+        if Bars.ResCells then range = Bars.ResCells.FillRange(entry, range) end
         return range, true, ResourceCostFractions and ResourceCostFractions(entry, range) or nil
     elseif kind == "health" then
         -- health points: the plain cached max (custom ticks typed in health
@@ -2254,6 +2277,8 @@ local function LayoutTicks(entry)
         local unitMax, integerUnit, costs = TickUnit(entry)
         fracs = TickFractions(rec, unitMax, integerUnit, costs)
     end
+    -- a kind in its own file may hand its own marks (a deck bar's procs)
+    local KT = Bars.KINDS[entry.kind]; if KT and KT.TickFractions then fracs = KT.TickFractions(entry) end
     if not fracs then
         for _, t in ipairs(pool) do t:Hide() end
         entry.tickCount = 0
@@ -2543,6 +2568,12 @@ local function ResourceRunText(entry, key, fmt, cur, range)
         SetRunText(shell, key, "")
         return
     end
+    -- Destruction's shards in tenths ("3.4"); whole shards when that fails
+    local RP = Bars.ResPowers
+    if (fmt == "value" or fmt == "valuemax") and RP and RP.Decimal(entry)
+        and RP.ShardText(shell.texts[key], range, fmt == "valuemax") then
+        return
+    end
     if fmt == "abbreviated" and AbbreviateNumbers then
         SetRunText(shell, key, AbbreviateNumbers(cur))   -- takes secrets
         return
@@ -2667,7 +2698,11 @@ local function PaintPips(entry)
         local pr, pg, pb, pa = PipColor(entry, i, n, r, g, b, a)
         p.litBar:SetStatusBarColor(pr, pg, pb, pa)
         p.dim:SetVertexColor(pr, pg, pb, tint)
+        -- kept for the recharging shade (runes, essence), which repaints after this
+        p.pr, p.pg, p.pb, p.pa, p.tinted = pr, pg, pb, pa, nil
     end
+    -- second laps and charged points paint over these
+    if Bars.ResCells then Bars.ResCells.Painted(entry) end
 end
 
 -- Geometry, dress and shape for every cell, on size or setting changes only:
@@ -2679,11 +2714,14 @@ local function LayoutPips(entry)
     if not on then
         for _, p in ipairs(entry.pips or {}) do p.f:Hide() end
         entry.pipCount = 0
+        -- bar style: recharge slots, charged marks, the fold's second lap
+        if Bars.ResCells then Bars.ResCells.BarLaid(entry) end
         return
     end
     local fill = shell.fill
     local range = Bars.PlainMax(entry)
     local n = ResourceSegmentCount(entry, range)
+    if Bars.ResCells then n = Bars.ResCells.CellCount(entry, n) end   -- half when folded
     if n > 20 then n = 20 elseif n < 1 then n = 1 end
     local vertical = (R(rec, "fill", "orientation") or "HORIZONTAL") == "VERTICAL"
     local rev = R(rec, "fill", "reverseFill") == true
@@ -2717,8 +2755,11 @@ local function LayoutPips(entry)
                 local pt, relTo, relPt, ox, oy = holder:GetPoint(1)
                 local l, b = holder:GetLeft(), holder:GetBottom()
                 if pt and relTo and l and b then
-                    local dx = l - math.floor(l / px + 0.5) * px
-                    local dy = b - math.floor(b / px + 0.5) * px
+                    -- the engine's rounding, where a half-pixel tie never flips
+                    local LE = NS.LayoutEngine
+                    local Round = (LE and LE.PixRound) or function(v, p) return math.floor(v / p + 0.5) * p end
+                    local dx = l - Round(l, px)
+                    local dy = b - Round(b, px)
                     if dx ~= 0 or dy ~= 0 then
                         holder:SetPoint(pt, relTo, relPt, (ox or 0) - dx, (oy or 0) - dy)
                     end
@@ -2860,6 +2901,8 @@ local function LayoutPips(entry)
     end
     for i = n + 1, #(entry.pips or {}) do entry.pips[i].f:Hide() end
     entry.pipCount = n
+    -- each cell's extra layers (recharge text, second lap) before the paint
+    if Bars.ResCells then Bars.ResCells.PipsLaid(entry) end
     PaintPips(entry)
     if Bars.ResPowers then Bars.ResPowers.PipsLaid(entry) end   -- re-windowed rune cells feed again
 end
@@ -2887,12 +2930,16 @@ local function ResourceRefresh(entry)
             ApplyVisibility(entry)
         end
     end
-    local range = cachedMax[pt] or 100
+    -- no plain max read yet: a point power's own count, never 100 (3 holy
+    -- power would draw as 3 %)
+    local range = cachedMax[pt] or Bars.PlainMax(entry) or 100
     -- the fill's units per point: tenths for soul shards
     local scale = RP and RP.Scale(pt) or 1
     if entry.lastMax ~= range then
         entry.lastMax = range
-        shell.fill:SetMinMaxValues(0, range * scale)
+        -- folded: the fill runs to the middle, the second lap lights past it
+        local RC = Bars.ResCells
+        shell.fill:SetMinMaxValues(0, ((RC and RC.FillRange(entry, range)) or range) * scale)
         -- No dividers on a resource bar: tick marks are its per-point marks,
         -- and a pips bar draws its own cells.
         if entry.segments ~= 1 then
@@ -2909,7 +2956,11 @@ local function ResourceRefresh(entry)
         -- the alpha rides along: the pips paint from this cache
         entry.cr, entry.cg, entry.cb, entry.ca = r, g, b, a
         shell.fill:SetStatusBarColor(r, g, b, a)
-        if entry.pipsOn then PaintPips(entry) end
+        if entry.pipsOn then
+            PaintPips(entry)
+        elseif Bars.ResCells then
+            Bars.ResCells.Painted(entry)   -- the bar-style slots wear it too
+        end
         -- "colour the text too" rides the same answer, on every readout;
         -- off = each text's own colour
         local tinted = curved and R(rec, "powerthresholds", "pthText") == true
@@ -2932,6 +2983,8 @@ local function ResourceRefresh(entry)
     -- Pips keep the continuous fill empty and light their cells instead.
     if not entry.pipsOn then
         local interp = (R(rec, "fill", "smoothing") ~= false) and INTERP_SMOOTH or INTERP_NONE
+        -- under bar-style rune / essence slots the count steps, never glides
+        if Bars.ResCells and Bars.ResCells.NoSmooth(entry) then interp = INTERP_NONE end
         if interp then shell.fill:SetValue(cur, interp) else shell.fill:SetValue(cur) end
     end
     -- the readout may take another read of the same power (whole shards)
@@ -2944,6 +2997,8 @@ local function ResourceRefresh(entry)
             if p then p.litBar:SetValue(cur) end
         end
     end
+    -- second laps and charged marks take the same value
+    if Bars.ResCells then Bars.ResCells.Feed(entry, cur) end
     -- Cost icons: the value into every detector, each detector's width into its
     -- lit copy's alpha (never compared). The width moves at layout, one tick
     -- after SetValue, so it is read now and again on the next frame.
@@ -2979,6 +3034,19 @@ local function ResourceEnsure(entry)
     ApplyVisibility(entry)
     EnsurePredictEvents()
     if Bars.ResPowers then Bars.ResPowers.Sync() end
+end
+
+-- The shown power changed (a druid's form): a bar with a look per power is
+-- styled again whole, since its colors, texts and ticks may all differ; the
+-- rest only re-read their power. Not the editor's preview: it shows the look
+-- being edited.
+function Bars.FormChanged(entry)
+    local lk = entry.rec and entry.rec.looks
+    if lk and lk.by == "power" and entry.holder and not entry.isPreview then
+        Bars.EnsureBar(entry.rec, entry.holder)
+    else
+        ResourceEnsure(entry)
+    end
 end
 
 local function ResourceIsFrequent(entry)
@@ -3037,7 +3105,9 @@ function PredictLayout(entry)
     if Bars.RectHidden(shell.fill) then return end   -- pinned to a nameplate
     local cost = entry.predCost
     local tex = entry.predTex
-    if not cost or R(rec, "predict", "predictEnabled") ~= true then
+    -- a folded fill shows two laps: a cost has no single place on it
+    local folded = Bars.ResCells and Bars.ResCells.Folded(entry)
+    if not cost or folded or R(rec, "predict", "predictEnabled") ~= true then
         if tex then tex:Hide() end
         return
     end
@@ -4258,6 +4328,7 @@ local function ArmAuraTargetWatch()
                     sub.container:UpdateAllAuras()
                 end
                 AuraPresenceSync(e)
+                Bars.AuraBlindSync(e)
             end
         end)
         return settled
@@ -4281,6 +4352,14 @@ local function ArmAuraTargetWatch()
             for i = 1, 4 do SyncParks("party" .. i) end
         end)
     end
+    if NS.OldAuraEngine then
+        -- 12.1.0 containers never re-read a side change (a duel, mind control) themselves
+        local function turned(_, u)
+            if u == "target" or u == "focus" then SyncParks(u) end
+        end
+        if valid("UNIT_FACTION") then Events.On("UNIT_FACTION", "adbarsaura", turned) end
+        if valid("UNIT_FLAGS") then Events.On("UNIT_FLAGS", "adbarsaura", turned) end
+    end
     -- secrecy can lift a beat after the event: an unknown answer gets two
     -- more looks, then waits for the next swap
     Events.On("PLAYER_REGEN_ENABLED", "adbarsaura", function()
@@ -4301,7 +4380,17 @@ local function ReleaseAuraTargetWatch()
     Events.Off("PLAYER_FOCUS_CHANGED", "adbarsaura")
     Events.Off("UNIT_PET", "adbarsaura")
     Events.Off("GROUP_ROSTER_UPDATE", "adbarsaura")
+    Events.Off("UNIT_FACTION", "adbarsaura")
+    Events.Off("UNIT_FLAGS", "adbarsaura")
     Events.Off("PLAYER_REGEN_ENABLED", "adbarsaura")
+end
+
+-- 12.1.0: a target or focus lane the engine cannot filter by spell shows the
+-- first aura it finds, so the bar's engine fill hides there instead.
+function Bars.AuraBlindSync(e)
+    local sub, DA = e.auraSub, NS.DriverAura
+    if not (sub and NS.OldAuraEngine and DA and DA.LaneBlind) then return end
+    sub.container:SetAlpha(DA.LaneBlind(sub.unit, sub.harmful, e.rec) and 0 or 1)
 end
 
 -- The composition: driven widgets live on the engine's buttons.
@@ -4420,8 +4509,9 @@ local function AuraPlan(entry)
     local layers, fillColor, parts = {}, nil, {}
     if entry.mode == "stack" then
         local M = AuraMaxStacks(rec)
-        -- colour by position (each cell keeps its band) or the flip model
-        local segmented = R(rec, "stackcolors", "scPosition") ~= false
+        -- colour by position (each cell keeps its band) or the flip model; the
+        -- flip layers need 12.1.5's applications window, position ones do not
+        local segmented = NS.OldAuraEngine == true or R(rec, "stackcolors", "scPosition") ~= false
         layers, fillColor = StackLayerPlan(rec, M, segmented)
         parts[#parts + 1] = "S" .. M .. (segmented and "g" or "c")
         for _, L in ipairs(layers) do
@@ -4917,6 +5007,7 @@ local function AuraBarEnsure(entry)
         hostilePark = hostilePark, spellID = d.spellID, idSig = Bars.AuraIDSig(d),
         parked = parked, sig = wantSig, plan = plan }
     entry.auraSub = sub
+    Bars.AuraBlindSync(entry)
 
     -- Hand-over options, baked at init and in the signature: probed enum
     -- members for direction and interpolation (nil = engine default).
@@ -5026,8 +5117,9 @@ local function AuraBarEnsure(entry)
         local li = (L and L.imm) and (INTERP_NONE or interp) or interp
         if stackMode then
             local win = L and kind ~= "shade"
-            local o = { maxApplications = win and L.maxA or M,
-                minApplications = win and L.minA or 0 }
+            local o = { maxApplications = win and L.maxA or M }
+            -- 12.1.0 does not know the field; every layer it gets starts at 0
+            if not NS.OldAuraEngine then o.minApplications = win and L.minA or 0 end
             if li then o.interpolation = li end
             b:SetApplicationBar(bar, o)
         else
@@ -5224,7 +5316,7 @@ local function EnsureSharedEvents()
     -- the displayed power changed (druid form, vehicle): re-resolve the type
     SafeOn("UNIT_DISPLAYPOWER", "adbars", function(_, unit)
         if unit ~= "player" then return end
-        ForEach("resource", ResourceEnsure)
+        ForEach("resource", Bars.FormChanged)
     end)
     -- a shapeshift lands a moment before the new power's max is readable, so
     -- the form event gets one settle delay
@@ -5233,7 +5325,7 @@ local function EnsureSharedEvents()
         formPending = true
         C_Timer.After(0.1, function()
             formPending = false
-            ForEach("resource", ResourceEnsure)
+            ForEach("resource", Bars.FormChanged)
         end)
     end)
     -- Classic combo points live on the target: a swap changes the count
@@ -5448,6 +5540,8 @@ function Bars.Release(barId)
         e.shell:Hide()
         e.shell:SetParent(UIParent)
         e.shell:ClearAllPoints()
+        -- its pinned texts come home with it
+        if NS.TextAnchor then NS.TextAnchor.Release(e.shell) end
     end
     if e.sCD then
         e.sCD:SetScript("OnShow", nil)
@@ -5713,7 +5807,7 @@ function PV.PaintResource(e, cur)
     local range = PV.ResourceRange(e)
     if e.lastMax ~= range then
         e.lastMax = range
-        shell.fill:SetMinMaxValues(0, range)
+        shell.fill:SetMinMaxValues(0, (Bars.ResCells and Bars.ResCells.FillRange(e, range)) or range)
         LayoutPips(e)
         LayoutTicks(e)
     end
@@ -5735,6 +5829,8 @@ function PV.PaintResource(e, cur)
     else
         shell.fill:SetValue(cur)
     end
+    -- as live: second laps, charged marks, and a sample recharge on the next point
+    if Bars.ResCells then Bars.ResCells.PreviewPaint(e, cur) end
     -- a preview's cost icons read as affordable (their detectors stay idle)
     for i = 1, e.costIconCount or 0 do
         local ci = e.costIcons and e.costIcons[i]

@@ -341,7 +341,11 @@ function TX.PaintPower(e)
     elseif show == "max" then
         TX.Number(e, UnitPowerMax and UnitPowerMax("player", pt))
     else
-        TX.Number(e, K.ResourceCurrent(pt))
+        -- shards read in tenths for the bar's fill: the text takes whole shards
+        local RP = Bars.ResPowers
+        local cur = K.ResourceCurrent(pt)
+        if RP and RP.Owns(pt) then cur = RP.TextValue(pt, cur) end
+        TX.Number(e, cur)
     end
 end
 
@@ -1011,7 +1015,9 @@ function TX.EnsureAura(e)
             if sub.which == "auraTime" then
                 b:SetDurationText(fs, fmt and { textFormatter = fmt } or {})
             elseif sub.which == "auraStacks" then
-                local o = { minApplications = 1 }
+                local o = {}
+                -- count from 1; 12.1.0 does not know the field and shows from 2
+                if not NS.OldAuraEngine then o.minApplications = 1 end
                 if fmt then o.formatter = fmt end
                 b:SetApplicationCount(fs, o)
             else

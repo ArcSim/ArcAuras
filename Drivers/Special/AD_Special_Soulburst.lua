@@ -58,12 +58,24 @@ local function IsSecret(v)
     return issecretvalue ~= nil and issecretvalue(v)
 end
 
+-- While auras are restricted the lookup answers nil for a hidden aura: that is
+-- unknown, not empty, so the spell update events decide the harvest.
+local function Hidden(id)
+    local S = C_Secrets
+    if not (S and S.ShouldAurasBeSecret and S.ShouldAurasBeSecret() == true) then return false end
+    return not (S.GetSpellAuraSecrecy and Enum and Enum.SecrecyLevel
+        and S.GetSpellAuraSecrecy(id) == Enum.SecrecyLevel.NeverSecret)
+end
+
 -- an absent aura is zero fragments, a normal reading after a full drain
 local function ReadFragments()
     local vm = C_UnitAuras.GetPlayerAuraBySpellID(VOID_META)
     local inVoidMeta = (vm ~= nil)
     local a = C_UnitAuras.GetPlayerAuraBySpellID(SOUL_FRAGMENTS)
-    if a == nil then return 0, "noaura", inVoidMeta end
+    if a == nil then
+        if Hidden(SOUL_FRAGMENTS) then return nil, "restricted", inVoidMeta end
+        return 0, "noaura", inVoidMeta
+    end
     if IsSecret(a) then return nil, "SECRET_STRUCT", inVoidMeta end
     local apps = a.applications
     if apps == nil then return nil, "noapps", inVoidMeta end
@@ -76,7 +88,10 @@ local function ReadMeta()
     local inVM = C_UnitAuras.GetPlayerAuraBySpellID(VOID_META) ~= nil
     local id = inVM and VM_BUILDER_META or VM_BUILDER
     local a = C_UnitAuras.GetPlayerAuraBySpellID(id)
-    if a == nil then return 0, inVM and "empty(vm)" or "empty", id end
+    if a == nil then
+        if Hidden(id) then return nil, "restricted", id end
+        return 0, inVM and "empty(vm)" or "empty", id
+    end
     if IsSecret(a) then return nil, "SECRET_STRUCT", id end
     local apps = a.applications
     if apps == nil then return nil, "noapps", id end

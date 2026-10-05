@@ -41,20 +41,27 @@ function SA.NameOf(id)
     return nm
 end
 
--- "17364, 51533" -> { list = { 17364, 51533 }, set = { [17364] = true, ... } }, or nil
+-- "17364, 51533" -> { list = { 17364, 51533 }, set = { [17364] = true, ... } }, or nil.
+-- "cd:12821" -> { cid = 12821, list = {}, set = {} }: one Cooldown Manager
+-- entry exactly, as two icons of the same spell (a cooldown and its buff) differ.
 function SA.Parse(spec)
     if type(spec) ~= "string" or spec == "" then return nil end
     local p = SA.parsed[spec]
     if p == nil then
-        local list, set = {}, {}
-        for n in spec:gmatch("%d+") do
-            local v = tonumber(n)
-            if v and v > 0 and not set[v] then
-                set[v] = true
-                list[#list + 1] = v
+        local cid = tonumber(spec:match("^%s*[Cc][Dd]:%s*(%d+)%s*$") or "")
+        if cid and cid > 0 then
+            p = { cid = cid, list = {}, set = {} }
+        else
+            local list, set = {}, {}
+            for n in spec:gmatch("%d+") do
+                local v = tonumber(n)
+                if v and v > 0 and not set[v] then
+                    set[v] = true
+                    list[#list + 1] = v
+                end
             end
+            p = (#list > 0) and { list = list, set = set } or false
         end
-        p = (#list > 0) and { list = list, set = set } or false
         SA.parsed[spec] = p
     end
     return p or nil
@@ -175,6 +182,7 @@ function SA.IconHolds(f, p)
     if type(cid) ~= "number" then return false end
     local vis = f.IsVisible and f:IsVisible()
     if Secret(vis) or not vis then return false end
+    if p.cid then return cid == p.cid end
     for _, id in ipairs(SA.EntryIDs(cid)) do
         if SA.Matches(p, id) then return true end
     end
@@ -206,6 +214,8 @@ end
 function SA.Resolve(kind, spec)
     local p = SA.Parse(spec)
     if not p or (kind ~= "action" and kind ~= "cdm") then return nil end
+    -- a cooldown ID names a Cooldown Manager entry, never a button
+    if p.cid and kind == "action" then return nil end
     local key = kind .. "|" .. spec
     local holds = (kind == "action") and SA.ButtonHolds or SA.IconHolds
     local c = SA.cache[key]
@@ -229,6 +239,8 @@ function SA.Changed()
     NS.Events.Coalesce(SA.KEY, function()
         local A = NS.Anchor
         if A and A.ReapplySpellPins then A.ReapplySpellPins() end
+        local TA = NS.TextAnchor
+        if TA and TA.Reapply then TA.Reapply() end
     end)
 end
 
@@ -276,7 +288,20 @@ end
 -- Arms exactly what the live pins need, after every rebuild: the bar events
 -- while any spell pin exists, the manager's signals while one rides an icon.
 -- A hook cannot be removed, so it stays but does nothing without an icon pin.
+-- Bars and records report through Sync, pinned texts through SyncTexts.
+SA.barWant = { action = false, cdm = false }
+SA.textWant = { action = false, cdm = false }
 function SA.Sync(wantAction, wantCDM)
+    SA.barWant.action, SA.barWant.cdm = wantAction == true, wantCDM == true
+    SA.Arm()
+end
+function SA.SyncTexts(wantAction, wantCDM)
+    SA.textWant.action, SA.textWant.cdm = wantAction == true, wantCDM == true
+    SA.Arm()
+end
+function SA.Arm()
+    local wantAction = SA.barWant.action or SA.textWant.action
+    local wantCDM = SA.barWant.cdm or SA.textWant.cdm
     local want = wantAction or wantCDM
     SA.wantCDM = wantCDM == true
     if NS.Events then
@@ -328,11 +353,15 @@ function SA.PickMap()
         end
         return false
     end)
+    -- an icon is picked by its cooldown ID: the exact entry, never its twin
+    -- of the same spell (a cooldown and its buff)
     SA.EachIcon(function(f)
-        local id = SA.IconSpell(f)
-        if id then
-            map[f] = { kind = "cdm", id = id,
-                text = "Cooldown Manager:  " .. (SA.NameOf(id) or ("spell " .. id)) }
+        local cid = Plain(f.cooldownID)
+        if type(cid) == "number" and cid > 0 then
+            local id = SA.IconSpell(f)
+            map[f] = { kind = "cdm", id = id, cid = cid,
+                text = "Cooldown Manager:  " .. (id and (SA.NameOf(id) or ("spell " .. id)) or "an icon")
+                    .. "  (cooldown ID " .. cid .. ")" }
         end
         return false
     end)

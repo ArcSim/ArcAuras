@@ -35,6 +35,29 @@ AR.BASE = { player = "HELPFUL", target = "HARMFUL", pet = "HELPFUL" }
 -- as the real row: the real row starts at the copy's left edge.
 AR.COPY_SCALE = 0.5
 
+-- Whole pixels, rounded as the engine's grid rounds them.
+function AR.Snap(v)
+    local E = NS.LayoutEngine
+    return (E and E.Snap) and E.Snap(v) or v
+end
+
+function AR.FloorPx(v)
+    local E = NS.LayoutEngine
+    return (E and E.FloorPx) and E.FloorPx(v) or math.floor(v)
+end
+
+-- A quarter of a physical pixel in UIParent's units. A centered line's start
+-- is (box - shown) / 2, a half pixel whenever that is odd, and the shown
+-- count is the game's: leaning by a quarter rounds a half toward the top-left,
+-- as the engine floors a centered cooldown row, and leaves a whole pixel put,
+-- so float noise can never split one line's icons across two pixels.
+function AR.Lean()
+    local _, physH = GetPhysicalScreenSize()
+    local s = UIParent and UIParent:GetEffectiveScale() or 1
+    if not physH or physH <= 0 or s <= 0 then return 0 end
+    return (768 / physH) / s / 4
+end
+
 -- Every Dynamic aura group, except one showing every aura on a unit (its own
 -- file draws it).
 function AR.On(g)
@@ -264,12 +287,14 @@ function AR.LaneAlpha(L, gf, on, combat)
     L.c:SetAlpha(a)
 end
 
--- A piece's cell is its icon plus the spacing after it along the direction it
--- packs (elementWidth in a row, elementHeight in a column), so pieces touch
--- and the spacing still falls between icons; an empty piece is one unit long.
+-- A cell is the icon plus the spacing after it (elementWidth in a row,
+-- elementHeight in a column), so pieces touch. An empty piece is never under
+-- one unit long (the flow layout's max(size, 1)), so cells are one unit longer
+-- and each next piece hangs one unit back (AR.Step): empties take no room.
 -- grow: "right" / "left" in a row, "down" / "up" in a column, the side its
 -- buttons flow toward from the opposite corner.
 AR.CORNER = { right = "TOPLEFT", left = "TOPRIGHT", down = "TOPLEFT", up = "BOTTOMLEFT" }
+AR.EMPTY = 1
 
 function AR.Shape(p, w, h, sx, sy, grow)
     -- its lanes copy the flow (AR.PlaceLanes)
@@ -280,8 +305,8 @@ function AR.Shape(p, w, h, sx, sy, grow)
     local c = p.c
     local vertical = grow == "down" or grow == "up"
     c:SetAuraGroupLayout(AR.KEY, { elementSpacing = 0, lineSpacing = 0, groupSpacing = 0,
-        groupLineSpacing = 0, elementWidth = vertical and w or (w + sx),
-        elementHeight = vertical and (h + sy) or h })
+        groupLineSpacing = 0, elementWidth = vertical and w or (w + sx + AR.EMPTY),
+        elementHeight = vertical and (h + sy + AR.EMPTY) or h })
     local AX = AnchorUtil and AnchorUtil.FlowLayoutAxis
     if AX and c.SetFlowLayoutAxis then c:SetFlowLayoutAxis(vertical and AX.Vertical or AX.Horizontal) end
     local FD = AnchorUtil and AnchorUtil.FlowDirection
@@ -316,7 +341,7 @@ end
 -- box, each member's visual row and column, the steps.
 function AR.Grid(g, members)
     local w, h, sx, sy, cols, growthH, growthV = NS.DriverAuraGroups.GroupDims(g)
-    local pad = math.max(0, Store.Resolve(g, "arrangement", "containerPadding") or 0)
+    local pad = AR.Snap(math.max(0, Store.Resolve(g, "arrangement", "containerPadding") or 0))
     local occupied, pending = {}, {}
     for _, rec in ipairs(members) do
         local gp = rec.gpos
@@ -363,7 +388,7 @@ function AR.Dims(rec, grid)
     if iw > 0 then w = iw end
     if ih > 0 then h = ih end
     local sc = Rp("iconScale") or 1
-    return math.max(1, math.floor(w * sc + 0.5)), math.max(1, math.floor(h * sc + 0.5))
+    return AR.Snap(math.max(1, math.floor(w * sc + 0.5))), AR.Snap(math.max(1, math.floor(h * sc + 0.5)))
 end
 
 -- The piece for rec in `set` (a group's pieces or its copies), kept while its
@@ -397,11 +422,11 @@ AR.DIRS = {
 }
 
 -- One element on the running edge a = { f, pt, x, y }; returns the edge after
--- it. Only while up (mode nil): its piece grows on, a cell while the aura is.
--- "both": a cell always, so the next one skips its piece. "missing": its piece
--- hangs back from the far side of its cell and takes the cell back while the
--- aura is up (+1: the unit an empty piece keeps). q: the piece (none for a
--- "both" copy); st: its stage, on the cell's near side. cell: q's own units.
+-- it. Plain (mode nil): its piece grows on, the next hanging one unit back, so
+-- an empty piece takes nothing. "both": a cell always. "missing": its piece
+-- hangs back from one unit past its cell's far side and takes the cell back
+-- while the aura is up. q: the piece (none for a "both" copy); st: its stage,
+-- on the cell's near side. cell: q's own units.
 function AR.Step(q, st, mode, a, dir, cell, e, grid)
     local D = AR.DIRS[dir]
     if st then
@@ -411,7 +436,7 @@ function AR.Step(q, st, mode, a, dir, cell, e, grid)
     if mode == "missing" then
         AR.Shape(q, e.w, e.h, grid.sx, grid.sy, D.back)
         q.c:ClearAllPoints()
-        q.c:SetPoint(D.far, a.f, a.pt, a.x + D.dx * (cell + 1), a.y + D.dy * (cell + 1))
+        q.c:SetPoint(D.far, a.f, a.pt, a.x + D.dx * (cell + AR.EMPTY), a.y + D.dy * (cell + AR.EMPTY))
         return { f = q.c, pt = D.near, x = 0, y = 0 }
     end
     if q then
@@ -422,7 +447,7 @@ function AR.Step(q, st, mode, a, dir, cell, e, grid)
     if mode == "both" then
         return { f = a.f, pt = a.pt, x = a.x + D.dx * cell, y = a.y + D.dy * cell }
     end
-    return { f = q.c, pt = D.far, x = 0, y = 0 }
+    return { f = q.c, pt = D.far, x = -D.dx * AR.EMPTY, y = -D.dy * AR.EMPTY }
 end
 
 -- The half-scale copy of a line (same units, filters, caps and cells; a "both"
@@ -450,7 +475,8 @@ end
 -- One row, its elements in screen order (left to right). Right chains leftward
 -- from the right edge; Left and Center rightward, Center from the far end of
 -- the row's half-scale copy, which ends on the group's middle. The trailing
--- spacing in every cell is split off the center by sx / 2.
+-- spacing in every cell is split off the center by sx / 2, and a half pixel
+-- leans left (AR.Lean).
 function AR.LayRow(rt, gf, grid, list, align, rowY, keepCopy)
     local sx, sy = grid.sx, grid.sy
     local n = #list
@@ -466,21 +492,23 @@ function AR.LayRow(rt, gf, grid, list, align, rowY, keepCopy)
     if align == "left" then
         a = { f = gf, pt = "TOPLEFT", x = grid.pad, y = rowY }
     elseif n == 1 then
-        -- alone: on the middle, no copy
+        -- alone: on the middle, floored to a whole pixel, no copy (its cell's
+        -- spacing and extra unit trail the icon)
         local e = list[1]
+        local x0 = AR.FloorPx((grid.boxW - e.w) / 2)
         AR.Shape(e.p, e.w, e.h, sx, sy, "right")
         e.p.c:ClearAllPoints()
-        e.p.c:SetPoint("TOP", gf, "TOP", sx / 2, rowY)
+        e.p.c:SetPoint("TOPLEFT", gf, "TOPLEFT", x0, rowY)
         if e.p.stage then
             e.p.stage:ClearAllPoints()
-            e.p.stage:SetPoint("TOP", gf, "TOP", 0, rowY)
+            e.p.stage:SetPoint("TOPLEFT", gf, "TOPLEFT", x0, rowY)
         end
         return
     else
         local c = AR.CopyLine(rt, list, keepCopy, grid, "left",
             { f = gf, pt = "TOP", x = 0, y = rowY / AR.COPY_SCALE }, true)
         if c then
-            a = { f = c.f, pt = c.pt, x = c.x * AR.COPY_SCALE + sx / 2, y = c.y * AR.COPY_SCALE }
+            a = { f = c.f, pt = c.pt, x = c.x * AR.COPY_SCALE + sx / 2 - AR.Lean(), y = c.y * AR.COPY_SCALE }
         else
             a = { f = gf, pt = "TOP", x = 0, y = rowY }
         end
@@ -494,7 +522,8 @@ end
 -- own x (colX = its left edge). Up chains downward from the top edge, Down
 -- upward from the bottom edge; Center downward from the top of the column's
 -- half-scale copy, which stands on the group's vertical middle. The trailing
--- spacing in every cell is split off the center by sy / 2.
+-- spacing in every cell is split off the center by sy / 2, and a half pixel
+-- leans up (AR.Lean).
 function AR.LayCol(rt, gf, grid, list, align, colX, keepCopy)
     local sx, sy = grid.sx, grid.sy
     local n = #list
@@ -510,21 +539,22 @@ function AR.LayCol(rt, gf, grid, list, align, colX, keepCopy)
     if align == "top" then
         a = { f = gf, pt = "TOPLEFT", x = colX, y = -grid.pad }
     elseif n == 1 then
-        -- alone: on the middle, no copy
+        -- alone: on the middle, floored to a whole pixel, no copy
         local e = list[1]
+        local y0 = AR.FloorPx((grid.boxH - e.h) / 2)
         AR.Shape(e.p, e.w, e.h, sx, sy, "down")
         e.p.c:ClearAllPoints()
-        e.p.c:SetPoint("LEFT", gf, "LEFT", colX, -sy / 2)
+        e.p.c:SetPoint("TOPLEFT", gf, "TOPLEFT", colX, -y0)
         if e.p.stage then
             e.p.stage:ClearAllPoints()
-            e.p.stage:SetPoint("LEFT", gf, "LEFT", colX, 0)
+            e.p.stage:SetPoint("TOPLEFT", gf, "TOPLEFT", colX, -y0)
         end
         return
     else
         local c = AR.CopyLine(rt, list, keepCopy, grid, "up",
             { f = gf, pt = "LEFT", x = colX / AR.COPY_SCALE, y = 0 }, false)
         if c then
-            a = { f = c.f, pt = c.pt, x = c.x * AR.COPY_SCALE, y = c.y * AR.COPY_SCALE - sy / 2 }
+            a = { f = c.f, pt = c.pt, x = c.x * AR.COPY_SCALE, y = c.y * AR.COPY_SCALE - sy / 2 + AR.Lean() }
         else
             a = { f = gf, pt = "LEFT", x = colX, y = 0 }
         end
@@ -678,7 +708,7 @@ end
 function AR.Place(g, gf, editMode)
     local G = NS.DriverAuraGroups
     local grid = AR.Grid(g, AR.Members(g))
-    gf:SetSize(math.max(grid.boxW, 4), math.max(grid.boxH, 4))
+    gf:SetSize(math.max(grid.boxW, AR.Snap(4)), math.max(grid.boxH, AR.Snap(4)))
     AR.placed[g.id] = gf
     local rt = AR.runtimes[g.id] or { pieces = {}, copies = {}, lanes = {} }
     rt.lanes = rt.lanes or {}

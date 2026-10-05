@@ -1,13 +1,10 @@
-# Ships as ArcAuras: the folder name picks the toc and the SavedVariables file.
+# The retail build (release.yml's retail step: -g retail -m .pkgmeta-retail).
+# Ships the ArcAuras folder alone: retail players have the real ArcUI, so the
+# Forever stand-in (Bridge) stays out of this zip.
 package-as: ArcAuras
 
-# The ArcUI stand-in ships beside it, so installing Arc Auras always loads the
-# old Arc UI Forever save (ArcUI.lua) for the move, and replaces the old addon.
-move-folders:
-  ArcAuras/Bridge/ArcUI: ArcUI
-
 manual-changelog:
-  filename: CHANGELOG.md
+  filename: CHANGELOG-retail.md
   markup-type: markdown
 
 ignore:
@@ -21,6 +18,7 @@ ignore:
   - CHANGELOG-retail.md
   - README.md
   - ArcDisplay.toc
+  - Bridge
   - "*.bak"
   - Textures/ArcUI_Icon_400x400.tga
   - Textures/ArcUI_Icon_Dial_256.tga

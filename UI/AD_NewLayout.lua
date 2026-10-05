@@ -407,9 +407,12 @@ function NL.Fill(pane)
     NL.tplRow = NL.CardRow(pg, NL.Cards(NL.TEMPLATES))
     local spot = NL.Cards(NL.SPOTLIGHT)
     NL.spotRow = nil
+    AT.Section(pg, "Layout Packs")
     if #spot > 0 then
-        AT.Section(pg, "Layout Packs")
         NL.spotRow = NL.CardRow(pg, spot)
+    else
+        -- no packs for this game yet (retail): the invite
+        AT.RowDesc(pg, "No layout packs here yet. Made a layout others would like? Post it with a screenshot on the Arc UI Discord to be featured here.", 34)
     end
     AT.Section(pg, "Start blank or import")
     local own = {

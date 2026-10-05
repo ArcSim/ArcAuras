@@ -1,7 +1,8 @@
 # Arc Auras
 
-Cooldowns, auras, resources, castbars, swing timers and reminders for WoW Forever:
-icons, groups and bars you place anywhere. Type `/arcauras` in game to open it.
+Cooldowns, auras, resources, castbars, swing timers and reminders for retail and
+WoW Forever: icons, groups and bars you place anywhere. Type `/arcauras` in game to
+open it (`/arcui2` when ArcUI is installed).
 
 - Cooldown icons, aura icons for buffs and debuffs, plus item, trinket, totem, weapon enchant and ammo icons
 - Bars for cooldowns, auras, resources, health, casts, swing timers and target range
@@ -12,6 +13,7 @@ icons, groups and bars you place anywhere. Type `/arcauras` in game to open it.
 - A live preview while you edit
 
 Arc UI Forever is now Arc Auras: install it and your setup moves over by itself.
+On retail, Arc Auras can import your ArcUI ProcTracker trackers.
 
 ## Download
 

@@ -145,16 +145,20 @@ Groups.StyleButtons = StyleButtons
 
 -- Layout helpers
 
--- A group's cell size, spacing, columns and growth, from its arrangement.
+-- A group's cell size, spacing, columns and growth, from its arrangement. Each
+-- size and spacing is whole pixels, rounded as the engine's grid rounds them,
+-- so aura rows step exactly like the static grid at any UI scale.
 local function GroupDims(grec)
     local R = function(field) return Store.Resolve(grec, "arrangement", field) end
+    local E = NS.LayoutEngine
+    local Snap = E and E.Snap or function(v) return v end
     local scale = math.floor((R("iconSize") or 36) + 0.5) / 36
-    local w = math.floor((R("iconWidth") or 36) * scale + 0.5)
-    local h = math.floor((R("iconHeight") or 36) * scale + 0.5)
+    local w = Snap(math.floor((R("iconWidth") or 36) * scale + 0.5))
+    local h = Snap(math.floor((R("iconHeight") or 36) * scale + 0.5))
     local spBase = R("spacing") or 2
     local sep = R("separateSpacing") == true
-    local sx = sep and (R("spacingX") or spBase) or spBase
-    local sy = sep and (R("spacingY") or spBase) or spBase
+    local sx = Snap(sep and (R("spacingX") or spBase) or spBase)
+    local sy = Snap(sep and (R("spacingY") or spBase) or spBase)
     return w, h, sx, sy, math.max(1, R("cols") or 6),
         R("growthH") or "RIGHT", R("growthV") or "DOWN"
 end

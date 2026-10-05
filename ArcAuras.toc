@@ -1,8 +1,8 @@
 ## Interface: 120100, 16001
 ## Title: |cff3fc9f2Arc|r Auras
-## Notes: Icons, icon groups and bars for your cooldowns, auras and resources, all set up from one panel. /arcauras
+## Notes: Icons, icon groups and bars for your cooldowns, auras and resources, all set up from one panel. /arcauras or /arcui2
 ## Author: Arc
-## Version: 2.1.0
+## Version: 2.2.0
 ## IconTexture: Interface\AddOns\ArcAuras\Textures\ArcAuras_Icon_256
 ## SavedVariables: ArcAurasDB
 ## OptionalDeps: ArcUI
@@ -20,10 +20,12 @@ Core\AD_Events.lua
 Core\AD_Perf.lua
 Core\AD_Sounds.lua
 Core\AD_Store.lua
+Core\AD_Looks.lua
 Core\AD_Migrate.lua
-Core\AD_ImportArcUI.lua
+Core\AD_MigratePT.lua
 Core\AD_Anchor.lua
 Core\AD_SpellAnchor.lua
+Core\AD_TextAnchor.lua
 Core\AD_Conditions.lua
 Core\AD_SpellCatalog.lua
 Core\AD_BarScan.lua
@@ -50,6 +52,7 @@ Drivers\AD_TotemRange.lua
 Drivers\AD_TotemButton.lua
 Bars\AD_Bars.lua
 Bars\AD_ResourcePowers.lua
+Bars\AD_ResourceCells.lua
 Bars\AD_SwingOffhand.lua
 Bars\AD_SwingClosing.lua
 Bars\AD_SwingAbilities.lua
@@ -61,9 +64,11 @@ Bars\AD_ManaRegen.lua
 Bars\AD_Castbar.lua
 Bars\AD_EnchantBar.lua
 Bars\AD_RangeBar.lua
+Bars\AD_SpecialBar.lua
 Bars\AD_TextElement.lua
 Bars\AD_TextureElement.lua
 Bars\AD_Wheel.lua
+Bars\AD_SoundItem.lua
 Bars\AD_AuraBarPrebuild.lua
 Core\AD_LayoutEngine.lua
 Drivers\AD_DriverReminders.lua
@@ -87,13 +92,15 @@ UI\AD_LayoutFollow.lua
 UI\AD_Modules.lua
 UI\AD_EditorTabs.lua
 UI\AD_FramePicker.lua
+UI\AD_TextPinOptions.lua
+UI\AD_LooksOptions.lua
 UI\AD_NewLayout.lua
 UI\AD_LayoutPreview.lua
 UI\AD_Spotlight.lua
 UI\AD_Home.lua
 UI\AD_CDMMirrorOptions.lua
 UI\AD_BarImport.lua
-UI\AD_ImportArcUIOptions.lua
+UI\AD_ImportPTOptions.lua
 UI\AD_RangeOptions.lua
 UI\AD_TotemOptions.lua
 UI\AD_CustomOptions.lua
@@ -105,6 +112,7 @@ UI\AD_TextOptions.lua
 UI\AD_TextureLibrary.lua
 UI\AD_TextureOptions.lua
 UI\AD_WheelOptions.lua
+UI\AD_SoundOptions.lua
 UI\AD_ReminderOptions.lua
 UI\AD_RetailWho.lua
 UI\AD_TalentPickerRetail.lua

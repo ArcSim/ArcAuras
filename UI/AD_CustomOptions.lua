@@ -313,10 +313,14 @@ end
 
 -- The rule editor: one titled section per rule, Schema.CUSTOM_MAX_RULES slots
 -- built ahead and shown while that rule exists; every edit goes through the
--- engine and re-lays the page at once.
-function CO.RuleRows(pg, Rec, vis, owner, isBar)
+-- engine and re-lays the page at once. opts (a Sound item's editor): groups,
+-- actions and section, the empty line, noTimer (no timer or stacks guards),
+-- noGuards(r) / actionsFor(r) / soundItems(r) per rule, and triggerRows /
+-- actRows(pg, i, api) for rows of its own under the trigger and the action.
+function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
     local AT, S = NS.AT, NS.Schema
     local COL = AT.COL
+    opts = opts or {}
     local function CU() return NS.DriverCustom end
     local function Rules()
         local r, E = Rec(), CU()
@@ -329,10 +333,10 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
         AT.LayoutPage(pg)
     end
     local function Stamp(row, field, label)
-        row._adMeta = { family = isBar and "bar" or "icon", section = "custom", field = field,
+        row._adMeta = { family = isBar and "bar" or "icon", section = opts.section or "custom", field = field,
             def = { label = label }, baseVis = vis }
     end
-    local groups = S.CUSTOM_TRIGGER_GROUPS
+    local groups = opts.groups or S.CUSTOM_TRIGGER_GROUPS
     local function GroupItems()
         local out = {}
         for _, g in ipairs(groups) do out[#out + 1] = { value = g.key, text = g.label } end
@@ -354,7 +358,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
 
     AT.Section(pg, "Triggers", { visibleFn = vis })
     AT.RowDesc(pg, "Each rule: when something happens, only if its conditions hold, then what it does.", 20, vis)
-    AT.RowDesc(pg, "No rules yet: it shows as active until a rule starts its timer or counts stacks.", 20,
+    AT.RowDesc(pg, opts.empty or "No rules yet: it shows as active until a rule starts its timer or counts stacks.", 20,
         function() return vis() and #Rules() == 0 end)
 
     for i = 1, S.CUSTOM_MAX_RULES do
@@ -382,7 +386,12 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
             return r.combat ~= nil or r.talent ~= nil or r.spec ~= nil or r.spellReady ~= nil or r.stacksMin ~= nil
                 or r.stacksMax ~= nil or r.withinRule ~= nil or r.timer ~= nil or CO.showIf[key()] == true
         end
-        local gv = function() return rv() and Gated() end
+        -- a rule the game plays (a Sound item's aura rule) takes no guards
+        local iv = function() return rv() and not (opts.noGuards and opts.noGuards(Rule(i))) end
+        local gv = function() return iv() and Gated() end
+        local gtv = function() return gv() and not opts.noTimer end
+        local api = { Rule = function() return Rule(i) end, Set = Set, Is = Is, rv = rv, Rec = Rec, Stamp = Stamp,
+            i = i }
 
         AT.Section(pg, "Rule " .. i, { visibleFn = vis })
         local grpRow = AT.RowDropdown(pg, owner, "Trigger group",
@@ -475,6 +484,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
                 return CO.ChainItems(r and r.id)
             end,
             Is("when", "chain"))
+        if opts.triggerRows then opts.triggerRows(pg, i, api) end
 
         -- the guards, behind one switch: off drops them all
         local ifRow = AT.RowToggle(pg, "Only if",
@@ -491,7 +501,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
                 end
                 AT.LayoutPage(pg)
             end,
-            rv, "On: the rule fires only while the conditions below hold. Off drops them.")
+            iv, "On: the rule fires only while the conditions below hold. Off drops them.")
         AT.RowDropdown(pg, owner, "Combat",
             function()
                 local r = Rule(i)
@@ -499,31 +509,45 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
             end,
             function(v) Set("combat", (v ~= "any") and v or nil) end,
             Items(S.CUSTOM_COMBAT, S.CUSTOM_COMBAT_LABELS), gv)
-        AT.RowDropdown(pg, owner, "Talent",
-            function()
-                local r = Rule(i)
-                return (r and r.talent) or 0
-            end,
-            function(v) Set("talent", (v ~= 0) and v or nil) end,
-            function()
-                local r = Rule(i)
-                return CO.TalentItems(r and r.talent)
-            end,
-            gv)
-        AT.RowDropdown(pg, owner, "Which choice",
-            function()
-                local r = Rule(i)
-                return (r and r.talentEntry) or 0
-            end,
-            function(v) Set("talentEntry", (v ~= 0) and v or nil) end,
-            function()
-                local r = Rule(i)
-                return CO.ChoiceItems(r and r.talent, r and r.talentEntry)
-            end,
-            function()
-                local r = Rule(i)
-                return gv() and r.talent ~= nil and (r.talentEntry ~= nil or CO.IsChoice(r.talent))
-            end)
+        -- the talent, picked on the Load Conditions talent tree: a choice
+        -- node's option is its own button, a second click is Not taken
+        Options.TalentPickRow(pg, "Talent", function()
+            local rec, E = Rec(), CU()
+            if not (rec and E) then return nil end
+            local function R() return (E.Rules(rec) or {})[i] end
+            local function W(field, value)
+                E.SetRule(rec, i, field, value)
+                AT.LayoutPage(pg)
+            end
+            return {
+                talentTarget = true,
+                State = function(node)
+                    local r = R()
+                    if not (r and r.talent == node) then return nil end
+                    return r.talentNot and "not" or "req", r.talentEntry
+                end,
+                Set = function(node, state, entry)
+                    local r = R()
+                    if not r then return end
+                    if state == nil then
+                        if r.talent == node then W("talent", nil) end
+                        return
+                    end
+                    if r.talent ~= node then W("talent", node) end
+                    W("talentEntry", entry)
+                    W("talentNot", (state == "not") or nil)
+                end,
+                List = function()
+                    local r = R()
+                    if not (r and r.talent) then return {} end
+                    return { { nodeID = r.talent, excluded = r.talentNot == true } }
+                end,
+                Clear = function()
+                    local r = R()
+                    if r and r.talent then W("talent", nil) end
+                end,
+            }
+        end, gv, "Opens the talent tree: click a talent for this rule, again for Not taken.")
         AT.RowDropdown(pg, owner, "Talent is",
             function()
                 local r = Rule(i)
@@ -568,7 +592,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
                 if v == "" then Set("stacksMin", nil) return end
                 if n and n >= 0 then Set("stacksMin", math.floor(math.min(999, n))) end
             end,
-            gv, "The item's own stacks, before this rule acts. Empty = no such condition.", "Any")
+            gtv, "The item's own stacks, before this rule acts. Empty = no such condition.", "Any")
         AT.RowInput(pg, "Stacks at most",
             function()
                 local r = Rule(i)
@@ -579,7 +603,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
                 if v == "" then Set("stacksMax", nil) return end
                 if n and n >= 0 then Set("stacksMax", math.floor(math.min(999, n))) end
             end,
-            gv, "The item's own stacks, before this rule acts. Empty = no such condition.", "Any")
+            gtv, "The item's own stacks, before this rule acts. Empty = no such condition.", "Any")
         AT.RowDropdown(pg, owner, "Within seconds after rule",
             function()
                 local r = Rule(i)
@@ -614,7 +638,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
                 return (r and r.timer) or "any"
             end,
             function(v) Set("timer", (v ~= "any") and v or nil) end,
-            Items(S.CUSTOM_TIMER_STATES, S.CUSTOM_TIMER_STATE_LABELS), gv)
+            Items(S.CUSTOM_TIMER_STATES, S.CUSTOM_TIMER_STATE_LABELS), gtv)
 
         local thenRow = AT.RowDropdown(pg, owner, "Then",
             function()
@@ -622,7 +646,8 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
                 return (r and r.act) or "start"
             end,
             function(v) Set("act", v) end,
-            Items(S.CUSTOM_ACTIONS, S.CUSTOM_ACTION_LABELS), rv)
+            opts.actionsFor and function() return opts.actionsFor(Rule(i)) end
+                or Items(opts.actions or S.CUSTOM_ACTIONS, S.CUSTOM_ACTION_LABELS), rv)
         AT.RowInput(pg, "Seconds (0 = the default)",
             function()
                 local r = Rule(i)
@@ -677,6 +702,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
             end,
             function(v) Set("sound", (type(v) == "string" and v ~= "") and v or nil) end,
             function()
+                if opts.soundItems then return opts.soundItems(Rule(i)) end
                 if NS.Sounds then return NS.Sounds.Items() end
                 return { { value = "", text = "None" } }
             end,
@@ -708,6 +734,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar)
             if r and E then E.Speak(r.text) end
         end)
         AT.Tooltip(speak, "Speak", "Hear the text once.")
+        if opts.actRows then opts.actRows(pg, i, api) end
         AT.RowActions(pg, {
             { label = "Move up", w = 80, quiet = true,
               onClick = function() Edit(function(E, r) E.MoveRule(r, i, -1) end) end,

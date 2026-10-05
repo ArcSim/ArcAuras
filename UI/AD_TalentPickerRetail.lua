@@ -1,5 +1,5 @@
 -- AD_TalentPickerRetail: the retail talent picker: class, hero and spec panels drawn from the catalog's retail panels.
--- AD_Options' OpenTalentPicker hands retail to Options.OpenRetailTalentPicker; a click writes Store.SetTalentState on the record being edited.
+-- AD_Options' OpenTalentPicker hands retail to Options.OpenRetailTalentPicker; a click writes the edited record's load talents, or one talent target's pick (TR.Get / TR.Set).
 -- Talent, spec and hero changes happen out of combat, so the picker only ever edits the released WHO layer.
 local ADDON, NS = ...
 local Options = NS.Options
@@ -20,10 +20,26 @@ local panels, bands, nodes, hubs, lines = {}, {}, {}, {}, {}
 
 function TR.Record() return ctxFn and ctxFn() end
 
+-- What the picker edits: a record's load talents, or a talent target that
+-- holds one pick of its own (a rule's guard, a look's talent; see
+-- Options.TalentPickRow), with its own reads and writes.
+function TR.Get(rec, nodeID)
+    if rec.talentTarget then return rec.State(nodeID) end
+    return NS.Store.TalentState(rec, nodeID)
+end
+function TR.Set(rec, nodeID, state, entryID)
+    if rec.talentTarget then rec.Set(nodeID, state, entryID) return end
+    NS.Store.SetTalentState(rec, nodeID, state, entryID)
+end
+function TR.List(rec)
+    if rec.talentTarget then return rec.List() end
+    return NS.Store.TalentList(rec)
+end
+
 -- The state a button shows: the node's, unless the record names another
 -- option of the same choice node.
 function TR.StateOf(rec, nodeID, entryID)
-    local state, named = NS.Store.TalentState(rec, nodeID)
+    local state, named = TR.Get(rec, nodeID)
     if entryID and named and named ~= entryID then return nil end
     return state
 end
@@ -176,12 +192,17 @@ function TR.Node(i)
         GameTooltip:AddLine(" ")
         local rec = TR.Record()
         local state = rec and TR.StateOf(rec, e.nodeID, node.entryID) or nil
+        local one = rec ~= nil and rec.talentTarget == true
         if state == "req" then
-            GameTooltip:AddLine("Required: click to exclude it instead.", 0.247, 0.788, 0.949)
+            GameTooltip:AddLine(not one and "Required: click to exclude it instead."
+                or (rec.noExclude and "Picked: click to drop it." or "Taken: click for Not taken instead."),
+                0.247, 0.788, 0.949)
         elseif state == "not" then
-            GameTooltip:AddLine("Excluded: click to drop the condition.", TR.RED[1], TR.RED[2], TR.RED[3])
+            GameTooltip:AddLine(one and "Not taken: click to drop it." or "Excluded: click to drop the condition.",
+                TR.RED[1], TR.RED[2], TR.RED[3])
         else
-            GameTooltip:AddLine("Click to require this talent.", 0.247, 0.788, 0.949)
+            GameTooltip:AddLine(one and "Click to pick this talent." or "Click to require this talent.",
+                0.247, 0.788, 0.949)
         end
         GameTooltip:AddLine("Right-click clears it.", 0.55, 0.65, 0.78)
         GameTooltip:AddLine("Node " .. e.nodeID, 0.4, 0.47, 0.57)
@@ -198,9 +219,9 @@ function TR.Node(i)
         local cur = TR.StateOf(rec, e.nodeID, node.entryID)
         local nxt
         if button ~= "RightButton" then
-            if cur == nil then nxt = "req" elseif cur == "req" then nxt = "not" end
+            if cur == nil then nxt = "req" elseif cur == "req" and not rec.noExclude then nxt = "not" end
         end
-        NS.Store.SetTalentState(rec, e.nodeID, nxt, node.entryID)
+        TR.Set(rec, e.nodeID, nxt, node.entryID)
         TR.Paint()
         Options.RefreshAll()
     end)
@@ -215,10 +236,21 @@ function TR.Paint()
     local rec = TR.Record()
     local q = query:lower():gsub("^%s+", ""):gsub("%s+$", "")
     local req, exc = 0, 0
-    for _, e in ipairs(rec and NS.Store.TalentList(rec) or {}) do
+    local list = rec and TR.List(rec) or {}
+    for _, e in ipairs(list) do
         if e.excluded then exc = exc + 1 else req = req + 1 end
     end
-    if req + exc == 0 then
+    if rec and rec.talentTarget then
+        local pick = list[1]
+        if not pick then
+            count:SetText("Nothing picked yet - click a talent to pick it"
+                .. (rec.noExclude and "." or ", again for Not taken."))
+        else
+            local _, entry = TR.Get(rec, pick.nodeID)
+            count:SetText((pick.excluded and "Not taken: " or "Picked: ")
+                .. (Options.TalentPickName(pick.nodeID, entry) or ""))
+        end
+    elseif req + exc == 0 then
         count:SetText("Nothing required yet - click a talent to require it, again to exclude it.")
     else
         local parts = {}
@@ -477,7 +509,7 @@ function TR.Build()
     clear:SetScript("OnClick", function()
         local rec = TR.Record()
         if not rec then return end
-        NS.Store.ClearTalents(rec)
+        if rec.talentTarget then rec.Clear() else NS.Store.ClearTalents(rec) end
         TR.Paint()
         Options.RefreshAll()
     end)

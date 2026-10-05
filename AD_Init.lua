@@ -32,6 +32,7 @@ loader:SetScript("OnEvent", function(self, event, arg1)
         -- did at ADDON_LOADED: the queued draw runs a frame later, outside it.
         if NS.Bars and NS.Bars.PreBuildAura then NS.Bars.PreBuildAura() end
         NS.LayoutEngine.QueueRebuild()
+        if NS.SlashAtLogin then NS.SlashAtLogin() end
         self:UnregisterEvent("PLAYER_LOGIN")
     elseif event == "PLAYER_ENTERING_WORLD" then
         -- The same check one event later: if the client re-pointed the global
@@ -64,15 +65,19 @@ end
 
 -- The old Arc UI Forever commands keep working. The numbers stay gapless: the
 -- chat frame stops reading at the first missing one.
-SLASH_ARCUIVTWO1 = "/arcauras"
-SLASH_ARCUIVTWO2 = "/arcui2"
-SLASH_ARCUIVTWO3 = "/aui2"
--- Forever has no retail ArcUI, so /arcui and /aui open this addon there too.
 if NS.IsForever then
+    -- Forever has no retail ArcUI, so /arcui and /aui open this addon there too.
+    SLASH_ARCUIVTWO1 = "/arcauras"
+    SLASH_ARCUIVTWO2 = "/arcui2"
+    SLASH_ARCUIVTWO3 = "/aui2"
     SLASH_ARCUIVTWO4 = "/arcui"
     SLASH_ARCUIVTWO5 = "/aui"
+else
+    -- Retail ArcUI answers /arcauras too: NS.SlashAtLogin adds it only without ArcUI.
+    SLASH_ARCUIVTWO1 = "/arcui2"
+    SLASH_ARCUIVTWO2 = "/aui2"
 end
-SlashCmdList["ARCUIVTWO"] = function(msg)
+local function Slash(msg)
     msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
     if msg == "demo" then
         local layout = SeedDemo()
@@ -95,5 +100,34 @@ SlashCmdList["ARCUIVTWO"] = function(msg)
         end
         return
     end
+    -- "/arcauras reset dw" restarts one Special Aura's count, "reset" alone
+    -- every one, as ProcTracker's /pt reset did (retail).
+    local tracker = msg:match("^reset%s*(%S*)$")
+    local SP = NS.Special
+    if tracker and SP and SP.Reset then
+        local def = tracker ~= "" and SP.Get(tracker) or nil
+        if tracker == "" then SP.ResetAll("command") elseif def then SP.Reset(tracker) end
+        print("|cff3fc9f2Arc Auras:|r " .. ((tracker == "" and "every Special Aura count reset.")
+            or (def and (def.name .. " count reset.")) or ("no Special Aura called " .. tracker .. ".")))
+        return
+    end
+    -- "/arcui2 proctracker" opens the ProcTracker import (retail); ArcUI
+    -- ProcTracker's own pointer runs it.
+    local PW = NS.Options and NS.Options.ImportPT
+    if msg == "proctracker" and PW and PW.Open then
+        PW.Open()
+        return
+    end
     NS.Options.Toggle()
+end
+SlashCmdList["ARCUIVTWO"] = Slash
+
+-- At login every addon has loaded, so whether another one owns /arcauras (an
+-- ArcUI whose custom icons still carry that name) is known. Setting the
+-- handler again makes the chat frame read the added name.
+function NS.SlashAtLogin()
+    if NS.IsForever then return end
+    if SlashCmdList.ARCAURAS then return end
+    SLASH_ARCUIVTWO3 = "/arcauras"
+    SlashCmdList["ARCUIVTWO"] = Slash
 end

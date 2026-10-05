@@ -103,7 +103,8 @@ end
 UO.chip, UO.chipGroup = "All", nil
 
 function UO.TypeOn(g)
-    return g ~= nil and NS.Store.ShowsAll(g) == true and NS.Store.Resolve(g, "typeLook", "looks") ~= "off"
+    return g ~= nil and not NS.OldAuraEngine and NS.Store.ShowsAll(g) == true
+        and NS.Store.Resolve(g, "typeLook", "looks") ~= "off"
 end
 
 -- Whether the group can show a type at all: with any Dispel types box ticked

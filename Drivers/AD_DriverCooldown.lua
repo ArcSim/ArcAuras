@@ -551,7 +551,7 @@ local function PushState(a)
     -- f._adStateSig; a proc, a usability code or a combat edge is in it.
     local f = a.frame
     UsabCfg(a)
-    local sig = (dim and "d" or "-") .. (m and "m" or "-") .. (f._adProcOn and "p" or "-")
+    local sig = (dim and "d" or "-") .. (m and "m" or "-") .. (f._adProcLit and "p" or "-")
         .. (f._adRecharging and "r" or "-")
         .. (InCombatLockdown() and "c" or "-") .. (f._adUsability or "") .. "|" .. (f._adGlowLaneOnly or "")
     if f._adStateSig ~= sig then
@@ -1027,13 +1027,22 @@ local function FeedTotem(a)
         a.shadow:Clear()
         a.frame.cooldown:Clear()
     end
-    -- totem art follows the live totem (display-only field, safe sink)
+    -- totem art follows the live totem (display-only field, safe sink); an
+    -- empty slot's art reads the shadow through Driver.TotemLive
     a.frame.icon:SetTexture(Factory.GetTexture(a.rec))
     local active = a.shadow:IsShown() == true
     Factory.SetState(a.frame, a.rec, not active, not active)
     if DT then DT.Pulse(a.frame, a.rec, slot, active) end
     -- the Out of range look shows only while the totem is out
     if NS.TotemRange then NS.TotemRange.Feed(a.rec, a.frame, active) end
+end
+
+-- Whether a totem icon's slot is live, from its shadow (a plain boolean); nil
+-- before the icon is fed. Factory's totem art reads it on every repaint.
+function Driver.TotemLive(rec)
+    local a = rec and attachedTotems[rec.id]
+    if not (a and a.shadow) then return nil end
+    return a.shadow:IsShown() == true
 end
 
 local function FeedAllTotems()

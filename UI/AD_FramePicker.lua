@@ -52,7 +52,7 @@ FP.WHY_TEXT = {
 FP.HINT = "Click to pick   Right-click or Esc: cancel"
 -- an action button: its spell wherever it moves, or this one button
 FP.BUTTON_HINT = "Click: follow the spell   Shift-click: this button   Esc: cancel"
-FP.ICON_HINT = "Click: follow this spell's icon   Right-click or Esc: cancel"
+FP.ICON_HINT = "Click: follow this icon   Right-click or Esc: cancel"
 
 -- Typed words to the spell ids a spell pin keeps: numbers as they are, a link
 -- or a spell's name through the spell parser. nil when nothing reads as a spell.
@@ -75,6 +75,21 @@ function FP.SpellSpec(text)
     end
     if #ids == 0 then return nil end
     return table.concat(ids, ", ")
+end
+
+-- A pin spec's cooldown ID ("cd:12821" -> 12821), or nil.
+function FP.CooldownID(spec)
+    if type(spec) ~= "string" then return nil end
+    return tonumber(spec:match("^%s*[Cc][Dd]:%s*(%d+)%s*$") or "")
+end
+
+-- Typed digits to a cooldown ID spec; "" clears; nil when nothing reads.
+function FP.CooldownSpec(text)
+    text = tostring(text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+    if text == "" then return "" end
+    local n = tonumber(text:match("^[Cc]?[Dd]?:?%s*(%d+)$") or "")
+    if not n or n <= 0 then return nil end
+    return "cd:" .. n
 end
 
 function FP.IsCommon(name)
@@ -336,15 +351,20 @@ end
 -- The action buttons and Cooldown Manager icons a pick may offer rec: the
 -- spell kinds its family allows, each as a pick ({ value, spec, text,
 -- frameName }); nil when it allows none.
-function FP.SpellPicks(rec)
+function FP.SpellPicks(rec, all)
     local A, SA = NS.Anchor, NS.SpellAnchor
-    if not (rec and A and SA and SA.PickMap) then return nil end
-    local action, cdm = A.Allows(rec, "action"), A.Allows(rec, "cdm")
+    if not (SA and SA.PickMap) then return nil end
+    local action, cdm = all == true, all == true
+    if not all then
+        if not (rec and A) then return nil end
+        action, cdm = A.Allows(rec, "action"), A.Allows(rec, "cdm")
+    end
     if not (action or cdm) then return nil end
     local out = {}
     for f, it in pairs(SA.PickMap()) do
         if (it.kind == "action" and action) or (it.kind == "cdm" and cdm) then
-            out[f] = { value = it.kind, spec = tostring(it.id), text = it.text, frameName = it.frameName }
+            local spec = it.cid and ("cd:" .. it.cid) or tostring(it.id)
+            out[f] = { value = it.kind, spec = spec, text = it.text, frameName = it.frameName }
         end
     end
     return out
@@ -355,7 +375,7 @@ end
 -- the record being anchored, whose legal targets are offered; nil offers game
 -- frames only. Refused in combat: a screen covering click catcher would take
 -- the player's clicks.
-function FP.Start(onPick, rec)
+function FP.Start(onPick, rec, textPick)
     if InCombatLockdown() then return false end
     FP.Stop()
     local c = Catcher()
@@ -363,9 +383,10 @@ function FP.Start(onPick, rec)
     Box()
     FP.onPick = onPick
     -- the items are mapped once: pick mode is short, and a rebuild while it
-    -- runs only leaves a stale frame that is no longer under the cursor
-    FP.items = (rec and NS.Anchor and NS.Anchor.PickFrames) and NS.Anchor.PickFrames(rec) or nil
-    FP.spells = FP.SpellPicks(rec)
+    -- runs only leaves a stale frame that is no longer under the cursor. A
+    -- text's pick offers game frames, buttons and icons, never Arc Auras items.
+    FP.items = (rec and not textPick and NS.Anchor and NS.Anchor.PickFrames) and NS.Anchor.PickFrames(rec) or nil
+    FP.spells = FP.SpellPicks(rec, textPick)
     FP.active = true
     FP.acc, FP.lastX, FP.lastY = 0, nil, nil
     if c.SetPropagateKeyboardInput then c:SetPropagateKeyboardInput(true) end
@@ -419,7 +440,8 @@ function Options.FramePickRows(pg, ctx, vis, owner, pickVis)
     AT.RowInput(pg, "Anchor spell",
         function()
             local r = ctx()
-            return r and (Store.Resolve(r, "anchor", "anchorTargetFrame") or "") or ""
+            local v = r and (Store.Resolve(r, "anchor", "anchorTargetFrame") or "") or ""
+            return FP.CooldownID(v) and "" or v
         end,
         function(v)
             local r, spec = ctx(), FP.SpellSpec(v)
@@ -428,6 +450,23 @@ function Options.FramePickRows(pg, ctx, vis, owner, pickVis)
         spellVis,
         "The spell whose button or icon it rides: a spell ID, a link or the name of a spell you know. Several ranks' IDs may be listed. Enter applies it.",
         "e.g. 17364")
+    -- a Cooldown Manager icon by its exact entry: a spell's cooldown icon and
+    -- its buff icon share the spell, never the cooldown ID
+    AT.RowInput(pg, "Cooldown ID",
+        function()
+            local r = ctx()
+            return tostring(FP.CooldownID(r and Store.Resolve(r, "anchor", "anchorTargetFrame")) or "")
+        end,
+        function(v)
+            local r, spec = ctx(), FP.CooldownSpec(v)
+            if r and spec then Store.SetOverride(r, "anchor", "anchorTargetFrame", spec) end
+        end,
+        function()
+            local r = ctx()
+            return spellVis() and r ~= nil and Store.Resolve(r, "anchor", "anchorTargetKind") == "cdm"
+        end,
+        "The icon's cooldown ID, its exact entry in the Cooldown Manager: Pick Frame on an icon fills it. Empty uses the spell above.",
+        "e.g. 12821")
     AT.RowDropdown(pg, owner, "Common frames",
         function()
             local r = ctx()
@@ -460,7 +499,7 @@ function Options.FramePickRows(pg, ctx, vis, owner, pickVis)
         end
     end, pickVis or vis, 110, "Pick it on screen")
     AT.Tooltip(row.button, "Pick Frame",
-        "Hover a game frame, one of your Arc Auras items, or for a bar an action button or Cooldown Manager icon, and left-click it. A button is followed by its spell; Shift-click keeps that one button. Right-click or Esc cancels.")
+        "Hover a game frame, one of your Arc Auras items, or for a bar an action button or Cooldown Manager icon, and left-click it. A button is followed by its spell, an icon by its cooldown ID; Shift-click keeps that one button. Right-click or Esc cancels.")
     -- pick mode ends with the page that started it
     pg:HookScript("OnHide", function() FP.Stop() end)
 end

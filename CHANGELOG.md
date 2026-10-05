@@ -1,5 +1,33 @@
 # Arc Auras
 
+## 2.2.0
+
+Texts you can pin anywhere, a Sound item, a tidier Home page and pixel-perfect spacing.
+
+### New Features
+
+- **Pin any text** - Stack counts, custom texts, keybinds and bar texts can sit on an action button or any named frame.
+- **Sound item** - A sound or spoken line with nothing on screen, on the same triggers as Custom Icons, a condition, or an aura gained, stacking or fading.
+- **A look per form or talent** - A resource bar can keep its own colors, texts and ticks for each druid form, or with and without a talent.
+- **New conditions** - You have aggro, High threat and Raid encounter, for Load When, Fade When and Sound items.
+- **Shaman layout** - Emity's Shaman layout joins the Layout Spotlight, and Emity's other layouts have an update.
+
+### Improvements
+
+- **Home page** - Updates show one at a time beside your layouts, with Update all, and the Layout Spotlight follows your layouts.
+- **A font per text** - Custom texts 2 and 3 can each use their own font.
+- **Talents on the tree** - A Custom Icon rule's talent and a bar's talent look are picked on the same talent tree as Load Conditions.
+- **Custom Icon preview** - Shows the Active and Not active looks and a timer loop.
+- **Quicker options** - Only the first open shows the loading bar.
+
+### Bug Fixes
+
+- **Pixel-perfect spacing** - Every gap between icons, groups and bars is the same whole number of pixels at any UI scale, and nothing shifts when you log in, change your resolution or UI scale, or open and close the options.
+- **Centered aura rows** - Icons in Dynamic aura groups sit exactly in the middle of their row, with no gap where an aura is missing.
+- **Texts over glows** - Custom texts, keybinds, stack counts and durations draw above the icon's glows.
+- **Hidden icons stay hidden** - A state at 0% opacity now hides the icon's glows too.
+- **Sound pick** - The sound list under a state no longer runs past the window.
+
 ## 2.1.0
 
 A Home page, the Conditions tab, more layout packs and a Missing Buffs group.

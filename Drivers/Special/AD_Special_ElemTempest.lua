@@ -263,6 +263,7 @@ end
 
 SP.Register({
     id = "elemtempest", name = "Tempest (Elemental)", class = "SHAMAN", specs = { 262 },
+    talentGate = { node = TEMPEST_NODE_ID },
     icon = TEMPEST_CAST, size = DECK_SIZE, procs = DECK_PROCS,
     isTimer = false, bar = true, sound = false, chanceSpend = false, chanceForecast = true, viol = false,
     words = { pos = "Deck position", procs = "Proc count" },

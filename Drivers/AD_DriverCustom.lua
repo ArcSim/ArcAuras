@@ -1,5 +1,5 @@
 -- AD_DriverCustom: the rule engine behind Custom Icons and Custom Bars (the timer kind): each rule is a trigger the game keeps plain, optional guards, and an action on the item's own timer and stacks.
--- The cooldown driver attaches icons here (Attach / Detach / Refeed); the bars runtime registers CU.BarKind for timer bars; the display goes through Factory.SetState, the icon's Cooldown and the bars kit's GetTime fill.
+-- The cooldown driver attaches icons here (Attach / Detach / Refeed); the bars runtime registers CU.BarKind for timer bars; the display goes through Factory.SetState, the icon's Cooldown and the bars kit's GetTime fill. A Sound item (Bars\AD_SoundItem.lua) attaches with nothing to draw: its rules only cue sounds and speech.
 -- Every trigger stays plain in combat on WoW Forever: UNIT_COMBAT on you and your pet, COMBAT_TEXT_UPDATE's type, your own casts, shadow-Cooldown edges (NS.Reminders' watches), proc overlays, combat, target and totem events. A secret amount or spell ID means unknown and fires nothing.
 local ADDON, NS = ...
 local Store = NS.Store
@@ -21,6 +21,9 @@ CU.DEDUPE = 0.3
 -- A loading screen sends a burst of spell updates for spells nobody used:
 -- none of them fires a rule for this long after it.
 CU.UPDATE_QUIET = 2
+-- A login or reload settles a few reads late (the roster, the pet): a
+-- condition's edge only sets its state for this long after one.
+CU.COND_QUIET = 3
 CU.WATCH_PREFIX = "adcustom:"
 CU.EVENT_KEY = "adcustom"
 
@@ -32,6 +35,9 @@ CU.totemUp = {}    -- [slot] = true while the slot holds a totem
 CU.lastFire = {}   -- [trigger] = GetTime of its last fire (the dedupe)
 CU.armed = {}      -- which event sets are registered
 CU.updQuiet = 0    -- GetTime until which spell updates fire nothing
+CU.conds = {}      -- [key] = true, the condition keys the live rules watch
+CU.condWas = {}    -- [key] = the key's last known answer
+CU.condQuiet = 0   -- GetTime until which a condition's edge fires nothing
 CU.inCombat = false
 
 local function Plain(v)
@@ -54,7 +60,7 @@ end
 
 -- The triggers a group offers, by key, and every trigger's group.
 CU.GROUP_OF = {}
-for _, g in ipairs(Schema.CUSTOM_TRIGGER_GROUPS) do
+for _, g in ipairs(Schema.SOUND_TRIGGER_GROUPS or Schema.CUSTOM_TRIGGER_GROUPS) do
     for _, k in ipairs(g.list) do CU.GROUP_OF[k] = g.key end
 end
 for _, k in ipairs(Schema.CUSTOM_TARGET_TRIGGERS) do CU.GROUP_OF[k] = "target" end
@@ -67,6 +73,21 @@ CU.PROC_TRIGGERS = { proc_on = true, proc_off = true }
 CU.TOTEM_TRIGGERS = { totem_placed = true, totem_gone = true }
 CU.TEXT_TRIGGERS = { extra_attacks = true, reactive = true, health_low = true, mana_low = true,
     combo_points = true, interrupted = true }
+CU.COND_TRIGGERS = { cond_on = true, cond_off = true }
+-- the game plays these itself (Drivers\AD_AuraSounds.lua): no event reaches a rule
+CU.AURA_TRIGGERS = { aura_gain = true, aura_stack = true, aura_lost = true }
+-- Conditions that read another unit's identity, secret in instances: never a trigger.
+CU.COND_SKIP = { pvp = true, shamanInGroup = true, roleTank = true, roleHealer = true, roleDamage = true,
+    groupLeader = true }
+
+-- A condition can be a trigger when the client reads it, an event reports it
+-- (the polled rows would need a ticker) and it is a state that can turn on.
+function CU.CondOK(key)
+    local C = NS.Conditions
+    local d = type(key) == "string" and C and C.ByKey and C.ByKey(key)
+    if not d or d.poll or d.negOnly or CU.COND_SKIP[key] then return false end
+    return not (d.avail and not d.avail())
+end
 
 -- The state
 
@@ -262,6 +283,10 @@ function CU.Matches(r, ctx)
     if r.when == "chain" then
         return ctx ~= nil and r.srcId ~= nil and r.srcId == ctx.srcId
     end
+    if CU.COND_TRIGGERS[r.when] then
+        return ctx ~= nil and r.cond ~= nil and r.cond == ctx.cond
+    end
+    if CU.AURA_TRIGGERS[r.when] then return false end
     return true
 end
 
@@ -309,12 +334,19 @@ function CU.Quiet(rec)
     return C ~= nil and C.IsInert(rec)
 end
 
+-- Every spoken line of Arc Auras: the shared voice and rate picked under a
+-- Sound item's Speech (settings ttsVoice, ttsRate: 0 or none = WoW's own rate),
+-- at WoW's own text to speech volume.
 function CU.Speak(text)
     if type(text) ~= "string" or text == "" then return false end
     if not (C_VoiceChat and C_VoiceChat.SpeakText) then return false end
     local RM = NS.Reminders
-    local voice = (RM and RM.Voice and RM.Voice("default")) or 0
-    local rate = C_TTSSettings and C_TTSSettings.GetSpeechRate and C_TTSSettings.GetSpeechRate()
+    local pick = Store.GetSetting and Store.GetSetting("ttsVoice") or nil
+    local voice = (RM and RM.Voice and RM.Voice(pick or "default")) or 0
+    local rate = Store.GetSetting and Store.GetSetting("ttsRate") or nil
+    if type(rate) ~= "number" or rate == 0 then
+        rate = C_TTSSettings and C_TTSSettings.GetSpeechRate and C_TTSSettings.GetSpeechRate()
+    end
     local vol = C_TTSSettings and C_TTSSettings.GetSpeechVolume and C_TTSSettings.GetSpeechVolume()
     if type(voice) ~= "number" then voice = 0 end
     C_VoiceChat.SpeakText(voice, text, tonumber(rate) or 0, tonumber(vol) or 100, false)
@@ -323,10 +355,29 @@ end
 
 function CU.Channel(rec)
     if rec.type == "icon" then return Store.Resolve(rec, "alerts", "soundChannel") or "Master" end
+    local SN = NS.SoundItems
+    if SN and SN.Is(rec) then return SN.Channel(rec) end
     return "Master"
 end
 
-function CU.Act(st, r)
+-- A sound or a spoken line: silent while inert, nothing to play is no cue, and
+-- a Sound item's spam guards have the last word (NS.SoundItems.MayCue).
+function CU.Cue(st, r, i)
+    if CU.Quiet(st.rec) then return false end
+    local speak = r.act == "speak"
+    if speak then
+        if type(r.text) ~= "string" or r.text == "" or not (C_VoiceChat and C_VoiceChat.SpeakText) then return false end
+    elseif not (r.sound and NS.Sounds) then
+        return false
+    end
+    local SN = NS.SoundItems
+    if SN and SN.Is(st.rec) and not SN.MayCue(st, r, i) then return false end
+    if speak then return CU.Speak(r.text) end
+    NS.Sounds.Play(r.sound, CU.Channel(st.rec))
+    return true
+end
+
+function CU.Act(st, r, i)
     local act = r.act or "start"
     local changed = false
     if act == "start" then
@@ -344,10 +395,8 @@ function CU.Act(st, r)
         local a = CU.StopTimer(st)
         local b = CU.SetStacks(st, 0)
         changed = a or b
-    elseif act == "sound" then
-        if r.sound and NS.Sounds and not CU.Quiet(st.rec) then NS.Sounds.Play(r.sound, CU.Channel(st.rec)) end
-    elseif act == "speak" then
-        if not CU.Quiet(st.rec) then CU.Speak(r.text) end
+    elseif act == "sound" or act == "speak" then
+        CU.Cue(st, r, i)
     end
     if changed then
         CU.Paint(st)
@@ -365,7 +414,7 @@ function CU.Fire(when, ctx)
                 if r.when == when and not (ctx and ctx.once and st.last[i] == ctx.once)
                     and CU.Matches(r, ctx) and CU.Guard(st, r) then
                     st.last[i] = GetTime()
-                    CU.Act(st, r)
+                    CU.Act(st, r, i)
                 end
             end
         end
@@ -491,6 +540,21 @@ function CU.DetachText(id)
     local st = CU.items[id]
     if not st then return end
     st.text = nil
+    CU.QueueSync()
+end
+
+-- A Sound item (Bars\AD_SoundItem.lua): the fourth sink, which draws nothing;
+-- its rules only ever cue a sound or a spoken line.
+function CU.AttachSound(rec, e)
+    local st = Ensure(rec)
+    st.sound = e
+    CU.QueueSync()
+end
+
+function CU.DetachSound(id)
+    local st = CU.items[id]
+    if not st then return end
+    st.sound = nil
     CU.QueueSync()
 end
 
@@ -750,18 +814,51 @@ function CU.SyncWatches(want, usable)
     end
 end
 
+-- The condition triggers: the conditions module arms the events of the keys
+-- the live rules name and calls CU.OnConds after each of its passes. A key's
+-- first read only sets its state, so a state already true never fires.
+function CU.SyncConds(want)
+    local C = NS.Conditions
+    if not (C and C.Watch) then return end
+    for key in pairs(CU.condWas) do
+        if not want[key] then CU.condWas[key] = nil end
+    end
+    local any = next(want) ~= nil
+    -- armed at login or /reload, while the roster and the pet still settle
+    if any and not CU.armed.cond then CU.condQuiet = GetTime() + CU.COND_QUIET end
+    CU.armed.cond = any
+    CU.conds = want
+    C.Watch(CU.EVENT_KEY, want, CU.OnConds)
+end
+
+-- An edge is a known answer that differs from the last known one. An unknown
+-- answer fires nothing and forgets the state, so the next known one only sets it.
+function CU.OnConds()
+    local C = NS.Conditions
+    if not (C and C.Read) then return end
+    local quiet = GetTime() < CU.condQuiet
+    for key in pairs(CU.conds) do
+        local v = C.Read(key)
+        local was = CU.condWas[key]
+        CU.condWas[key] = v
+        if v ~= nil and was ~= nil and v ~= was and not quiet then
+            CU.Fire(v and "cond_on" or "cond_off", { cond = key })
+        end
+    end
+end
+
 function CU.Sync()
     local live = {}
     local feedback, casts, petCasts, text, proc, target, totem = {}, false, false, false, false, false, false
     local upd = false
-    local watch, usable = {}, {}
+    local watch, usable, conds = {}, {}, {}
     for id, st in pairs(CU.items) do
         local rec = Store.Get(id)
         if not rec then
             CU.items[id] = nil
         else
             st.rec = rec
-            if (st.f or st.bar or st.text) and Store.IsLoaded(rec) then
+            if (st.f or st.bar or st.text or st.sound) and Store.IsLoaded(rec) then
                 live[id] = st
                 for _, r in ipairs(CU.Rules(rec) or {}) do
                     local g = CU.GROUP_OF[r.when]
@@ -791,6 +888,8 @@ function CU.Sync()
                         target = true
                     elseif CU.TOTEM_TRIGGERS[r.when] then
                         totem = true
+                    elseif CU.COND_TRIGGERS[r.when] and CU.CondOK(r.cond) then
+                        conds[r.cond] = true
                     end
                     if r.spellReady then watch[r.spellReady] = true end
                 end
@@ -829,11 +928,14 @@ function CU.Sync()
     CU.ArmSet("target", target, { "PLAYER_TARGET_CHANGED" }, function() CU.Fire("target_changed") end)
     if totem and not CU.armed.totem then CU.ReadTotems() end
     CU.ArmSet("totem", totem, { "PLAYER_TOTEM_UPDATE" }, function(_, slot) CU.OnTotem(slot) end)
-    CU.ArmSet("world", any, { "PLAYER_ENTERING_WORLD" }, function()
+    CU.ArmSet("world", any, { "PLAYER_ENTERING_WORLD" }, function(_, login, reload)
         CU.updQuiet = GetTime() + CU.UPDATE_QUIET
+        -- a zone change keeps its edges (entering a dungeon is one)
+        if login or reload then CU.condQuiet = GetTime() + CU.COND_QUIET end
         if CU.armed.totem then CU.ReadTotems() end
     end)
     CU.SyncWatches(watch, usable)
+    CU.SyncConds(conds)
 end
 
 function CU.QueueSync() Events.Coalesce("adcustom_sync", CU.Sync) end
@@ -844,7 +946,12 @@ function CU.AddRule(rec)
     local d = rec.driver
     d.rules = d.rules or {}
     if #d.rules >= Schema.CUSTOM_MAX_RULES then return false end
-    d.rules[#d.rules + 1] = { when = "cast", act = "start", mode = "restart" }
+    -- a Sound item's rule only ever plays something
+    if rec.type == "bar" and rec.barKind == "sound" then
+        d.rules[#d.rules + 1] = { when = "cast", act = "sound" }
+    else
+        d.rules[#d.rules + 1] = { when = "cast", act = "start", mode = "restart" }
+    end
     Store.Dirty("style", rec.id)
     return true
 end
@@ -861,7 +968,7 @@ function CU.RemoveRule(rec, i)
         end
     end
     local st = CU.items[rec.id]
-    if st then st.last = {} end
+    if st then st.last, st.cue = {}, nil end
     Store.Dirty("style", rec.id)
     return true
 end
@@ -876,7 +983,7 @@ function CU.MoveRule(rec, i, dir)
         elseif r.withinRule == j then r.withinRule = i end
     end
     local st = CU.items[rec.id]
-    if st then st.last = {} end
+    if st then st.last, st.cue = {}, nil end
     Store.Dirty("style", rec.id)
     return true
 end
@@ -893,6 +1000,16 @@ function CU.SetRule(rec, i, field, value)
         if not CU.USABLE_TRIGGERS[value] then r.ignoreCooldown = nil end
         if not CU.TOTEM_TRIGGERS[value] then r.slot = nil end
         if value ~= "chain" then r.srcId = nil end
+        if not CU.COND_TRIGGERS[value] then r.cond = nil end
+        if not CU.AURA_TRIGGERS[value] then r.unit, r.auraIDs = nil, nil end
+        -- the game plays an aura's moment from a sound file: never speech or a
+        -- kit, and no guard of ours can hold it back
+        if CU.AURA_TRIGGERS[value] then
+            if r.act == "speak" then r.act = "sound" end
+            if type(r.sound) == "string" and r.sound:sub(1, 4) == "kit:" then r.sound = nil end
+            r.combat, r.talent, r.talentEntry, r.talentNot, r.spec, r.spellReady = nil, nil, nil, nil, nil, nil
+            r.stacksMin, r.stacksMax, r.withinRule, r.withinSecs, r.timer = nil, nil, nil, nil, nil
+        end
     end
     if field == "withinRule" and value == nil then r.withinSecs = nil end
     -- a choice belongs to its talent; no talent, no reverse
@@ -917,6 +1034,15 @@ function CU.Words(r)
     local L = Schema.CUSTOM_TRIGGER_LABELS[r.when] or tostring(r.when)
     if CU.SPELL_TRIGGERS[r.when] and r.spellID then
         L = L .. " (" .. (SpellName(r.spellID) or tostring(r.spellID)) .. ")"
+    end
+    if CU.COND_TRIGGERS[r.when] and r.cond then
+        local C = NS.Conditions
+        local d = C and C.ByKey and C.ByKey(r.cond)
+        L = L .. " (" .. ((d and d.text) or r.cond) .. ")"
+    end
+    local first = CU.AURA_TRIGGERS[r.when] and type(r.auraIDs) == "table" and r.auraIDs[1]
+    if first then
+        L = L .. " (" .. (SpellName(first) or tostring(first)) .. ((#r.auraIDs > 1) and ", ..." or "") .. ")"
     end
     local A = Schema.CUSTOM_ACTION_LABELS[r.act] or tostring(r.act)
     if r.act == "start" then

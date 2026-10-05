@@ -20,6 +20,8 @@ local tempGainCount = 0
 local tempMSWConsumed = 0
 local tempViolations = 0
 local tempEnabled = false
+-- talented once this session: ProcTracker's deck registration, sticky from then on
+local registered = false
 local snap = { deckNumber = 1, prevProcs = 0, totalStacks = 0, procCredited = false }
 local openWatches = {}
 local MSW = nil
@@ -128,8 +130,21 @@ local function IsTempestTalented()
     return true
 end
 
-local function Sync()
-    MSW = NS.SpecialMSW
+-- ProcTracker's registration: once talented, the deck draws and refreshes its
+-- readout one and three seconds on
+local function TryRegister()
+    if registered or not IsTempestTalented() then return end
+    registered = true
+    tempEnabled = true
+    MSW.Subscribe("OnConsumed", OnMSWConsumed)
+    C_Timer.After(1, function() SP.Update("tempest") end)
+    C_Timer.After(3, function() SP.Update("tempest") end)
+    MSW.InitFromLive()
+end
+
+-- the talent API is not ready on a zone change: leave the state alone then
+local function ApplyTalentVisibility()
+    if not registered then return end
     if not SP.ConfigID() then return end
     local track = IsTempestTalented() and SP.Wanted("tempest")
     if not track then
@@ -142,13 +157,17 @@ local function Sync()
     end
 end
 
-local function Start()
+local function Sync()
     MSW = NS.SpecialMSW
-    tempEnabled = true
-    MSW.Subscribe("OnConsumed", OnMSWConsumed)
-    MSW.InitFromLive()
+    TryRegister()
+    ApplyTalentVisibility()
 end
 
+local function Start()
+    MSW = NS.SpecialMSW
+end
+
+-- nothing reads the deck any more: it stops drawing, its open windows run out
 local function Stop()
     tempEnabled = false
     if MSW then MSW.Unsubscribe("OnConsumed", OnMSWConsumed) end
@@ -178,12 +197,16 @@ end
 
 SP.Register({
     id = "tempest", name = "Tempest", class = "SHAMAN", specs = { 263 },
+    talentGate = { node = TEMPEST_NODE_ID },
     icon = TEMPEST_CAST, size = DECK_SIZE, procs = DECK_PROCS,
     isTimer = false, bar = true, sound = false, chanceSpend = true, chanceForecast = false, viol = true,
     words = { pos = "Deck position", procs = "Proc count" },
     tokens = SP.DECK_TOKENS,
     labels = { "{procsLeft}", "{chance}", "{viol}" },
     stack = "{left}",
+    -- ProcTracker's talent frame for this deck, plus its login pass
+    syncEvents = { TRAIT_CONFIG_UPDATED = true, PLAYER_TALENT_UPDATE = true, ACTIVE_COMBAT_CONFIG_CHANGED = true,
+        ACTIVE_TALENT_GROUP_CHANGED = true, PLAYER_SPECIALIZATION_CHANGED = true, PLAYER_LOGIN = true },
     Gate = IsTempestTalented, Read = Read, Start = Start, Stop = Stop, Sync = Sync, Reset = Reset,
     Save = Save, Load = Load, Status = Status,
 })

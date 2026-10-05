@@ -21,6 +21,8 @@ local drePrevDeckProcs = 0
 local dreGainCount = 0
 local dreViolations = 0
 local dreEnabled = false
+-- talented once this session: ProcTracker's deck registration, sticky from then on
+local registered = false
 local dreSnapTotal = 0
 local dreProcThisConsume = false
 local dreLastProcTime = 0
@@ -132,8 +134,18 @@ local function IsDRETalented()
     return activeEntryID == DRE_ENTRY_ID
 end
 
-local function Sync()
-    MSW = NS.SpecialMSW
+-- ProcTracker's registration: once talented, the deck draws
+local function TryRegister()
+    if registered or not IsDRETalented() then return end
+    registered = true
+    dreEnabled = true
+    MSW.Subscribe("OnConsumed", OnMSWConsumed)
+    MSW.InitFromLive()
+end
+
+-- the talent API is not ready on a zone change: leave the state alone then
+local function ApplyTalentVisibility()
+    if not registered then return end
     if not SP.ConfigID() then return end
     local track = IsDRETalented() and SP.Wanted("dre")
     if not track then
@@ -146,13 +158,17 @@ local function Sync()
     end
 end
 
-local function Start()
+local function Sync()
     MSW = NS.SpecialMSW
-    dreEnabled = true
-    MSW.Subscribe("OnConsumed", OnMSWConsumed)
-    MSW.InitFromLive()
+    TryRegister()
+    ApplyTalentVisibility()
 end
 
+local function Start()
+    MSW = NS.SpecialMSW
+end
+
+-- nothing reads the deck any more: it stops drawing, its open windows run out
 local function Stop()
     dreEnabled = false
     if MSW then MSW.Unsubscribe("OnConsumed", OnMSWConsumed) end
@@ -181,12 +197,16 @@ end
 
 SP.Register({
     id = "dre", name = "DRE Ascendance", class = "SHAMAN", specs = { 263 },
+    talentGate = { node = DRE_NODE_ID, entry = DRE_ENTRY_ID },
     icon = DRE_ICON, size = DECK_SIZE, procs = DECK_PROCS,
     isTimer = false, bar = true, sound = false, chanceSpend = true, chanceForecast = false, viol = true,
     words = { pos = "Deck position", procs = "Proc count" },
     tokens = SP.DECK_TOKENS,
     labels = { "{procsLeft}", "{chance}", "{viol}" },
     stack = "{left}",
+    -- ProcTracker's talent frame for this deck, plus its login pass
+    syncEvents = { TRAIT_CONFIG_UPDATED = true, PLAYER_TALENT_UPDATE = true, ACTIVE_COMBAT_CONFIG_CHANGED = true,
+        ACTIVE_TALENT_GROUP_CHANGED = true, PLAYER_LOGIN = true },
     Gate = IsDRETalented, Read = Read, Start = Start, Stop = Stop, Sync = Sync, Reset = Reset,
     Save = Save, Load = Load, Status = Status,
 })

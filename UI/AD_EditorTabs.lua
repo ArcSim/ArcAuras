@@ -242,8 +242,9 @@ local WARN_WORDS = { ammo = "your ammo runs low", petHealth = "your pet's health
 local AURA_WORDS = { always = "the aura is up", pandemic = "the last 30% of it", time = "little time is left",
     missing = "the aura is missing", both = "always" }
 ET.GLOW_WHEN = {
-    ready = function(rec) return rec.kind == "special" and "a proc is still in the deck" or "cooldown done" end,
-    cooldown = function(rec) return rec.kind == "special" and "every proc is used, or the timer runs" or "the cooldown runs" end,
+    -- a deck's glows have cards of their own; Nature's Guardian, a timer, keeps When ready
+    ready = function(rec) return rec.kind == "special" and "its internal cooldown is ready" or "cooldown done" end,
+    cooldown = "the cooldown runs",
     active = function(rec)
         if rec.kind == "timer" then return "it is active" end
         return rec.kind == "totem" and "the totem is out" or "the weapon has it"
@@ -353,6 +354,20 @@ local WARNING = { key = "warn", label = "Warning", when = "while the warning is 
     showIf = function(r) return FieldOn(r, S, "warnGlow") end,
     fx = { glow = { "states.warnGlow" } } }
 local function GBNobody(r) return r ~= nil and Store.Resolve(r, "groupBuff", "remind") == "nobody" end
+-- A charge spell's cooldown state is every charge spent: Depleted, listed
+-- after Recharging (Ready, Recharging, Depleted).
+function ET.IsCharge(r)
+    local D = NS.DriverCooldown
+    return r ~= nil and D ~= nil and D.IsCharge ~= nil and D.IsCharge(r) == true
+end
+-- A Special Aura that is a timer (Nature's Guardian) is ready or on cooldown.
+function ET.SpecialTimer(r)
+    local O = NS.Options
+    return r ~= nil and O ~= nil and O.SpecialIsTimer ~= nil and O.SpecialIsTimer(r) == true
+end
+local SPELL_COOLDOWN = {}
+for k, v in pairs(COOLDOWN) do SPELL_COOLDOWN[k] = v end
+SPELL_COOLDOWN.labelFn = function(r) return ET.IsCharge(r) and "Depleted" or "On cooldown" end
 -- One entry per state a kind has, in order: its key (the Effects box's pick),
 -- its words, then the field each column drives as { section, field }. A tint's
 -- switch is `on`; an opacity with `on` has a switch before its slider. A
@@ -360,20 +375,18 @@ local function GBNobody(r) return r ~= nil and Store.Resolve(r, "groupBuff", "re
 -- them. `base`: the switch picking whose look it copies, under its words.
 ET.STATES = {
     spell = {
-        READY, COOLDOWN,
+        READY,
         -- a charge spell with a charge left and another on its way; it copies
-        -- On cooldown or, with Wait for no charges, Ready
+        -- Depleted or, with Wait for no charges, Ready
         { key = "recharge", label = "Recharging", when = "while a charge comes back",
           alpha = { S, "rechargeAlpha", on = "rechargeAlphaEnabled" },
           onTip = "On: this opacity while a charge comes back. Off: the opacity of the look picked under Recharging.",
           grey = { S, "rechargeDesaturate" }, tint = { S, "rechargeTintColor", on = "rechargeTintEnabled" },
           base = { S, "waitForNoCharges" },
-          showIf = function(r)
-              local D = NS.DriverCooldown
-              return D ~= nil and D.IsCharge ~= nil and D.IsCharge(r)
-          end,
+          showIf = ET.IsCharge,
           fx = { glow = { "states.rechargeGlow" },
               sound = { "alerts.rechargeSoundEnabled", "alerts.chargeGainedSoundEnabled" } } },
+        SPELL_COOLDOWN,
         { key = "unusable", label = "Can't use it", when = "while it can't be used", alpha = { S, "unusableAlpha" },
           grey = { S, "unusableDesaturate" }, tint = { S, "unusableTintColor", on = "unusableTintEnabled" },
           alphaTip = "Never brighter than Ready's opacity." },
@@ -455,14 +468,16 @@ ET.STATES = {
         OUT_OF_STOCK,
         WARNING,
     },
-    -- a Special Aura: procs left in the deck, or every proc used (a timer's
-    -- internal cooldown running)
+    -- a Special Aura: procs left in the deck, or every proc used; a timer
+    -- (Nature's Guardian) ready, or its internal cooldown running
     special = {
-        { key = "ready", label = "Procs left", when = "while a proc is still in the deck", alpha = READY.alpha,
+        { key = "ready", label = "Procs left", when = "while it can still proc", alpha = READY.alpha,
           grey = READY.grey, tint = READY.tint, alphaTip = "0 hides it; the rules under the table can bring it back.",
+          labelFn = function(r) return ET.SpecialTimer(r) and "Ready" or "Procs left" end,
           fx = { glow = { "states.readyGlow" }, sound = { "alerts.procSoundEnabled", "alerts.sureSoundEnabled" } } },
         { key = "cooldown", label = "All procs used", when = "while every proc is used, or its timer runs",
           alpha = COOLDOWN.alpha, grey = COOLDOWN.grey, tint = COOLDOWN.tint,
+          labelFn = function(r) return ET.SpecialTimer(r) and "On cooldown" or "All procs used" end,
           fx = { glow = { "states.cooldownGlow" } } },
         WARNING,
     },
@@ -597,6 +612,8 @@ end
 -- under the effect (ET.FxKindBlock); the editor under a table row draws them.
 ET.FX_ORDER = { "glow", "sound", "art" }
 ET.FX_WORD = { glow = "Glow", sound = "Sound", art = "Icon" }
+-- a sound field's width in an editor line (it narrows on a short line)
+ET.SOUND_W = 220
 ET.FX_BLOCKS = {}
 ET.FX_KIND_BLOCKS = {}
 -- Options' gate for a block on a record: its kind, a switch's own row, and
@@ -1051,9 +1068,15 @@ local function MakePair(ed, blk, field, ctx, owner, relay)
             get = function() return Options.AuraGlowForValue(ctx(), section, field) end
             set = function(v) Put(tonumber(v) or 0) end
         end
-        local dd = AT.MakeDropdown(owner, ed, nil, items, get, set, function() relay() end)
+        -- a sound field keeps a set width: sized to the longest sound name it
+        -- ran past the editor's edge, and its pullout with it
+        local fixed = t == "sound"
+        local dd = AT.MakeDropdown(owner, ed, fixed and ET.SOUND_W or nil, items, get, set, function() relay() end)
         P.ctrl = dd
-        P.sync = function() dd.Refresh() end
+        P.sync = function()
+            if fixed then dd:SetWidth(ET.SOUND_W) end
+            dd.Refresh()
+        end
         if t == "sound" then
             local play = AT.MakeSmallButton(ed, "Play", 44)
             play:SetScript("OnClick", function()
@@ -1064,6 +1087,12 @@ local function MakePair(ed, blk, field, ctx, owner, relay)
             end)
             Tip(play, "Play", "Hear the chosen sound once, on this icon's sound channel.")
             P.extra = play
+            -- on a line too short for it the field narrows, long names cut short
+            P.fit = function(room)
+                local other = Measure(lbl) + 8 + 4 + play:GetWidth()
+                dd:SetWidth(math.max(80, math.floor(room - other)))
+                return P.width()
+            end
         end
     elseif t == "color" then
         local sw = AT.MakeSwatch(ed, 28, 14)
@@ -1442,6 +1471,8 @@ local function EditorRow(pg, T, ctx, vis, kind, st, owner, stateRow)
                     yc = y - LINE_H / 2
                     x = px0
                 end
+                -- still too wide on a line of its own: never past the edge
+                if x + w > right and P.fit then w = P.fit(right - x) end
                 P.place(x, yc)
                 x = x + w + PAIR_GAP
             end
@@ -1621,21 +1652,21 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
     end
     local function Relay() AT.LayoutPage(pg) end
 
-    -- the look it copies until it has its own (Recharging: On cooldown, or
+    -- the look it copies until it has its own (Recharging: Depleted, or
     -- Ready with Wait for no charges), one pick for the two
     if tall then
         local section, field = st.base[1], st.base[2]
         local bdef = Def(section, field)
         local dd = AT.MakeDropdown(owner or pg, row, nil,
             function()
-                return { { value = false, text = "Like On cooldown" }, { value = true, text = "Like Ready" } }
+                return { { value = false, text = "Like Depleted" }, { value = true, text = "Like Ready" } }
             end,
             function() return Get(section, field) == true end,
             function(v) Put(section, field, v == true) end,
             function() Relay() end)
         dd:SetPoint("TOPLEFT", 12, -27)
         Tip(dd, (bdef and bdef.label) or field,
-            "Until it has looks of its own: like On cooldown (dim from the first charge spent) or like Ready (until the last one).")
+            "Until it has looks of its own: like Depleted (dim from the first charge spent) or like Ready (until the last one).")
         row._adBase = dd
     end
 

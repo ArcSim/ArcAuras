@@ -1,4 +1,4 @@
--- AD_RetailWho: the retail-only Load Conditions rows: a Role row under the class and spec matrix and a Hero Talents section.
+-- AD_RetailWho: the retail-only Load Conditions sections: Role and Hero Talents, after the class and spec matrix.
 -- AD_Options' ConditionRows calls Options.RetailWhoRows behind a nil check; every write goes through the Store's role and hero setters.
 -- Nothing here shows on WoW Forever: the flavor flag hides the rows there, and that client ignores the keys they write.
 local ADDON, NS = ...
@@ -32,23 +32,21 @@ function Options.RetailWhoRows(pg, ctx, tabVisible, uiStore)
     local AT, Store = NS.AT, NS.Store
     local COL = AT.COL
 
-    -- Role: the spec's role, boxes under the spec columns. Every box checked
-    -- is any role; the set collapses back to nothing when all three are back.
+    -- Role: the spec's role, a section of its own, since under the spec columns
+    -- it read as part of the spec pick. Every box checked is any role; the set
+    -- collapses back to nothing when all three are back.
+    AT.Section(pg, "Role", { collapsible = true, store = uiStore, visibleFn = tabVisible })
+    AT.RowDesc(pg, "Every box checked = any role. It applies together with class and spec.", 18, tabVisible)
     local roleRow = AT.AddRow(pg, 22, tabVisible)
-    local lbl = roleRow:CreateFontString(nil, "OVERLAY")
-    lbl:SetFont(STANDARD_TEXT_FONT, 10, "")
-    lbl:SetPoint("LEFT", 4, 0)
-    lbl:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
-    lbl:SetText("Role")
     local cells = {}
     for i, role in ipairs(Store.ROLES) do
         local cb = AT.MakeCheckbox(roleRow)
-        cb:SetPoint("LEFT", roleRow, "LEFT", 128 + (i - 1) * 104, 0)
+        cb:SetPoint("LEFT", roleRow, "LEFT", 4 + (i - 1) * 104, 0)
         local fs = roleRow:CreateFontString(nil, "OVERLAY")
-        fs:SetFont(STANDARD_TEXT_FONT, 10, "")
-        fs:SetPoint("LEFT", cb, "RIGHT", 4, 0)
+        fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+        fs:SetPoint("LEFT", cb, "RIGHT", 6, 0)
         fs:SetText(RW.ROLE_WORDS[role] or role)
-        fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+        fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
         cb:SetScript("OnClick", function()
             local r = ctx()
             if r then Store.ToggleRole(r, role) end

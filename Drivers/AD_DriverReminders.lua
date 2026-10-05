@@ -1280,7 +1280,11 @@ function RM.Place(g, gf, editMode)
     if mode == "stack" then
         w = size + (size + (R(g, "pulse", "stackSpacing") or 4)) * (RM.STACK_MAX - 1)
     end
-    gf:SetSize(math.max(w, size), size)
+    -- whole pixels: the aura row counts from this frame's top-left corner
+    local E = NS.LayoutEngine
+    local S = (E and E.Snap) or function(v) return v end
+    w = S(math.max(w, size))
+    gf:SetSize(w, S(size))
     local lvl = gf:GetFrameLevel() + 5
     local primary = RM.Primary(P, g)
     local frames = { primary }
@@ -1322,7 +1326,7 @@ function RM.Place(g, gf, editMode)
     ph.tex:SetTexture(first and NS.Factory.GetTexture(first) or RM.PLACEHOLDER)
     ph:SetAlpha(0.5)
     RM.PaintMarker(g.id)
-    RM.PlaceAuras(g, gf, math.max(w, size), size)
+    RM.PlaceAuras(g, gf, w, S(size))
     RM.QueueSync()
 end
 
@@ -1335,25 +1339,32 @@ function RM.PlaceAuras(g, gf, pw, ph)
     if not (E and E.PlaceKindIcon and E.Shows) then return end
     local all = Store.IconsOf(g)
     if #all == 0 then return end
-    local size = math.max(8, R(g, "pulse", "auraSize") or 40)
-    local sp = math.max(0, R(g, "pulse", "auraSpacing") or 4)
+    -- Slot corners from the pulse area's top-left (y down), every size and gap
+    -- whole pixels, so each step is the same pixel count.
+    local S = E.Snap or function(v) return v end
+    local Floor = E.FloorPx or math.floor
+    local size = S(math.max(8, R(g, "pulse", "auraSize") or 40))
+    local sp = S(math.max(0, R(g, "pulse", "auraSpacing") or 4))
     local side = R(g, "pulse", "auraSide") or "below"
+    pw, ph = S(pw), S(ph)
     local n = 0
     for _, rec in ipairs(all) do
         if E.Shows(rec) then n = n + 1 end
     end
+    local span = n * size + (n - 1) * sp
     local i = 0
     for _, rec in ipairs(all) do
         local x, y = 0, 0
         if E.Shows(rec) then
             i = i + 1
-            if side == "left" or side == "right" then
-                local d = pw / 2 + sp + size / 2 + (i - 1) * (size + sp)
-                x = (side == "left") and -d or d
+            local step = (i - 1) * (size + sp)
+            if side == "left" then
+                x, y = -(sp + size) - step, Floor((ph - size) / 2)
+            elseif side == "right" then
+                x, y = pw + sp + step, Floor((ph - size) / 2)
             else
-                x = -(n * size + (n - 1) * sp) / 2 + size / 2 + (i - 1) * (size + sp)
-                y = ph / 2 + sp + size / 2
-                if side ~= "above" then y = -y end
+                x = Floor((pw - span) / 2) + step
+                y = (side == "above") and -(sp + size) or (ph + sp)
             end
         end
         -- one not drawn here is released by the same call

@@ -162,6 +162,9 @@ SP.Register({
     labels = {},
     stack = "",
     talentGate = { node = NG_NODE_ID, entry = NG_ENTRY_ID },
+    -- the timer's recipe, for the Custom Icon the ProcTracker import builds
+    icd = { spell = NG_EFFECT, base = NG_ICD_BASE,
+        harmony = { node = NH_NODE_ID, entry = NH_ENTRY_ID, bySpec = NH_BY_SPEC, fallback = NH_FALLBACK } },
     Gate = HasNGTalent, Talented = HasNGTalent, Read = Read, Start = Start, Stop = Stop,
     Reset = Reset, Save = Save, Load = Load, Status = Status,
     CurrentICD = CurrentICD, IsOnCooldown = function() return ngOnCD end,

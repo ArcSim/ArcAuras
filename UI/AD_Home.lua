@@ -1,10 +1,11 @@
--- AD_Home: the window's front page. Your own setup on the left (who you are
--- playing, what loads here, your layouts and what each holds) beside what
--- changed on the right (layout pack updates, the release notes), then the
--- Spotlight packs. UI\AD_Options.lua owns the pane and the sidebar's Home row: it
--- calls Fill once as the window builds, Refresh whenever the page shows,
--- MakeHouse and PaintRailDot for the Home row and OnOpen as the window opens.
--- The sidebar's update tag on a layout row is made and painted here too.
+-- AD_Home: the window's front page. A main column with your own setup (who
+-- you are playing, what loads here, your layouts) and the Spotlight packs,
+-- beside a rail with what changed (layout pack updates one at a time, the
+-- release notes); a narrow page stacks the rail under the main column.
+-- UI\AD_Options.lua owns the pane and the sidebar's Home row: it calls Fill
+-- once as the window builds, Refresh whenever the page shows, MakeHouse and
+-- PaintRailDot for the Home row and OnOpen as the window opens. The sidebar's
+-- update tag on a layout row is made and painted here too.
 local ADDON, NS = ...
 local Options = NS.Options
 if not Options then return end
@@ -12,16 +13,21 @@ local AT = NS.AT
 local COL = AT.COL
 local Store = NS.Store
 
-local HM = { cards = {}, others = {}, ups = {}, packs = {}, gen = 0 }
+local HM = { cards = {}, others = {}, gen = 0 }
 Options.Home = HM
 
 -- a layout that loads here: the Modules cards' ON green
 HM.ON = { 0.35, 0.85, 0.45 }
 HM.GAP, HM.HEAD_H = 10, 24
 HM.HERO_H, HM.TILE_H, HM.TILE_MIN = 58, 60, 150
--- My Layouts sits beside Updates and What's New from this width, taking
--- LEFT_SHARE of it; narrower, the two stack
-HM.TWO_COL, HM.LEFT_SHARE, HM.COL_GAP = 620, 0.55, 18
+-- a tile's words start 14 in and stop 12 short of its right edge
+HM.TILE_PAD = 26
+-- the rail keeps RAIL_W beside a main column of at least MAIN_MIN; a
+-- narrower page stacks the rail under the main column
+HM.RAIL_W, HM.MAIN_MIN, HM.COL_GAP = 340, 340, 18
+HM.TWO_COL = HM.MAIN_MIN + HM.COL_GAP + HM.RAIL_W
+-- before a column's second section, and between stacked columns
+HM.SEC_GAP = 14
 -- a layout card: the picture gives way to Edit, Export and the eye button,
 -- then the eye button drops its words
 HM.EDIT_W, HM.EXPORT_W, HM.EYE_ICON_W = 56, 62, 30
@@ -30,13 +36,19 @@ HM.PREV_MIN, HM.PREV_MAX = 120, 172
 -- a collection row shows its load conditions from TAG_MIN wide
 HM.ROW_H, HM.ROW_MIN, HM.ROW_GAP, HM.TAG_MIN = 30, 180, 6, 260
 HM.CALM_H = 36
-HM.PACK_H, HM.PACK_MIN, HM.IMG_W, HM.IMG_H = 88, 300, 128, 64
--- a maker's card: its picture, a class crest per pack, the legend from LEGEND_W
-HM.MAKER_IMG_W, HM.MAKER_IMG_H = 192, 96
-HM.CREST, HM.CREST_W, HM.CREST_H, HM.LEGEND_W = 30, 54, 50, 210
+HM.PACK_H, HM.IMG_W, HM.IMG_H = 88, 128, 64
+-- a maker's card: its picture gives way from MAKER_IMG_W to MAKER_IMG_MIN
+-- wide (always 2:1), a class crest per pack, the share strip at its foot
+HM.MAKER_IMG_W, HM.MAKER_IMG_MIN = 256, 128
+HM.CREST, HM.CREST_W, HM.CREST_H = 30, 54, 50
+HM.STRIP_H = 36
 HM.CLASS_ART = "Interface\\Glues\\CharacterCreate\\UI-CharacterCreate-Classes"
--- What's New: the first NOTES_MAX items, each line cut at NOTES_LINES
-HM.NOTES_MAX, HM.NOTES_LINES = 4, 2
+-- the rail's update card: the pack's picture, a dot per waiting update
+HM.UPD_IMG_W, HM.UPD_IMG_H, HM.DOT, HM.DOT_PITCH = 112, 56, 8, 12
+-- Update all asks for a second press within ARM_S seconds
+HM.ARM_S = 4
+-- What's New: the first NOTES_MAX items, each cut at NOTES_LINES lines
+HM.NOTES_MAX, HM.NOTES_LINES = 5, 2
 HM.TILES = { "loaded", "showing", "hidden", "updates" }
 
 -- Small helpers
@@ -75,6 +87,35 @@ function HM.Usable(pg)
         return nil
     end
     return math.floor(w - 28)
+end
+
+-- a button as wide as its words need, never under minW
+function HM.Fit(b, minW)
+    local w = math.max(minW or 0, math.ceil(HM.Width(b.fs)) + 20)
+    b:SetWidth(w)
+    return w
+end
+
+-- a button in the accent: its words and its border, the border kept when the
+-- mouse leaves
+function HM.Arc(b)
+    HM.Color(b.fs, COL.arc)
+    b:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
+    b:HookScript("OnLeave", function(s) s:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1) end)
+    return b
+end
+
+-- Lets a text wrap at w and returns its height, so nothing in it is cut.
+function HM.Wrap(fs, w)
+    fs:SetWidth(w)
+    fs:SetWordWrap(true)
+    return math.ceil(fs:GetStringHeight() or 12)
+end
+
+-- a colour as the hex digits a |c code takes
+function HM.Hex(c)
+    return ("%02x%02x%02x"):format(math.floor(c[1] * 255 + 0.5), math.floor(c[2] * 255 + 0.5),
+        math.floor(c[3] * 255 + 0.5))
 end
 
 -- A word in a small box: outlined in its colour, or filled with dark letters.
@@ -240,10 +281,9 @@ end
 
 function HM.HasNews() return #HM.Pending() > 0 end
 
+-- all: every update out, the ones put off with Later too
 function HM.Read()
-    local upd = {}
-    for _, up in ipairs(HM.Updates()) do upd[up.layoutId] = up.e end
-    return { census = HM.Census(), pending = HM.Pending(), upd = upd }
+    return { census = HM.Census(), pending = HM.Pending(), all = HM.Updates() }
 end
 
 -- A layout's picture
@@ -454,48 +494,41 @@ function HM.MakeOther(parent)
     r.name = HM.Text(r, 12)
     r.name:SetPoint("LEFT", 12, 0)
     r.name:SetWordWrap(false)
+    -- two lines fill the row's height
+    if r.name.SetMaxLines then r.name:SetMaxLines(2) end
     r.tag = HM.Text(r, 10, COL.faint)
     r.tag:SetWordWrap(false)
-    r.edit = AT.MakeQuietButton(r, "Edit", 50)
+    -- Edit only: a pack update is offered in the rail and on the sidebar row
+    r.edit = AT.MakeSmallButton(r, "Edit", 50)
+    HM.Fit(r.edit, 50)
     r.edit:SetPoint("RIGHT", -6, 0)
-    r.upd = AT.MakeSmallButton(r, "Update", 64)
-    r.upd:SetPoint("RIGHT", -6, 0)
-    HM.Color(r.upd.fs, COL.arc)
+    r.tag:SetPoint("RIGHT", r.edit, "LEFT", -8, 0)
     r:SetScript("OnClick", function() if r._lay then Options.OpenLayout(r._lay) end end)
     r.edit:SetScript("OnClick", function() if r._lay then Options.OpenLayout(r._lay) end end)
-    r.upd:SetScript("OnClick", function() HM.Offer(r._pack) end)
     r:SetScript("OnEnter", function(s) s:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1) end)
-    r:SetScript("OnLeave", function(s) HM.PaintOther(s) end)
+    r:SetScript("OnLeave", function(s) s:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1) end)
     return r
 end
 
-function HM.PaintOther(r)
-    local edge = r._pack and COL.arcDeep or COL.line
-    r:SetBackdropBorderColor(edge[1], edge[2], edge[3], 1)
+-- the room a row w wide leaves its name, with its tag beside it or without
+function HM.NameRoom(r, w, tagged)
+    local room = w - 12 - 8 - r.edit:GetWidth() - 6
+    if tagged then room = room - math.ceil(HM.Width(r.tag)) - 8 end
+    return room
 end
 
--- w: the row's width; a narrow row drops its tag and keeps the name
-function HM.FillOther(r, lay, pack, w)
-    r._lay, r._pack = lay, pack
+-- w: the row's width. The tag shows only on a row TAG_MIN wide whose name
+-- still fits beside it; a name too long for its line takes a second one.
+function HM.FillOther(r, lay, w)
+    r._lay = lay
     r.name:SetText(lay.name or "Layout")
-    local btn = pack and r.upd or r.edit
-    r.upd:SetShown(pack ~= nil)
-    r.edit:SetShown(pack == nil)
-    r.tag:ClearAllPoints()
-    r.tag:SetPoint("RIGHT", btn, "LEFT", -8, 0)
-    local wide = (w or HM.TAG_MIN) >= HM.TAG_MIN
+    r.tag:SetText(Store.BadgeText and Store.BadgeText(lay) or "")
+    local nameW = math.ceil(HM.Width(r.name))
+    local wide = w >= HM.TAG_MIN and (r.tag:GetText() or "") ~= "" and nameW <= HM.NameRoom(r, w, true)
     r.tag:SetShown(wide)
-    r.name:ClearAllPoints()
-    r.name:SetPoint("LEFT", 12, 0)
-    r.name:SetPoint("RIGHT", wide and r.tag or btn, "LEFT", -8, 0)
-    if pack then
-        r.tag:SetText("Update out")
-        HM.Color(r.tag, COL.arc)
-    else
-        r.tag:SetText(Store.BadgeText and Store.BadgeText(lay) or "")
-        HM.Color(r.tag, COL.faint)
-    end
-    HM.PaintOther(r)
+    local room = math.max(20, HM.NameRoom(r, w, wide))
+    r.name:SetWidth(room)
+    r.name:SetWordWrap(nameW > room)
 end
 
 -- a pack's newer string, offered on the Import page for the player's copy
@@ -504,103 +537,284 @@ function HM.Offer(e)
     if e and SP and SP.Offer then SP.Offer(e) end
 end
 
--- Updates: a card for each layout pack update still waiting
+-- Later: off Home until the pack's next version; the sidebar tag stays
+function HM.PutOff(e)
+    local SP = NS.Spotlight
+    if e and SP and SP.Later then SP.Later(e) end
+    if Options.RefreshAll then Options.RefreshAll() end
+end
 
-function HM.MakeUpdate(parent)
-    local c = CreateFrame("Frame", nil, parent, "BackdropTemplate")
-    AT.Skin(c, COL.panel, COL.arcDeep)
-    c.chip = HM.MakeChip(c, 8)
-    c.chip:Set("LAYOUT PACK", COL.arc, true)
-    c.chip:SetPoint("TOPLEFT", 12, -14)
-    c.title = HM.Text(c, 14)
-    c.title:SetPoint("LEFT", c.chip, "RIGHT", 8, 0)
-    c.title:SetPoint("RIGHT", c, "RIGHT", -12, 0)
-    c.title:SetWordWrap(false)
-    c.notes = HM.Text(c, 12, COL.dim)
-    c.notes:SetPoint("TOPLEFT", 12, -38)
-    c.notes:SetJustifyV("TOP")
-    c.notes:SetWordWrap(true)
-    c.go = HM.Big(AT.MakeSmallButton(c, "Update my copy", 126))
-    c.go:SetPoint("BOTTOMLEFT", 12, 12)
-    HM.Color(c.go.fs, COL.arc)
-    c.later = HM.Big(AT.MakeQuietButton(c, "Later", 70))
-    c.later:SetPoint("LEFT", c.go, "RIGHT", 8, 0)
-    c.go:SetScript("OnClick", function() HM.Offer(c._e) end)
-    c.later:SetScript("OnClick", function()
-        local SP = NS.Spotlight
-        if c._e and SP and SP.Later then SP.Later(c._e) end
-        if Options.RefreshAll then Options.RefreshAll() end
+-- Updates: the waiting ones one at a time in a card, paged from the heading
+
+-- A pack's picture in `pic`: a stage per pack, drawn once at w x h. Returns
+-- the stage it shows.
+function HM.ShowPicture(pic, t, w, h)
+    local NL = NS.NewLayout
+    for key, st in pairs(pic.stages) do st:SetShown(key == t.key) end
+    local st = pic.stages[t.key]
+    if not st then
+        st = CreateFrame("Frame", nil, pic)
+        st:SetSize(w - 2, h - 2)
+        st:SetPoint("CENTER")
+        if NL and t.image then
+            NL.DrawImage(st, t.image, w - 2, h - 2)
+        elseif NL then
+            NL.DrawEntry(st, t, w - 6, h - 6, false)
+        end
+        pic.stages[t.key] = st
+    end
+    st:Show()
+    return st
+end
+
+-- An arrow button for the heading; at either end it rests dimmed, takes no
+-- click and keeps its border under the mouse.
+function HM.MakeArrow(parent, dir)
+    local b = AT.MakeSmallButton(parent, "", 22)
+    b.chev = AT.MakeChevron(b)
+    b.chev:SetDir(dir)
+    b.chev:SetColor(COL.ink)
+    b.chev:SetPoint("CENTER", 0, 0)
+    b:HookScript("OnEnter", function(s)
+        if s._off then
+            s:SetBackdropColor(COL.btn[1], COL.btn[2], COL.btn[3], 1)
+            s:SetBackdropBorderColor(COL.steel[1], COL.steel[2], COL.steel[3], 1)
+        end
     end)
+    return b
+end
+
+function HM.PaintArrow(b, off)
+    b._off = off
+    b:SetAlpha(off and 0.35 or 1)
+    if b.SetEnabled then b:SetEnabled(not off) end
+end
+
+-- the card turns to the i-th waiting update (HM.updIndex lasts the session)
+function HM.GoUpdate(i)
+    HM.updIndex = i
+    HM.Refresh()
+end
+
+function HM.StepUpdate(d)
+    local n = HM.state and #HM.state.pending or 0
+    local i = (HM.updIndex or 1) + d
+    if i >= 1 and i <= n then HM.GoUpdate(i) end
+end
+
+-- a round dot for one waiting update; a click turns the card to it
+function HM.MakeDot(parent)
+    local d = CreateFrame("Button", nil, parent)
+    d:SetSize(HM.DOT_PITCH, HM.DOT_PITCH)
+    d.tex = d:CreateTexture(nil, "ARTWORK")
+    d.tex:SetTexture(AT.WHITE)
+    d.tex:SetSize(HM.DOT, HM.DOT)
+    d.tex:SetPoint("CENTER", 0, 0)
+    local MOD = Options.Modules
+    if MOD and MOD.Round then MOD.Round(d, d.tex) end
+    d:SetScript("OnClick", function(s) if s._i then HM.GoUpdate(s._i) end end)
+    AT.Tooltip(d, function() return d._up and d._up.e.title end, function()
+        local lay = d._up and Store.Get(d._up.layoutId)
+        return lay and ("Updates " .. (lay.name or "")) or nil
+    end)
+    return d
+end
+
+function HM.MakeUpdCard(parent)
+    local c = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+    AT.Skin(c, COL.box, COL.line)
+    c.pic = CreateFrame("Frame", nil, c, "BackdropTemplate")
+    c.pic:SetSize(HM.UPD_IMG_W, HM.UPD_IMG_H)
+    c.pic:SetPoint("TOPLEFT", 14, -12)
+    AT.Skin(c.pic, COL.well, COL.line)
+    c.pic.stages = {}
+    c.title = HM.Text(c, 14)
+    c.which = HM.Text(c, 10, COL.faint)
+    c.notes = HM.Text(c, 11, COL.dim)
+    c.notes:SetJustifyV("TOP")
+    c.go = HM.Arc(AT.MakeSmallButton(c, "Update my copy", 100))
+    HM.Fit(c.go, 100)
+    c.later = AT.MakeQuietButton(c, "Later", 56)
+    HM.Fit(c.later, 56)
+    c.go:SetScript("OnClick", function() HM.Offer(c._e) end)
+    c.later:SetScript("OnClick", function() HM.PutOff(c._e) end)
     AT.Tooltip(c.later, "Later", "Hides this update here until the next version. The tag on the layout in the sidebar stays.")
+    c.dots = {}
     return c
 end
 
--- sizes the card to w and returns its height
-function HM.FillUpdate(c, up, w)
-    local e = up.e
-    local lay = Store.Get(up.layoutId)
+-- Sizes the card to w for the i-th waiting update and returns its height.
+-- The words wrap, the buttons fit their words; Later drops under Update my
+-- copy when the two leave no room, and the dots take a line of their own when
+-- they don't fit beside the buttons (none at all past that).
+function HM.FillUpdCard(c, list, i, w)
+    local up = list[i]
+    local e, lay = up.e, Store.Get(up.layoutId)
     c._e = e
-    c.title:SetText(e.title)
-    local notes = table.concat(e.notes or {}, " ")
-    local which = lay and ("Updates your layout " .. (lay.name or "") .. ". Your own sizes and positions stay.") or ""
-    c.notes:SetText((notes ~= "" and (notes .. " ") or "") .. which)
     c:SetWidth(w)
-    c.notes:SetWidth(w - 24)
-    local h = 38 + math.ceil(c.notes:GetStringHeight() or 12) + 12 + 26 + 12
+    HM.ShowPicture(c.pic, e, HM.UPD_IMG_W, HM.UPD_IMG_H)
+    local tx = 14 + HM.UPD_IMG_W + 12
+    local tw = math.max(40, w - tx - 14)
+    c.title:SetText(e.title or "")
+    c.which:SetText("Updates " .. ((lay and lay.name) or "your layout"))
+    local th, wh = HM.Wrap(c.title, tw), HM.Wrap(c.which, tw)
+    -- the title and its layout centred beside the picture
+    local block = th + 3 + wh
+    local top = 12 + math.max(0, math.floor((HM.UPD_IMG_H - block) / 2))
+    c.title:ClearAllPoints()
+    c.title:SetPoint("TOPLEFT", c, "TOPLEFT", tx, -top)
+    c.which:ClearAllPoints()
+    c.which:SetPoint("TOPLEFT", c, "TOPLEFT", tx, -(top + th + 3))
+    local inner = w - 28
+    local y = 12 + math.max(HM.UPD_IMG_H, block) + 10
+    local notes = table.concat(e.notes or {}, " ")
+    c.notes:SetText(notes)
+    c.notes:SetShown(notes ~= "")
+    if notes ~= "" then
+        c.notes:ClearAllPoints()
+        c.notes:SetPoint("TOPLEFT", c, "TOPLEFT", 14, -y)
+        y = y + HM.Wrap(c.notes, inner) + 10
+    end
+    local gw, lw = c.go:GetWidth(), c.later:GetWidth()
+    c.go:ClearAllPoints()
+    c.go:SetPoint("TOPLEFT", c, "TOPLEFT", 14, -y)
+    c.later:ClearAllPoints()
+    local used
+    if gw + 6 + lw <= inner then
+        c.later:SetPoint("TOPLEFT", c, "TOPLEFT", 14 + gw + 6, -y)
+        used = gw + 6 + lw
+    else
+        y = y + 22 + 6
+        c.later:SetPoint("TOPLEFT", c, "TOPLEFT", 14, -y)
+        used = lw
+    end
+    local bottom = y + 22
+    local n = #list
+    for k = 1, n do
+        local d = c.dots[k]
+        if not d then
+            d = HM.MakeDot(c)
+            c.dots[k] = d
+        end
+        d._i, d._up = k, list[k]
+        local col = (k == i) and COL.arc or COL.line
+        d.tex:SetVertexColor(col[1], col[2], col[3], 1)
+    end
+    for k = n + 1, #c.dots do c.dots[k]:Hide() end
+    local need = n * HM.DOT_PITCH
+    local dy
+    if need <= inner - used - 8 then
+        dy = y + (22 - HM.DOT_PITCH) / 2
+    elseif need <= inner then
+        dy = bottom + 4
+        bottom = dy + HM.DOT_PITCH
+    end
+    for k = 1, n do
+        local d = c.dots[k]
+        d:SetShown(dy ~= nil)
+        if dy then
+            d:ClearAllPoints()
+            d:SetPoint("TOPLEFT", c, "TOPLEFT", w - 14 - need + (k - 1) * HM.DOT_PITCH, -dy)
+        end
+    end
+    local h = bottom + 12
     c:SetHeight(h)
     return h
 end
 
--- What's New: the first few items of the newest release notes, in a box
+-- Update all is armed for ARM_S seconds by a first press
+function HM.Armed()
+    return HM.armAt ~= nil and GetTime() - HM.armAt <= HM.ARM_S
+end
+
+-- Every update the pager shows takes it with the default parts, so Size &
+-- Position stays the player's; one put off with Later waits, as Later says. A
+-- string that no longer reads, or one that matches nothing here (it would come
+-- in as a second copy), is left out. Returns how many it updated.
+function HM.UpdateAll()
+    local n = 0
+    for _, up in ipairs(HM.Pending()) do
+        local plan = Store.PlanUpdate(up.e.text)
+        if plan and plan.relation ~= "new" then
+            Store.ApplyUpdate(plan, { targetLayoutId = up.layoutId })
+            n = n + 1
+        end
+    end
+    return n
+end
+
+-- A first press arms Update all and the caption asks for a second; a second
+-- within ARM_S seconds runs it. Left alone, it disarms.
+function HM.PressUpdateAll()
+    if HM.Armed() then
+        HM.armAt = nil
+        HM.UpdateAll()
+        if Options.RefreshAll then Options.RefreshAll() end
+        return
+    end
+    local at = GetTime()
+    HM.armAt = at
+    C_Timer.After(HM.ARM_S, function()
+        if HM.armAt == at then
+            HM.armAt = nil
+            HM.Refresh()
+        end
+    end)
+    HM.Refresh()
+end
+
+-- What's New: the newest release's version, then its first items in the
+-- accent with their descriptions dim, in a box
 
 function HM.MakeNotes(parent, ver)
     local box = CreateFrame("Frame", nil, parent, "BackdropTemplate")
     AT.Skin(box, COL.box, COL.line)
+    box.ver = HM.Text(box, 11, COL.faint)
+    box.ver:SetText("Version " .. tostring(ver.version))
     box._items = {}
     for _, sec in ipairs(ver.sections or {}) do
         for _, it in ipairs(sec.items or {}) do
             if #box._items < HM.NOTES_MAX then
-                local t = HM.Text(box, 13)
+                local t = HM.Text(box, 12, COL.arc)
+                local d = HM.Text(box, 11, COL.dim)
+                for _, fs in ipairs({ t, d }) do
+                    fs:SetJustifyV("TOP")
+                    fs:SetWordWrap(true)
+                    if fs.SetMaxLines then fs:SetMaxLines(HM.NOTES_LINES) end
+                end
                 t:SetText(it.title or "")
-                t:SetWordWrap(false)
-                local d = HM.Text(box, 12, COL.dim)
-                d:SetJustifyV("TOP")
-                d:SetWordWrap(true)
-                if d.SetMaxLines then d:SetMaxLines(HM.NOTES_LINES) end
                 d:SetText(it.desc or "")
                 box._items[#box._items + 1] = { t = t, d = d }
             end
         end
     end
-    box.all = HM.MakeLink(box, "All release notes", function()
-        local CL = NS.Changelog
-        if CL and CL.Show then CL.Show() end
-    end)
     return box
+end
+
+-- One line of a note at y, cut at NOTES_LINES lines of lineH; a fixed height
+-- cuts it with an ellipsis where SetMaxLines is missing. Returns its height.
+function HM.LayNote(box, fs, y, w, lineH)
+    fs:ClearAllPoints()
+    fs:SetPoint("TOPLEFT", box, "TOPLEFT", 14, -y)
+    fs:SetWidth(w - 28)
+    fs:SetHeight(0)
+    local h = math.min(HM.NOTES_LINES * lineH, math.ceil(fs:GetStringHeight() or lineH))
+    fs:SetHeight(h)
+    return h
 end
 
 -- sizes the box to w and returns its height
 function HM.LayNotes(box, w)
     box:SetWidth(w)
-    local y = 12
-    -- a fixed height cuts a long line with an ellipsis where SetMaxLines is missing
-    local cap = HM.NOTES_LINES * 15
+    box.ver:ClearAllPoints()
+    box.ver:SetPoint("TOPLEFT", box, "TOPLEFT", 14, -12)
+    box.ver:SetWidth(w - 28)
+    local y = 12 + 14 + 8
     for _, it in ipairs(box._items) do
-        it.t:ClearAllPoints()
-        it.t:SetPoint("TOPLEFT", box, "TOPLEFT", 14, -y)
-        it.t:SetWidth(w - 28)
-        y = y + 17
-        it.d:ClearAllPoints()
-        it.d:SetPoint("TOPLEFT", box, "TOPLEFT", 14, -y)
-        it.d:SetWidth(w - 28)
-        it.d:SetHeight(0)
-        local dh = math.min(cap, math.ceil(it.d:GetStringHeight() or 12))
-        it.d:SetHeight(dh)
-        y = y + dh + 10
+        y = y + HM.LayNote(box, it.t, y, w, 15) + 2
+        y = y + HM.LayNote(box, it.d, y, w, 14) + 9
     end
-    box.all:ClearAllPoints()
-    box.all:SetPoint("TOPLEFT", box, "TOPLEFT", 14, -y)
-    y = y + 18 + 10
+    y = y + 3
     box:SetHeight(y)
     return y
 end
@@ -639,39 +853,46 @@ function HM.MakeTile(parent)
     local t = CreateFrame("Frame", nil, parent, "BackdropTemplate")
     t:SetHeight(HM.TILE_H)
     AT.Skin(t, COL.box, COL.line)
+    -- the words get the tile's width less HM.TILE_PAD in TilesRow, one line each
     t.label = HM.Text(t, 10, COL.faint)
     t.label:SetPoint("TOPLEFT", 14, -9)
+    t.label:SetWordWrap(false)
     t.value = HM.Text(t, 17)
     t.value:SetPoint("TOPLEFT", t.label, "BOTTOMLEFT", 0, -4)
-    t.value:SetPoint("RIGHT", t, "RIGHT", -12, 0)
     t.value:SetWordWrap(false)
     t.sub = HM.Text(t, 11, COL.dim)
     t.sub:SetPoint("TOPLEFT", t.value, "BOTTOMLEFT", 0, -4)
-    t.sub:SetPoint("RIGHT", t, "RIGHT", -12, 0)
     t.sub:SetWordWrap(false)
     return t
 end
 
--- a tile's caption, value and line
+-- A tile's caption, its value's forms longest first (a narrow tile takes the
+-- first that fits: the loaded layout's name gives way to a count), its line.
 function HM.TileText(key, st)
     local c = st.census
     if key == "loaded" then
-        local first = c.loaded[1]
-        local v = first and (first.name or "Layout") or "None"
-        if #c.loaded > 1 then v = v .. "  +" .. (#c.loaded - 1) end
-        return "LOADED HERE", v, #c.loaded .. " of " .. c.total .. (c.total == 1 and " layout" or " layouts")
+        local n, first = #c.loaded, c.loaded[1]
+        local sub = n .. " of " .. c.total .. (c.total == 1 and " layout" or " layouts")
+        if not first then return "LOADED HERE", { "None" }, sub end
+        local name = first.name or "Layout"
+        local forms = {}
+        if n > 1 then forms[1] = name .. "  +" .. (n - 1) end
+        forms[#forms + 1] = name
+        forms[#forms + 1] = n .. (n == 1 and " layout" or " layouts")
+        return "LOADED HERE", forms, sub
     elseif key == "showing" then
-        return "SHOWING NOW", c.showing .. (c.showing == 1 and " item" or " items"), "groups, bars and icons"
+        return "SHOWING NOW", { c.showing .. (c.showing == 1 and " item" or " items") }, "groups, bars and icons"
     elseif key == "hidden" then
-        return "NOT LOADED HERE", c.hidden .. (c.hidden == 1 and " item" or " items"),
+        return "NOT LOADED HERE", { c.hidden .. (c.hidden == 1 and " item" or " items") },
             "not for this character"
     end
-    local n, first = #st.pending, st.pending[1]
-    return "UPDATES", (n == 0) and "None" or (n .. (n == 1 and " layout pack" or " layout packs")),
-        first and (first.e.title .. " has an update")
-        or "Everything is up to date"
+    local n = #st.pending
+    if n == 0 then return "UPDATES", { "None" }, "Everything is up to date" end
+    return "UPDATES", { n .. (n == 1 and " layout" or " layouts") }, (n == 1) and "has an update" or "have an update"
 end
 
+-- Four tiles to a line where every tile's words fit, else two, else one, so
+-- no word is ever cut.
 function HM.TilesRow(pg)
     local row = AT.AddRow(pg, HM.TILE_H + 14)
     row._tiles = {}
@@ -684,10 +905,13 @@ function HM.TilesRow(pg)
         local st = HM.state
         if not st then return end
         for _, t in ipairs(row._tiles) do
-            local label, value, sub = HM.TileText(t._key, st)
+            local label, forms, sub = HM.TileText(t._key, st)
+            t._forms = forms
             t.label:SetText(label)
-            t.value:SetText(value)
             t.sub:SetText(sub)
+            -- the shortest form sets how narrow the tile may go
+            t.value:SetText(forms[#forms])
+            t._need = math.ceil(math.max(HM.Width(t.label), HM.Width(t.value), HM.Width(t.sub))) + HM.TILE_PAD
             local hot = t._key == "updates" and #st.pending > 0
             local edge = hot and COL.arcDeep or COL.line
             t:SetBackdropBorderColor(edge[1], edge[2], edge[3], 1)
@@ -696,10 +920,27 @@ function HM.TilesRow(pg)
         local usable = HM.Usable(pg)
         if not usable then return end
         local cols = 1
-        if usable >= 4 * HM.TILE_MIN + 3 * HM.GAP then cols = 4
-        elseif usable >= 2 * HM.TILE_MIN + HM.GAP then cols = 2 end
+        for _, n in ipairs({ 4, 2 }) do
+            local w = math.floor((usable - (n - 1) * HM.GAP) / n)
+            local fits = w >= HM.TILE_MIN
+            for _, t in ipairs(row._tiles) do
+                if t._need > w then fits = false end
+            end
+            if fits then
+                cols = n
+                break
+            end
+        end
         local tw = math.floor((usable - (cols - 1) * HM.GAP) / cols)
+        local inner = tw - HM.TILE_PAD
         for i, t in ipairs(row._tiles) do
+            for _, form in ipairs(t._forms) do
+                t.value:SetText(form)
+                if HM.Width(t.value) <= inner then break end
+            end
+            t.label:SetWidth(inner)
+            t.value:SetWidth(inner)
+            t.sub:SetWidth(inner)
             local col, r = (i - 1) % cols, math.floor((i - 1) / cols)
             t:SetWidth(tw)
             t:ClearAllPoints()
@@ -713,23 +954,24 @@ function HM.TilesRow(pg)
     return row
 end
 
--- My Layouts in the left column: the cards, the "also in your collection"
--- caption and rows, or a line when there are none. Returns its height.
-function HM.LayLeft(row, st, w)
-    local L, c = row.L, st.census
+-- The main column: My Layouts (a card per layout that loads here, then the
+-- "also in your collection" rows, or a line when there are none), then the
+-- Spotlight. Returns its height.
+function HM.LayMain(row, st, w)
+    local M, c = row.M, st.census
     row.headL:ClearAllPoints()
-    row.headL:SetPoint("TOPLEFT", L, "TOPLEFT", 0, 0)
+    row.headL:SetPoint("TOPLEFT", M, "TOPLEFT", 0, 0)
     row.headL:SetWidth(w)
     local y = HM.HEAD_H + 8
     for i, lay in ipairs(c.loaded) do
         local card = HM.cards[i]
         if not card then
-            card = HM.MakeCard(L)
+            card = HM.MakeCard(M)
             HM.cards[i] = card
         end
         local h = HM.FillCard(card, lay, w)
         card:ClearAllPoints()
-        card:SetPoint("TOPLEFT", L, "TOPLEFT", 0, -y)
+        card:SetPoint("TOPLEFT", M, "TOPLEFT", 0, -y)
         card:Show()
         y = y + h + HM.GAP
     end
@@ -738,21 +980,28 @@ function HM.LayLeft(row, st, w)
     if #c.others > 0 then
         if #c.loaded > 0 then y = y + 6 end
         row.cap:ClearAllPoints()
-        row.cap:SetPoint("TOPLEFT", L, "TOPLEFT", 2, -y)
+        row.cap:SetPoint("TOPLEFT", M, "TOPLEFT", 2, -y)
         y = y + 20
+        -- two to a line where the column holds two and every name fits its half
         local cols = (w >= 2 * HM.ROW_MIN + HM.ROW_GAP) and 2 or 1
-        local ow = math.floor((w - (cols - 1) * HM.ROW_GAP) / cols)
+        local half = math.floor((w - HM.ROW_GAP) / 2)
         for i, lay in ipairs(c.others) do
             local r = HM.others[i]
             if not r then
-                r = HM.MakeOther(L)
+                r = HM.MakeOther(M)
                 HM.others[i] = r
             end
+            r.name:SetText(lay.name or "Layout")
+            if math.ceil(HM.Width(r.name)) > HM.NameRoom(r, half, false) then cols = 1 end
+        end
+        local ow = math.floor((w - (cols - 1) * HM.ROW_GAP) / cols)
+        for i, lay in ipairs(c.others) do
+            local r = HM.others[i]
             r:SetWidth(ow)
-            HM.FillOther(r, lay, st.upd[lay.id], ow)
+            HM.FillOther(r, lay, ow)
             local col, line = (i - 1) % cols, math.floor((i - 1) / cols)
             r:ClearAllPoints()
-            r:SetPoint("TOPLEFT", L, "TOPLEFT", col * (ow + HM.ROW_GAP), -(y + line * (HM.ROW_H + HM.ROW_GAP)))
+            r:SetPoint("TOPLEFT", M, "TOPLEFT", col * (ow + HM.ROW_GAP), -(y + line * (HM.ROW_H + HM.ROW_GAP)))
             r:Show()
         end
         y = y + math.ceil(#c.others / cols) * (HM.ROW_H + HM.ROW_GAP)
@@ -761,41 +1010,67 @@ function HM.LayLeft(row, st, w)
     row.none:SetShown(c.total == 0)
     if c.total == 0 then
         row.none:ClearAllPoints()
-        row.none:SetPoint("TOPLEFT", L, "TOPLEFT", 2, -y)
+        row.none:SetPoint("TOPLEFT", M, "TOPLEFT", 2, -y)
         y = y + 22
     end
-    return y
+    y = y + HM.SEC_GAP
+    return y + HM.LaySpot(row.spot, M, y, w)
 end
 
--- Updates, then What's New, in the right column. Returns its height.
-function HM.LayRight(row, st, w)
-    local R = row.R
-    row.headU:ClearAllPoints()
-    row.headU:SetPoint("TOPLEFT", R, "TOPLEFT", 0, 0)
-    row.headU:SetWidth(w)
-    local y = HM.HEAD_H + 8
-    for i, up in ipairs(st.pending) do
-        local c = HM.ups[i]
-        if not c then
-            c = HM.MakeUpdate(R)
-            HM.ups[i] = c
-        end
-        local h = HM.FillUpdate(c, up, w)
-        c:ClearAllPoints()
-        c:SetPoint("TOPLEFT", R, "TOPLEFT", 0, -y)
-        c:Show()
-        y = y + h + HM.GAP
+-- The rail: the waiting updates one at a time (the heading pages through
+-- them), or a calm box, then What's New. Returns its height.
+function HM.LayRail(row, st, w)
+    local R, h = row.R, row.headU
+    h:ClearAllPoints()
+    h:SetPoint("TOPLEFT", R, "TOPLEFT", 0, 0)
+    h:SetWidth(w)
+    local list = st.pending
+    local n = #list
+    local some = n > 0
+    h.pos:SetShown(some)
+    h.prev:SetShown(some)
+    h.next:SetShown(some)
+    if some then
+        h.rule:SetPoint("RIGHT", h.pos, "LEFT", -10, 0)
+    else
+        h.rule:SetPoint("RIGHT", h, "RIGHT", 0, 0)
     end
-    for i = #st.pending + 1, #HM.ups do HM.ups[i]:Hide() end
-    row.calm:SetShown(#st.pending == 0)
-    if #st.pending == 0 then
+    row.upd:SetShown(some)
+    row.capU:SetShown(some)
+    row.all:SetShown(some)
+    row.calm:SetShown(not some)
+    local y = HM.HEAD_H + 8
+    if not some then
+        HM.updIndex = nil
         row.calm:SetWidth(w)
         row.calm:ClearAllPoints()
         row.calm:SetPoint("TOPLEFT", R, "TOPLEFT", 0, -y)
         y = y + HM.CALM_H + HM.GAP
+    else
+        -- a shorter list (Later, an update made) pulls the index back inside it
+        local i = math.max(1, math.min(HM.updIndex or 1, n))
+        HM.updIndex = i
+        h.pos:SetText(i .. " of " .. n)
+        HM.PaintArrow(h.prev, i <= 1)
+        HM.PaintArrow(h.next, i >= n)
+        local ch = HM.FillUpdCard(row.upd, list, i, w)
+        row.upd:ClearAllPoints()
+        row.upd:SetPoint("TOPLEFT", R, "TOPLEFT", 0, -y)
+        y = y + ch + 8
+        -- what an update keeps, or Update all asking for its second press
+        local armed = HM.Armed()
+        row.capU:SetText(armed and ("Press again to update all " .. #st.pending) or "Your own sizes and positions stay.")
+        HM.Color(row.capU, armed and COL.arc or COL.faint)
+        local capH = HM.Wrap(row.capU, math.max(40, w - 2 - row.all:GetWidth() - 10))
+        local lineH = math.max(22, capH)
+        row.capU:ClearAllPoints()
+        row.capU:SetPoint("TOPLEFT", R, "TOPLEFT", 2, -(y + math.floor((lineH - capH) / 2)))
+        row.all:ClearAllPoints()
+        row.all:SetPoint("TOPRIGHT", R, "TOPRIGHT", 0, -(y + math.floor((lineH - 22) / 2)))
+        y = y + lineH + HM.GAP
     end
     if row.notes then
-        y = y + 10
+        y = y + HM.SEC_GAP
         row.headN:ClearAllPoints()
         row.headN:SetPoint("TOPLEFT", R, "TOPLEFT", 0, -y)
         row.headN:SetWidth(w)
@@ -807,28 +1082,55 @@ function HM.LayRight(row, st, w)
     return y
 end
 
--- The page's middle: My Layouts on the left, Updates and What's New on the
--- right, or the one over the other when the page is narrow.
+-- The page's body: the main column (My Layouts, the Spotlight) and the rail
+-- (Updates, What's New) at its right, or under it on a narrow page.
 function HM.MainRow(pg)
     local row = AT.AddRow(pg, 200)
-    row.L = CreateFrame("Frame", nil, row)
+    row.M = CreateFrame("Frame", nil, row)
     row.R = CreateFrame("Frame", nil, row)
-    row.headL = HM.MakeHead(row.L, "My Layouts")
-    row.cap = HM.Text(row.L, 10, COL.faint)
+    row.headL = HM.MakeHead(row.M, "My Layouts")
+    row.cap = HM.Text(row.M, 10, COL.faint)
     row.cap:SetText("ALSO IN YOUR COLLECTION")
-    row.none = HM.Text(row.L, 12, COL.dim)
+    row.none = HM.Text(row.M, 12, COL.dim)
     row.none:SetText("No layouts yet. Start one with + New Layout.")
-    row.headU = HM.MakeHead(row.R, "Updates")
+    local NL = NS.NewLayout
+    row.spot = HM.MakeSpot(row.M, (NL and NL.SPOTLIGHT) or {})
+    -- the heading pages through the waiting updates
+    local h = HM.MakeHead(row.R, "Updates")
+    h.next = HM.MakeArrow(h, "right")
+    h.next:SetPoint("RIGHT", h, "RIGHT", 0, 0)
+    h.prev = HM.MakeArrow(h, "left")
+    h.prev:SetPoint("RIGHT", h.next, "LEFT", -4, 0)
+    h.pos = HM.Text(h, 11, COL.dim)
+    h.pos:SetPoint("RIGHT", h.prev, "LEFT", -8, 0)
+    h.prev:SetScript("OnClick", function() HM.StepUpdate(-1) end)
+    h.next:SetScript("OnClick", function() HM.StepUpdate(1) end)
+    row.headU = h
+    row.upd = HM.MakeUpdCard(row.R)
+    row.capU = HM.Text(row.R, 11, COL.faint)
+    row.capU:SetJustifyV("TOP")
+    row.all = AT.MakeQuietButton(row.R, "Update all", 80)
+    HM.Fit(row.all, 80)
+    row.all:SetScript("OnClick", function() HM.PressUpdateAll() end)
+    AT.Tooltip(row.all, "Update all", "Updates every layout that has a pack update. Press twice.")
     row.calm = CreateFrame("Frame", nil, row.R, "BackdropTemplate")
     row.calm:SetHeight(HM.CALM_H)
     AT.Skin(row.calm, COL.box, COL.line)
+    row.calm.mark = row.calm:CreateTexture(nil, "ARTWORK")
+    row.calm.mark:SetAtlas("checkmark-minimal")
+    row.calm.mark:SetDesaturated(true)
+    row.calm.mark:SetVertexColor(HM.ON[1], HM.ON[2], HM.ON[3], 1)
+    row.calm.mark:SetSize(16, 16)
+    row.calm.mark:SetPoint("LEFT", 12, 0)
     row.calm.fs = HM.Text(row.calm, 12, COL.dim)
-    row.calm.fs:SetPoint("LEFT", 14, 0)
-    row.calm.fs:SetText("Your layouts and layout packs are up to date.")
+    row.calm.fs:SetPoint("LEFT", row.calm.mark, "RIGHT", 8, 0)
+    row.calm.fs:SetText("Your layouts are up to date.")
     local CL = NS.Changelog
     local ver = CL and CL.versions and CL.versions[1]
     if ver then
-        row.headN = HM.MakeHead(row.R, "What's New in " .. tostring(ver.version))
+        row.headN = HM.MakeHead(row.R, "What's New", "All notes", function()
+            if CL.Show then CL.Show() end
+        end)
         row.notes = HM.MakeNotes(row.R, ver)
     end
     row._sync = function()
@@ -837,33 +1139,34 @@ function HM.MainRow(pg)
         local usable = HM.Usable(pg)
         if not usable then return end
         local two = usable >= HM.TWO_COL
-        local lw, rw = usable, usable
+        local mw, rw = usable, usable
         if two then
-            lw = math.floor((usable - HM.COL_GAP) * HM.LEFT_SHARE)
-            rw = usable - HM.COL_GAP - lw
+            rw = HM.RAIL_W
+            mw = usable - HM.COL_GAP - rw
         end
-        local lh = HM.LayLeft(row, st, lw)
-        local rh = HM.LayRight(row, st, rw)
-        row.L:ClearAllPoints()
-        row.L:SetPoint("TOPLEFT", row, "TOPLEFT", 12, -4)
-        row.L:SetSize(lw, lh)
+        local mh = HM.LayMain(row, st, mw)
+        local rh = HM.LayRail(row, st, rw)
+        row.M:ClearAllPoints()
+        row.M:SetPoint("TOPLEFT", row, "TOPLEFT", 12, -4)
+        row.M:SetSize(mw, mh)
         row.R:ClearAllPoints()
         if two then
-            row.R:SetPoint("TOPLEFT", row, "TOPLEFT", 12 + lw + HM.COL_GAP, -4)
+            row.R:SetPoint("TOPLEFT", row, "TOPLEFT", 12 + mw + HM.COL_GAP, -4)
         else
-            row.R:SetPoint("TOPLEFT", row, "TOPLEFT", 12, -4 - lh - 8)
+            row.R:SetPoint("TOPLEFT", row, "TOPLEFT", 12, -4 - mh - HM.SEC_GAP)
         end
         row.R:SetSize(rw, rh)
         row._two = two
-        local want = 4 + (two and math.max(lh, rh) or (lh + 8 + rh)) + 10
+        local want = 4 + (two and math.max(mh, rh) or (mh + HM.SEC_GAP + rh)) + 10
         if row._h ~= want then row._h = want row:SetHeight(want) end
     end
     HM.main = row
     return row
 end
 
--- Spotlight: the featured layout packs, a short card each (a maker's packs
--- share one), then the one that asks for yours
+-- The Spotlight, in the main column under My Layouts: the featured layout
+-- packs, a card per maker (a pack with no maker has a short card of its own),
+-- then the strip that asks for yours
 
 function HM.MakePack(parent, t)
     local NL = NS.NewLayout
@@ -1012,13 +1315,12 @@ function HM.MakeMaker(parent, packs)
     c.count:SetText(#packs == 1 and "A layout for 1 class" or ("Layouts for %d classes"):format(#packs))
     c.link = SP and SP.LinkButton and SP.LinkButton(c, first)
     if c.link then c.link:SetPoint("TOPRIGHT", c, "TOPRIGHT", -12, -10) end
+    -- PaintMaker places and sizes the rest, for the pack it shows
     c.note = HM.Text(c, 11, COL.dim)
     c.note:SetPoint("TOPLEFT", c.name, "BOTTOMLEFT", 0, -6)
-    c.note:SetPoint("RIGHT", c, "RIGHT", -12, 0)
-    c.note:SetWordWrap(false)
+    c.note:SetJustifyV("TOP")
     -- the chosen pack's picture: hovered big, clicked like the button
     c.pic = CreateFrame("Button", nil, c, "BackdropTemplate")
-    c.pic:SetSize(HM.MAKER_IMG_W, HM.MAKER_IMG_H)
     c.pic:RegisterForClicks("LeftButtonUp")
     AT.Skin(c.pic, COL.well, COL.line)
     c.pic.entry = { src = first }
@@ -1033,21 +1335,14 @@ function HM.MakeMaker(parent, packs)
     end)
     c.pic:SetScript("OnClick", function() if c.shown then HM.PickPack(c.shown) end end)
     c.title = HM.Text(c, 14)
-    c.title:SetPoint("TOPLEFT", c.pic, "TOPRIGHT", 12, -1)
+    c.title:SetJustifyV("TOP")
     c.yours = HM.MakeChip(c, 9)
-    c.yours:SetPoint("LEFT", c.title, "RIGHT", 8, 0)
     c.desc = HM.Text(c, 11, COL.dim)
-    c.desc:SetPoint("TOPLEFT", c.title, "BOTTOMLEFT", 0, -6)
-    c.desc:SetPoint("RIGHT", c, "RIGHT", -12, 0)
     c.desc:SetJustifyV("TOP")
-    c.desc:SetWordWrap(true)
-    c.desc:SetHeight(28)
-    c.act = HM.Big(AT.MakeSmallButton(c, "Use this layout", 124), 124)
+    c.act = HM.Arc(HM.Big(AT.MakeSmallButton(c, "Use this layout", 124), 124))
     c.act:SetScript("OnClick", function() if c.shown then HM.PickPack(c.shown) end end)
     c.state = HM.Text(c, 11, COL.dim)
-    c.state:SetPoint("BOTTOMLEFT", c.pic, "BOTTOMRIGHT", 12, 6)
-    c.state:SetPoint("RIGHT", c.act, "LEFT", -10, 0)
-    c.state:SetWordWrap(false)
+    c.state:SetJustifyV("TOP")
     c.rule = c:CreateTexture(nil, "ARTWORK")
     c.rule:SetColorTexture(COL.line2[1], COL.line2[2], COL.line2[3], 1)
     c.rule:SetHeight(AT.Hairline(c))
@@ -1080,28 +1375,17 @@ function HM.MakeMaker(parent, packs)
         b.bar:SetPoint("TOPRIGHT", b.label, "BOTTOMRIGHT", 0, -2)
         b.dot = HM.Dot(b, 7)
         b.dot:SetPoint("CENTER", b.ring, "TOPRIGHT", -2, -2)
+        -- another pack can take more or fewer lines: the whole page lays out again
         b:SetScript("OnClick", function()
             c.sel = t
-            HM.PaintMaker(c)
+            HM.Refresh()
         end)
         AT.Tooltip(b, t.title or HM.ClassName(t.packClass), function() return HM.PackWords(t) end)
         c.crests[i] = b
     end
-    -- what the crests' dots mean
-    c.legend = CreateFrame("Frame", nil, c)
-    c.legend:SetSize(HM.LEGEND_W, 14)
-    c.legend.upText = HM.Text(c.legend, 10, COL.faint)
-    c.legend.upText:SetPoint("RIGHT", 0, 0)
-    c.legend.upText:SetText("Update out")
-    c.legend.up = HM.Dot(c.legend, 7)
-    c.legend.up:SetColorTexture(COL.arc[1], COL.arc[2], COL.arc[3], 1)
-    c.legend.up:SetPoint("RIGHT", c.legend.upText, "LEFT", -5, 0)
-    c.legend.haveText = HM.Text(c.legend, 10, COL.faint)
-    c.legend.haveText:SetPoint("RIGHT", c.legend.up, "LEFT", -14, 0)
-    c.legend.haveText:SetText("In your collection")
-    c.legend.have = HM.Dot(c.legend, 7)
-    c.legend.have:SetColorTexture(HM.ON[1], HM.ON[2], HM.ON[3], 1)
-    c.legend.have:SetPoint("RIGHT", c.legend.haveText, "LEFT", -5, 0)
+    -- the ask for yours at the card's foot, shown on the Spotlight's last card
+    c.strip = HM.MakeStrip(c, false, false)
+    c.strip:Hide()
     return c
 end
 
@@ -1112,15 +1396,12 @@ function HM.PackWords(t)
     return "Not in your collection yet."
 end
 
--- the card's height: the note line only when your class has no pack here
-function HM.MakerH(c)
-    return 10 + 18 + (c.noteOn and 17 or 0) + 8 + HM.MAKER_IMG_H + 10 + 1 + 7 + HM.CREST_H + 6
-end
-
--- Picks the pack it shows (the one clicked, else yours, else the newest) and
--- paints the card for it; w is the card's width, when known.
+-- Picks the pack the card shows (the one clicked, else yours, else the
+-- newest), paints the card for it w wide and returns its height. Giving way,
+-- in order: the picture shrinks to MAKER_IMG_MIN, the chip marking your class
+-- drops under the title, the button drops under the state line, and the
+-- crests take a second line; every text wraps rather than being cut.
 function HM.PaintMaker(c, w)
-    local NL = NS.NewLayout
     local mine = Store.ClassTag and Store.ClassTag()
     local yours
     for _, t in ipairs(c.packs) do
@@ -1133,32 +1414,18 @@ function HM.PaintMaker(c, w)
     end
     if not known then sel = yours or HM.Newest(c.packs) end
     c.shown = sel
+    c.pic.entry.src = sel
+    local inner = w - 24
     c.noteOn = yours == nil and mine ~= nil
     c.note:SetText(c.noteOn and ("No %s layout from %s yet, so this shows the newest."):format(HM.ClassName(mine), c.maker) or "")
     c.note:SetShown(c.noteOn)
-    local picTop = 10 + 18 + (c.noteOn and 17 or 0) + 8
-    c.pic:ClearAllPoints()
-    c.pic:SetPoint("TOPLEFT", c, "TOPLEFT", 12, -picTop)
-    -- the button on the card's right, level with the picture's foot
-    c.act:ClearAllPoints()
-    c.act:SetPoint("BOTTOMRIGHT", c, "TOPRIGHT", -12, -(picTop + HM.MAKER_IMG_H))
-    -- one picture stage per pack, drawn once
-    for key, st in pairs(c.pic.stages) do st:SetShown(key == sel.key) end
-    if not c.pic.stages[sel.key] then
-        local st = CreateFrame("Frame", nil, c.pic)
-        st:SetSize(HM.MAKER_IMG_W - 2, HM.MAKER_IMG_H - 2)
-        st:SetPoint("CENTER")
-        if NL and sel.image then
-            NL.DrawImage(st, sel.image, HM.MAKER_IMG_W - 2, HM.MAKER_IMG_H - 2)
-        elseif NL then
-            NL.DrawEntry(st, sel, HM.MAKER_IMG_W - 6, HM.MAKER_IMG_H - 6, false)
-        end
-        c.pic.stages[sel.key] = st
-    end
-    c.pic.entry.src = sel
-    c.title:SetText(HM.ClassName(sel.packClass))
+    local top = 10 + 18
+    if c.noteOn then top = top + 6 + HM.Wrap(c.note, inner) end
+    top = top + 8
+    c.title:SetText(sel.title or HM.ClassName(sel.packClass))
+    local chipW = 0
     if sel == yours then
-        c.yours:Set("YOUR CLASS", COL.arc, true)
+        chipW = c.yours:Set("YOUR CLASS", COL.arc, true)
         c.yours:Show()
     else
         c.yours:Hide()
@@ -1177,14 +1444,66 @@ function HM.PaintMaker(c, w)
         HM.Color(c.state, COL.dim)
         c.act.fs:SetText("Use this layout")
     end
-    local ruleY = picTop + HM.MAKER_IMG_H + 10
+    local actW = HM.Fit(c.act, 124)
+    local titleW = math.ceil(HM.Width(c.title))
+    local stateW = math.ceil(HM.Width(c.state))
+    -- the picture: as big as the words beside it leave room for, 2:1 in whole units
+    local want = math.max(titleW + ((chipW > 0) and (8 + chipW) or 0), stateW + 10 + actW)
+    local pw = math.max(HM.MAKER_IMG_MIN, math.min(HM.MAKER_IMG_W, inner - 16 - want))
+    pw = pw - pw % 2
+    local ph = pw / 2
+    c.pic:SetSize(pw, ph)
+    c.pic:ClearAllPoints()
+    c.pic:SetPoint("TOPLEFT", c, "TOPLEFT", 12, -top)
+    -- a stage per pack, drawn once at full size and scaled to the picture
+    local st = HM.ShowPicture(c.pic, sel, HM.MAKER_IMG_W, HM.MAKER_IMG_W / 2)
+    st:SetScale(pw / HM.MAKER_IMG_W)
+    local tx = 12 + pw + 16
+    local tw = math.max(60, w - tx - 12)
+    local th = HM.Wrap(c.title, math.min(titleW + 2, tw))
+    c.title:ClearAllPoints()
+    c.title:SetPoint("TOPLEFT", c, "TOPLEFT", tx, -top)
+    local ty = top + th
+    c.yours:ClearAllPoints()
+    if chipW > 0 then
+        if titleW + 8 + chipW <= tw then
+            c.yours:SetPoint("LEFT", c.title, "RIGHT", 8, 0)
+        else
+            c.yours:SetPoint("TOPLEFT", c, "TOPLEFT", tx, -(ty + 4))
+            ty = ty + 4 + c.yours:GetHeight()
+        end
+    end
+    c.desc:ClearAllPoints()
+    c.desc:SetPoint("TOPLEFT", c, "TOPLEFT", tx, -(ty + 6))
+    ty = ty + 6 + HM.Wrap(c.desc, tw)
+    -- the state and the button sit on the picture's foot, or under the words
+    -- when those run longer; on one line where both fit
+    local one = stateW + 10 + actW <= tw
+    local sh = HM.Wrap(c.state, one and (tw - actW - 10) or tw)
+    local foot = math.max(top + ph, ty + 8 + (one and 26 or (sh + 6 + 26)))
+    c.act:ClearAllPoints()
+    c.state:ClearAllPoints()
+    if one then
+        c.act:SetPoint("BOTTOMRIGHT", c, "TOPRIGHT", -12, -foot)
+        c.state:SetPoint("TOPLEFT", c, "TOPLEFT", tx, -(foot - 13 - math.floor(sh / 2)))
+    else
+        c.act:SetPoint("BOTTOMLEFT", c, "TOPLEFT", tx, -foot)
+        c.state:SetPoint("TOPLEFT", c, "TOPLEFT", tx, -(foot - 26 - 6 - sh))
+    end
+    local ruleY = foot + 10
     c.rule:ClearAllPoints()
     c.rule:SetPoint("TOPLEFT", c, "TOPLEFT", 12, -ruleY)
     c.rule:SetPoint("TOPRIGHT", c, "TOPRIGHT", -12, -ruleY)
+    -- the crests share the card's width, a second line where it holds fewer
+    local n = #c.crests
+    local per = math.max(1, math.min(n, math.floor(inner / HM.CREST_W)))
+    local cw = math.floor(inner / per)
     for i, b in ipairs(c.crests) do
         local on = b.t == sel
+        local col, line = (i - 1) % per, math.floor((i - 1) / per)
+        b:SetSize(cw, HM.CREST_H)
         b:ClearAllPoints()
-        b:SetPoint("TOPLEFT", c, "TOPLEFT", 12 + (i - 1) * (HM.CREST_W + 4), -(ruleY + 8))
+        b:SetPoint("TOPLEFT", c, "TOPLEFT", 12 + col * cw, -(ruleY + 8 + line * (HM.CREST_H + 4)))
         local rc = on and COL.arc or COL.line
         b.ring:SetBackdropBorderColor(rc[1], rc[2], rc[3], 1)
         b.art:SetAlpha(on and 1 or 0.6)
@@ -1201,78 +1520,129 @@ function HM.PaintMaker(c, w)
             b.dot:Hide()
         end
     end
-    -- the legend where the crests leave it room
-    local crestsW = 12 + #c.crests * (HM.CREST_W + 4)
-    c.legend:ClearAllPoints()
-    c.legend:SetPoint("RIGHT", c, "TOPRIGHT", -12, -(ruleY + 8 + HM.CREST / 2 + 2))
-    c.legend:SetShown(w == nil or w - crestsW - 12 >= HM.LEGEND_W)
+    local lines = math.ceil(n / per)
+    local h = ruleY + 8 + lines * HM.CREST_H + (lines - 1) * 4 + 8
+    if c.strip:IsShown() then
+        local sh2 = HM.LayStrip(c.strip, w)
+        c.strip:ClearAllPoints()
+        c.strip:SetPoint("TOPLEFT", c, "TOPLEFT", 0, -h)
+        h = h + sh2
+    end
+    return h
 end
 
-function HM.PacksRow(pg, list)
-    local row = AT.AddRow(pg, HM.PACK_H + 40)
-    row.head = HM.MakeHead(row, "Spotlight", "See them all in New Layout", function()
+-- An upload mark drawn from bars like the house: a stem and its arrowhead
+-- rising out of an open tray. :SetColor(c) tints it.
+function HM.MakeUpload(parent)
+    local f = CreateFrame("Frame", nil, parent)
+    f:SetSize(14, 14)
+    f._bars = {}
+    local function Bar(w, h, x, y, deg)
+        local t = f:CreateTexture(nil, "OVERLAY")
+        t:SetTexture(AT.WHITE)
+        t:SetSize(w, h)
+        t:SetPoint("CENTER", x, y)
+        if deg then t:SetRotation(math.rad(deg)) end
+        f._bars[#f._bars + 1] = t
+    end
+    Bar(1.5, 7, 0, 1.5)
+    Bar(5, 1.5, -1.6, 3.5, 45)
+    Bar(5, 1.5, 1.6, 3.5, -45)
+    Bar(1.5, 4, -5, -3.5)
+    Bar(1.5, 4, 5, -3.5)
+    Bar(11.5, 1.5, 0, -5.5)
+    function f:SetColor(c)
+        for _, t in ipairs(self._bars) do t:SetVertexColor(c[1], c[2], c[3], 1) end
+    end
+    f:SetColor(COL.arc)
+    return f
+end
+
+-- The ask for the player's own layout: the upload mark, the words (the first
+-- sentence brighter) and Copy link for the Arc UI Discord. Inside a maker
+-- card it is the card's tinted foot under a hairline; `boxed`, it stands as
+-- its own box. `featured`: the words while there are no packs to show.
+function HM.MakeStrip(parent, boxed, featured)
+    local s = CreateFrame("Frame", nil, parent, boxed and "BackdropTemplate" or nil)
+    if boxed then AT.Skin(s, COL.box, COL.line) end
+    s.tint = s:CreateTexture(nil, "BACKGROUND", nil, 1)
+    s.tint:SetTexture(AT.WHITE)
+    s.tint:SetAllPoints()
+    s.tint:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 0.06)
+    if not boxed then
+        s.rule = s:CreateTexture(nil, "ARTWORK")
+        s.rule:SetColorTexture(COL.line[1], COL.line[2], COL.line[3], 1)
+        s.rule:SetHeight(AT.Hairline(s))
+        s.rule:SetPoint("TOPLEFT", 0, 0)
+        s.rule:SetPoint("TOPRIGHT", 0, 0)
+    end
+    s.glyph = HM.MakeUpload(s)
+    s.glyph:SetPoint("LEFT", 12, 0)
+    s.copy = HM.Arc(AT.MakeSmallButton(s, "Copy link", 70))
+    HM.Fit(s.copy, 70)
+    s.copy:SetPoint("RIGHT", -12, 0)
+    s.copy:SetScript("OnClick", function(b)
+        local SP = NS.Spotlight
+        if SP and SP.ShowLink then SP.ShowLink(AT.DISCORD, "Arc UI Discord", b) end
+    end)
+    s.fs = HM.Text(s, 11, COL.dim)
+    s.fs:SetPoint("LEFT", s.glyph, "RIGHT", 8, 0)
+    local first = featured and "Your layout could be featured here." or "Your layout could be next."
+    s.fs:SetText("|cff" .. HM.Hex(COL.ink) .. first .. "|r Share it on the Arc UI Discord with a screenshot.")
+    return s
+end
+
+-- sizes the strip to w and returns its height: the words wrap beside Copy link
+function HM.LayStrip(s, w)
+    local tw = math.max(40, w - 12 - 14 - 8 - 10 - s.copy:GetWidth() - 12)
+    local h = math.max(HM.STRIP_H, HM.Wrap(s.fs, tw) + 16)
+    s:SetSize(w, h)
+    return h
+end
+
+-- The Spotlight's heading ("Browse all layouts" opens New Layout while there
+-- are packs), its cards and the ask for yours: the foot of the last card when
+-- that is a maker's, else its own box. With no packs for this game yet
+-- (retail) the box alone asks to be featured here.
+function HM.MakeSpot(parent, list)
+    local sp = { cards = {} }
+    sp.head = HM.MakeHead(parent, "Arc Auras Layout Spotlight", (#list > 0) and "Browse all layouts" or nil, function()
         Options.Select("newlayout")
     end)
-    row._cards = {}
     for _, g in ipairs(HM.Makers(list)) do
-        row._cards[#row._cards + 1] = g.single and HM.MakePack(row, g[1]) or HM.MakeMaker(row, g)
+        sp.cards[#sp.cards + 1] = g.single and HM.MakePack(parent, g[1]) or HM.MakeMaker(parent, g)
     end
-    local share = CreateFrame("Frame", nil, row, "BackdropTemplate")
-    share:SetHeight(HM.PACK_H)
-    AT.Skin(share, COL.bg, COL.line2)
-    share.title = HM.Text(share, 13)
-    share.title:SetPoint("TOPLEFT", 14, -16)
-    share.title:SetText("Share your layout")
-    share.desc = HM.Text(share, 11, COL.dim)
-    share.desc:SetPoint("TOPLEFT", share.title, "BOTTOMLEFT", 0, -6)
-    share.desc:SetPoint("RIGHT", share, "RIGHT", -14, 0)
-    share.desc:SetJustifyV("TOP")
-    share.desc:SetWordWrap(true)
-    share.desc:SetText("Made a layout others would like? Post it with a screenshot on the Arc UI Discord.")
-    row._cards[#row._cards + 1] = share
-    row._share = share
-    row._sync = function()
-        local usable = HM.Usable(pg)
-        local top = 4 + HM.HEAD_H + 8
-        local cols = usable and math.max(1, math.floor((usable + HM.GAP) / (HM.PACK_MIN + HM.GAP))) or 1
-        local cw = usable and math.floor((usable - (cols - 1) * HM.GAP) / cols) or HM.PACK_MIN
-        local function Span(c) return c.packs and math.min(cols, 2) or 1 end
-        local function Width(c) return Span(c) * cw + (Span(c) - 1) * HM.GAP end
-        for _, c in ipairs(row._cards) do
-            if c.packs then HM.PaintMaker(c, usable and Width(c)) elseif c ~= share then HM.PaintPack(c) end
-        end
-        if not usable then return end
-        row.head:ClearAllPoints()
-        row.head:SetPoint("TOPLEFT", row, "TOPLEFT", 12, -4)
-        row.head:SetWidth(usable)
-        -- cards flow into lines, each line as tall as its tallest card
-        local lines, line, col = {}, nil, 0
-        for _, c in ipairs(row._cards) do
-            local span = Span(c)
-            if not line or col + span > cols then
-                line = { h = 0 }
-                lines[#lines + 1] = line
-                col = 0
-            end
-            line[#line + 1] = { c = c, col = col }
-            line.h = math.max(line.h, c.packs and HM.MakerH(c) or HM.PACK_H)
-            col = col + span
-        end
-        local y = top
-        for li, ln in ipairs(lines) do
-            if li > 1 then y = y + HM.GAP end
-            for _, it in ipairs(ln) do
-                it.c:SetSize(Width(it.c), ln.h)
-                it.c:ClearAllPoints()
-                it.c:SetPoint("TOPLEFT", row, "TOPLEFT", 12 + it.col * (cw + HM.GAP), -y)
-            end
-            y = y + ln.h
-        end
-        local want = y + 16
-        if row._h ~= want then row._h = want row:SetHeight(want) end
+    local last = sp.cards[#sp.cards]
+    if last and last.packs then
+        last.strip:Show()
+    else
+        sp.share = HM.MakeStrip(parent, true, #list == 0)
     end
-    HM.packsRow = row
-    return row
+    return sp
+end
+
+-- Lays the Spotlight out in `parent` from y0 down, w wide, one card to a
+-- line. Returns its height.
+function HM.LaySpot(sp, parent, y0, w)
+    sp.head:ClearAllPoints()
+    sp.head:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -y0)
+    sp.head:SetWidth(w)
+    local y = y0 + HM.HEAD_H + 8
+    for _, c in ipairs(sp.cards) do
+        local h = HM.PACK_H
+        if c.packs then h = HM.PaintMaker(c, w) else HM.PaintPack(c) end
+        c:SetSize(w, h)
+        c:ClearAllPoints()
+        c:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -y)
+        y = y + h + HM.GAP
+    end
+    if sp.share then
+        local h = HM.LayStrip(sp.share, w)
+        sp.share:ClearAllPoints()
+        sp.share:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -y)
+        y = y + h + HM.GAP
+    end
+    return y - y0
 end
 
 -- The pane
@@ -1293,8 +1663,6 @@ function HM.Fill(pane, header)
     HM.HeroRow(pg)
     HM.TilesRow(pg)
     HM.MainRow(pg)
-    local NL = NS.NewLayout
-    if NL and NL.SPOTLIGHT and #NL.SPOTLIGHT > 0 then HM.PacksRow(pg, NL.SPOTLIGHT) end
     -- an edit anywhere redraws the layout pictures the next time Home shows
     if NS.Events and NS.Events.OnMessage then
         NS.Events.OnMessage("AD_DIRTY", "adhome", function() HM.gen = HM.gen + 1 end)

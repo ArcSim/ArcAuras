@@ -477,6 +477,62 @@ local function CleanLayoutValues(rec)
     if next(rec.inh) == nil then rec.inh = nil end
 end
 
+-- A resource bar's looks (Core\AD_Looks.lua) cleaned like its overrides: a
+-- known mode, number keys (a talent's: 1 with it, 0 without), known fields
+-- that a look may carry; empty ones go. The talent its looks follow is a node
+-- ID, its choice an entry ID.
+function Store.CleanLooks(rec, fam)
+    local lk = rec.looks
+    if lk == nil then return end
+    if type(lk) ~= "table" or rec.type ~= "bar" or rec.barKind ~= "resource" or not fam then
+        rec.looks = nil
+        return
+    end
+    local known = false
+    for _, mode in ipairs(Schema.LOOK_MODES) do
+        if lk.by == mode then known = true end
+    end
+    if not known then lk.by = nil end
+    local function Id(v)
+        return (type(v) == "number" and v > 0 and v == math.floor(v)) and v or nil
+    end
+    lk.talentNode = Id(lk.talentNode)
+    lk.talentEntry = lk.talentNode and Id(lk.talentEntry) or nil
+    for _, mode in ipairs(Schema.LOOK_MODES) do
+        local sets = lk[mode]
+        if type(sets) ~= "table" then
+            lk[mode] = nil
+        else
+            for key, set in pairs(sets) do
+                if type(key) ~= "number" or type(set) ~= "table"
+                    or (mode == "talent" and key ~= 1 and key ~= 0) then
+                    sets[key] = nil
+                else
+                    for section, values in pairs(set) do
+                        local sec = fam[section]
+                        if not sec or Schema.LOOK_SKIP[section] or type(values) ~= "table" then
+                            set[section] = nil
+                        else
+                            for field, v in pairs(values) do
+                                local def = sec.fields and sec.fields[field]
+                                values[field] = def and CleanValue(def, v) or nil
+                            end
+                            if next(values) == nil then set[section] = nil end
+                        end
+                    end
+                    if next(set) == nil then sets[key] = nil end
+                end
+            end
+            if next(sets) == nil then lk[mode] = nil end
+        end
+    end
+    local keep = lk.by ~= nil
+    for _, mode in ipairs(Schema.LOOK_MODES) do
+        if lk[mode] then keep = true end
+    end
+    if not keep then rec.looks = nil end
+end
+
 -- A who-set kept usable: keys of one type (a whole positive number, or a
 -- string) with true as the value. An empty set stays: it means nowhere, like
 -- an empty class set.
@@ -709,7 +765,8 @@ function Store.Normalize()
                 and rec.barKind ~= "resource" and rec.barKind ~= "health"
                 and rec.barKind ~= "cast" and rec.barKind ~= "enchant"
                 and rec.barKind ~= "range" and rec.barKind ~= "text"
-                and rec.barKind ~= "texture" and rec.barKind ~= "wheel" then
+                and rec.barKind ~= "texture" and rec.barKind ~= "wheel"
+                and rec.barKind ~= "special" and rec.barKind ~= "sound" then
                 rec.barKind = "cooldown"
             end
             -- a timer (custom) bar fills with its timer or with its stacks
@@ -766,6 +823,9 @@ function Store.Normalize()
             if rec.barKind == "text" then Store.CleanText(rec.driver) end
             if rec.barKind == "texture" then Store.CleanTexture(rec.driver) end
             if rec.barKind == "wheel" then Store.CleanWheel(rec) end
+            if rec.barKind == "sound" then Store.CleanSound(rec.driver) end
+            -- a deck bar names its tracker by id (Bars\AD_SpecialBar.lua)
+            if rec.barKind == "special" and type(rec.driver.tracker) ~= "string" then rec.driver.tracker = nil end
         end
         if rec.type == "icon" and rec.kind == "timer" then
             rec.driver = rec.driver or {}
@@ -868,6 +928,7 @@ function Store.Normalize()
                 end
             end
         end
+        Store.CleanLooks(rec, family and Schema[family])
     end
     -- a custom item's saved runtime state goes with its record
     if type(DB.runtime) == "table" then
@@ -1104,6 +1165,13 @@ function Store.KeepDynReadings(rec, readings)
 end
 
 function Store.Resolve(rec, section, field)
+    -- a resource bar's look for the power or spec in play (Core\AD_Looks.lua)
+    local lk = rec.looks
+    if lk then
+        local L = NS.Looks
+        local v = L and L.Value(rec, lk, section, field)
+        if v ~= nil then return v end
+    end
     local o = rec.o[section]
     if o and o[field] ~= nil then return o[field] end
     -- A reminder follows its group field by field: what it leaves unset reads
@@ -1168,11 +1236,17 @@ function Store.SetOverride(rec, section, field, value)
         end
         return
     end
+    -- a look the options are editing takes the write (Core\AD_Looks.lua)
+    if rec.looks and NS.Looks and NS.Looks.Set(rec, section, field, value) then return end
     rec.o[section] = rec.o[section] or {}
     -- storing the resolved-default value is a no-op: keep the record sparse
     local without = rec.o[section][field]
     rec.o[section][field] = nil
+    -- against the record's own chain: a look in play is not its default
+    local looks = rec.looks
+    rec.looks = nil
     local base = Store.Resolve(rec, section, field)
+    rec.looks = looks
     if value == base then
         if next(rec.o[section]) == nil then rec.o[section] = nil end
     else
@@ -2828,6 +2902,12 @@ function Store.CleanRules(list)
         for _, k in ipairs(g.list) do whens[k] = true end
     end
     for _, k in ipairs(Schema.CUSTOM_TARGET_TRIGGERS) do whens[k] = true end
+    -- the Sound item's own triggers: a condition's edge and an aura's moments
+    for _, g in ipairs(Schema.SOUND_TRIGGER_GROUPS or {}) do
+        for _, k in ipairs(g.list) do whens[k] = true end
+    end
+    local units = {}
+    for _, u in ipairs(Schema.SOUND_AURA_UNITS or {}) do units[u] = true end
     local acts, modes = {}, {}
     for _, v in ipairs(Schema.CUSTOM_ACTIONS) do acts[v] = true end
     for _, v in ipairs(Schema.CUSTOM_START_MODES) do modes[v] = true end
@@ -2873,12 +2953,27 @@ function Store.CleanRules(list)
                 restartToo = (r.restartToo == true) and true or nil,
                 sound = Str(r.sound, 120),
                 text = Str(r.text, 200),
+                quiet = Num(r.quiet, 0, 3600),
             }
             if c.withinRule then c.withinSecs = Num(r.withinSecs, 0.1, 600) or 1 end
             -- a talent's choice option and its reverse live only with a talent
             if c.talent then
                 c.talentEntry = Whole(r.talentEntry, 1, 1e9)
                 c.talentNot = (r.talentNot == true) and true or nil
+            end
+            -- a condition's edge names its key; an aura's moment its unit and ids
+            if c.when == "cond_on" or c.when == "cond_off" then c.cond = Str(r.cond, 40) end
+            if c.when == "aura_gain" or c.when == "aura_stack" or c.when == "aura_lost" then
+                c.unit = units[r.unit] and r.unit or nil
+                local ids, seen = {}, {}
+                for _, v in ipairs(type(r.auraIDs) == "table" and r.auraIDs or {}) do
+                    local n = Whole(v, 1, 1e9)
+                    if n and not seen[n] and #ids < 10 then
+                        seen[n] = true
+                        ids[#ids + 1] = n
+                    end
+                end
+                c.auraIDs = (#ids > 0) and ids or nil
             end
             out[#out + 1] = c
         end
@@ -3011,6 +3106,28 @@ function Store.CleanWheel(rec)
     if type(key) ~= "string" or key == "" or #key > 40 or key:find("%c") then rec.wheelKey = nil end
 end
 
+-- A Sound item (Bars\AD_SoundItem.lua): its rules, each a sound or a spoken
+-- line (an aura's moment is played by the game from a file, so never speech),
+-- the timer's and stacks' fields gone, and its Play in switches (true = silent
+-- there). A Custom item's own fields mean nothing on it.
+function Store.CleanSound(d)
+    d.rules = Store.CleanRules(d.rules) or {}
+    for _, r in ipairs(d.rules) do
+        if r.act ~= "speak" or r.when == "aura_gain" or r.when == "aura_stack" or r.when == "aura_lost" then
+            r.act = "sound"
+        end
+        r.secs, r.mode, r.n, r.restartToo = nil, nil, nil, nil
+        r.stacksMin, r.stacksMax, r.timer = nil, nil, nil
+    end
+    if d.skipSolo ~= true then d.skipSolo = nil end
+    if d.skipParty ~= true then d.skipParty = nil end
+    if d.skipRaid ~= true then d.skipRaid = nil end
+    -- the game channel it plays on; Master (the default) stays unwritten
+    local CH = { SFX = true, Music = true, Ambience = true, Dialog = true }
+    if not CH[d.channel] then d.channel = nil end
+    d.spellID, d.duration, d.maxStacks, d.clearOnEnd, d.showWhile = nil, nil, nil, nil, nil
+end
+
 function Store.CleanTexture(d)
     if not TEXTURE_SOURCE_SET[d.source] then d.source = "aura" end
     local function Whole(v)
@@ -3058,7 +3175,8 @@ function Store.NewBar(layoutId, barKind, driver, name, barMode)
     if barKind ~= "timer" and barKind ~= "stack" and barKind ~= "swing"
         and barKind ~= "aura" and barKind ~= "resource" and barKind ~= "health"
         and barKind ~= "cast" and barKind ~= "enchant" and barKind ~= "range"
-        and barKind ~= "text" and barKind ~= "texture" and barKind ~= "wheel" then
+        and barKind ~= "text" and barKind ~= "texture" and barKind ~= "wheel"
+        and barKind ~= "special" and barKind ~= "sound" then
         barKind = "cooldown"
     end
     local id = NewId()
@@ -3074,15 +3192,17 @@ function Store.NewBar(layoutId, barKind, driver, name, barMode)
     ScopeToCreator(rec)
     -- Creation template, written on the record only: the schema defaults
     -- stay off and a saved default wins.
-    if barKind == "cooldown" or barKind == "aura" or barKind == "enchant" then
+    if barKind == "cooldown" or barKind == "aura" or barKind == "enchant" or barKind == "special" then
         TemplateSet(rec, "icon", "iconShow", true)
     end
+    -- A deck bar marks where each proc landed.
+    if barKind == "special" then TemplateSet(rec, "ticks", "ticksShow", true) end
     -- Name text shows on spell bars. A resource or swing bar's name is just its
     -- power or hand, and a player health bar's is your own, so it stays off
     -- there; other health bars show their unit's live name.
     local hpUnit = barKind == "health" and (rec.driver.unit or "player") or nil
     if barKind ~= "resource" and barKind ~= "swing" and barKind ~= "text" and barKind ~= "texture"
-        and barKind ~= "wheel" and hpUnit ~= "player" then
+        and barKind ~= "wheel" and barKind ~= "sound" and hpUnit ~= "player" then
         TemplateSet(rec, "text", "nameShow", true)
     end
     -- A text element is born as a small box; its look is the schema's (white, 14).
@@ -3137,12 +3257,36 @@ function Store.NewBar(layoutId, barKind, driver, name, barMode)
         TemplateSet(rec, "text", "nameColor", { 1, 1, 1, 1 })
     end
     if rec.barMode == "stack" then TemplateSet(rec, "text", "stkAnchor", "CENTER") end
-    -- A counted bar (combo points, aura stacks) is born with one tick mark per
+    -- A counted bar (aura stacks, a point power: combo points, holy power,
+    -- chi, shards, runes, Maelstrom Weapon ...) is born with one tick mark per
     -- point; mana-sized powers stay clean.
-    if (barKind == "aura" and rec.barMode == "stack")
-        or (barKind == "resource" and rec.driver.powerType == 4) then
+    local pt = barKind == "resource" and rec.driver.powerType or nil
+    local RP = NS.Bars and NS.Bars.ResPowers
+    local point = pt ~= nil and (pt == 4 or (RP ~= nil and RP.IsPoint(pt)))
+    if (barKind == "aura" and rec.barMode == "stack") or point then
         TemplateSet(rec, "ticks", "ticksShow", true)
         TemplateSet(rec, "ticks", "tickMode", "all")
+    end
+    if pt ~= nil then
+        -- runes and essence are born as pips: their recharge timers live in the cells
+        if pt == 5 or pt == 19 then TemplateSet(rec, "resource", "style", "pips") end
+        -- stagger in Blizzard's light / moderate / heavy colours
+        if pt == 100 then
+            TemplateSet(rec, "powerthresholds", "pthEnabled", true)
+            TemplateSet(rec, "powerthresholds", "pthCount", 2)
+            TemplateSet(rec, "powerthresholds", "pthDirection", "above")
+            TemplateSet(rec, "powerthresholds", "pth2Value", 30)
+            TemplateSet(rec, "powerthresholds", "pth2Color", { 1, 0.98, 0.72, 1 })
+            TemplateSet(rec, "powerthresholds", "pth3Value", 60)
+            TemplateSet(rec, "powerthresholds", "pth3Color", { 1, 0.42, 0.42, 1 })
+        end
+        -- a druid's combo points show in Cat Form only, as the game's do; the
+        -- condition sits in Visibility, one click to remove
+        if pt == 4 and ClassTag() == "DRUID" then rec.c.showWhen = { formCat = true } end
+        -- a rogue's charged points show in their own colour
+        if pt == 4 and ClassTag() == "ROGUE" and NS.IsForever ~= true then
+            TemplateSet(rec, "resource", "chargedShow", true)
+        end
     end
     -- at the screen centre; a bar already there pushes the new one down
     -- one row (24px bar + the name above it + a gap = 42)
@@ -4228,6 +4372,7 @@ local PART_OF_SECTION = {
         pulse = "appearance", special = "appearance", states = "showhide", swipe = "appearance",
         text = "text", trinket = "tracking" },
     bar = { abilcolors = "appearance", anchor = "position", behavior = "showhide", cast = "appearance",
+        deck = "appearance",
         fill = "appearance", frame = "position", healpred = "appearance", healththresholds = "appearance",
         icon = "appearance", look = "appearance", powerthresholds = "appearance", predict = "appearance",
         range = "appearance", regen = "appearance", resource = "appearance", segments = "appearance",
@@ -4247,6 +4392,10 @@ local PART_OF_FIELD = {
     ["iconGroup.arrangement.iconWidth"] = "position", ["iconGroup.arrangement.iconHeight"] = "position",
     ["iconGroup.pulse.size"] = "position", ["reminder.pulse.size"] = "position",
 }
+-- a deck bar's two texts update with the texts, its colours and marks with the look
+for f in pairs(Schema.bar.deck and Schema.bar.deck.fields or {}) do
+    if f:find("^pos%u") or (f:find("^proc%u") and f ~= "procTicks") then PART_OF_FIELD["bar.deck." .. f] = "text" end
+end
 Store.PART_OF_SECTION = PART_OF_SECTION
 
 -- nil: a section no part knows (kept as the player has it)

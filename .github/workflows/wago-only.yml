@@ -10,12 +10,17 @@ name: Wago upload only
 # made after the tag (blank lines under the headers for the stores' markdown)
 # reaches Wago. Run it from the Actions tab or:
 #   gh workflow run wago-only.yml -R ArcSim/ArcAuras -f tag=1.5.1
+#   gh workflow run wago-only.yml -R ArcSim/ArcAuras -f tag=2.2.0 -f flavor=retail
 on:
   workflow_dispatch:
     inputs:
       tag:
         description: "Existing release tag to send to Wago (e.g. 1.0.0)"
         required: true
+      flavor:
+        description: "Which build: forever or retail (as release.yml builds it)"
+        required: true
+        default: forever
 
 permissions:
   contents: read
@@ -30,13 +35,24 @@ jobs:
           ref: ${{ inputs.tag }}
           fetch-depth: 0   # full history + tags: the version comes from the tag
 
-      - name: Use main's changelog
-        run: git show origin/main:CHANGELOG.md > CHANGELOG.md
+      - name: Use main's changelogs
+        run: |
+          git show origin/main:CHANGELOG.md > CHANGELOG.md
+          git show origin/main:CHANGELOG-retail.md > CHANGELOG-retail.md || true
 
-      - name: Package and upload to Wago
+      - name: Package and upload to Wago (Forever)
+        if: ${{ inputs.flavor != 'retail' }}
         uses: BigWigsMods/packager@v2.6.1
         with:
-          # Forever alone, as release.yml: the toc also lists retail.
+          # one flavor per build, as release.yml: the toc lists both
           args: '-g forever -n ":{package-name}-{project-version}{classic}"'
         env:
           WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}   # Wago only, see above
+
+      - name: Package and upload to Wago (retail)
+        if: ${{ inputs.flavor == 'retail' }}
+        uses: BigWigsMods/packager@v2.6.1
+        with:
+          args: '-g retail -m .pkgmeta-retail -n ":{package-name}-{project-version}-{game-type}"'
+        env:
+          WAGO_API_TOKEN: ${{ secrets.WAGO_API_TOKEN }}

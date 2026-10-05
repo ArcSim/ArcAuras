@@ -1,5 +1,5 @@
 -- AD_Special_DoomWinds: the Doom Winds tracker, a 600-card deck of Maelstrom Weapon stacks holding 3 procs, read off a Nature wolf's arrival (the wolf path) or the Cooldown Manager's Doom Winds item frame (the CDM path).
--- Registers "dw" on the Special hub; the shared MSW engine's consumes draw; a record's driver.forceCDM picks the CDM path while a wolf talent is taken.
+-- Registers "dw" on the Special hub; the shared MSW engine's consumes draw; a record's driver.forceCDM picks the CDM path while a wolf talent is taken. Every branch, window and order is ProcTracker's deck file.
 -- frame.auraInstanceID is secret even in the open world, so the CDM path keys off which callback fires plus a plain nil-check; it reads Blizzard fields only and hooks frames.
 local ADDON, NS = ...
 if NS.IsForever == true then return end
@@ -39,13 +39,14 @@ local dwProcThisConsume = false
 local dwLastProcTime = 0
 local hardCastBuf = {}
 local dwEnabled = false
+-- talented once this session: ProcTracker's deck registration, sticky from then on
+local registered = false
+local armed = false
 local wolfMode = false
 local wolfWatchUntil = 0
-local wolfOpenedAt = 0
 local wolfFired = false
-local wolfFiredAt = 0
-local cdmWatchOn = false
 local rehookPending = false
+local MSW = nil
 
 local function BufPush(buf)
     buf[#buf + 1] = GetTime()
@@ -61,9 +62,10 @@ local function BufCheck(buf, window)
     return false
 end
 
--- true (same), false (different) or nil (a side missing or secret: unknowable)
+-- true (same), false (different, or nothing stored) or nil (a side secret); with
+-- nothing stored the flap test never runs, exactly as in ProcTracker
 local function SameAuraID(a, b)
-    if a == nil or b == nil then return nil end
+    if a == nil or b == nil then return false end
     if issecretvalue and (issecretvalue(a) or issecretvalue(b)) then return nil end
     return a == b
 end
@@ -124,19 +126,20 @@ local function OnWolfSUC(sid)
     if wolfFired then return end
     if SP.SpellID(sid) ~= WOLF_MARKER_ID then return end
     wolfFired = true
-    wolfFiredAt = GetTime()
 end
 
 -- Opened by a spend, the only thing that rolls the deck. Ascendance's own
 -- Doom Winds never opens one, a hard cast is filtered by GateGain, and a
--- Sundering wolf carries the wrong buff.
+-- Sundering wolf carries the wrong buff. The event listens while a window is
+-- open, and a window outlives a stop, as ProcTracker's always-on watcher did.
 local function WolfWindowOpen()
     if not wolfMode then return end
     wolfFired = false
-    wolfOpenedAt = GetTime()
-    wolfWatchUntil = wolfOpenedAt + WOLF_WINDOW
+    wolfWatchUntil = GetTime() + WOLF_WINDOW
+    SP.Listen("SPELL_UPDATE_COOLDOWN", "dw_wolf", OnWolfSUC)
     C_Timer.After(WOLF_WINDOW, function()
         wolfWatchUntil = 0
+        SP.Unlisten("SPELL_UPDATE_COOLDOWN", "dw_wolf")
         if not (dwEnabled and wolfMode) then return end
         if wolfFired then GateGain() end
     end)
@@ -155,10 +158,8 @@ local function HookDWFrame(frame)
         if not instID then return end
         local same = SameAuraID(instID, dwLastAuraInstID)
         if same == true then return end
-        -- the buff is up whatever the verdict below, or the next refresh
-        -- reads as a resync and a real back-to-back proc is lost
-        dwAuraActive = true
         if same == nil and (GetTime() - dwLastClearedAt) <= FLAP_WINDOW then return end
+        dwAuraActive = true
         dwLastAuraInstID = StorableAID(instID)
         if wolfMode then return end
         GateGain()
@@ -227,31 +228,18 @@ local function RehookDWCDMFrame()
     end
 end
 
--- the pool re-deals frames within milliseconds in combat: rehook now and
--- again once it settles
+-- a Cooldown Manager settings change re-deals its frames: rebind now and once
+-- more a second later, while this deck reads the Cooldown Manager
 local function ScheduleRehook()
-    if rehookPending then return end
+    if not registered or rehookPending then return end
     rehookPending = true
-    RehookDWCDMFrame()
+    if not wolfMode then RehookDWCDMFrame() end
     SP.Update("dw")
     C_Timer.After(1.0, function()
         rehookPending = false
-        RehookDWCDMFrame()
+        if not wolfMode then RehookDWCDMFrame() end
         SP.Update("dw")
     end)
-end
-
-local function SetCDMWatch(on)
-    if on == cdmWatchOn then return end
-    cdmWatchOn = on
-    local ER = EventRegistry
-    if on then
-        if ER and ER.RegisterCallback then
-            ER:RegisterCallback("CooldownViewerSettings.OnDataChanged", ScheduleRehook, CDM_OWNER)
-        end
-    elseif ER and ER.UnregisterCallback then
-        ER:UnregisterCallback("CooldownViewerSettings.OnDataChanged", CDM_OWNER)
-    end
 end
 
 local function OnMSWConsumed(stacksSpent, spenderID, ascActive)
@@ -308,16 +296,30 @@ local function IsDWTalented()
     return activeEntryID == ASC_ENTRY_ID
 end
 
-local MSW = nil
+local function OnEnable()
+    dwEnabled = true
+    wolfMode = HasWolfTalent() and not ForceCDM()
+    MSW.Subscribe("OnConsumed", OnMSWConsumed)
+    RehookDWCDMFrame()
+    C_Timer.After(1, function() RehookDWCDMFrame(); SP.Update("dw") end)
+    C_Timer.After(3, function() RehookDWCDMFrame(); SP.Update("dw") end)
+    MSW.InitFromLive()
+end
 
-local function Sync()
-    MSW = NS.SpecialMSW
+local function TryRegister()
+    if registered or not IsDWTalented() then return end
+    registered = true
+    OnEnable()
+end
+
+-- the talent API is not ready on a zone change: leave the state alone then
+local function ApplyTalentVisibility()
+    if not registered then return end
     if not SP.ConfigID() then return end
     local talented = IsDWTalented()
     local wantWolf = talented and HasWolfTalent() and not ForceCDM()
-    wolfMode = wantWolf
+    if wantWolf ~= wolfMode then wolfMode = wantWolf end
     if not wolfMode then RehookDWCDMFrame() end
-    SetCDMWatch(SP.Wanted("dw") and not wolfMode)
     local track = talented and SP.Wanted("dw")
     if not track then
         dwEnabled = false
@@ -329,28 +331,30 @@ local function Sync()
     end
 end
 
-local function Start()
+local function Sync()
     MSW = NS.SpecialMSW
-    dwEnabled = true
-    wolfMode = HasWolfTalent() and not ForceCDM()
-    MSW.Subscribe("OnConsumed", OnMSWConsumed)
-    SP.Listen("SPELL_UPDATE_COOLDOWN", "dw_wolf", OnWolfSUC)
-    SP.Listen("UNIT_SPELLCAST_SUCCEEDED", "dw", OnCast)
-    SP.Listen("COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED", "dw", OnOverrideUpdated)
-    RehookDWCDMFrame()
-    C_Timer.After(1, function() RehookDWCDMFrame(); SP.Update("dw") end)
-    C_Timer.After(3, function() RehookDWCDMFrame(); SP.Update("dw") end)
-    MSW.InitFromLive()
+    TryRegister()
+    ApplyTalentVisibility()
 end
 
+-- ProcTracker listens for these from load whether the deck counts or not; from
+-- the first start on, so a stop and a start never lose a hard cast or a rebind
+local function Start()
+    MSW = NS.SpecialMSW
+    if armed then return end
+    armed = true
+    SP.Listen("UNIT_SPELLCAST_SUCCEEDED", "dw", OnCast)
+    SP.Listen("COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED", "dw", OnOverrideUpdated)
+    local ER = EventRegistry
+    if ER and ER.RegisterCallback then
+        ER:RegisterCallback("CooldownViewerSettings.OnDataChanged", ScheduleRehook, CDM_OWNER)
+    end
+end
+
+-- nothing reads the deck any more: it stops drawing, its open windows run out
 local function Stop()
     dwEnabled = false
     if MSW then MSW.Unsubscribe("OnConsumed", OnMSWConsumed) end
-    SP.Unlisten("SPELL_UPDATE_COOLDOWN", "dw_wolf")
-    SP.Unlisten("UNIT_SPELLCAST_SUCCEEDED", "dw")
-    SP.Unlisten("COOLDOWN_VIEWER_SPELL_OVERRIDE_UPDATED", "dw")
-    SetCDMWatch(false)
-    wolfWatchUntil = 0
 end
 
 local function Read(drv)
@@ -361,6 +365,8 @@ local function Read(drv)
         procs = dwDeckProcs, max = DECK_PROCS, procsLeft = DECK_PROCS - dwDeckProcs,
         chance = SP.DeckChance(DECK_SIZE, DECK_PROCS, pos, dwDeckProcs, spend),
         viol = dwViolations, deck = dwDeckNumber,
+        -- on the Cooldown Manager path with no Doom Winds icon bound, no proc counts
+        cdmWarn = dwEnabled and not wolfMode and not (dwCDMFrame ~= nil and dwCDMFrame.cooldownID == DW_CDM_ID),
     }
 end
 
@@ -379,6 +385,7 @@ local function Reset()
     hardCastBuf = {}
     wolfFired = false
     wolfWatchUntil = 0
+    SP.Unlisten("SPELL_UPDATE_COOLDOWN", "dw_wolf")
     SP.Update("dw")
 end
 
@@ -412,6 +419,7 @@ end
 
 SP.Register({
     id = "dw", name = "Doom Winds", class = "SHAMAN", specs = { 263 },
+    talentGate = { node = ASC_NODE_ID, entry = ASC_ENTRY_ID },
     icon = DW_ICON, size = DECK_SIZE, procs = DECK_PROCS,
     isTimer = false, bar = true, sound = true, chanceSpend = true, chanceForecast = false, viol = true,
     words = { pos = "Deck position", procs = "Proc count" },
@@ -427,6 +435,9 @@ SP.Register({
         action = { { name = "Ascendance", ids = { 114051, 384352 } } },
     },
     driverFlags = { "forceCDM" },
+    -- ProcTracker's talent frame for this deck, plus its login pass
+    syncEvents = { TRAIT_CONFIG_UPDATED = true, PLAYER_TALENT_UPDATE = true, ACTIVE_COMBAT_CONFIG_CHANGED = true,
+        ACTIVE_TALENT_GROUP_CHANGED = true, PLAYER_LOGIN = true },
     Gate = IsDWTalented, Read = Read, Start = Start, Stop = Stop, Sync = Sync, Reset = Reset,
     Save = Save, Load = Load, Status = Status,
     CDMTracking = CDMTracking, CanSkipCDM = HasWolfTalent, SkipCDMReason = ActiveWolfTalent,

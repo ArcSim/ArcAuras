@@ -9,6 +9,11 @@ local Factory = {}
 NS.Factory = Factory
 
 local QUESTION_MARK = 134400
+-- an empty totem slot's art, the totem glyph (retail's file)
+Factory.TOTEM_GLYPH = 310731
+-- the custom texts' slots; a special icon adds its own three
+Factory.LABELS = { "", "2", "3" }
+Factory.SPECIAL_LABELS = { "", "2", "3", "4", "5", "6" }
 local WHITE = "Interface\\Buttons\\WHITE8X8"
 local BORDER_KEYS = { "top", "bottom", "left", "right" }
 -- Ammo inventory slot (INVSLOT_AMMO on Forever and retail; 0 as a fallback).
@@ -233,17 +238,21 @@ local function KindTexture(rec)
             local _, barTex = DT.BarShows(rec)
             if barTex then return barTex end
         end
-        -- haveTotem is a secret boolean, so it is never tested. The icon is
-        -- only painted, and SetTexture takes a secret. A totem followed by
-        -- spell shows its spell's art while it is not down.
+        -- haveTotem is a secret boolean, so it is never tested: the feed's
+        -- duration shadow says whether the slot is live (nil before its first
+        -- feed). The icon is only painted, and SetTexture takes a secret. An
+        -- empty slot's own art is blank: a totem followed by spell shows its
+        -- spell's art, any other the totem glyph (retail; Forever lacks it).
         local slot = d.slot or 1
         if NS.DriverTotem then slot = NS.DriverTotem.SlotFor(rec) end
-        if slot and GetTotemInfo then
+        local DC = NS.DriverCooldown
+        local live = DC and DC.TotemLive and DC.TotemLive(rec)
+        if live ~= false and slot and GetTotemInfo then
             local _, _, _, _, icon = GetTotemInfo(slot)
             if icon then return icon end
         end
         local tex = d.spellID and C_Spell.GetSpellTexture(d.spellID)
-        return tex or QUESTION_MARK
+        return tex or ((NS.IsForever ~= true) and Factory.TOTEM_GLYPH or QUESTION_MARK)
     elseif kind == "enchant" then
         -- the enchant's own art while it is on, else the weapon's
         local E = NS.DriverEnchant
@@ -712,10 +721,13 @@ function Factory.Release(id)
         f._adStateSig = nil   -- the lanes just stopped: the next feed repaints
         if NS.DriverWarn then NS.DriverWarn.Drop(f) end
         if NS.DriverToggle then NS.DriverToggle.Drop(f) end
+        -- pinned texts come home, their carriers hidden with the icon
+        if NS.TextAnchor then NS.TextAnchor.Release(f) end
         f._adPureGCD = nil   -- pooled frames must not carry GCD presentation
         f._adPureWand = nil
         f._adRecharging = nil
         f._adTipsOn = nil
+        f._adProcLit = nil   -- nor the game's proc on the spell it showed
         f:Hide()
         f:ClearAllPoints()
     end
@@ -875,7 +887,8 @@ end
 local function ApplyAuraButtonDispel(b, rec, on, alpha)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
     local styles = Enum and Enum.CustomAuraButtonDispelTypeTextureStyle
-    local canEngine = b.AddDispelTypeTexture ~= nil and b.RemoveDispelTypeTexture ~= nil
+    -- 12.1.0 removes these by index, so once added they could never come off
+    local canEngine = not NS.OldAuraEngine and b.AddDispelTypeTexture ~= nil and b.RemoveDispelTypeTexture ~= nil
         and styles ~= nil and styles.PreserveAsset ~= nil
     local edges = b._adDispelEdges
     if not (on and canEngine) then
@@ -1115,7 +1128,9 @@ local function StyleCountdownText(cfs, rec, kS, anchorTo, fontPath)
     cfs:SetShadowOffset(1, -1)
 end
 
-local function StyleStackText(fs, rec, kS, anchorTo)
+-- pinOwner: the holder, whose own texts may ride another frame (Core\AD_TextAnchor.lua);
+-- nil for a copy on the game's aura button, which cannot move in combat.
+local function StyleStackText(fs, rec, kS, anchorTo, pinOwner)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
     local outline = R("text", "stackOutline") or "OUTLINE"
     if outline == "NONE" then outline = "" end
@@ -1124,9 +1139,14 @@ local function StyleStackText(fs, rec, kS, anchorTo)
     fs._adTextRGBA = R("text", "stackColor") or { 1, 1, 1, 1 }
     PaintText(fs)
     local anch = R("text", "stackAnchor") or "BOTTOMRIGHT"
-    fs:ClearAllPoints()
-    fs:SetPoint(anch, anchorTo, anch,
-        (R("text", "stackX") or 0) * kS, (R("text", "stackY") or 0) * kS)
+    local x, y = (R("text", "stackX") or 0) * kS, (R("text", "stackY") or 0) * kS
+    local TA = pinOwner and NS.TextAnchor
+    if TA then
+        TA.Place(fs, pinOwner, "stack", R("text", "stackPinTo"), R("text", "stackPinTarget"), anch, anch, x, y)
+    else
+        fs:ClearAllPoints()
+        fs:SetPoint(anch, anchorTo, anch, x, y)
+    end
     fs:SetShadowColor(0, 0, 0, R("text", "stackShadow") == true and 1 or 0)
     fs:SetShadowOffset(1, -1)
 end
@@ -1195,19 +1215,32 @@ function Factory.ApplyFrameAlpha(f, rec)
     f:SetAlpha(a)
 end
 
+-- A custom text's font: its own, else custom text 1's.
+function Factory.LabelFont(rec, suf)
+    local f = (suf ~= "") and Store.Resolve(rec, "label", "labelFont" .. suf) or nil
+    if f == nil or f == "" then f = Store.Resolve(rec, "label", "labelFont") end
+    return f
+end
+
 -- One custom text's look (suf "", "2" or "3") on fs, anchored to anchorTo:
--- the holder's, and the copies a group buff's combat layers carry.
-local function StyleLabel(fs, rec, suf, kS, anchorTo)
+-- the holder's, and the copies a group buff's combat layers carry. pinOwner:
+-- the holder, whose own texts may ride another frame (the copies never do).
+local function StyleLabel(fs, rec, suf, kS, anchorTo, pinOwner)
     local R = function(section, field) return Store.Resolve(rec, section, field) end
-    fs:SetFont(IconFont(R("label", "labelFont")),
+    fs:SetFont(IconFont(Factory.LabelFont(rec, suf)),
         math.max(6, math.floor((R("label", "labelSize" .. suf) or 12) * kS + 0.5)), "OUTLINE")
     local lc = R("label", "labelColor" .. suf) or { 1, 1, 1, 1 }
     fs:SetTextColor(lc[1], lc[2], lc[3], lc[4] or 1)
     local an = R("label", "labelAnchor" .. suf) or "CENTER"
-    fs:ClearAllPoints()
-    fs:SetPoint(an, anchorTo, an,
-        (R("label", "labelX" .. suf) or 0) * kS,
-        (R("label", "labelY" .. suf) or 0) * kS)
+    local x, y = (R("label", "labelX" .. suf) or 0) * kS, (R("label", "labelY" .. suf) or 0) * kS
+    local TA = pinOwner and NS.TextAnchor
+    if TA then
+        TA.Place(fs, pinOwner, "label" .. suf, R("label", "labelPinTo" .. suf),
+            R("label", "labelPinTarget" .. suf), an, an, x, y)
+    else
+        fs:ClearAllPoints()
+        fs:SetPoint(an, anchorTo, an, x, y)
+    end
     fs:SetText(R("label", "labelText" .. suf))
 end
 Factory.StyleLabel = StyleLabel
@@ -1234,24 +1267,42 @@ function Factory.ApplyStyle(f, rec)
     -- (AURA_LADDER) it sits under the missing look's glows and the engine
     -- button, which covers it while the aura is up and draws its own. Above
     -- the button it would show at the missing alpha over the live icon. Any
-    -- other icon's border sits at +1, under the swipe (+2), so the swipe's own
-    -- countdown number draws above it; a spell icon's aura overlay (the button
-    -- at +4) covers both.
+    -- other icon's border sits at +1, under the swipe (+2); a spell icon's
+    -- aura overlay (the button at +5) covers both.
     local overlay = NS.DriverAura ~= nil and NS.DriverAura.OverlayOn ~= nil
         and NS.DriverAura.OverlayOn(rec) == true
     Factory.ApplyBorder(f, rec, rec.kind == "aura" and Factory.AURA_LADDER.border or 1, forceHide)
-    -- The text host sits above the border and any anchored engine button,
-    -- which would otherwise hide the labels. Set each pass (children don't
-    -- follow SetFrameLevel), skipped when the level reads secret.
+    -- Texts are the top of an icon: the text host sits over every glow at its
+    -- default level and any anchored engine button's stack. Set each pass
+    -- (children don't follow SetFrameLevel), skipped when the level reads secret.
     local hostLvl = f:GetFrameLevel()
     local plainLvl = not (issecretvalue and issecretvalue(hostLvl)) and type(hostLvl) == "number"
     if plainLvl then
-        f.textHost:SetFrameLevel(hostLvl + 7 + Factory.Rise(rec))
+        f.textHost:SetFrameLevel(hostLvl + Factory.TEXT_LEVEL + Factory.Rise(rec))
         if rec.kind ~= "aura" then f.cooldown:SetFrameLevel(hostLvl + 2) end
+    end
+    -- The countdown number moves onto a child of its swipe one under the text
+    -- host: the swipe keeps driving it and hides it with itself, and it draws
+    -- over the glows. With an aura overlay it stays on the swipe, under the
+    -- button that covers the spell's look.
+    local cfs = f.cooldown.GetCountdownFontString and f.cooldown:GetCountdownFontString()
+    if cfs then
+        local home = f.cooldown
+        if not overlay then
+            home = f._adCdText
+            if not home then
+                home = CreateFrame("Frame", nil, f.cooldown)
+                home:SetAllPoints()
+                home:EnableMouse(false)
+                f._adCdText = home
+            end
+            if plainLvl then home:SetFrameLevel(hostLvl + Factory.TEXT_LEVEL - 1 + Factory.Rise(rec)) end
+        end
+        if cfs:GetParent() ~= home then cfs:SetParent(home) end
     end
     -- With an aura overlay the button shows the aura's count in that corner,
     -- so the charges move to a low host at +3, between the swipe (+2) and the
-    -- button (+4), and show while the aura is down.
+    -- button (+5), and show while the aura is down.
     if overlay then
         local low = f._adLowText
         if not low then
@@ -1356,7 +1407,7 @@ function Factory.ApplyStyle(f, rec)
     local stacks = NS.Schema.Applies(NS.Schema.icon.text.fields.stackText, NS.Schema.icon.text, rec.kind)
         and R("text", "stackText") ~= false
     if stacks then
-        StyleStackText(f.stackText, rec, kS, f)
+        StyleStackText(f.stackText, rec, kS, f, rec.kind ~= "aura" and f or nil)
         if rec.kind == "ammo" then Factory.AmmoCountColor(f.stackText, rec, "stackColor") end
         f.stackText:Show()
     else
@@ -1386,10 +1437,35 @@ function Factory.ApplyStyle(f, rec)
 
     -- Custom labels: styled here, shown per state in SetState.
     f._adLabels = f._adLabels or {}
-    local labelFS = { f.labelText, f.labelText2, f.labelText3 }
+    -- a special icon's own texts ride slots 4 to 6 (Schema.SPECIAL_TEXTS),
+    -- made the first time a special icon wears the frame
+    local special = rec.kind == "special"
+    if special and not f.labelText4 then
+        for n = 4, 6 do
+            local fs = f.textHost:CreateFontString(nil, "OVERLAY")
+            fs:SetDrawLayer("OVERLAY", 7)
+            fs:SetFont(STANDARD_TEXT_FONT, 12, "OUTLINE")
+            fs:Hide()
+            f["labelText" .. n] = fs
+        end
+    end
+    local labelFS = { f.labelText, f.labelText2, f.labelText3, f.labelText4, f.labelText5, f.labelText6 }
+    local sufs = special and Factory.SPECIAL_LABELS or Factory.LABELS
+    -- a pooled frame a special icon wore: its slots 4 to 6 stand down
+    for i = #sufs + 1, 6 do
+        local st = f._adLabels[i]
+        if st then
+            f._adLabels[i] = nil
+            if st.fs then
+                st.fs:SetText("")
+                st.fs:Hide()
+                if NS.TextAnchor and NS.TextAnchor.live[st.fs] then NS.TextAnchor.Place(st.fs, f, "label" .. i, "own") end
+            end
+        end
+    end
     -- under the time gate the button and the missing look carry every label
     local split = rec.kind == "aura" and Factory.TimeGateFrac(rec) ~= nil
-    for i, suf in ipairs({ "", "2", "3" }) do
+    for i, suf in ipairs(sufs) do
         local fs = labelFS[i]
         local st = f._adLabels[i] or {}
         f._adLabels[i] = st
@@ -1401,12 +1477,14 @@ function Factory.ApplyStyle(f, rec)
         st.split = split
         local ltext = R("label", "labelText" .. suf)
         if fs and ltext and ltext ~= "" then
-            StyleLabel(fs, rec, suf, kS, f)
+            StyleLabel(fs, rec, suf, kS, f, f)
             st.has = true
         elseif fs then
             fs:SetText("")
             st.has = false
             fs:Hide()
+            -- an emptied text leaves any pin, so its carrier does not linger
+            if NS.TextAnchor and NS.TextAnchor.live[fs] then NS.TextAnchor.Place(fs, f, "label" .. suf, "own") end
         end
     end
     f._adHasLabel = f._adLabels[1].has
@@ -1420,9 +1498,14 @@ function Factory.ApplyStyle(f, rec)
         local kc = R("keybind", "keybindColor") or { 1, 1, 1, 1 }
         f.keybindText:SetTextColor(kc[1], kc[2], kc[3], kc[4] or 1)
         local kan = R("keybind", "keybindAnchor") or "TOPLEFT"
-        f.keybindText:ClearAllPoints()
-        f.keybindText:SetPoint(kan, f, kan,
-            (R("keybind", "keybindX") or 0) * kS, (R("keybind", "keybindY") or 0) * kS)
+        local kx, ky = (R("keybind", "keybindX") or 0) * kS, (R("keybind", "keybindY") or 0) * kS
+        if NS.TextAnchor then
+            NS.TextAnchor.Place(f.keybindText, f, "keybind", R("keybind", "keybindPinTo"),
+                R("keybind", "keybindPinTarget"), kan, kan, kx, ky)
+        else
+            f.keybindText:ClearAllPoints()
+            f.keybindText:SetPoint(kan, f, kan, kx, ky)
+        end
         f.keybindText:Show()
     else
         f.keybindText:Hide()
@@ -1495,7 +1578,7 @@ function Factory.ApplyMissingLabels(f, rec, kS)
                 fs:SetDrawLayer("OVERLAY", 7)
                 clip._fs[i] = fs
             end
-            fs:SetFont(IconFont(R("label", "labelFont")),
+            fs:SetFont(IconFont(Factory.LabelFont(rec, suf)),
                 math.max(6, math.floor((R("label", "labelSize" .. suf) or 12) * kS + 0.5)), "OUTLINE")
             local lc = R("label", "labelColor" .. suf) or { 1, 1, 1, 1 }
             fs:SetTextColor(lc[1], lc[2], lc[3], lc[4] or 1)
@@ -1528,8 +1611,17 @@ function Factory.ApplyMissingLabels(f, rec, kS)
     end
 end
 
--- Aura icon ladder over the holder: glows above borders, the live button above every missing piece.
-Factory.AURA_LADDER = { border = 1, missLabels = 1, missGlow = 2, button = 3 }
+-- Aura icon ladder over the holder: glows above borders, texts above glows,
+-- the live button above every missing piece.
+Factory.AURA_LADDER = { border = 1, missGlow = 2, missLabels = 3, button = 4 }
+
+-- A live engine button's stack over its own level: the swipe, its glows at
+-- their frame level (GLOW_LEVEL unless set, a style frame one over), its texts
+-- over those, then the time-left bar that hides them all.
+Factory.BUTTON_STACK = { swipe = 1, text = GLOW_LEVEL + 2, gate = GLOW_LEVEL + 3 }
+
+-- The holder's texts: over a spell overlay's button (one rung up) and its stack.
+Factory.TEXT_LEVEL = Factory.AURA_LADDER.button + 1 + Factory.BUTTON_STACK.gate + 1
 
 -- An aura watching you, then your target, has a second button above the
 -- first: the holder's texts and glows go up by as much to stay on top.
@@ -1614,7 +1706,7 @@ local function ApplyShowGate(b, frac, w, h, reach)
     gb:ClearAllPoints()
     gb:SetSize(L, gh)
     gb:SetPoint("LEFT", b, "CENTER", math.min(-gw / 2, gw / 2 - frac * L), 0)
-    if type(b._adLevel) == "number" then gb:SetFrameLevel(b._adLevel + 3) end
+    if type(b._adLevel) == "number" then gb:SetFrameLevel(b._adLevel + Factory.BUTTON_STACK.gate) end
     gb:Show()
 end
 
@@ -2650,8 +2742,9 @@ function Factory.ApplyAlwaysGlows(f, rec, w, h, combat)
             f._adAlwaysGlow = host
         end
         if host then
-            -- the live button's own glow level: over the button and the holder's texts
-            host._adLevel = lvl and (lvl + Factory.AURA_LADDER.button)
+            -- the live button's own glow level (your button's on a two-unit
+            -- icon): over its art, under its texts and the holder's
+            host._adLevel = lvl and (lvl + Factory.AURA_LADDER.button + Factory.Rise(rec))
             Factory.SetAuraButtonGlow(host, rec, want, w, h, 1, k)
         end
     end
@@ -2785,7 +2878,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     -- icon step aside (its driver's layers show instead, when switched on).
     if rec.kind == "groupbuff" and f._adGBHidden then f._adStateAlpha = 0 end
     -- procOverride: a lit proc forces full opacity, over the usability dim too.
-    if f._adProcOn and R("states", "procOverride") == true then
+    if f._adProcLit and R("states", "procOverride") == true then
         f._adStateAlpha = 1
     end
     -- usableOverride: full opacity while ready and usable (range is usable,
@@ -2888,6 +2981,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     Factory.UpdateCooldownGlow(f, rec)
     Factory.UpdateRangeGlow(f, rec)
     Factory.UpdateRechargeGlow(f, rec)
+    if f._adProcLit ~= nil then Factory.SetProcGlow(f, rec, f._adProcLit) end
 end
 
 -- usability code from the driver: "range" | "nomana" | "unusable" | nil
@@ -2986,6 +3080,12 @@ local function LaneAllowed(f, lane)
     return only == nil or only == lane
 end
 Factory.LaneAllowed = LaneAllowed
+
+-- A state at 0 opacity hides the icon, and its glows with it: they ride the
+-- frame, which the state's dim never touches (SetState re-runs them after it).
+function Factory.GlowHidden(f)
+    return (f._adShownAlpha or f._adStateAlpha or 1) <= 0
+end
 
 -- Move X / Y on a library glow: the library re-anchors its frame on every
 -- Start, so each point shifts once right after it. A secret read, unexpected
@@ -3090,9 +3190,18 @@ Factory.StopGlowLane = StopLane
 -- Proc glow (SPELL_ACTIVATION_OVERLAY), with the other lanes' options.
 function Factory.SetProcGlow(f, rec, on)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
+    on = on and true or false
+    local changed = (f._adProcLit or false) ~= on
+    f._adProcLit = on
+    -- a proc that lifts the icon to full opacity restyles its state, which
+    -- calls back here with the new opacity
+    if changed and f._adOnCooldown ~= nil and R("states", "procOverride") == true then
+        Factory.SetState(f, rec, f._adOnCooldown, f._adDesatState)
+        return
+    end
     local want = on and R("states", "procGlow") == true
         and R("appearance", "forceHideIcon") ~= true
-        and LaneAllowed(f, "proc")
+        and LaneAllowed(f, "proc") and not Factory.GlowHidden(f)
     if not want then
         Factory.StopProcGlow(f)
         return
@@ -3248,7 +3357,7 @@ function Factory.UpdateGlow(f, rec, ready)
     if not LCG then return end
     local R = function(s, k) return Store.Resolve(rec, s, k) end
     local want = ready and rec.kind ~= "aura" and R("states", "readyGlow") == true
-        and LaneAllowed(f, "ready")
+        and LaneAllowed(f, "ready") and not Factory.GlowHidden(f)
     -- Combat-only is re-checked on every restyle and at each combat edge
     -- (Factory.CombatGlows).
     if want and R("states", "readyGlowCombatOnly") == true
@@ -3308,7 +3417,7 @@ function Factory.UpdateUsableGlow(f, rec)
         and f._adUsability == nil
         and (not f._adOnCooldown or f._adRecharging == true)
         and R("appearance", "forceHideIcon") ~= true
-        and LaneAllowed(f, "usable")
+        and LaneAllowed(f, "usable") and not Factory.GlowHidden(f)
     if want and R("states", "usableGlowCombatOnly") == true
         and not InCombatLockdown() then
         want = false
@@ -3361,7 +3470,7 @@ function Factory.UpdateRechargeGlow(f, rec)
         and R("states", "rechargeGlow") == true
         and (preview or f._adRecharging == true)
         and R("appearance", "forceHideIcon") ~= true
-        and LaneAllowed(f, "recharge")
+        and LaneAllowed(f, "recharge") and not Factory.GlowHidden(f)
     if want and not preview and R("states", "rechargeGlowCombatOnly") == true
         and not InCombatLockdown() then
         want = false
@@ -3414,7 +3523,7 @@ function Factory.UpdateRangeGlow(f, rec)
         and R("states", "rangeGlow") == true
         and (preview or (f._adUsability == "range" and (not f._adOnCooldown or f._adRecharging == true)))
         and R("appearance", "forceHideIcon") ~= true
-        and LaneAllowed(f, "range")
+        and LaneAllowed(f, "range") and not Factory.GlowHidden(f)
     if want and not preview and R("states", "rangeGlowCombatOnly") == true
         and not InCombatLockdown() then
         want = false
@@ -3467,7 +3576,7 @@ function Factory.UpdateCooldownGlow(f, rec)
     local want = f._adOnCooldown == true and rec.kind ~= "aura"
         and R("states", "cooldownGlow") == true
         and R("appearance", "forceHideIcon") ~= true
-        and LaneAllowed(f, "cooldown")
+        and LaneAllowed(f, "cooldown") and not Factory.GlowHidden(f)
     if want and R("states", "cooldownGlowCombatOnly") == true
         and not InCombatLockdown() then
         want = false

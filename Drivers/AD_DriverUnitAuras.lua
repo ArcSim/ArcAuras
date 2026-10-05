@@ -164,8 +164,12 @@ function UA.Plan(g, cfg)
     local per = math.max(1, math.min(vertical and cfg.rows or cfg.cols, cap))
     local lines = math.ceil(cap / per)
     local blocks = cfg.both and 2 or 1
+    -- whole pixels, as the slots and gaps are, so the box is too
+    local E = NS.LayoutEngine
+    local Snap = (E and E.Snap) or function(v) return v end
     local pad = Store.Resolve(g, "arrangement", "containerPadding") or 0
     if pad < 0 then pad = 0 end
+    pad = Snap(pad)
     local right, down = growthH ~= "LEFT", growthV ~= "UP"
     local hPart, vPart
     if cfg.plates then
@@ -195,7 +199,7 @@ function UA.Plan(g, cfg)
     local n = lines * blocks
     local bw, bh = span, n * cw + (n - 1) * cs
     if vertical then bw, bh = bh, bw end
-    bw, bh = math.max(4, bw + 2 * pad), math.max(4, bh + 2 * pad)
+    bw, bh = math.max(Snap(4), bw + 2 * pad), math.max(Snap(4), bh + 2 * pad)
     local corner = (down and "TOP" or "BOTTOM") .. (right and "LEFT" or "RIGHT")
     local pin, ox, oy = corner, 0, 0
     if not cfg.plates then
@@ -446,6 +450,23 @@ function UA.SendHalf(c, key, s, filter, filters, sig, cfg)
     return false
 end
 
+-- A centred axis hangs the container from the group frame's middle, so its
+-- edge sits at (box - content) / 2: half a pixel whenever that is odd, and the
+-- game sizes the container (never read). A quarter-pixel lean toward the
+-- top-left puts a half pixel on the pixel up and left of it every time and
+-- leaves a whole one where it is, so float error can never split one row's
+-- buttons across two pixels. The editor's marks take the same lean.
+function UA.Lean(gf, pin)
+    local _, physH = GetPhysicalScreenSize()
+    local es = gf and gf:GetEffectiveScale()
+    if es == nil or (issecretvalue and issecretvalue(es)) then return 0, 0 end
+    if type(physH) ~= "number" or physH <= 0 or es <= 0 then return 0, 0 end
+    local q = (768 / physH) / es / 4
+    local x = (pin:find("LEFT") or pin:find("RIGHT")) and 0 or -q
+    local y = (pin:find("TOP") or pin:find("BOTTOM")) and 0 or q
+    return x, y
+end
+
 -- The flow the aura group rows use. The unit's container is pinned to the
 -- group frame at the pin Alignment picks, so it grows away from it (both ways
 -- when centred); a plate row is pinned to its plate when the plate comes up
@@ -457,7 +478,8 @@ function UA.Layout(rt, gf, p, cfg)
     if cfg.plates then return end
     local c = rt.cs[1]
     c:ClearAllPoints()
-    c:SetPoint(p.pin, gf, p.pin, 0, 0)
+    local lx, ly = UA.Lean(gf, p.pin)
+    c:SetPoint(p.pin, gf, p.pin, lx, ly)
 end
 
 -- Fill down first turns the flow's axis: a line runs down, so each spacing
@@ -502,6 +524,7 @@ function UA.Marks(gf, p, on)
     end
     host:SetFrameLevel(gf:GetFrameLevel() + 1)
     local n = p.cap * p.blocks
+    local lx, ly = UA.Lean(gf, p.pin)
     for i = 1, n do
         local t = host.cells[i]
         if not t then
@@ -513,7 +536,7 @@ function UA.Marks(gf, p, on)
         end
         local x, y = UA.CellXY(p, i)
         t:ClearAllPoints()
-        t:SetPoint(p.corner, gf, p.pin, x, y)
+        t:SetPoint(p.corner, gf, p.pin, x + lx, y + ly)
         t:SetSize(p.w, p.h)
         t:Show()
     end

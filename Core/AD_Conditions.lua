@@ -350,6 +350,17 @@ local function Leader()
     return Plain("leader", UnitIsGroupLeader and UnitIsGroupLeader("player"))
 end
 
+-- Your own threat on anything you fight: 3 or 2 is tanking it, 1 is about to
+-- pull it. One unit's threat state is not secret (the API's own rule), but a
+-- secret still keeps the last plain answer.
+local function Threat()
+    local s = UnitThreatSituation and UnitThreatSituation("player")
+    if IsSecret(s) then return lastPlain.threat end
+    s = type(s) == "number" and s or 0
+    lastPlain.threat = s
+    return s
+end
+
 -- Vocabulary. key: what rec.c stores (saved, so never renamed). text: follows
 -- the list name ("Load when", "Fade when"). ev: the events that change it.
 -- poll: no event reports it. class: only that class's panel lists it.
@@ -380,6 +391,7 @@ local WARMODE_EV = { "WAR_MODE_STATUS_UPDATE", "PLAYER_FLAGS_CHANGED" }
 local ROLE_EV = { "PLAYER_ROLES_ASSIGNED", "ROLE_CHANGED_INFORM", "GROUP_ROSTER_UPDATE",
     "PLAYER_SPECIALIZATION_CHANGED" }
 local LEADER_EV = { "PARTY_LEADER_CHANGED", "GROUP_ROSTER_UPDATE" }
+local THREAT_EV = { "UNIT_THREAT_SITUATION_UPDATE", "PLAYER_REGEN_ENABLED" }
 
 local function FormIs(name)
     return function() return Form() == name end
@@ -390,6 +402,10 @@ local VOCAB = {
         read = function() return inCombat end },
     { key = "outOfCombat", cat = "combat", text = "Out of combat",
         read = function() return not inCombat end },
+    { key = "hasAggro", cat = "combat", text = "You have aggro", ev = THREAT_EV,
+        read = function() return (Threat() or 0) >= 2 end },
+    { key = "nearAggro", cat = "combat", text = "High threat", ev = THREAT_EV,
+        read = function() return Threat() == 1 end },
     { key = "mounted", cat = "move", text = "Mounted",
         ev = { "PLAYER_MOUNT_DISPLAY_CHANGED", "COMPANION_UPDATE" },
         read = function() return Plain("mounted", IsMounted and IsMounted()) end },
@@ -489,6 +505,9 @@ local VOCAB = {
         read = function() return InstanceType() == "arena" end },
     { key = "encounter", cat = "place", text = "Boss encounter",
         read = function() return encounterActive end },
+    -- a raid's pull alone (a dungeon boss's is not one)
+    { key = "raidEncounter", cat = "place", text = "Raid encounter",
+        read = function() return encounterActive and InstanceType() == "raid" end },
     { key = "petBattle", cat = "place", text = "Pet battle",
         avail = function() return C_PetBattles ~= nil and C_PetBattles.IsInBattle ~= nil end,
         ev = { "PET_BATTLE_OPENING_START", "PET_BATTLE_CLOSE" },
@@ -621,6 +640,15 @@ local function Live(key)
     local d = BY_KEY[key]
     if d and d.avail and not d.avail() then return nil end
     return d
+end
+
+-- A key's answer for a watcher, as this pass read it; nil (unknown) while the
+-- client cannot evaluate it or the shapeshift form reads secret.
+function Conditions.Read(key)
+    local d = Live(key)
+    if not d then return nil end
+    if d.cat == "form" and Form() == "unknown" then return nil end
+    return Is(key)
 end
 
 local function SetHas(set)
@@ -997,6 +1025,27 @@ function Conditions.RegisterSubject(recType, sub)
     subjects[recType] = sub
 end
 
+-- Watchers: another module's keys, read through Conditions.Read after every
+-- pass (the Sound item's condition triggers); their events arm as a live
+-- record's do. No keys drops the watcher.
+Conditions.watchers = {}
+
+function Conditions.Watch(owner, keys, fn)
+    local old, new = Conditions.watchers[owner], nil
+    if keys and next(keys) ~= nil then
+        new = { keys = {}, fn = fn }
+        for k in pairs(keys) do new.keys[k] = true end
+    end
+    Conditions.watchers[owner] = new
+    -- a pass arms the events; the same set needs none
+    local same = (old == nil) == (new == nil)
+    if same and old then
+        for k in pairs(old.keys) do if not new.keys[k] then same = false end end
+        for k in pairs(new.keys) do if not old.keys[k] then same = false end end
+    end
+    if not same then Conditions.Queue() end
+end
+
 local function CollectKeys(c)
     for _, list in ipairs(LISTS) do
         local set = c[list]
@@ -1031,6 +1080,11 @@ function Conditions.Pass()
             end
         end)
     end
+    for _, w in pairs(Conditions.watchers) do
+        for key in pairs(w.keys) do
+            if Live(key) then inUse[key] = true end
+        end
+    end
     for _, recType in ipairs(subjectOrder) do
         local sub = subjects[recType]
         sub.each(function(id)
@@ -1049,6 +1103,8 @@ function Conditions.Pass()
     -- Aura displays hang off UIParent, not these frames, so their drivers
     -- copy the effective alphas whenever they change.
     Events.Fire("AD_VISIBILITY")
+    -- the reads are fresh now: a watcher compares them with its last ones
+    for _, w in pairs(Conditions.watchers) do w.fn() end
 end
 
 function Conditions.Queue()

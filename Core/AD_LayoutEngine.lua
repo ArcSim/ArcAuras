@@ -30,13 +30,46 @@ if NS.Anchor then
     end
 end
 
--- Pixel snap for the whole addon; slot sizes and steps are snapped separately.
-local function Snap(v)
+-- Half a pixel is a tie that a float rect read tips either way, so rounding
+-- leans up by a sliver no common pixel fraction lands on: one spot always
+-- snaps to one pixel. Core\AD_Anchor.lua rounds the same way.
+local TIE = 0.0058
+
+-- v rounded to whole physical pixels, px frame units each.
+local function PixRound(v, px)
+    return math.floor(v / px + 0.5 + TIE) * px
+end
+
+-- A left edge leans the other way at the tie, so a centred frame's spare
+-- pixel falls on its right and below (the bottom leans up), as FloorPx and
+-- the aura rows' lean put a centred row's: every centred thing agrees.
+local function PixRoundLeft(v, px)
+    return math.floor(v / px + 0.5 - TIE) * px
+end
+
+-- One physical pixel in UIParent's units, the scale of every engine frame.
+local function UIPx()
     local _, screenH = GetPhysicalScreenSize()
     local ppu = (screenH / 768) * (UIParent:GetEffectiveScale() or 1)
-    if ppu <= 0 then return v end
-    return math.floor(v * ppu + 0.5) / ppu
+    if ppu <= 0 then return nil end
+    return 1 / ppu
 end
+
+-- Pixel snap for the whole addon; slot sizes and steps are snapped separately.
+local function Snap(v)
+    local px = UIPx()
+    if not px then return v end
+    return PixRound(v, px)
+end
+
+-- A whole or half pixel count floored to whole pixels, toward the top-left;
+-- the sliver only absorbs float error.
+local function FloorPx(v)
+    local px = UIPx()
+    if not px then return v end
+    return math.floor(v / px + TIE) * px
+end
+Engine.Snap, Engine.FloorPx, Engine.PixRound = Snap, FloorPx, PixRound
 
 -- Pixel-exact placement. A CENTER anchor puts the edges on half pixels when the
 -- frame is an odd number of pixels across, and a whole-unit offset is a whole
@@ -53,8 +86,8 @@ local function SnapPlacement(f, container, x, y)
     local s = f:GetEffectiveScale() or 1
     if not physH or physH <= 0 or s <= 0 then return end
     local px = (768 / physH) / s           -- one physical pixel in frame units
-    local dx = left - math.floor(left / px + 0.5) * px
-    local dy = bottom - math.floor(bottom / px + 0.5) * px
+    local dx = left - PixRoundLeft(left, px)
+    local dy = bottom - PixRound(bottom, px)
     if dx ~= 0 or dy ~= 0 then
         f:SetPoint("CENTER", container, "CENTER", x - dx, y - dy)
     end
@@ -143,9 +176,9 @@ if NS.Anchor and NS.Anchor.SetFreePlacer then
 end
 
 -- An icon's own size: the group's slot unless Use group scale is off; a free
--- icon uses its width and height (0 = the base) times its scale. Placement and
--- ApplyIconPosition share it. Position offsets are visual only. Call
--- ApplyIconPosition before ApplyStyle: the border host takes the frame level.
+-- icon uses its width and height (0 = the base) times its scale. Placement,
+-- ApplyIconPosition and PlaceCell share it. Position offsets are visual only.
+-- Place before ApplyStyle: the border host takes the frame level.
 local function MemberSize(rec, baseW, baseH)
     local Rp = function(k) return Store.Resolve(rec, "position", k) end
     local w, h = baseW, baseH
@@ -190,12 +223,9 @@ local function ShowIcon(f, rec)
     end
 end
 
-local function ApplyIconPosition(f, rec, parent, cx, cy, baseW, baseH)
+-- An icon's strata and level, from its own settings over its parent's.
+local function IconLayer(f, rec, parent)
     local Rp = function(k) return Store.Resolve(rec, "position", k) end
-    local w, h = MemberSize(rec, baseW, baseH)
-    f:SetSize(Snap(w), Snap(h))
-    -- Size first, so SnapPlacement measures the final rect.
-    SnapPlacement(f, parent, cx + (Rp("offsetX") or 0), cy + (Rp("offsetY") or 0))
     local strata = Rp("strata")
     if strata and strata ~= "AUTO" then
         f:SetFrameStrata(strata)
@@ -203,6 +233,44 @@ local function ApplyIconPosition(f, rec, parent, cx, cy, baseW, baseH)
         f:SetFrameStrata(parent:GetFrameStrata())
     end
     f:SetFrameLevel(parent:GetFrameLevel() + 2 + (Rp("frameLevel") or 0))
+end
+
+-- A free icon: a root, placed by its centre and snapped by measuring.
+local function ApplyIconPosition(f, rec, parent, cx, cy, baseW, baseH)
+    local Rp = function(k) return Store.Resolve(rec, "position", k) end
+    local w, h = MemberSize(rec, baseW, baseH)
+    f:SetSize(Snap(w), Snap(h))
+    -- Size first, so SnapPlacement measures the final rect.
+    SnapPlacement(f, parent, cx + (Rp("offsetX") or 0), cy + (Rp("offsetY") or 0))
+    IconLayer(f, rec, parent)
+end
+
+-- A group's icon: a whole-pixel size at a corner counted in whole pixels from
+-- the parent's top-left (left, top; y down) and never read back, so it rides
+-- its group by whole pixels and every pass lands it on the same pixels. A
+-- member sized off its slot centres on it. Returns the corner it took.
+local function PlaceCell(f, rec, parent, left, top, slotW, slotH)
+    local Rp = function(k) return Store.Resolve(rec, "position", k) end
+    local w, h = MemberSize(rec, slotW, slotH)
+    w, h = Snap(w), Snap(h)
+    f:SetSize(w, h)
+    local x = Snap(left + FloorPx((slotW - w) / 2) + Snap(Rp("offsetX") or 0))
+    local y = Snap(top + FloorPx((slotH - h) / 2) - Snap(Rp("offsetY") or 0))
+    f:ClearAllPoints()
+    f:SetPoint("TOPLEFT", parent, "TOPLEFT", x, -y)
+    IconLayer(f, rec, parent)
+    return x, y
+end
+
+-- A group frame is a root: it takes its spot once its size is final and snaps
+-- by measuring, so the corner its icons count from sits on a pixel. The anchor
+-- post-pass places an anchored one. ox, oy move a shrunk box off the spot.
+local function PlaceGroupRoot(group, gf, ox, oy)
+    if NS.Anchor and NS.Anchor.ResolveTarget(group) then return end
+    local c = gf:GetParent()
+    if not c then return end
+    local pos = group.pos or {}
+    SnapPlacement(gf, c, (pos.x or 0) + (ox or 0), (pos.y or 0) + (oy or 0))
 end
 
 -- The anchor and glide code below must stay above its users: a closure only
@@ -262,14 +330,15 @@ local function DynAnimTick(_, dt)
                 a.x, a.y = a.tx, a.ty
                 dynAnims[fr] = nil
             end
-            fr:SetPoint("CENTER", a.p, "CENTER", a.x, a.y)
+            fr:SetPoint("TOPLEFT", a.p, "TOPLEFT", a.x, -a.y)
         end
     end
     if not next(dynAnims) then dynAnimFrame:SetScript("OnUpdate", nil) end
 end
 
--- Glide f from (fx, fy) to (tx, ty), CENTER offsets on p. dur is the time to
--- get about 95% of the way there (rate = 3 / dur).
+-- Glide f from corner (fx, fy) to corner (tx, ty), top-left offsets on p with
+-- y down, landing on the target exactly. dur is the time to get about 95% of
+-- the way there (rate = 3 / dur).
 local function StartDynAnim(f, p, fx, fy, tx, ty, dur)
     local a = dynAnims[f]
     if not a then
@@ -278,7 +347,7 @@ local function StartDynAnim(f, p, fx, fy, tx, ty, dur)
     end
     a.p, a.x, a.y, a.tx, a.ty = p, fx, fy, tx, ty
     a.rate = 3 / math.max(0.05, dur or 0.18)
-    f:SetPoint("CENTER", p, "CENTER", fx, fy)
+    f:SetPoint("TOPLEFT", p, "TOPLEFT", fx, -fy)
     if not dynAnimFrame then dynAnimFrame = CreateFrame("Frame") end
     dynAnimFrame:SetScript("OnUpdate", DynAnimTick)
 end
@@ -346,29 +415,30 @@ local function DynDropsOut(rec, f, collapse)
     return false
 end
 
--- CENTER offset of visual cell (vr, vc) on the full grid.
+-- Top-left corner of visual cell (vr, vc), from the full grid's top-left with
+-- y down: whole pixels, as every term is.
 local function CellXY(ctx, vr, vc)
-    return -ctx.contentW / 2 + ctx.pad + vc * ctx.stepX + ctx.slotW / 2,
-        ctx.contentH / 2 - ctx.pad - vr * ctx.stepY - ctx.slotH / 2
+    return ctx.pad + vc * ctx.stepX, ctx.pad + vr * ctx.stepY
 end
 
 -- Packs items along one visual row, left to right, against the aligned edge or
 -- centered. A full row lands on the static cells, so Dynamic never nudges it.
+-- Corners, as CellXY; centred, an odd leftover pixel goes right.
 local function PackRow(ctx, items, align, vr, out)
     local n = #items
     if n == 0 then return end
     local span = n * ctx.stepX - ctx.spacingX
     local x0
     if align == "left" then
-        x0 = -ctx.contentW / 2 + ctx.pad
+        x0 = ctx.pad
     elseif align == "right" then
-        x0 = ctx.contentW / 2 - ctx.pad - span
+        x0 = ctx.contentW - ctx.pad - span
     else
-        x0 = -span / 2
+        x0 = FloorPx((ctx.contentW - span) / 2)
     end
-    local _, cy = CellXY(ctx, vr, 0)
+    local _, y = CellXY(ctx, vr, 0)
     for i, it in ipairs(items) do
-        out[it] = { x0 + (i - 1) * ctx.stepX + ctx.slotW / 2, cy }
+        out[it] = { x0 + (i - 1) * ctx.stepX, y }
     end
 end
 
@@ -378,15 +448,15 @@ local function PackCol(ctx, items, align, vc, out)
     local span = n * ctx.stepY - ctx.spacingY
     local y0   -- the block's top edge
     if align == "top" then
-        y0 = ctx.contentH / 2 - ctx.pad
+        y0 = ctx.pad
     elseif align == "bottom" then
-        y0 = -ctx.contentH / 2 + ctx.pad + span
+        y0 = ctx.contentH - ctx.pad - span
     else
-        y0 = span / 2
+        y0 = FloorPx((ctx.contentH - span) / 2)
     end
-    local cx = CellXY(ctx, 0, vc)
+    local x = CellXY(ctx, 0, vc)
     for i, it in ipairs(items) do
-        out[it] = { cx, y0 - (i - 1) * ctx.stepY - ctx.slotH / 2 }
+        out[it] = { x, y0 + (i - 1) * ctx.stepY }
     end
 end
 
@@ -414,7 +484,7 @@ local function FcfsList(gid, active)
     return out
 end
 
--- Where each surviving member goes, as CENTER offsets on the full grid. One row
+-- Where each surviving member goes, as corners on the full grid. One row
 -- or column: the order list along the fill direction, aligned. Multi-row: each
 -- icon keeps its visual row or column and slides toward the aligned edge.
 local function DynTargets(group, ctx, align, shape)
@@ -487,7 +557,8 @@ local function DynEmptyXY(ctx, align, shape)
     return tmp[lone][1], tmp[lone][2]
 end
 
--- Shrink to content: center (full-grid offsets) and size of the survivors' box.
+-- Shrink to content: the survivors' box, its top-left corner on the full grid
+-- and its size.
 local function DynBox(ctx, targets, align, shape)
     local x1, x2, y1, y2
     for _, t in pairs(targets) do
@@ -504,7 +575,7 @@ local function DynBox(ctx, targets, align, shape)
         x1, y1 = DynEmptyXY(ctx, align, shape)
         x2, y2 = x1, y1
     end
-    return (x1 + x2) / 2, (y1 + y2) / 2,
+    return x1 - ctx.pad, y1 - ctx.pad,
         (x2 - x1) + ctx.slotW + 2 * ctx.pad, (y2 - y1) + ctx.slotH + 2 * ctx.pad
 end
 
@@ -514,21 +585,18 @@ end
 local function DynApply(group, gf, ctx)
     local align, shape = Engine.EffectiveAlignment(group, ctx.needRows, ctx.cols)
     local targets = DynTargets(group, ctx, align, shape)
-    local ox, oy, w, h = 0, 0, ctx.contentW, ctx.contentH
+    -- the box's top-left corner on the full grid, and its size
+    local bx, by, w, h = 0, 0, ctx.contentW, ctx.contentH
     if Store.Resolve(group, "arrangement", "dynamicShrink") == true then
-        ox, oy, w, h = DynBox(ctx, targets, align, shape)
+        bx, by, w, h = DynBox(ctx, targets, align, shape)
     end
-    w, h = math.max(w, 4), math.max(h, 4)
+    w, h = math.max(w, Snap(4)), math.max(h, Snap(4))
     local sizeChanged = gf._adDynW ~= w or gf._adDynH ~= h
     gf._adDynW, gf._adDynH = w, h
     gf:SetSize(w, h)
     -- A free group moves by the box's offset, so icons keep their screen spots.
     -- An anchored group keeps its anchor point; the icons sit inside the box.
-    if not (NS.Anchor and NS.Anchor.ResolveTarget(group)) then
-        local pos = group.pos or {}
-        gf:ClearAllPoints()
-        gf:SetPoint("CENTER", gf:GetParent(), "CENTER", (pos.x or 0) + ox, (pos.y or 0) + oy)
-    end
+    PlaceGroupRoot(group, gf, bx + w / 2 - ctx.contentW / 2, ctx.contentH / 2 - by - h / 2)
     local smooth = Store.Resolve(group, "arrangement", "smoothMovement") == true
     local dur = Store.Resolve(group, "arrangement", "smoothDuration") or 0.18
     for _, m in ipairs(ctx.members) do
@@ -536,12 +604,9 @@ local function DynApply(group, gf, ctx)
         if Factory.frames[rec.id] == f then
             local t = targets[m]
             if t then
-                -- Target point, computed rather than read back off the frame.
-                local tx = t[1] - ox + (Store.Resolve(rec, "position", "offsetX") or 0)
-                local ty = t[2] - oy + (Store.Resolve(rec, "position", "offsetY") or 0)
                 -- Where the icon is now, relative to this pass's box, so a
                 -- box that moved doesn't make a standing icon jump.
-                local sx, sy = (f._adDynOX or 0) - ox, (f._adDynOY or 0) - oy
+                local sx, sy = (f._adDynOX or 0) - bx, (f._adDynOY or 0) - by
                 local a = dynAnims[f]
                 local fromX, fromY
                 if a and a.p == gf then
@@ -549,8 +614,8 @@ local function DynApply(group, gf, ctx)
                 elseif f._adDynParent == gf and f:IsShown() then
                     fromX, fromY = f._adDynX + sx, f._adDynY + sy
                 end
-                f:ClearAllPoints()
-                ApplyIconPosition(f, rec, gf, t[1] - ox, t[2] - oy, ctx.slotW, ctx.slotH)
+                -- Target corner, computed rather than read back off the frame.
+                local tx, ty = PlaceCell(f, rec, gf, t[1] - bx, t[2] - by, ctx.slotW, ctx.slotH)
                 if smooth and fromX
                     and (math.abs(fromX - tx) > 0.5 or math.abs(fromY - ty) > 0.5) then
                     StartDynAnim(f, gf, fromX, fromY, tx, ty, dur)
@@ -558,7 +623,7 @@ local function DynApply(group, gf, ctx)
                     dynAnims[f] = nil
                 end
                 f._adDynParent, f._adDynX, f._adDynY = gf, tx, ty
-                f._adDynOX, f._adDynOY = ox, oy
+                f._adDynOX, f._adDynOY = bx, by
                 f:Show()
             else
                 -- Dropped out: stays attached, so its state edges bring it back.
@@ -886,6 +951,24 @@ local function HideDropIndicators()
     InsertLine:Hide()
 end
 
+-- A grid group's slot, steps, spacings and padding, each rounded to whole
+-- pixels on its own, so every step is the same pixel count at any scale.
+-- Placement, the drop mapping and the grow arrows all read these.
+local function GridMetrics(group)
+    local R = function(field) return Store.Resolve(group, "arrangement", field) end
+    -- iconSize is a scale where 36 = 1, applied to the base width and height;
+    -- each term rounds to an integer first.
+    local scale = math.floor((R("iconSize") or 36) + 0.5) / 36
+    local slotW = Snap(math.floor((R("iconWidth") or 36) * scale + 0.5))
+    local slotH = Snap(math.floor((R("iconHeight") or 36) * scale + 0.5))
+    local spBase = R("spacing") or 2
+    local sep = R("separateSpacing") == true
+    local spacingX = Snap(sep and (R("spacingX") or spBase) or spBase)
+    local spacingY = Snap(sep and (R("spacingY") or spBase) or spBase)
+    return slotW, slotH, slotW + spacingX, slotH + spacingY, spacingX, spacingY,
+        Snap(R("containerPadding") or 0)
+end
+
 -- Oversized members (Use group scale off) widen their column and heighten
 -- their row; later columns and rows shift so spacing stays between edges, and
 -- the container grows to fit. cells = { [row * cols + col] = rec } in logical
@@ -929,25 +1012,24 @@ local function GroupCascade(cells, cols, needRows, slotW, slotH, growthH, growth
     return cas
 end
 
+-- A visual cell's slot corner from the container's TOPLEFT (x right, y down):
+-- whole pixels, as every term is.
+local function CascadeCorner(cas, col, row, stepX, stepY, pad)
+    return pad + cas.leftOver + col * stepX + (cas.colCum[col] or 0),
+        pad + cas.topOver + row * stepY + (cas.rowCum[row] or 0)
+end
+
 -- A visual cell's centre from the container's TOPLEFT (x right, y down), and
 -- the cell's own width and height.
 local function CascadeCell(cas, col, row, slotW, slotH, stepX, stepY, pad)
-    local cx = pad + cas.leftOver + col * stepX + (cas.colCum[col] or 0) + slotW / 2
-    local cy = pad + cas.topOver + row * stepY + (cas.rowCum[row] or 0) + slotH / 2
-    return cx, cy, cas.colW[col] or slotW, cas.rowH[row] or slotH
+    local x, y = CascadeCorner(cas, col, row, stepX, stepY, pad)
+    return x + slotW / 2, y + slotH / 2, cas.colW[col] or slotW, cas.rowH[row] or slotH
 end
 
 local function GroupDropInfo(grec, gf, cx, cy, skipId)
     if not (grec and gf) then return nil end
     local R = function(field) return Store.Resolve(grec, "arrangement", field) end
-    local scale = math.floor((R("iconSize") or 36) + 0.5) / 36
-    local slotW = Snap(math.floor((R("iconWidth") or 36) * scale + 0.5))
-    local slotH = Snap(math.floor((R("iconHeight") or 36) * scale + 0.5))
-    local spBase = R("spacing") or 2
-    local sep = R("separateSpacing") == true
-    local stepX = Snap(slotW + (sep and (R("spacingX") or spBase) or spBase))
-    local stepY = Snap(slotH + (sep and (R("spacingY") or spBase) or spBase))
-    local pad = R("containerPadding") or 0
+    local slotW, slotH, stepX, stepY, _, _, pad = GridMetrics(grec)
     local gl, gt = gf:GetLeft(), gf:GetTop()
     if not (gl and gt and stepX > 0 and stepY > 0) then return nil end
 
@@ -1214,14 +1296,8 @@ end
 
 -- One grid step, with the same Snap math as PlaceGroup.
 local function GroupStep(g)
-    local R = function(field) return Store.Resolve(g, "arrangement", field) end
-    local scale = math.floor((R("iconSize") or 36) + 0.5) / 36
-    local slotW = Snap(math.floor((R("iconWidth") or 36) * scale + 0.5))
-    local slotH = Snap(math.floor((R("iconHeight") or 36) * scale + 0.5))
-    local spBase = R("spacing") or 2
-    local sep = R("separateSpacing") == true
-    return Snap(slotW + (sep and (R("spacingX") or spBase) or spBase)),
-        Snap(slotH + (sep and (R("spacingY") or spBase) or spBase))
+    local _, _, stepX, stepY = GridMetrics(g)
+    return stepX, stepY
 end
 
 -- Rows the static grid actually draws; an overfull grid grows by rows.
@@ -1452,10 +1528,11 @@ end
 Engine.Shows = ShowsRec
 
 -- An icon a group kind places itself (the Reminder group's aura reminders):
--- a grid member's wiring at the handler's spot (CENTER offsets on parent, a
--- w x h cell), never dragged, as the handler owns the layout. Returns the
--- frame, or nil (released) when it is not drawn here.
-function Engine.PlaceKindIcon(rec, parent, cx, cy, w, h)
+-- a grid member's wiring at the handler's spot (a w x h cell whose top-left
+-- corner is left, top from parent's top-left, y down, in whole pixels), never
+-- dragged, as the handler owns the layout. Returns the frame, or nil
+-- (released) when it is not drawn here.
+function Engine.PlaceKindIcon(rec, parent, left, top, w, h)
     if not ShowsRec(rec) then
         Factory.Release(rec.id)
         NS.DriverCooldown.Detach(rec.id)
@@ -1466,7 +1543,7 @@ function Engine.PlaceKindIcon(rec, parent, cx, cy, w, h)
     f:ClearAllPoints()
     dynAnims[f] = nil
     f._adDynParent = nil
-    ApplyIconPosition(f, rec, parent, cx, cy, w, h)
+    PlaceCell(f, rec, parent, left, top, w, h)
     Factory.ApplyStyle(f, rec)
     NS.DriverCooldown.Attach(rec, f)
     f:SetMovable(false)
@@ -1514,22 +1591,9 @@ local function PlaceGroup(group, container, flowMode)
     end
 
     local R = function(field) return Store.Resolve(group, "arrangement", field) end
-    -- iconSize is a scale where 36 = 1, applied to the base width and height;
-    -- each term rounds to an integer first.
-    local scale = math.floor((R("iconSize") or 36) + 0.5) / 36
-    local slotW = Snap(math.floor((R("iconWidth") or 36) * scale + 0.5))
-    local slotH = Snap(math.floor((R("iconHeight") or 36) * scale + 0.5))
+    local slotW, slotH, stepX, stepY, spacingX, spacingY, pad = GridMetrics(group)
     local cols = math.max(1, R("cols") or 6)
     local rows = math.max(1, R("rows") or 1)
-    local spBase = R("spacing") or 2
-    local sep = R("separateSpacing") == true
-    local sx = sep and (R("spacingX") or spBase) or spBase
-    local sy = sep and (R("spacingY") or spBase) or spBase
-    local stepX = Snap(slotW + sx)
-    local stepY = Snap(slotH + sy)
-    local spacingX = stepX - slotW
-    local spacingY = stepY - slotH
-    local pad = R("containerPadding") or 0
 
     -- Static grid: each member keeps a cell (rec.gpos), holes are legal and
     -- nothing packs. A member without one (new, collided, imported) takes the
@@ -1567,12 +1631,13 @@ local function PlaceGroup(group, container, flowMode)
     local dynamic = (not flowMode) and (not editMode) and group.groupKind ~= "aura"
         and R("dynamicLayout") == true
 
-    local contentW = cols * slotW + (cols - 1) * spacingX + pad * 2
-        + cas.totalExtraW + cas.leftOver + cas.rightOver
-    local contentH = needRows * slotH + (needRows - 1) * spacingY + pad * 2
-        + cas.totalExtraH + cas.topOver + cas.bottomOver
-    container:SetSize(math.max(contentW, 4), math.max(contentH, 4))
+    local contentW = Snap(cols * slotW + (cols - 1) * spacingX + pad * 2
+        + cas.totalExtraW + cas.leftOver + cas.rightOver)
+    local contentH = Snap(needRows * slotH + (needRows - 1) * spacingY + pad * 2
+        + cas.totalExtraH + cas.topOver + cas.bottomOver)
+    container:SetSize(math.max(contentW, Snap(4)), math.max(contentH, Snap(4)))
     ContainerLook(group, container)
+    PlaceGroupRoot(group, container, 0, 0)
 
     if dynamic then
         -- Every member, dropped-out ones too, is sized at its static cell,
@@ -1588,8 +1653,8 @@ local function PlaceGroup(group, container, flowMode)
             local f = Factory.Ensure(rec)
             f:SetParent(container)
             f:ClearAllPoints()
-            local ccx, ccy = CascadeCell(cas, col, row, slotW, slotH, stepX, stepY, pad)
-            ApplyIconPosition(f, rec, container, -contentW / 2 + ccx, contentH / 2 - ccy, slotW, slotH)
+            local cl, ct = CascadeCorner(cas, col, row, stepX, stepY, pad)
+            PlaceCell(f, rec, container, cl, ct, slotW, slotH)
             Factory.ApplyStyle(f, rec)
             NS.DriverCooldown.Attach(rec, f)
             WireIconDrag(f)
@@ -1618,8 +1683,7 @@ local function PlaceGroup(group, container, flowMode)
         local col = key % cols
         if growthH == "LEFT" then col = (cols - 1) - col end
         if growthV == "UP" then row = (needRows - 1) - row end
-        local ccx, ccy = CascadeCell(cas, col, row, slotW, slotH, stepX, stepY, pad)
-        local cx, cy = -contentW / 2 + ccx, contentH / 2 - ccy
+        local cl, ct = CascadeCorner(cas, col, row, stepX, stepY, pad)
         local f = Factory.Ensure(rec)
         f:SetParent(container)
         f:ClearAllPoints()
@@ -1627,7 +1691,7 @@ local function PlaceGroup(group, container, flowMode)
         -- its static cell after the panel opened.
         dynAnims[f] = nil
         f._adDynParent = nil
-        ApplyIconPosition(f, rec, container, cx, cy, slotW, slotH)
+        PlaceCell(f, rec, container, cl, ct, slotW, slotH)
         Factory.ApplyStyle(f, rec)
         NS.DriverCooldown.Attach(rec, f)
         -- In edit mode grid icons drag into other groups, within this one, or
@@ -1766,6 +1830,8 @@ function Engine.Rebuild()
                         end
                         gk.place(group, gf, editMode)
                         ContainerLook(group, gf)
+                        -- the handler sized it: now the spot, on a pixel
+                        PlaceGroupRoot(group, gf, 0, 0)
                     else
                         -- Panel closed and a dynamic aura group: engine-flow
                         -- mode. Holders release and the AuraContainer rows
@@ -1884,6 +1950,12 @@ function Engine.QueueRebuild()
     Events.Coalesce("ad_rebuild", Engine.Rebuild)
 end
 
+-- A new resolution or UI scale moves the physical pixel grid: every size and
+-- corner was rounded to the old one, so the whole layout is placed again.
+function Engine.OnScreenChanged()
+    Engine.QueueRebuild()
+end
+
 function Engine.SetMoveMode(on)
     moveMode = on and true or false
     Engine.QueueRebuild()
@@ -1930,6 +2002,11 @@ function Engine.Init()
         if unit == "player" or unit == nil then Engine.QueueRebuild() end
     end)
     Events.On("PLAYER_ENTERING_WORLD", "adeng", function() Engine.QueueRebuild() end)
+    Events.On("UI_SCALE_CHANGED", "adeng", Engine.OnScreenChanged)
+    Events.On("DISPLAY_SIZE_CHANGED", "adeng", Engine.OnScreenChanged)
+    -- An addon may set UIParent's scale itself (a "pixel perfect" scale), which
+    -- fires no event: the layout is placed again after that too.
+    hooksecurefunc(UIParent, "SetScale", Engine.OnScreenChanged)
     -- Talent load conditions: on a spec-less client the talent build is the
     -- gate, so a talent change re-runs visibility like a spec swap. The catalog
     -- filters with IsEventValid: RegisterEvent throws on an unknown event, and

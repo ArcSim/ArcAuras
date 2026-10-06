@@ -860,12 +860,13 @@ Factory.PaintBorderEdges = PaintBorderEdges
 -- The live aura button's own border, on the engine button so it shows and
 -- hides with the aura and never carries the missing alpha (the button has no
 -- border; CustomAuraButtonSharedMixin exposes only widget slots). OVERLAY 6
--- on its TextOverlay: above the swipe, under the texts. Accessible passes only.
+-- on its edge layer (BUTTON_STACK.edge): above the swipe, under the button's
+-- glows and texts. Accessible passes only.
 local function ApplyAuraButtonBorder(b, rec, show, alpha)
     local edges = b._adBtnEdges
     if show then
         if not edges then
-            local host = b.TextOverlay or b
+            local host = b._adEdgeHost or b.TextOverlay or b
             edges = {}
             for _, k in ipairs(BORDER_KEYS) do
                 local t = host:CreateTexture(nil, "OVERLAY", nil, 6)
@@ -902,7 +903,8 @@ local function ApplyAuraButtonDispel(b, rec, on, alpha)
         return false
     end
     if not edges then
-        local host = b.TextOverlay or b
+        -- the border's layer: under the button's glows like the plain border
+        local host = b._adEdgeHost or b.TextOverlay or b
         edges = {}
         for _, k in ipairs(BORDER_KEYS) do
             local t = host:CreateTexture(nil, "OVERLAY", nil, 6)
@@ -1615,10 +1617,10 @@ end
 -- the live button above every missing piece.
 Factory.AURA_LADDER = { border = 1, missGlow = 2, missLabels = 3, button = 4 }
 
--- A live engine button's stack over its own level: the swipe, its glows at
--- their frame level (GLOW_LEVEL unless set, a style frame one over), its texts
--- over those, then the time-left bar that hides them all.
-Factory.BUTTON_STACK = { swipe = 1, text = GLOW_LEVEL + 2, gate = GLOW_LEVEL + 3 }
+-- A live engine button's stack over its own level: the swipe, its border, its
+-- glows at their frame level (GLOW_LEVEL unless set, a style frame one over),
+-- its texts over those, then the time-left bar that hides them all.
+Factory.BUTTON_STACK = { swipe = 1, edge = 2, text = GLOW_LEVEL + 2, gate = GLOW_LEVEL + 3 }
 
 -- The holder's texts: over a spell overlay's button (one rung up) and its stack.
 Factory.TEXT_LEVEL = Factory.AURA_LADDER.button + 1 + Factory.BUTTON_STACK.gate + 1

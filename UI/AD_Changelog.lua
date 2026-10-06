@@ -51,6 +51,8 @@ CL.versions = {
                     desc = "A state at 0% opacity now hides the icon's glows too." },
                 { title = "Sound pick",
                     desc = "The sound list under a state no longer runs past the window." },
+                { title = "Glows over borders",
+                    desc = "The glow on an aura icon draws over its border instead of hiding behind it." },
             } },
         },
     },
@@ -693,6 +695,10 @@ CL.retailVersions = {
                     desc = "Their states read Ready, Recharging and Depleted." },
                 { title = "Totem slots",
                     desc = "An empty slot shows the totem icon." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Glows over borders",
+                    desc = "The glow on an aura icon draws over its border instead of hiding behind it." },
             } },
             { header = "Known Issues", items = {
                 { title = "Waiting for patch 12.1.5",

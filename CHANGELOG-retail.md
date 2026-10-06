@@ -18,6 +18,10 @@ The first retail release of Arc Auras. Feedback is welcome on Discord.
 - **Charge spells** - Their states read Ready, Recharging and Depleted.
 - **Totem slots** - An empty slot shows the totem icon.
 
+### Bug Fixes
+
+- **Glows over borders** - The glow on an aura icon draws over its border instead of hiding behind it.
+
 ### Known Issues
 
 - **Waiting for patch 12.1.5** - Debuff-colored borders, stack colors on aura bars and debuff type looks are hidden until then.

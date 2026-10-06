@@ -571,10 +571,16 @@ local function WireButton(btn)
     swipe:Show()
     btn._adSwipe = swipe
 
-    -- texts above the swipe (a child Cooldown renders over button textures)
+    -- the border's own layer over the swipe, so the button's glows draw over it
+    local edge = CreateFrame("Frame", nil, btn)
+    edge:SetAllPoints()
+    edge:SetFrameLevel(swipe:GetFrameLevel() + 1)
+    btn._adEdgeHost = edge
+
+    -- texts above the swipe and the border (a child Cooldown renders over button textures)
     local overlay = CreateFrame("Frame", nil, btn)
     overlay:SetAllPoints()
-    overlay:SetFrameLevel(swipe:GetFrameLevel() + 1)
+    overlay:SetFrameLevel(swipe:GetFrameLevel() + 2)
     btn.TextOverlay = overlay
 
     local stacks = overlay:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
@@ -604,7 +610,7 @@ Driver.WireButton = WireButton
 
 -- Ladder over the holder (Factory.AURA_LADDER: the missing look's border +1,
 -- glows +2, texts +3): the button +4, then its stack (Factory.BUTTON_STACK):
--- swipe, its glows, texts over them, the time-left bar over those.
+-- swipe, its border, its glows, texts over them, the time-left bar over those.
 -- Anchored two-point, never reparented; re-asserted because holder levels move
 -- on reparenting and children do not follow a parent's SetFrameLevel. `lift`
 -- adds one for a spell overlay, leaving +3 for the spell's charge count.
@@ -620,6 +626,7 @@ local function AnchorButton(b, holder, lift)
     b._adLevel = lvl
     local S = Factory.BUTTON_STACK
     if b._adSwipe then b._adSwipe:SetFrameLevel(lvl + S.swipe) end
+    if b._adEdgeHost then b._adEdgeHost:SetFrameLevel(lvl + S.edge) end
     if b.TextOverlay then b.TextOverlay:SetFrameLevel(lvl + S.text) end
     if b._adTimeGate then b._adTimeGate:SetFrameLevel(lvl + S.gate) end
 end

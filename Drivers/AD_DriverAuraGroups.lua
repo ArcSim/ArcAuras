@@ -93,7 +93,7 @@ Groups.MemberMapFor = MemberMapFor
 local function StyleSlotButton(b, rt)
     local rec = rt.slotRecs and rt.slotRecs[b._adSlotIndex or 0]
     if not rec then return end
-    -- The border is drawn on the text overlay, so any border host is hidden.
+    -- The border is drawn on the button's edge layer, so any border host is hidden.
     if b._adBorderHost then b._adBorderHost:Hide() end
     local dims = rt.slotDims and rt.slotDims[b._adSlotIndex or 0]
     local w = (dims and dims.w) or rt.cfg.iconW or 36

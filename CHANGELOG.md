@@ -27,6 +27,7 @@ Texts you can pin anywhere, a Sound item, a tidier Home page and pixel-perfect s
 - **Texts over glows** - Custom texts, keybinds, stack counts and durations draw above the icon's glows.
 - **Hidden icons stay hidden** - A state at 0% opacity now hides the icon's glows too.
 - **Sound pick** - The sound list under a state no longer runs past the window.
+- **Glows over borders** - The glow on an aura icon draws over its border instead of hiding behind it.
 
 ## 2.1.0
 

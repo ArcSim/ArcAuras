@@ -2,6 +2,8 @@
 -- bars runtime through Bars.RegisterKind and Bars.Kit. A target's or focus's
 -- cast is secret in combat: its duration object only feeds SetTimerDuration and
 -- SetFormattedText, and "cannot be interrupted" only the *FromBoolean setters.
+-- A cast of yours the game starts with no START event (Forever's Multi-Shot)
+-- is drawn from its press, UNIT_SPELLCAST_SENT, for the spell's cast time.
 
 local ADDON, NS = ...
 local Bars = NS.Bars
@@ -36,6 +38,20 @@ CB.EVENTS = { "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_FAI
     "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_DELAYED", "UNIT_SPELLCAST_CHANNEL_START",
     "UNIT_SPELLCAST_CHANNEL_UPDATE", "UNIT_SPELLCAST_CHANNEL_STOP",
     "UNIT_SPELLCAST_INTERRUPTIBLE", "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" }
+-- Your castbars also hear the press and how it went, for casts drawn from it.
+CB.PLAYER_EVENTS = { "UNIT_SPELLCAST_SENT", "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_FAILED_QUIET",
+    "UNIT_SPELLCAST_EMPOWER_START" }
+-- A START answers a press after the round trip, so a press waits that long
+-- (the connection's delay) before it is drawn; the bounds in seconds.
+CB.SENT_SETTLE = 0.05
+CB.SENT_SETTLE_MAX = 0.25
+-- a press queued behind a cast of yours still counts this long after it
+CB.SENT_QUEUED = 1
+-- a cast drawn from its press ends this long past its time if nothing ends it
+CB.SENT_GRACE = 1
+-- the edit-mode sample's cast length: 1.2 s left at 60%
+CB.SAMPLE_LEN = 3
+CB.QUEUE_COLOR = { 0.35, 0.85, 1, 1 }
 -- The events CastingBarMixin:SetUnit registers on the player castbar;
 -- registered again to undo hiding it.
 CB.BLIZZ_EVENTS = { "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_DELAYED",
@@ -94,6 +110,12 @@ function CB.Build(e)
         lt:SetTexture(K.WHITE)
         lt:Hide()
         e.castLat = lt
+    end
+    if not e.castQueue then
+        -- the spell queue tick, over the latency zone, under the texts
+        local qt = shell.overlay:CreateTexture(nil, "ARTWORK", nil, 4)
+        qt:Hide()
+        e.castQueue = qt
     end
     if not e.castShield then
         local sh = shell.overlay:CreateTexture(nil, "OVERLAY", nil, 3)
@@ -312,6 +334,58 @@ function CB.LiveLatency()
     return world / (eMs - sMs)
 end
 
+-- The game's spell queue window in seconds (the SpellQueueWindow setting, a
+-- plain string), or nil when it is off.
+function CB.QueueWindow()
+    local get = (C_CVar and C_CVar.GetCVar) or GetCVar
+    local v = get and tonumber(get("SpellQueueWindow"))
+    if not v or v <= 0 then return nil end
+    return v / 1000
+end
+
+-- Your casts, never channels: a tick where the queue window opens, so a
+-- spell pressed past it goes off as this cast ends. len = the cast's plain
+-- length in seconds. A whole number of pixels with whole-pixel edges, the
+-- way LayoutTicks places a mark.
+function CB.QueueTick(e, len)
+    local qt, rec, shell = e.castQueue, e.rec, e.shell
+    if not qt then return end
+    local win = CB.QueueWindow()
+    if not (len and win and win < len and not e.castChannel and e.castUnit == "player"
+        and R(rec, "cast", "queueTickOn") == true) or Bars.RectHidden(shell.fill) then
+        qt:Hide()
+        return
+    end
+    local fill, vertical = shell.fill, CB.Vertical(rec)
+    local size = (vertical and fill:GetHeight() or fill:GetWidth()) or 0
+    if size <= 1 then qt:Hide() return end
+    local px = K.Px(shell)
+    local n = math.max(1, math.floor((R(rec, "cast", "queueTickWidth") or 2) + 0.5))
+    local thick = Bars.StripPx(shell, n)
+    -- pixels before the spot, from the fill origin: an odd width's spare
+    -- pixel goes right of it (below on a standing bar), either direction
+    local rev = R(rec, "fill", "reverseFill") == true
+    local lead = (vertical == rev) and math.floor(n / 2) or (n - math.floor(n / 2))
+    local pos = (math.floor(size * (1 - win / len) / px + 0.5) - lead) * px
+    local c = R(rec, "cast", "queueTickColor") or CB.QUEUE_COLOR
+    qt:SetColorTexture(c[1], c[2], c[3], c[4] or 1)
+    qt:ClearAllPoints()
+    if vertical then
+        local edge = rev and "TOP" or "BOTTOM"
+        local y = rev and -pos or pos
+        qt:SetPoint(edge .. "LEFT", fill, edge .. "LEFT", 0, y)
+        qt:SetPoint(edge .. "RIGHT", fill, edge .. "RIGHT", 0, y)
+        qt:SetHeight(thick)
+    else
+        local edge = rev and "RIGHT" or "LEFT"
+        local x = rev and -pos or pos
+        qt:SetPoint("TOP" .. edge, fill, "TOP" .. edge, x, 0)
+        qt:SetPoint("BOTTOM" .. edge, fill, "BOTTOM" .. edge, x, 0)
+        qt:SetWidth(thick)
+    end
+    qt:Show()
+end
+
 function CB.SparkShown(e, on)
     if e.castSpark then e.castSpark:SetShown(on and R(e.rec, "cast", "sparkOn") == true) end
 end
@@ -322,7 +396,9 @@ end
 
 -- Runs 20 times a second while a cast shows. The remaining time only reaches
 -- SetFormattedText, since it may be secret. If the unit stops casting and no
--- ending event has matched within 0.15 s, the cast ends as finished.
+-- ending event has matched within 0.15 s, the cast ends as finished. A cast
+-- drawn from its press is not one the game reports: it ends on its own
+-- events, else SENT_GRACE past its time.
 function CB.StartTicker(e)
     local tk = e.castTick
     if not tk then return end
@@ -337,7 +413,13 @@ function CB.StartTicker(e)
             return
         end
         if not e.isPreview then
-            if CB.StillCasting(e) then
+            if e.castSent then
+                if GetTime() >= e.castSentEnd + CB.SENT_GRACE then
+                    e.castLastEv, e.castLastID = "watchdog", nil
+                    CB.Finish(e, "done")
+                    return
+                end
+            elseif CB.StillCasting(e) then
                 e.castGoneAt = nil
             else
                 local now = GetTime()
@@ -366,9 +448,10 @@ function CB.StopFade(e)
     if e.castFade and e.castFade:IsPlaying() then e.castFade:Stop() end
 end
 
--- info = { dur, channel, name, tex, notInt, barID, latency, spellID, len },
--- from CB.Begin or the editor preview. spellID and len are plain and only set
--- for a player channel.
+-- info = { dur, channel, name, tex, notInt, barID, latency, spellID, len, sent },
+-- from CB.Begin, CB.FromSent or the editor preview. spellID and len are plain:
+-- spellID set for a player channel, len for any cast or channel of yours.
+-- sent = the press a cast was drawn from (CB.sent), copied.
 function CB.Show(e, info)
     local rec, shell = e.rec, e.shell
     CB.StopFade(e)
@@ -376,6 +459,9 @@ function CB.Show(e, info)
     e.castOn, e.castHold, e.castHow = true, nil, nil
     e.castChannel, e.castBarID, e.castDur = info.channel and true or false, info.barID, info.dur
     e.castNotInt, e.castTex = info.notInt, info.tex
+    local s = info.sent
+    e.castSent, e.castLen = s ~= nil, info.len
+    if s then e.castSentGUID, e.castSentSpell, e.castSentEnd = s.guid, s.sid, s.start + s.len end
     -- The fill runs from the cast's own timer; a channel drains.
     K.FeedStatusBarTimer(shell.fill, info.dur, false, e.castChannel)
     if not CB.CustomName(rec) then K.SetRunText(shell, "name", info.name) end
@@ -389,12 +475,15 @@ function CB.Show(e, info)
     if CB.PerTick(e) then K.LayoutTicks(e) end
     CB.TicksFor(e)
     CB.Latency(e, info.latency)
+    CB.QueueTick(e, info.len)
     CB.SparkShown(e, true)
     CB.StartTicker(e)
     e.stateHidden = false
     K.ApplyVisibility(e)
 end
 
+-- A cast drawn from its press is not one the game reports: a re-read leaves
+-- it running.
 function CB.Sync(e)
     if e.isPreview then return end
     local unit = e.castUnit or CB.Unit(e)
@@ -403,7 +492,7 @@ function CB.Sync(e)
     if dur then return CB.Begin(e, true, dur) end
     dur = UnitCastingDuration and UnitCastingDuration(unit)
     if dur then return CB.Begin(e, false, dur) end
-    if not e.castHold then CB.Rest(e) end
+    if not (e.castHold or e.castSent) then CB.Rest(e) end
 end
 
 function CB.Begin(e, channel, dur)
@@ -422,8 +511,12 @@ function CB.Begin(e, channel, dur)
             if sMs and eMs and eMs > sMs then len = (eMs - sMs) / 1000 end
         end
     else
-        local n, _, t, _, _, _, _, x, _, b = UnitCastingInfo(unit)
+        local n, _, t, sMs, eMs, _, _, x, _, b = UnitCastingInfo(unit)
         name, tex, ni, bid = n, t, x, b
+        if unit == "player" then
+            sMs, eMs = CB.Plain(sMs), CB.Plain(eMs)
+            if sMs and eMs and eMs > sMs then len = (eMs - sMs) / 1000 end
+        end
     end
     CB.Show(e, { dur = dur, channel = channel, name = name, tex = tex, notInt = ni,
         barID = CB.Plain(bid), spellID = sid, len = len,
@@ -433,16 +526,27 @@ end
 -- how = "done", "failed" or "interrupted". An end event whose cast bar id is
 -- missing, secret or not ours may belong to another cast, so it waits while
 -- the unit still casts; with nothing cast, the bar ends (else the watchdog).
+-- A cast drawn from its press has no cast bar id: only its press's own
+-- events end it.
 function CB.End(e, how, barID)
     if not e.castOn then return end
-    if (barID == nil or barID ~= e.castBarID) and CB.StillCasting(e) then
+    if e.castSent then
+        if not CB.EventIs(e.castSentGUID, e.castSentSpell) then return end
+    elseif (barID == nil or barID ~= e.castBarID) and CB.StillCasting(e) then
         return
     end
+    CB.Finish(e, how)
+end
+
+function CB.Finish(e, how)
+    -- your cast finished: a press queued behind it gets its turn
+    local queued = how == "done" and not e.castSent and e.castUnit == "player"
     e.castOn = false
-    e.castDur = nil
+    e.castDur, e.castSent, e.castLen = nil, nil, nil
     CB.StopTicker(e)
     CB.SparkShown(e, false)
     if e.castLat then e.castLat:Hide() end
+    if e.castQueue then e.castQueue:Hide() end
     if e.castShield then e.castShield:Hide() end
     e.shell:SetAlpha(1)
     K.SetRunText(e.shell, "dur", "")
@@ -458,6 +562,7 @@ function CB.End(e, how, barID)
     else
         CB.FadeOrRest(e)
     end
+    if queued then CB.Unblock() end
 end
 
 -- how = "interrupted" or "failed": a full bar in that colour, named for it
@@ -499,10 +604,11 @@ end
 function CB.Rest(e)
     e.castOn, e.castHold, e.castDur, e.castNotInt, e.castBarID = false, nil, nil, nil, nil
     e.castChannel, e.castTex, e.castGoneAt, e.castHow = false, nil, nil, nil
-    e.castTickFracs = nil
+    e.castTickFracs, e.castSent, e.castLen = nil, nil, nil
     CB.StopFade(e)
     CB.StopTicker(e)
     if e.castLat then e.castLat:Hide() end
+    if e.castQueue then e.castQueue:Hide() end
     if e.castShield then e.castShield:Hide() end
     local shell = e.shell
     shell:SetAlpha(1)
@@ -542,8 +648,10 @@ function CB.Sample(e)
     local fs = shell.texts.dur
     if fs and fs:IsShown() then fs:SetFormattedText(CB.TimeFmt(rec), 1.2) end
     CB.SparkShown(e, true)
-    -- so "One per tick" marks can be styled while editing
+    -- so "One per tick" marks and the spell queue tick can be styled while editing
     e.castTickFracs = CB.SAMPLE_TICKS
+    e.castLen = CB.SAMPLE_LEN
+    CB.QueueTick(e, CB.SAMPLE_LEN)
 end
 
 -- Blizzard's player castbar is a managed frame: calling its Hide from addon
@@ -609,18 +717,134 @@ function CB.BarIDOf(event, ...)
     return CB.Plain(id)
 end
 
+-- Casts drawn from the press. CB.sent is your latest press of a spell with a
+-- cast time that no START has answered yet, one table reused: live, guid,
+-- sid, len, name, tex, at (pressed), start (drawn from), due (its wait ends),
+-- blocked (queued behind a cast of yours).
+CB.sent = { live = false }
+
+-- How long a press waits for its START: the connection's delay, bounded.
+function CB.SettleTime()
+    local world
+    if GetNetStats then world = CB.Plain(select(4, GetNetStats())) end
+    local t = type(world) == "number" and world > 0 and world / 1000 or 0
+    return math.min(CB.SENT_SETTLE_MAX, CB.SENT_SETTLE + t)
+end
+
+-- Whether the event being handled is about this cast: its cast GUID when both
+-- read plain, else its spell. CB.OnCast keeps the event's own two.
+function CB.EventIs(guid, sid)
+    local g, s = CB.evGUID, CB.evSpell
+    if g ~= nil and guid ~= nil then return g == guid end
+    return s ~= nil and s == sid
+end
+
+-- UNIT_SPELLCAST_SENT (target, castGUID, spellID), your castbars only. Your
+-- own casts read plain; an auto-repeat shot or an instant draws nothing.
+function CB.Sent(_, guid, sid)
+    sid = CB.Plain(sid)
+    if type(sid) ~= "number" then return end
+    local DT = NS.DriverToggle
+    if DT and DT.REPEAT and DT.REPEAT[sid] then return end
+    local info = CB.Plain(C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(sid))
+    if type(info) ~= "table" then return end
+    local ms = CB.Plain(info.castTime)
+    if type(ms) ~= "number" or ms <= 0 then return end
+    local s, now, wait = CB.sent, GetTime(), CB.SettleTime()
+    s.live, s.blocked = true, false
+    s.guid, s.sid, s.len = CB.Plain(guid), sid, ms / 1000
+    s.name, s.tex = CB.Plain(info.name), CB.Plain(info.iconID)
+    s.at, s.start, s.due = now, now, now + wait
+    C_Timer.After(wait, CB.Settle)
+end
+
+-- The press's wait is over and no START came. Behind a cast of yours it is
+-- queued (CB.Unblock); else every castbar of yours draws it. An older press's
+-- timer finds the newer one not due yet (a millisecond's slack for the clock).
+function CB.Settle()
+    local s = CB.sent
+    if not s.live or GetTime() < s.due - 0.001 then return end
+    if (UnitCastingDuration and UnitCastingDuration("player"))
+        or (UnitChannelDuration and UnitChannelDuration("player")) then
+        s.blocked = true
+        return
+    end
+    s.live = false
+    CB.ForUnit("player", CB.FromSent, s)
+end
+
+function CB.FromSent(e, s)
+    if e.isPreview then return end
+    local dur = CB.FakeDuration(s.start, s.len)
+    if not dur then return end
+    CB.Show(e, { dur = dur, channel = false, name = s.name, tex = s.tex, len = s.len, sent = s })
+end
+
+-- Your cast finished: a press queued behind it waits once more for its own
+-- START, then runs from now. One pressed long before is stale.
+function CB.Unblock()
+    local s = CB.sent
+    if not (s.live and s.blocked) then return end
+    s.blocked = false
+    local now = GetTime()
+    if now - s.at > CB.SENT_QUEUED then
+        s.live = false
+        return
+    end
+    local wait = CB.SettleTime()
+    s.start, s.due = now, now + wait
+    C_Timer.After(wait, CB.Settle)
+end
+
+-- An ending event of the pending press: it was answered with no bar.
+function CB.Resolve()
+    local s = CB.sent
+    if s.live and CB.EventIs(s.guid, s.sid) then s.live = false end
+end
+
+-- SUCCEEDED or FAILED_QUIET end only a cast drawn from its press; a cast the
+-- game reports ends on its STOP.
+function CB.EndSent(e)
+    if e.castOn and e.castSent and CB.EventIs(e.castSentGUID, e.castSentSpell) then
+        CB.Finish(e, "done")
+    end
+end
+
+-- An empowered cast is not drawn here; it ends a cast drawn from a press.
+function CB.EndAnySent(e)
+    if e.castOn and e.castSent then CB.Finish(e, "done") end
+end
+
 function CB.OnCast(event, unit, ...)
     if not CB.UNITS[unit] then return end
+    if event == "UNIT_SPELLCAST_SENT" then
+        CB.ForUnit(unit, CB.Note, event, nil)
+        return CB.Sent(...)
+    end
     local id = CB.BarIDOf(event, unit, ...)
     CB.ForUnit(unit, CB.Note, event, id)
+    local guid, sid = ...
+    CB.evGUID, CB.evSpell = CB.Plain(guid), CB.Plain(sid)
+    local mine = unit == "player"
     if event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START"
         or event == "UNIT_SPELLCAST_DELAYED" or event == "UNIT_SPELLCAST_CHANNEL_UPDATE" then
+        -- a START wins over a press still waiting or already drawn
+        if mine and (event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START") then
+            CB.sent.live = false
+        end
         CB.ForUnit(unit, CB.Sync)
     elseif event == "UNIT_SPELLCAST_INTERRUPTIBLE" or event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
         CB.ForUnit(unit, CB.SyncIfOn)
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" or event == "UNIT_SPELLCAST_FAILED_QUIET" then
+        CB.Resolve()
+        CB.ForUnit(unit, CB.EndSent)
+    elseif event == "UNIT_SPELLCAST_EMPOWER_START" then
+        CB.sent.live = false
+        CB.ForUnit(unit, CB.EndAnySent)
     else
         local how = (event == "UNIT_SPELLCAST_INTERRUPTED" and "interrupted")
             or (event == "UNIT_SPELLCAST_FAILED" and "failed") or "done"
+        if mine then CB.Resolve() end
         CB.ForUnit(unit, CB.End, how, id)
     end
 end
@@ -661,6 +885,13 @@ function CB.Listen()
                     f:RegisterUnitEvent(ev, unit)
                 end
             end
+            if unit == "player" then
+                for _, ev in ipairs(CB.PLAYER_EVENTS) do
+                    if (not (C_EventUtils and C_EventUtils.IsEventValid)) or C_EventUtils.IsEventValid(ev) then
+                        f:RegisterUnitEvent(ev, unit)
+                    end
+                end
+            end
             f.adOn = true
         elseif not want[unit] and f and f.adOn then
             f:UnregisterAllEvents()
@@ -686,13 +917,16 @@ function CB.Refresh(e)
     if not e.castHold then CB.Sync(e) end
 end
 
+-- A new size moves the queue tick of the cast or sample on show; a fresh bar
+-- has its first size only here.
 function CB.Relayout(e)
     CB.Style(e)
     if e.castOn then CB.LockLook(e) end
+    if e.castLen then CB.QueueTick(e, e.castLen) end
 end
 
 function CB.Release(e)
-    e.castOn, e.castHold = false, nil
+    e.castOn, e.castHold, e.castSent, e.castLen = false, nil, nil, nil
     CB.StopTicker(e)
     CB.StopFade(e)
     CB.Listen()
@@ -717,10 +951,11 @@ function CB.Diag(e)
     if last and last ~= "watchdog" then
         last = last:gsub("^UNIT_SPELLCAST_", "") .. "#" .. tostring(e.castLastID)
     end
-    return ("%s [cast %s] on=%s channel=%s hold=%s barID=%s last=%s castingNow=%s blizzardHidden=%s"):format(
+    return ("%s [cast %s] on=%s channel=%s hold=%s barID=%s last=%s castingNow=%s fromPress=%s blizzardHidden=%s"):format(
         tostring(e.rec.name), tostring(e.castUnit), tostring(e.castOn == true),
         tostring(e.castChannel == true), tostring(e.castHold == true), tostring(e.castBarID),
-        tostring(last), tostring(CB.StillCasting(e) ~= nil), tostring(CB.blizzOff == true))
+        tostring(last), tostring(CB.StillCasting(e) ~= nil), tostring(e.castSent == true),
+        tostring(CB.blizzOff == true))
 end
 
 -- Editor preview
@@ -737,7 +972,7 @@ function CB.PreviewBuild(e)
     CB.Style(e)
 end
 
--- A plain duration object for the preview.
+-- A plain duration object: the preview's, a cast drawn from its press.
 function CB.FakeDuration(start, len)
     if not (C_DurationUtil and C_DurationUtil.CreateDuration) then return nil end
     local d = C_DurationUtil.CreateDuration()
@@ -800,17 +1035,19 @@ function CB.PreviewApply(e, loop, t, fresh)
         end
         local name, tex = CB.PreviewSpell(p.spell)
         local started = GetTime() - (x - p.at)
-        local mine = channel and e.castUnit == "player"
+        local yours = e.castUnit == "player"
+        local mine = channel and yours
         CB.Show(e, { dur = CB.FakeDuration(started, p.len), channel = channel, name = name, tex = tex,
             notInt = p.lock and true or false,
-            spellID = mine and CB.PV_SPELLS[p.spell] or nil, len = mine and p.len or nil,
-            latency = (not channel and e.castUnit == "player") and CB.PV_LATENCY or nil })
+            spellID = mine and CB.PV_SPELLS[p.spell] or nil, len = yours and p.len or nil,
+            latency = (not channel and yours) and CB.PV_LATENCY or nil })
     elseif p.kind == "hold" then
         -- The previous cast ended: hold its colour, or rest.
-        e.castOn, e.castBarID = false, nil
+        e.castOn, e.castBarID, e.castLen = false, nil, nil
         CB.StopTicker(e)
         CB.SparkShown(e, false)
         if e.castLat then e.castLat:Hide() end
+        if e.castQueue then e.castQueue:Hide() end
         if e.castShield then e.castShield:Hide() end
         e.shell:SetAlpha(1)
         K.SetRunText(e.shell, "dur", "")
@@ -821,9 +1058,10 @@ function CB.PreviewApply(e, loop, t, fresh)
             e.shell.fill:SetValue(0)
         end
     else
-        e.castOn, e.castHold, e.castTickFracs = false, nil, nil
+        e.castOn, e.castHold, e.castTickFracs, e.castLen = false, nil, nil, nil
         CB.StopTicker(e)
         CB.SparkShown(e, false)
+        if e.castQueue then e.castQueue:Hide() end
         if e.castShield then e.castShield:Hide() end
         e.shell:SetAlpha(1)
         e.shell.fill:SetMinMaxValues(0, 1)

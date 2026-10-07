@@ -99,12 +99,26 @@ function Options.UnitAuraGroupRows(pg, ctx, tabFn, kit)
 end
 
 -- Debuff type looks (Drivers\AD_TypeLooks.lua): the type picked in the strip
--- is a panel pick only. "All" holds the shared sizes, a type its own parts.
+-- is a panel pick only. "All" holds the shared sizes, a type its own parts;
+-- with a full look per type, the type order and each type's own icon look.
 UO.chip, UO.chipGroup = "All", nil
+UO.fullTab = "Icon"
+UO.FULL_TABS = { "Icon", "Glows", "Text" }
 
 function UO.TypeOn(g)
     return g ~= nil and not NS.OldAuraEngine and NS.Store.ShowsAll(g) == true
         and NS.Store.Resolve(g, "typeLook", "looks") ~= "off"
+end
+
+-- a full look per type in play on this group (TL.Full: one half, no plates)
+function UO.FullOn(g)
+    local TL = NS.TypeLooks
+    return g ~= nil and TL ~= nil and TL.Full(g) == true
+end
+
+-- picked, but the group shows both halves or plates: Colors and badges show
+function UO.FullFallback(g)
+    return UO.TypeOn(g) and NS.Store.Resolve(g, "typeLook", "looks") == "full" and not UO.FullOn(g)
 end
 
 -- Whether the group can show a type at all: with any Dispel types box ticked
@@ -139,11 +153,13 @@ function UO.Pick(g, key)
     C_Timer.After(0, function() UO.ScrollTo(key) end)
 end
 
--- the first row of a pick, scrolled in when not in view
+-- the first row of a pick, scrolled in when not in view (a full look's type
+-- opens on its place in the order)
 function UO.ScrollTo(key)
     local pg, S = UO.pg, Options.Search
     if not (pg and S and S.ScrollTo and pg:IsVisible()) then return end
     local want = key == "All" and "looks" or ("border" .. key)
+    if key ~= "All" and UO.FullOn(UO.Group()) then want = "order" end
     for _, sec in ipairs(pg._sections or {}) do
         for _, r in ipairs(sec.rows) do
             local m = r._adMeta
@@ -167,6 +183,17 @@ function UO.TypeChanged(g, key)
         if o[f] ~= nil then return true end
     end
     return false
+end
+
+-- the same, or with a full look of its own
+function UO.TypeOwn(g, key)
+    return UO.TypeChanged(g, key) or (g ~= nil and g.fullLooks ~= nil and g.fullLooks[key] ~= nil)
+end
+
+-- The group the block edits (UO.ctx: the page's selection).
+function UO.Group()
+    local g = UO.ctx and UO.ctx()
+    return (g and NS.Store.ShowsAll(g)) and g or nil
 end
 
 -- The strip's icons, as a group's own icons are picked: All, then each type
@@ -259,7 +286,8 @@ function UO.Preview(b, g, key)
 end
 
 -- The type picks in the group's strip, which holds no icons on a group showing
--- every aura: one icon per type, picked as a group's icon is.
+-- every aura: one icon per type, picked as a group's icon is. With a full look
+-- per type they stand in the types' order, the order their auras show in.
 function Options.TypeLookStrip(g, strip)
     local K, AT = Options.GroupPaneKit, NS.AT
     local btns = strip._adTypeBtns
@@ -274,8 +302,7 @@ function Options.TypeLookStrip(g, strip)
     end
     local names = {}
     for _, t in ipairs(NS.Schema.TYPE_LOOKS) do names[t.key] = t.label end
-    -- a type the Dispel types boxes filter out never shows: no icon for it
-    local cur, slot = UO.Chip(g), 0
+    local byKey = {}
     for i, s in ipairs(UO.STRIP) do
         local b = btns[i]
         if not b then
@@ -283,57 +310,239 @@ function Options.TypeLookStrip(g, strip)
             b.tex:SetTexture(s.art)
             b._adTypeKey = s.key
             local name = s.label or names[s.key] or s.key
-            AT.Tooltip(b, name, s.key == "All" and "What every type shares: wash strength, label size and spot, glow size."
+            AT.Tooltip(b, name, s.key == "All"
+                and "What every type shares: wash strength, label size and spot, glow size, and the order of a full look."
                 or ("Click to give " .. name .. " its own look."))
             btns[i] = b
         end
-        if UO.TypeShown(g, s.key) then
+        byKey[s.key] = b
+    end
+    local full = UO.FullOn(g)
+    local order = { "All" }
+    if full then
+        for _, k in ipairs(NS.TypeLooks.Order(g)) do order[#order + 1] = k end
+    else
+        for i = 2, #UO.STRIP do order[#order + 1] = UO.STRIP[i].key end
+    end
+    -- a type the Dispel types boxes filter out never shows: no icon for it
+    local cur, slot = UO.Chip(g), 0
+    for _, key in ipairs(order) do
+        local b = byKey[key]
+        if UO.TypeShown(g, key) then
             slot = slot + 1
             b:ClearAllPoints()
             b:SetPoint("LEFT", 8 + (slot - 1) * UO.STRIP_STEP, 0)
-            b:SetScript("OnClick", function() UO.Pick(g, s.key) end)
-            b._adSelected = s.key == cur
+            b:SetScript("OnClick", function() UO.Pick(g, key) end)
+            b._adSelected = key == cur
             b:SetSelected(b._adSelected)
-            UO.Preview(b, g, s.key)
+            UO.Preview(b, g, key)
             b:Show()
         else
             b:Hide()
         end
     end
+    -- a type's full look: its rows, made the first time one is needed
+    if full then UO.EnsureFull() end
 end
 
 -- The Debuff types block on Appearance > Icons of a group showing every aura.
 -- kit: the page's SectionRows; openIcons() shows Appearance > Icons.
 function Options.TypeLookRows(pg, ctx, tabVis, kit)
     local AT, Store = NS.AT, NS.Store
-    UO.openIcons, UO.pg = kit.openIcons, pg
-    local function G()
-        local g = ctx()
-        return (g and Store.ShowsAll(g)) and g or nil
-    end
+    UO.openIcons, UO.pg, UO.kit, UO.ctx, UO.tabVis = kit.openIcons, pg, kit, ctx, tabVis
+    local G = UO.Group
     local vis = function() return tabVis() and G() ~= nil end
     local function At(key) return function() return UO.Chip(ctx()) == key end end
     local function SR(fields, opts) kit.SectionRows(pg, "iconGroup", "typeLook", ctx, vis, fields, opts) end
     AT.Section(pg, "Debuff types", { visibleFn = vis })
     SR({ "looks" })
+    AT.RowDesc(pg, "With both aura types, or on nameplates, it shows as Colors and badges.", 20, function()
+        return vis() and UO.FullFallback(G())
+    end)
+    AT.RowDesc(pg, "The full look starts out of combat, or after a /reload.", 20, function()
+        local UA = NS.DriverUnitAuras
+        return vis() and UA ~= nil and UA.FullWaiting ~= nil and UA.FullWaiting(G())
+    end)
     AT.RowDesc(pg, "Click a type's icon at the top to give it its own look.", 20, function()
         return vis() and UO.TypeOn(G()) and UO.Chip(G()) == "All"
     end)
     AT.RowDesc(pg, "Only the types ticked under Tracking, Dispel types, show, so only they have an icon.", 20, function()
         return vis() and UO.TypeOn(G()) and UO.Chip(G()) == "All" and UO.SomeHidden(G())
     end)
-    SR({ "washAlpha", "labelSize", "labelAnchor", "glowSize" },
+    SR({ "washAlpha", "labelSize", "labelAnchor", "glowSize", "ownLine" },
         { showWhen = At("All"), reveal = function() UO.Pick(ctx(), "All") end })
+    UO.OrderRow(pg, vis)
+    -- the game caps each aura group on its own: a type's group holds the grid
+    AT.RowDesc(pg, "Each type shows up to Rows by Columns of its auras.", 20, function()
+        return vis() and UO.FullOn(G()) and UO.Chip(G()) == "All"
+    end)
     for _, t in ipairs(NS.Schema.TYPE_LOOKS) do
         local key = t.key
         SR(UO.TypeFields(key), { showWhen = At(key), reveal = function() UO.Pick(ctx(), key) end })
+        -- a full look's Reset sits under its own rows (UO.EnsureFull)
         AT.RowActions(pg, { { label = "Reset " .. t.label, w = 130, quiet = true, onClick = function()
             local g = G()
             if not g then return end
             for _, f in ipairs(UO.TypeFields(key)) do Store.SetOverride(g, "typeLook", f, nil) end
         end } }, "left", function()
             local g = G()
-            return vis() and UO.TypeOn(g) and UO.Chip(g) == key and UO.TypeChanged(g, key)
+            return vis() and UO.TypeOn(g) and UO.Chip(g) == key and UO.TypeChanged(g, key) and not UO.FullOn(g)
         end)
     end
+end
+
+function UO.TypeName(key)
+    for _, t in ipairs(NS.Schema.TYPE_LOOKS) do
+        if t.key == key then return t.label end
+    end
+    return key
+end
+
+-- The type order (typeLook.order), with a full look per type: All shows it in
+-- words, a picked type the buttons that move it one place among the types
+-- that show; the strip shows the result. The schema field is its search entry.
+function UO.OrderRow(pg, vis)
+    local AT = NS.AT
+    local def = NS.Schema.iconGroup.typeLook.fields.order
+    local function Shows() return vis() and UO.FullOn(UO.Group()) end
+    local row = AT.AddRow(pg, nil, Shows)
+    row._colLabel = AT.RowLabel(row, def.label)
+    local ctl = CreateFrame("Frame", nil, row)
+    ctl:SetSize(200, 24)
+    row._colCtrl, row._colFill = ctl, true
+    local words = ctl:CreateFontString(nil, "OVERLAY")
+    words:SetFont(STANDARD_TEXT_FONT, 12, "")
+    words:SetPoint("LEFT", 0, 0)
+    words:SetPoint("RIGHT", 0, 0)
+    words:SetJustifyH("LEFT")
+    words:SetWordWrap(false)
+    local left = AT.MakeSmallButton(ctl, "Move left", 92)
+    local right = AT.MakeSmallButton(ctl, "Move right", 100)
+    AT.Tooltip(left, "Move left", "Its auras come before those of the type now on its left.")
+    AT.Tooltip(right, "Move right", "Its auras come after those of the type now on its right.")
+    row._adWords, row._adLeft, row._adRight = words, left, right
+    local function Move(step)
+        local g, TL = UO.Group(), NS.TypeLooks
+        local key = g and UO.Chip(g)
+        if not (TL and key and key ~= "All") then return end
+        TL.Move(g, key, step, function(k) return UO.TypeShown(g, k) end)
+    end
+    left:SetScript("OnClick", function() AT.CloseDropdown() Move(-1) end)
+    right:SetScript("OnClick", function() AT.CloseDropdown() Move(1) end)
+    row._sync = function()
+        local g, TL = UO.Group(), NS.TypeLooks
+        if not (g and TL) then return end
+        local key, shown = UO.Chip(g), {}
+        for _, k in ipairs(TL.Order(g)) do
+            if UO.TypeShown(g, k) then shown[#shown + 1] = k end
+        end
+        if key == "All" then
+            local names = {}
+            for i, k in ipairs(shown) do names[i] = UO.TypeName(k) end
+            words:SetText(table.concat(names, ", "))
+            words:Show()
+            left:Hide()
+            right:Hide()
+            return
+        end
+        words:Hide()
+        local at
+        for i, k in ipairs(shown) do
+            if k == key then at = i end
+        end
+        local canL, canR = at ~= nil and at > 1, at ~= nil and at < #shown
+        left:ClearAllPoints()
+        left:SetPoint("LEFT", ctl, "LEFT", 0, 0)
+        right:ClearAllPoints()
+        right:SetPoint("LEFT", canL and left or ctl, canL and "RIGHT" or "LEFT", canL and 8 or 0, 0)
+        left:SetShown(canL)
+        right:SetShown(canR)
+    end
+    row._adMeta = { family = "iconGroup", section = "typeLook", field = "order", def = def,
+        baseVis = function() return vis() end }
+    return row
+end
+
+-- A type's full look: the icon look rows its buttons honour
+-- (Schema.TYPE_FULL_BLOCKS) under a strip of their own, bound to the type's
+-- proxy (Store.TypeLookProxy), then its Reset. Made the first time a group
+-- shows a full look, at the page's end, which on this sub-tab comes right
+-- after the block. The search skips them: they are the icon editor's rows.
+function UO.EnsureFull()
+    if UO.fullBuilt or not (UO.pg and UO.kit and UO.tabVis) then return end
+    UO.fullBuilt = true
+    local pg, kit, AT, Store, Schema = UO.pg, UO.kit, NS.AT, NS.Store, NS.Schema
+    local ET = Options.EditorTabs
+    local function Key()
+        local g = UO.Group()
+        if not (g and UO.FullOn(g)) then return nil end
+        local key = UO.Chip(g)
+        if key == "All" then return nil end
+        return key, g
+    end
+    local function ctx()
+        local key, g = Key()
+        return key and Store.TypeLookProxy(g, key) or nil
+    end
+    local function on()
+        local S = Options.Search
+        return not (S and S.indexing) and UO.tabVis() and ctx() ~= nil
+    end
+    local function In(tab) return function() return on() and UO.fullTab == tab end end
+    local was = pg._curSection
+    AT.Section(pg, nil, { visibleFn = on })
+    AT.RowDesc(pg, "What a type leaves alone follows the layout's icon look.", 20, on)
+    local chipRow = AT.AddRow(pg, 30, on)
+    chipRow._strip = AT.TabRow(chipRow)
+    chipRow._strip._openFill = AT.COL.panel
+    chipRow._strip:SetPoint("TOPLEFT", 8, 0)
+    chipRow._strip:SetPoint("BOTTOMRIGHT", -8, 2)
+    chipRow._sync = function()
+        local h = chipRow._strip:Set(UO.FULL_TABS, UO.fullTab, function(name)
+            UO.fullTab = name
+            AT.LayoutPage(pg)
+        end, 11)
+        local want = (h or 24) + 6
+        if chipRow._h ~= want then
+            chipRow._h = want
+            chipRow:SetHeight(want)
+        end
+    end
+    UO.fullChips = chipRow
+    for _, b in ipairs(Schema.TYPE_FULL_BLOCKS) do
+        local vis = In(b.tab)
+        if b.glows and ET then
+            for k = 1, Schema.AURA_GLOW_SLOTS or 1 do
+                local sfx = (k > 1) and tostring(k) or nil
+                local fields, words = ET.GlowCard(b.section, "activeGlow", sfx, "Glow while active")
+                local keep = {}
+                for _, f in ipairs(fields) do
+                    if not Schema.TYPE_FULL_GLOW_SKIP[(f:gsub("%d+$", ""))] then keep[#keep + 1] = f end
+                end
+                local card = ET.CardStart(pg, { vis = vis, ctx = ctx, family = "icon", section = b.section,
+                    switch = keep[1], name = "Glow " .. k, when = ET.AuraGlowWhen(sfx), word = "Glow while active" })
+                local rest = {}
+                for i = 2, #keep do rest[#rest + 1] = keep[i] end
+                kit.SectionRows(pg, "icon", b.section, ctx, vis, rest, { labels = words, dimDep = keep[1] })
+                ET.CardEnd(card)
+            end
+        elseif not b.glows then
+            AT.Section(pg, b.title, { visibleFn = vis })
+            kit.SectionRows(pg, "icon", b.section, ctx, vis, b.fields, b.labels and { labels = b.labels } or nil)
+        end
+    end
+    AT.Section(pg, nil, { visibleFn = on })
+    for _, t in ipairs(Schema.TYPE_LOOKS) do
+        local key = t.key
+        AT.RowActions(pg, { { label = "Reset " .. t.label, w = 130, quiet = true, onClick = function()
+            local g = UO.Group()
+            if not g then return end
+            for _, f in ipairs(UO.TypeFields(key)) do Store.SetOverride(g, "typeLook", f, nil) end
+            Store.ClearTypeLook(g, key)
+        end } }, "left", function()
+            local k, g = Key()
+            return on() and k == key and UO.TypeOwn(g, key)
+        end)
+    end
+    pg._curSection = was
 end

@@ -269,9 +269,10 @@ end
 Driver.GlowSpellGroups = GlowSpellGroups
 
 -- A gate needs the icon's own button: an aura icon, and not a member of a
--- Dynamic aura group, whose rows draw it in play.
+-- Dynamic aura group, whose rows draw it in play, nor a type's look on a group
+-- showing every aura (_adNoHolder), which has no lane either.
 function Driver.GlowLaneOK(rec)
-    if not (IS_121 and rec and rec.kind == "aura") then return false end
+    if not (IS_121 and rec and rec.kind == "aura") or rec._adNoHolder then return false end
     local g = rec.groupId and Store.Get(rec.groupId)
     if g and g.groupKind == "aura"
         and Store.Resolve(g, "arrangement", "dynamicLayout") == true then
@@ -286,8 +287,10 @@ function Driver.HolderGlowOK(rec)
     return IS_121 and rec ~= nil and rec.kind == "aura"
 end
 
+-- A type's look on a group showing every aura (_adNoHolder: its button draws
+-- every glow, as a row's does) has nothing under the button for a Missing one.
 function Driver.MissingGlowOK(rec)
-    return FB_OK and Driver.HolderGlowOK(rec)
+    return FB_OK and Driver.HolderGlowOK(rec) and not rec._adNoHolder
 end
 
 -- Glow for and Glow only in combat: a lane of the icon's own, or of its
@@ -571,16 +574,18 @@ local function WireButton(btn)
     swipe:Show()
     btn._adSwipe = swipe
 
-    -- the border's own layer over the swipe, so the button's glows draw over it
+    -- Factory.BUTTON_STACK from the swipe's level: the border's own layer over
+    -- the swipe, the button's glows over that, its texts over the glows. A
+    -- button no holder anchors (aura group rows, a unit's auras) is born right.
+    local S = Factory.BUTTON_STACK
     local edge = CreateFrame("Frame", nil, btn)
     edge:SetAllPoints()
-    edge:SetFrameLevel(swipe:GetFrameLevel() + 1)
+    edge:SetFrameLevel(swipe:GetFrameLevel() + S.edge - S.swipe)
     btn._adEdgeHost = edge
 
-    -- texts above the swipe and the border (a child Cooldown renders over button textures)
     local overlay = CreateFrame("Frame", nil, btn)
     overlay:SetAllPoints()
-    overlay:SetFrameLevel(swipe:GetFrameLevel() + 2)
+    overlay:SetFrameLevel(swipe:GetFrameLevel() + S.text - S.swipe)
     btn.TextOverlay = overlay
 
     local stacks = overlay:CreateFontString(nil, "OVERLAY", "NumberFontNormal")

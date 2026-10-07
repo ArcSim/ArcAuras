@@ -52,7 +52,6 @@ MB.FOREVER = {
         ids = { 13165, 13163, 5118, 13161, 13159, 20043 }, expand = true },
     { key = "trueshot", name = "Trueshot Aura", sect = "class", class = "HUNTER", ids = { 19506 }, expand = true },
     { key = "thorns", name = "Thorns", sect = "class", class = "DRUID", ids = { 467 }, expand = true },
-    { key = "omen", name = "Omen of Clarity", sect = "class", class = "DRUID", ids = { 16864 } },
     { key = "rfury", name = "Righteous Fury", sect = "class", class = "PALADIN", ids = { 25780 } },
     { key = "flask", name = "Flask", sect = "consumable", ids = { 17626, 17627, 17628, 17629 } },
     { key = "food", name = "Food", sect = "consumable", ids = { 19705 }, expand = "name" },

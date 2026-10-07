@@ -21,7 +21,7 @@ M.SELECTABLE = { group = true, groupicon = true, reminder = true, bar = true, fr
 M.PER_ITEM_TABS = { Tracking = true, Triggers = true, Position = true, ["Load Conditions"] = true }
 
 local ICON_WORD = { spell = "cooldown", aura = "aura", item = "item", trinket = "trinket", timer = "custom",
-    totem = "totem", ammo = "ammo", enchant = "enchant" }
+    totem = "totem", ammo = "ammo", enchant = "enchant", stance = "stance" }
 local BAR_WORD = { cooldown = "cooldown", aura = "aura", timer = "custom", stack = "stack", swing = "swing",
     resource = "resource", health = "health", cast = "cast", enchant = "enchant", range = "range" }
 local TYPE_ORDER = { "group", "bar", "icon", "reminder" }

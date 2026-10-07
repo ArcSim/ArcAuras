@@ -262,6 +262,9 @@ local function KindTexture(rec)
     elseif kind == "special" then
         -- the tracker's own art (Core\AD_SpecialIcon.lua; nil without the hub)
         return NS.SpecialIcon and NS.SpecialIcon.Texture(rec) or QUESTION_MARK
+    elseif kind == "stance" then
+        -- the stance bar's own art for the stance it shows (Drivers\AD_DriverStance.lua)
+        return NS.DriverStance and NS.DriverStance.Texture(rec) or QUESTION_MARK
     end
     return QUESTION_MARK
 end
@@ -294,6 +297,8 @@ local function PaintArt(f, tex)
     end
     f.icon:SetTexture(tex)
 end
+-- the stance driver repaints its art through it on every stance change
+Factory.PaintArt = PaintArt
 
 -- GetTexture's answer for a spell icon, from the cached settings.
 function Factory.RefreshArt(f, rec)
@@ -605,30 +610,40 @@ function Factory.FormatCountdown(t, decTo, abbrev, roundDown)
     return string.format("%d", Rn(t))
 end
 
+-- A countdown that prints nothing, for a switched-off duration text; nil
+-- where the client has no formatters.
+local function BlankTimerFormatter()
+    if fmtCache.blank ~= nil then return fmtCache.blank or nil end
+    local f = C_StringUtil and C_StringUtil.CreateNumericRuleFormatter and C_StringUtil.CreateNumericRuleFormatter()
+    if f then f:AddBreakpoint({ threshold = 0, format = "" }) end
+    fmtCache.blank = f or false
+    return f
+end
+
 -- The icon's countdown formatter and signature (holder and aura button alike).
 local function CountdownFormatterFor(rec)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
-    local decTo, bands, abbrev = 0, nil, 0
-    if R("text", "durationText") ~= false then
-        abbrev = R("text", "durationAbbrev") or 0
-        if R("text", "durationDecimals") == true then
-            decTo = R("text", "durationDecimalThreshold") or 10
-        end
-        if R("text", "durationColorBands") == true then
-            bands = {}
-            -- only the bands in play ("+ Add band"); 0 seconds is still off
-            local count = math.max(1, math.min(3, math.floor(tonumber(R("text", "durBandCount")) or 1)))
-            for i = 1, count do
-                local secs = R("text", "durBand" .. i .. "Sec") or 0
-                if secs > 0 then
-                    bands[#bands + 1] = {
-                        t = secs,
-                        c = R("text", "durBand" .. i .. "Color") or { 1, 1, 1, 1 },
-                    }
-                end
+    -- switched off: nothing to print, whatever shows the numbers
+    if R("text", "durationText") == false then return BlankTimerFormatter(), "off" end
+    local decTo, bands = 0, nil
+    local abbrev = R("text", "durationAbbrev") or 0
+    if R("text", "durationDecimals") == true then
+        decTo = R("text", "durationDecimalThreshold") or 10
+    end
+    if R("text", "durationColorBands") == true then
+        bands = {}
+        -- only the bands in play ("+ Add band"); 0 seconds is still off
+        local count = math.max(1, math.min(3, math.floor(tonumber(R("text", "durBandCount")) or 1)))
+        for i = 1, count do
+            local secs = R("text", "durBand" .. i .. "Sec") or 0
+            if secs > 0 then
+                bands[#bands + 1] = {
+                    t = secs,
+                    c = R("text", "durBand" .. i .. "Color") or { 1, 1, 1, 1 },
+                }
             end
-            if #bands == 0 then bands = nil end
         end
+        if #bands == 0 then bands = nil end
     end
     -- Rounding is in the signature, so changing it re-pushes the formatter.
     local mode = Factory.IconRounding(rec)
@@ -1389,7 +1404,6 @@ function Factory.ApplyStyle(f, rec)
         f.cooldown:SetPoint("TOPLEFT", f, "TOPLEFT", ix, -iy)
         f.cooldown:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -ix, iy)
     end
-    Factory.ApplyDurationVis(f, rec)
     -- Pushed only when the recipe changes; nil restores the stock format.
     if f.cooldown.SetCountdownFormatter then
         local fmt, sig = CountdownFormatterFor(rec)
@@ -1398,6 +1412,8 @@ function Factory.ApplyStyle(f, rec)
             f.cooldown:SetCountdownFormatter(fmt)
         end
     end
+    -- the hide after the formatter: handing one over shows the numbers
+    Factory.ApplyDurationVis(f, rec)
     if f.cooldown.GetCountdownFontString then
         local cfs = f.cooldown:GetCountdownFontString()
         if cfs then
@@ -1625,6 +1641,29 @@ Factory.BUTTON_STACK = { swipe = 1, edge = 2, text = GLOW_LEVEL + 2, gate = GLOW
 -- The holder's texts: over a spell overlay's button (one rung up) and its stack.
 Factory.TEXT_LEVEL = Factory.AURA_LADDER.button + 1 + Factory.BUTTON_STACK.gate + 1
 
+-- The level a live button's stack and glows count from: the single-icon
+-- driver's stamp, else the button's own while it reads plain (it can read
+-- secret in the create window).
+local function ButtonBase(b)
+    if type(b._adLevel) == "number" then return b._adLevel end
+    local v = b:GetFrameLevel()
+    if type(v) == "number" and not (issecretvalue and issecretvalue(v)) then return v end
+    return nil
+end
+
+-- A button no holder anchors (aura group rows, a unit's auras) lays its stack
+-- from its own level, the one its glows count from: texts over the glows.
+local function StackOwnLevel(b)
+    if type(b._adLevel) == "number" then return end
+    local base = ButtonBase(b)
+    if not base then return end
+    local S = Factory.BUTTON_STACK
+    if b._adSwipe then b._adSwipe:SetFrameLevel(base + S.swipe) end
+    if b._adEdgeHost then b._adEdgeHost:SetFrameLevel(base + S.edge) end
+    if b.TextOverlay then b.TextOverlay:SetFrameLevel(base + S.text) end
+    if b._adTimeGate then b._adTimeGate:SetFrameLevel(base + S.gate) end
+end
+
 -- An aura watching you, then your target, has a second button above the
 -- first: the holder's texts and glows go up by as much to stay on top.
 function Factory.Rise(rec)
@@ -1708,7 +1747,8 @@ local function ApplyShowGate(b, frac, w, h, reach)
     gb:ClearAllPoints()
     gb:SetSize(L, gh)
     gb:SetPoint("LEFT", b, "CENTER", math.min(-gw / 2, gw / 2 - frac * L), 0)
-    if type(b._adLevel) == "number" then gb:SetFrameLevel(b._adLevel + Factory.BUTTON_STACK.gate) end
+    local base = ButtonBase(b)
+    if base then gb:SetFrameLevel(base + Factory.BUTTON_STACK.gate) end
     gb:Show()
 end
 
@@ -1735,6 +1775,7 @@ function Factory.StyleAuraButton(b, rec, px, opts)
     local textA = (forceHide or (aA > 0 and keep)) and 1 or aA
     -- Active alpha goes on the pieces, so the button stays at 1.
     b:SetAlpha(1)
+    StackOwnLevel(b)
     local padPx = (R("appearance", "padding") or 0) * kS
     -- Art override: the engine only ever calls SetTexture on b._adIcon, so an
     -- override is our own texture drawn in its place. Being on the button, it
@@ -1827,7 +1868,8 @@ function Factory.StyleAuraButton(b, rec, px, opts)
             local ec = R("auraSwipe", "edgeColor") or { 1, 1, 1, 1 }
             sw:SetEdgeColor(ec[1], ec[2], ec[3], (ec[4] or 1) * aA)
         end
-        sw:SetHideCountdownNumbers(R("text", "durationText") == false)
+        -- The hide goes last: handing over a formatter shows the numbers, and
+        -- an aura button gets no per-feed hide after it.
         if sw.SetCountdownFormatter then
             local fmt, sig = CountdownFormatterFor(rec)
             if b._adFmtSig ~= sig then
@@ -1835,6 +1877,7 @@ function Factory.StyleAuraButton(b, rec, px, opts)
                 sw:SetCountdownFormatter(fmt)
             end
         end
+        sw:SetHideCountdownNumbers(R("text", "durationText") == false)
         local cfs = sw.GetCountdownFontString and sw:GetCountdownFontString()
         if cfs then
             StyleCountdownText(cfs, rec, kS, b, STANDARD_TEXT_FONT)
@@ -2562,13 +2605,8 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
     if cap and not (LE ~= nil and LE.IsEditMode ~= nil and LE.IsEditMode() == true) then
         frac = math.min(frac or 1, cap)
     end
-    -- A plain level: stamped by the single-icon driver when it anchors the
-    -- button; group buttons read it, skipping a secret read (create window).
-    local base = b._adLevel
-    if type(base) ~= "number" then
-        local v = b:GetFrameLevel()
-        if type(v) == "number" and not (issecretvalue and issecretvalue(v)) then base = v end
-    end
+    -- the level the button's stack counts from (ButtonBase)
+    local base = ButtonBase(b)
     local sig = table.concat({ gtype, w, h, c[1], c[2], c[3], a, speed, xo, yo,
         lines, th, parts, scale, lvl, strata, base or -1,
         frac or -1, dash, mx, my, levelTo or -1 }, ":")
@@ -3710,6 +3748,9 @@ function Factory.ShowTooltip(f, rec)
         -- the buff, then who lacks it at the last count (read between pulls)
         GameTooltip:SetText(rec.name or "Group Buff")
         NS.DriverGroupBuff.TooltipLines(rec)
+    elseif kind == "stance" and NS.DriverStance then
+        -- the stance it shows, or a line saying you are in none
+        NS.DriverStance.Tooltip(rec)
     else
         GameTooltip:SetText(rec.name or "Arc Auras")
     end

@@ -1,6 +1,7 @@
 -- AD_TypeLooks: a show-all aura group's debuff type looks, parts on each game button shown only for the dispel types given them.
 -- The show-all runtime (Drivers\AD_DriverUnitAuras.lua) calls TL.Apply from its buttons' style pass; the settings are the group's typeLook section.
 -- The game reads each aura's type and picks the art and colour itself, so it works in combat: nothing here reads an aura.
+-- A full look per type is the runtime's: one engine aura group per type, each type's buttons styled from its own look (TL.Full, TL.Order).
 local ADDON, NS = ...
 local Store = NS.Store
 
@@ -36,8 +37,66 @@ function TL.Available(b)
         and S ~= nil and S.CustomAsset ~= nil and CreateColor ~= nil
 end
 
+-- The parts show with Colors and badges and with a full look per type alike.
 function TL.On(g)
-    return g ~= nil and Store.ShowsAll(g) == true and Store.Resolve(g, "typeLook", "looks") == "parts"
+    if not (g ~= nil and Store.ShowsAll(g) == true) then return false end
+    local v = Store.Resolve(g, "typeLook", "looks")
+    return v == "parts" or v == "full"
+end
+
+-- A full look per type in play: picked, on a client with the per-type art
+-- (12.1.0 has none: the whole feature waits for 12.1.5 there), on one half
+-- off the plates (Schema.TypeFullOK); elsewhere the parts show alone.
+function TL.Full(g)
+    return g ~= nil and not NS.OldAuraEngine and Store.ShowsAll(g) == true
+        and Store.Resolve(g, "typeLook", "looks") == "full" and NS.Schema.TypeFullOK(g) == true
+end
+
+-- The type keys in the order their groups show: the stored ones first, each
+-- once, then any left out in the strip's order.
+function TL.Order(g)
+    local out, seen = {}, {}
+    local text = g and Store.Resolve(g, "typeLook", "order")
+    for k in tostring(text or ""):gmatch("[^,%s]+") do
+        if NS.Schema.TYPE_KEYS[k] and not seen[k] then
+            seen[k] = true
+            out[#out + 1] = k
+        end
+    end
+    for _, t in ipairs(NS.Schema.TYPE_LOOKS) do
+        if not seen[t.key] then out[#out + 1] = t.key end
+    end
+    return out
+end
+
+-- Moves a type one place earlier (-1) or later (+1), trading places with the
+-- next type shows(key) passes (the strip has no icon for the others, nil =
+-- every type); the strip's own order is stored as nothing.
+function TL.Move(g, key, step, shows)
+    local list = TL.Order(g)
+    local i
+    for n, k in ipairs(list) do
+        if k == key then i = n end
+    end
+    if not i then return false end
+    local j = i + step
+    while list[j] ~= nil and shows ~= nil and not shows(list[j]) do j = j + step end
+    if list[j] == nil then return false end
+    list[i], list[j] = list[j], list[i]
+    local plain = true
+    for n, t in ipairs(NS.Schema.TYPE_LOOKS) do
+        if list[n] ~= t.key then plain = false end
+    end
+    Store.SetOverride(g, "typeLook", "order", plain and "" or table.concat(list, ","))
+    return true
+end
+
+-- Whether auras of a type can show at all: the Tracking tab's Dispel types
+-- boxes are the game's own filter, and with any ticked an aura with no type
+-- never shows either. dispel: the ticked set ({ Magic = true }), nil = none.
+function TL.Shows(dispel, key)
+    if dispel == nil then return true end
+    return key ~= "None" and dispel[key] == true
 end
 
 -- Blizzard's art for one type: the game's live table first.

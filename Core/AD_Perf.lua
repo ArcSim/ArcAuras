@@ -1,20 +1,28 @@
 -- AD_Perf: an opt-in profiler (/arcperf) showing what this addon spends per event handler and per module function, beside the game's own totals.
--- Off, nothing is wrapped and the dispatcher pays one flag test; on, Core\AD_Events.lua times each handler and the runtime modules' functions are wrapped.
+-- Off, nothing is wrapped and the dispatcher pays one flag test; on, Core\AD_Events.lua times each handler and every runtime module's functions are wrapped.
 -- It only does arithmetic on debugprofilestop(); wrapped calls pass their arguments and returns through untouched, secrets included.
+-- The game's own per-tick count for this addon runs beside ours, so whatever the wrappers cannot see shows up as "not traced".
 local ADDON, NS = ...
 
-local Perf = { on = false, stats = {}, keys = {}, wrapped = {}, since = 0, depth = 0, child = {} }
+local Perf = { on = false, stats = {}, keys = {}, wrapped = {}, since = 0, depth = 0, child = {}, meta = {} }
 NS.Perf = Perf
 
--- The modules a fight pays for. The options window, the theme and the tiny
--- store accessors stay out: their cost folds into the callers' own time.
-Perf.MODULES = { "Anchor", "Bars", "Castbars", "Conditions", "DriverAura", "DriverAuraGroups",
-    "DriverCooldown", "DriverCustom", "DriverEnchant", "DriverPhase", "DriverRange", "DriverToggle", "DriverTotem",
-    "DriverUnitAuras", "DriverWarn", "EnchantBars", "Factory", "LayoutEngine", "PressHighlight", "RangeBars", "Reminders",
-    "Sounds", "Special", "SpecialIcon", "TextElements", "TooltipIDs" }
+-- Every module table on the namespace is wrapped, and its sub-module tables
+-- one level down, except these: the options window and its pages, the theme,
+-- the store's tiny accessors (their cost folds into the callers' own time),
+-- the dispatcher (it times its own handlers), one-shot importers and data.
+Perf.SKIP = { Perf = true, Events = true, Store = true, Schema = true, AT = true, Options = true,
+    Changelog = true, Spotlight = true, NewLayout = true, LayoutPreview = true, LayoutFollow = true,
+    IconScreen = true, ItemSets = true, FramePicker = true, CDMMirrorOptions = true,
+    ImportArcUI = true, Migrate = true, MigratePT = true, SpellCatalog = true, TalentCatalog = true }
 Perf.TOP = 12
 Perf.TOP_AFTER = 6
-Perf.OTHER = "EnhanceQoL"
+Perf.TOP_GAME = 5
+Perf.TOP_DEEP = 15
+Perf.TOP_OTHERS = 10
+-- seconds between live refreshes of the window while recording: rewriting the
+-- report's long text costs time the recording would otherwise count as ours
+Perf.REFRESH = 5
 -- Record next fight keeps going this long after combat ends: the settle work
 -- that waited for combat runs then.
 Perf.TAIL = 2
@@ -38,9 +46,23 @@ local function Stat(key)
     return s
 end
 
+-- Per recording table: the game's count for this addon summed over the ticks,
+-- and the profiler's own bookkeeping, which the game counts as ours too.
+local function Meta(t)
+    local m = Perf.meta[t]
+    if not m then
+        m = { game = 0, ticks = 0, over = 0 }
+        Perf.meta[t] = m
+    end
+    return m
+end
+
 -- One timed call. Nested timed calls subtract from the caller's self time, so
--- a module function's own work is told apart from what it calls.
+-- a module function's own work is told apart from what it calls. The
+-- bookkeeping around it leaves the caller's own time too and is reported as
+-- the profiler's cost.
 function Perf.Call(key, fn, ...)
+    local enter = clock()
     local d = Perf.depth + 1
     Perf.depth = d
     Perf.child[d] = 0
@@ -49,10 +71,13 @@ function Perf.Call(key, fn, ...)
     local total = clock() - t0
     local own = total - Perf.child[d]
     Perf.depth = d - 1
-    if d > 1 then Perf.child[d - 1] = Perf.child[d - 1] + total end
     local s = Stat(key)
     s.ms, s.self, s.n = s.ms + total, s.self + own, s.n + 1
     if total > s.peak then s.peak = total end
+    local full = clock() - enter
+    if d > 1 then Perf.child[d - 1] = Perf.child[d - 1] + full end
+    local m = Meta(Perf.cur)
+    m.over = m.over + full - total
     return unpack(r, 1, r.n)
 end
 
@@ -79,22 +104,70 @@ function Perf.Key(kind, name, key)
     return k
 end
 
+-- A wrapper someone kept a reference to stays cheap after Off.
 local function Wrapper(key, fn)
-    return function(...) return Perf.Call(key, fn, ...) end
+    return function(...)
+        if Perf.on then return Perf.Call(key, fn, ...) end
+        return fn(...)
+    end
 end
 
-function Perf.WrapModules()
-    for _, name in ipairs(Perf.MODULES) do
-        local t = NS[name]
-        if type(t) == "table" then
-            for k, v in pairs(t) do
-                if type(v) == "function" then
-                    Perf.wrapped[#Perf.wrapped + 1] = { t = t, k = k, fn = v }
-                    t[k] = Wrapper(name .. "." .. tostring(k), v)
-                end
+-- Tables that are not ours to touch: every global table (a Blizzard mixin or
+-- another addon's table must never run our wrappers) and every shared library.
+local function Foreign()
+    local set = {}
+    for _, v in pairs(_G) do
+        if type(v) == "table" then set[v] = true end
+    end
+    if LibStub and type(LibStub.libs) == "table" then
+        for _, lib in pairs(LibStub.libs) do set[lib] = true end
+    end
+    return set
+end
+
+-- A plain table of functions: no metatable (objects keep their methods there)
+-- and not a widget.
+local function IsModule(t, foreign)
+    return type(t) == "table" and not foreign[t] and getmetatable(t) == nil and rawget(t, 0) == nil
+end
+
+-- The module tables, then their sub-module tables one level down (capitalised
+-- keys: Bars.ManaRegen, Bars.Spark), each once, as { t = table, name = label }.
+function Perf.ModuleTables(skip)
+    local foreign, seen, list = Foreign(), { [NS] = true }, {}
+    for name in pairs(skip or {}) do
+        if type(NS[name]) == "table" then seen[NS[name]] = true end
+    end
+    for name, t in pairs(NS) do
+        if type(name) == "string" and not (skip and skip[name]) and IsModule(t, foreign) and not seen[t] then
+            seen[t] = true
+            list[#list + 1] = { t = t, name = name }
+        end
+    end
+    for i = 1, #list do
+        local m = list[i]
+        for k, v in pairs(m.t) do
+            if type(k) == "string" and k:find("^%u") and IsModule(v, foreign) and not seen[v] then
+                seen[v] = true
+                list[#list + 1] = { t = v, name = m.name .. "." .. k }
             end
         end
     end
+    return list
+end
+
+function Perf.WrapModules()
+    local list = Perf.ModuleTables(Perf.SKIP)
+    for _, m in ipairs(list) do
+        for k, v in pairs(m.t) do
+            if type(v) == "function" then
+                local w = Wrapper(m.name .. "." .. tostring(k), v)
+                Perf.wrapped[#Perf.wrapped + 1] = { t = m.t, k = k, fn = v, w = w }
+                m.t[k] = w
+            end
+        end
+    end
+    Perf.moduleCount = #list
 end
 
 -- Each wrapped field gets its own function back, unless something replaced it
@@ -102,8 +175,7 @@ end
 function Perf.Unwrap()
     for i = #Perf.wrapped, 1, -1 do
         local w = Perf.wrapped[i]
-        local cur = w.t[w.k]
-        if cur ~= nil and cur ~= w.fn then w.t[w.k] = w.fn end
+        if w.t[w.k] == w.w then w.t[w.k] = w.fn end
         Perf.wrapped[i] = nil
     end
 end
@@ -111,6 +183,7 @@ end
 function Perf.Reset()
     wipe(Perf.stats)
     wipe(Perf.after)
+    wipe(Perf.meta)
     Perf.cur = Perf.stats
     Perf.since = GetTime()
     Perf.endedAt = nil
@@ -121,11 +194,13 @@ function Perf.On()
     Perf.Reset()
     Perf.WrapModules()
     Perf.on = true
+    Perf.Sampling(true)
 end
 
 function Perf.Off()
     if not Perf.on then return end
     Perf.on = false
+    Perf.Sampling(false)
     Perf.Unwrap()
 end
 
@@ -167,6 +242,23 @@ local function Profiler()
     return P, M
 end
 
+-- The game's own count for this addon, added up tick by tick while recording.
+local function Sample()
+    local t0 = clock()
+    local m = Meta(Perf.cur)
+    local P, M = Profiler()
+    if P and M.LastTime then
+        local last = P.GetAddOnMetric(ADDON, M.LastTime)
+        if type(last) == "number" then m.game, m.ticks = m.game + last, m.ticks + 1 end
+    end
+    m.over = m.over + clock() - t0
+end
+
+function Perf.Sampling(on)
+    if on and not Perf.sampler then Perf.sampler = CreateFrame("Frame") end
+    if Perf.sampler then Perf.sampler:SetScript("OnUpdate", on and Sample or nil) end
+end
+
 function Perf.AddonPct(name, metric)
     local P = Profiler()
     if not P then return nil end
@@ -193,17 +285,12 @@ local function GameLines(out)
     end
     out[#out + 1] = ("Game CPU, as the addon list shows it: all addons average %s, peak %s"):format(
         Perf.PctText(Perf.OverallPct(M.SessionAverageTime)), Perf.PctText(Perf.OverallPct(M.PeakTime)))
-    for _, name in ipairs({ ADDON, Perf.OTHER }) do
-        local loaded = not (C_AddOns and C_AddOns.IsAddOnLoaded) or C_AddOns.IsAddOnLoaded(name)
-        if loaded then
-            out[#out + 1] = ("  %s: recent %s, session %s, peak %s"):format(name,
-                Perf.PctText(Perf.AddonPct(name, M.RecentAverageTime)),
-                Perf.PctText(Perf.AddonPct(name, M.SessionAverageTime)),
-                Perf.PctText(Perf.AddonPct(name, M.PeakTime)))
-        end
-    end
+    out[#out + 1] = ("  %s: recent %s, session %s, peak %s"):format(ADDON,
+        Perf.PctText(Perf.AddonPct(ADDON, M.RecentAverageTime)),
+        Perf.PctText(Perf.AddonPct(ADDON, M.SessionAverageTime)),
+        Perf.PctText(Perf.AddonPct(ADDON, M.PeakTime)))
     if P.GetTopKAddOnsForMetric then
-        local top, parts = P.GetTopKAddOnsForMetric(M.RecentAverageTime, 3), {}
+        local top, parts = P.GetTopKAddOnsForMetric(M.RecentAverageTime, Perf.TOP_GAME), {}
         for _, r in ipairs(top or {}) do
             parts[#parts + 1] = ("(%s) %s"):format(Perf.PctText(Perf.AddonPct(r.addOnName, M.RecentAverageTime)),
                 tostring(r.addOnName))
@@ -225,56 +312,228 @@ local function RowLines(out, t, secs, top)
     return total
 end
 
--- The report as plain text lines: the game's numbers, then ours.
+-- The game's count beside ours for one recording table: what the wrappers
+-- cannot see is the rest.
+local function CoverageLines(out, t, secs)
+    local m = Perf.meta[t]
+    if not (m and m.ticks > 0) then return end
+    local traced = 0
+    for _, s in pairs(t) do traced = traced + s.self end
+    local rest = math.max(m.game - traced - m.over, 0)
+    out[#out + 1] = ("The game counted %.2f ms (%.3f ms per second): traced %.2f ms, the profiler's own work %.2f ms, not traced %.2f ms (%s)."):format(
+        m.game, m.game / secs, traced, m.over, rest, Perf.PctText(m.game > 0 and rest / m.game * 100 or 0))
+    if rest > traced and rest > 1 then
+        out[#out + 1] = "Not traced: timers, per-frame scripts, frames with their own events, glow animations. /arcperf deep lists them by file."
+    end
+end
+
+-- Deep view: the game's script profiler (the scriptProfile setting) times every
+-- frame's scripts and every function. Ours are told by where each frame was
+-- made and by the namespace walk; nothing is wrapped.
+-- The path inside this addon's folder, or nil for anyone else's frame (a
+-- folder whose name only starts with ours included).
+local function Site(loc)
+    if type(loc) ~= "string" then return nil end
+    local _, e = loc:find("[/\\]" .. ADDON:gsub("%p", "%%%0") .. "[/\\]")
+    if not e then return nil end
+    return loc:sub(e + 1)
+end
+
+local function DeepRows(t, top, out, fmt)
+    local rows = {}
+    for key, s in pairs(t) do rows[#rows + 1] = { key = key, s = s } end
+    table.sort(rows, function(a, b) return a.s.ms > b.s.ms end)
+    for i = 1, math.min(top, #rows) do out[#out + 1] = fmt(i, rows[i].key, rows[i].s) end
+end
+
+-- The busiest frames that are not ours, a short list kept in order: a hook we
+-- put on someone else's frame runs inside that frame's time.
+local function KeepTop(list, row, top)
+    local i = #list + 1
+    while i > 1 and list[i - 1].ms < row.ms do i = i - 1 end
+    if i <= top then
+        table.insert(list, i, row)
+        if #list > top then list[#list] = nil end
+    end
+end
+
+local function Short(loc)
+    if type(loc) ~= "string" then return "?" end
+    return (loc:gsub("^.-[/\\][Aa]dd[Oo]ns[/\\]", ""))
+end
+
+function Perf.DeepLines()
+    if not Perf.deep then return Perf.deepLines end
+    if UpdateAddOnCPUUsage then UpdateAddOnCPUUsage() end
+    local secs = math.max(GetTime() - (Perf.deepSince or GetTime()), 0.001)
+    local total = (GetAddOnCPUUsage and GetAddOnCPUUsage(ADDON)) or 0
+    local sites, matched, others = {}, 0, {}
+    local f = EnumerateFrames and EnumerateFrames()
+    while f do
+        if not (f.IsForbidden and f:IsForbidden()) and f.GetSourceLocation then
+            local loc = f:GetSourceLocation()
+            local site = Site(loc)
+            local ms, n = GetFrameCPUUsage(f, false)
+            if site then
+                matched = matched + 1
+                if type(ms) == "number" and ms > 0 then
+                    local s = sites[site]
+                    if not s then
+                        s = { ms = 0, n = 0, frames = 0 }
+                        sites[site] = s
+                    end
+                    s.ms, s.n, s.frames = s.ms + ms, s.n + (tonumber(n) or 0), s.frames + 1
+                end
+            elseif type(ms) == "number" and ms > 0 then
+                local name = (f.GetDebugName and f:GetDebugName()) or (f.GetName and f:GetName()) or "?"
+                KeepTop(others, { name = tostring(name), loc = Short(loc), ms = ms, n = tonumber(n) or 0 }, Perf.TOP_OTHERS)
+            end
+        end
+        f = EnumerateFrames(f)
+    end
+    -- the real functions, also while a recording has them wrapped
+    local orig, funcs = {}, {}
+    for _, w in ipairs(Perf.wrapped) do orig[w.w] = w.fn end
+    for _, m in ipairs(Perf.ModuleTables(nil)) do
+        for k, v in pairs(m.t) do
+            if type(v) == "function" then
+                local ms, n = GetFunctionCPUUsage(orig[v] or v, false)
+                if type(ms) == "number" and ms > 0 then
+                    funcs[m.name .. "." .. tostring(k)] = { ms = ms, n = tonumber(n) or 0 }
+                end
+            end
+        end
+    end
+    local function Pct(ms) return Perf.PctText(total > 0 and ms / total * 100 or 0) end
+    -- the profiler's own reports run inside this addon too
+    local own = 0
+    for key, s in pairs(funcs) do
+        if key:find("^Perf%.") then own = own + s.ms end
+    end
+    local out = { "", ("Deep view, the game's script profiler (%.1f s): this addon %.2f ms, %.3f ms per second;"
+        .. " without the profiler's own reports %.3f ms per second."):format(secs, total, total / secs,
+        math.max(total - own, 0) / secs) }
+    if UpdateAddOnMemoryUsage and GetAddOnMemoryUsage then
+        UpdateAddOnMemoryUsage()
+        local kb = GetAddOnMemoryUsage(ADDON)
+        if type(kb) == "number" and type(Perf.deepMem) == "number" then
+            out[#out + 1] = ("Memory: %.0f KB now, %.0f KB when the deep view started."):format(kb, Perf.deepMem)
+        end
+    end
+    local q = NS.Events and NS.Events.RunPending
+    local qms, qn = nil, nil
+    if q then qms, qn = GetFunctionCPUUsage(q, true) end
+    if type(qms) == "number" then
+        out[#out + 1] = ("Work queued for the next frame, with everything it runs: %.2f ms (%s), %d runs."):format(
+            qms, Pct(qms), tonumber(qn) or 0)
+    end
+    out[#out + 1] = ("Frame scripts by the file that made the frame, each with what it calls (%d of our frames seen):"):format(matched)
+    DeepRows(sites, Perf.TOP_DEEP, out, function(i, key, s)
+        return ("%2d. %s: %.2f ms (%s), %d calls, %d frames"):format(i, key, s.ms, Pct(s.ms), s.n, s.frames)
+    end)
+    out[#out + 1] = "Functions by their own time:"
+    DeepRows(funcs, Perf.TOP_DEEP, out, function(i, key, s)
+        return ("%2d. %s: %.2f ms (%s), %d calls"):format(i, key, s.ms, Pct(s.ms), s.n)
+    end)
+    out[#out + 1] = "The busiest frames that are not ours (any addon or the game; a hook of ours counts inside them):"
+    for i, r in ipairs(others) do
+        out[#out + 1] = ("%2d. %s (%s): %.2f ms, %d calls"):format(i, r.name, r.loc, r.ms, r.n)
+    end
+    return out
+end
+
+-- /arcperf deep: on (the counters start from zero), then off with the last
+-- numbers kept in the report.
+function Perf.Deep()
+    if Perf.deep then
+        Perf.deepLines = Perf.DeepLines()
+        Perf.deep = false
+        return
+    end
+    if not (GetCVarBool and GetCVarBool("scriptProfile")) then
+        Perf.deepLines = { "", "The deep view needs the game's script profiler, which slows every addon while it is on:",
+            "/console scriptProfile 1, then /reload, then /arcperf deep. Afterwards /console scriptProfile 0 and /reload." }
+        return
+    end
+    if ResetCPUUsage then ResetCPUUsage() end
+    Perf.deep, Perf.deepSince, Perf.deepLines = true, GetTime(), nil
+    if UpdateAddOnMemoryUsage and GetAddOnMemoryUsage then
+        UpdateAddOnMemoryUsage()
+        Perf.deepMem = GetAddOnMemoryUsage(ADDON)
+    end
+end
+
+-- The report as plain text lines: the game's numbers, then ours, then the
+-- deep view when it has numbers.
 function Perf.Lines()
     local out = {}
-    GameLines(out)
+    -- a report reads the game's numbers before its own work (Perf.Report)
+    if Perf.snap then
+        for _, line in ipairs(Perf.snap) do out[#out + 1] = line end
+    else
+        GameLines(out)
+    end
     if not next(Perf.stats) and not next(Perf.after) then
         out[#out + 1] = Perf.on and "Recording, nothing seen yet."
             or "Nothing recorded. Press Record next fight, or Start."
-        return out
-    end
-    local stop = Perf.endedAt or GetTime()
-    local secs = math.max(stop - Perf.since, 0.001)
-    local fight = 0
-    for _, s in pairs(Perf.stats) do fight = fight + s.self end
-    out[#out + 1] = ""
-    out[#out + 1] = ("%s (%.1f s): %.2f ms of own work, %.3f ms per second. Top by own time:"):format(
-        Perf.endedAt and "In the fight" or "Recorded", secs, fight, fight / secs)
-    RowLines(out, Perf.stats, secs, Perf.TOP)
-    if next(Perf.after) then
-        local tail = math.max(GetTime() - (Perf.endedAt or GetTime()), 0.001)
-        local own = 0
-        for _, s in pairs(Perf.after) do own = own + s.self end
+    else
+        local stop = Perf.endedAt or GetTime()
+        local secs = math.max(stop - Perf.since, 0.001)
+        local fight = 0
+        for _, s in pairs(Perf.stats) do fight = fight + s.self end
         out[#out + 1] = ""
-        out[#out + 1] = ("The %.1f s after combat: %.2f ms of own work. Top:"):format(tail, own)
-        RowLines(out, Perf.after, tail, Perf.TOP_AFTER)
+        out[#out + 1] = ("%s (%.1f s): %.2f ms of own work, %.3f ms per second, %d modules traced. Top by own time:"):format(
+            Perf.endedAt and "In the fight" or "Recorded", secs, fight, fight / secs, Perf.moduleCount or 0)
+        RowLines(out, Perf.stats, secs, Perf.TOP)
+        CoverageLines(out, Perf.stats, secs)
+        if next(Perf.after) then
+            local tail = math.max(GetTime() - (Perf.endedAt or GetTime()), 0.001)
+            local own = 0
+            for _, s in pairs(Perf.after) do own = own + s.self end
+            out[#out + 1] = ""
+            out[#out + 1] = ("The %.1f s after combat: %.2f ms of own work. Top:"):format(tail, own)
+            RowLines(out, Perf.after, tail, Perf.TOP_AFTER)
+            CoverageLines(out, Perf.after, tail)
+        end
     end
+    for _, line in ipairs(Perf.deepLines or {}) do out[#out + 1] = line end
     return out
 end
 
 -- The window (the probe rule: a copyable text box, never chat)
 
 function Perf.Status()
-    if Perf.fightArmed and not Perf.on then return "Armed: the next fight is recorded." end
-    if Perf.on then return "Recording." end
-    return "Off."
+    local s = "Off."
+    if Perf.fightArmed and not Perf.on then
+        s = "Armed: the next fight is recorded."
+    elseif Perf.on then
+        s = "Recording."
+    end
+    if Perf.deep then s = s .. " Deep view on." end
+    return s
 end
 
+-- A recording counts the window's refresh as the profiler's own work.
 function Perf.Refresh()
+    local t0 = clock()
     Perf.text = table.concat(Perf.Lines(), "\n")
     local w = Perf.win
-    if not (w and w:IsShown()) then return end
-    w.edit:SetText(Perf.text)
-    w.status:SetText(Perf.Status())
-    w.toggle.fs:SetText(Perf.on and "Stop" or "Start")
-    if w.scroll.UpdateScroll then w.scroll:UpdateScroll() end
+    if w and w:IsShown() then
+        w.edit:SetText(Perf.text)
+        w.status:SetText(Perf.Status())
+        w.toggle.fs:SetText(Perf.on and "Stop" or "Start")
+        if w.scroll.UpdateScroll then w.scroll:UpdateScroll() end
+    end
+    if Perf.on then
+        local m = Meta(Perf.cur)
+        m.over = m.over + clock() - t0
+    end
 end
 
 -- Live numbers only while the window shows and a recording runs.
 function Perf.Tick(on)
     if on and not Perf.ticker and C_Timer and C_Timer.NewTicker then
-        Perf.ticker = C_Timer.NewTicker(1, function()
+        Perf.ticker = C_Timer.NewTicker(Perf.REFRESH, function()
             if Perf.on then Perf.Refresh() end
         end)
     elseif not on and Perf.ticker then
@@ -332,13 +591,21 @@ function Perf.Build()
     return w
 end
 
--- Opens the window on the latest report.
+-- Opens the window on the latest report. The game's numbers are read first:
+-- the deep scan and the window's text would otherwise land in the "recent"
+-- average the report prints.
 function Perf.Report()
+    local game = {}
+    GameLines(game)
+    Perf.snap = game
+    if Perf.deep then Perf.deepLines = Perf.DeepLines() end
     Perf.text = table.concat(Perf.Lines(), "\n")
     local w = Perf.Build()
-    if not w then return end
-    w:Show()
-    Perf.Refresh()
+    if w then
+        w:Show()
+        Perf.Refresh()
+    end
+    Perf.snap = nil
 end
 
 -- Record next fight: the fight alone, then the window opens on its report.
@@ -381,6 +648,8 @@ SlashCmdList.ARCPERF = function(msg)
         Perf.Reset()
     elseif cmd == "fight" then
         Perf.ArmFight()
+    elseif cmd == "deep" then
+        Perf.Deep()
     end
     Perf.Report()
 end

@@ -227,6 +227,37 @@ local function PetPassive()
     return false
 end
 
+-- An idle pet: out and alive with nothing targeted.
+local function PetIdle()
+    if not HasPet() or PetDead() then return false end
+    return not Plain("petTarget", UnitExists and UnitExists("pettarget"))
+end
+
+-- Melee Attack swinging, an auto-repeat shot (Auto Shot, a wand's Shoot)
+-- repeating: the toggle driver's state, kept from plain events.
+local function Swinging()
+    local DT = NS.DriverToggle
+    return DT ~= nil and DT.Swinging() == true
+end
+
+local function Shooting()
+    local DT = NS.DriverToggle
+    return DT ~= nil and DT.Shooting() == true
+end
+
+-- A living target you can attack, with neither going. UnitCanAttack and
+-- UnitIsDead have no secrecy annotation; Plain keeps the last real answer.
+local function NotAttacking()
+    if Swinging() or Shooting() or not HasTarget() then return false end
+    if not Plain("targetHostile", UnitCanAttack and UnitCanAttack("player", "target")) then return false end
+    return not Plain("targetDead", UnitIsDead and UnitIsDead("target"))
+end
+
+-- Forever's Auto Shot and wands only fire while you stand still.
+local function MovingShooting()
+    return Shooting() and Plain("moving", IsPlayerMoving and IsPlayerMoving())
+end
+
 -- A warlock's demon by spells only it brings to the pet spellbook, a plain
 -- read: the pet's family reads secret in instances. Retail's IDs.
 Conditions.DEMONS = {
@@ -365,6 +396,7 @@ end
 -- the list name ("Load when", "Fade when"). ev: the events that change it.
 -- poll: no event reports it. class: only that class's panel lists it.
 -- avail: the client has the system. negOnly: only the never and fade lists.
+-- toggle: reads the toggle driver, which then keeps its events armed.
 
 local CAST_EV = { "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP",
     "UNIT_SPELLCAST_CHANNEL_START", "UNIT_SPELLCAST_CHANNEL_STOP",
@@ -380,6 +412,9 @@ local MOOD_EV = { "UNIT_HAPPINESS", "UNIT_PET" }
 local PET_HP_EV = { "UNIT_PET", "UNIT_HEALTH" }
 local PET_BAR_EV = { "UNIT_PET", "PET_BAR_UPDATE", "PET_UI_UPDATE" }
 local DEMON_EV = { "UNIT_PET", "PET_BAR_UPDATE", "SPELLS_CHANGED" }
+local PET_TARGET_EV = { "UNIT_PET", "UNIT_HEALTH", "UNIT_TARGET" }
+local ATTACK_EV = { "PLAYER_TARGET_CHANGED", "UNIT_FACTION", "PLAYER_TARGET_DIED" }
+local MOVE_EV = { "PLAYER_STARTED_MOVING", "PLAYER_STOPPED_MOVING" }
 local REPAIR_EV = { "UPDATE_INVENTORY_ALERTS", "UPDATE_INVENTORY_DURABILITY" }
 local AMMO_EV = { "UNIT_INVENTORY_CHANGED", "BAG_UPDATE_DELAYED", "PLAYER_EQUIPMENT_CHANGED" }
 local DIFF_EV = { "PLAYER_DIFFICULTY_CHANGED", "ZONE_CHANGED_NEW_AREA" }
@@ -406,6 +441,10 @@ local VOCAB = {
         read = function() return (Threat() or 0) >= 2 end },
     { key = "nearAggro", cat = "combat", text = "High threat", ev = THREAT_EV,
         read = function() return Threat() == 1 end },
+    { key = "autoRepeatOn", cat = "combat", text = "Auto Shot or Shoot", toggle = true, read = Shooting },
+    { key = "meleeOn", cat = "combat", text = "Melee attack is on", toggle = true, read = Swinging },
+    { key = "notAttacking", cat = "combat", text = "Not attacking", toggle = true, ev = ATTACK_EV,
+        read = NotAttacking },
     { key = "mounted", cat = "move", text = "Mounted",
         ev = { "PLAYER_MOUNT_DISPLAY_CHANGED", "COMPANION_UPDATE" },
         read = function() return Plain("mounted", IsMounted and IsMounted()) end },
@@ -418,6 +457,9 @@ local VOCAB = {
         read = function() return Plain("indoors", IsIndoors and IsIndoors()) end },
     { key = "outdoors", cat = "move", text = "Outdoors", poll = true,
         read = function() return Plain("outdoors", IsOutdoors and IsOutdoors()) end },
+    -- retail shoots on the move
+    { key = "movingShooting", cat = "move", text = "Moving, shooting", toggle = true, avail = Forever,
+        ev = MOVE_EV, read = MovingShooting },
     { key = "dead", cat = "player", text = "Dead or a ghost", ev = DEAD_EV, read = Dead },
     { key = "alive", cat = "player", text = "Alive", ev = DEAD_EV,
         read = function() return not Dead() end },
@@ -431,6 +473,7 @@ local VOCAB = {
     { key = "hasPet", cat = "player", text = "Pet is out", ev = { "UNIT_PET" }, read = HasPet },
     { key = "petDead", cat = "player", text = "Pet is dead", ev = PET_HP_EV, read = PetDead },
     { key = "petPassive", cat = "player", text = "Pet is on Passive", ev = PET_BAR_EV, read = PetPassive },
+    { key = "petNoTarget", cat = "player", text = "Pet has no target", ev = PET_TARGET_EV, read = PetIdle },
     { key = "demonImp", cat = "player", class = "WARLOCK", text = "Imp is out", avail = Retail,
         ev = DEMON_EV, read = DemonIs("imp") },
     { key = "demonVoidwalker", cat = "player", class = "WARLOCK", text = "Voidwalker is out", avail = Retail,
@@ -940,7 +983,7 @@ local UNIT_ARG = {
     UNIT_SPELLCAST_CHANNEL_START = "player", UNIT_SPELLCAST_CHANNEL_STOP = "player",
     UNIT_SPELLCAST_EMPOWER_START = "player", UNIT_SPELLCAST_EMPOWER_STOP = "player",
     UNIT_PET = "player", UNIT_INVENTORY_CHANGED = "player",
-    UNIT_HAPPINESS = "pet", UNIT_HEALTH = "pet", PLAYER_SPECIALIZATION_CHANGED = "player",
+    UNIT_HAPPINESS = "pet", UNIT_HEALTH = "pet", UNIT_TARGET = "pet", PLAYER_SPECIALIZATION_CHANGED = "player",
     UNIT_FACTION = "either",   -- the PvP flag (player) or hostility (target)
 }
 
@@ -971,7 +1014,7 @@ local function PollTick()
 end
 
 local function Arm()
-    local want = {}
+    local want, toggle = {}, false
     wipe(polled)
     for key in pairs(inUse) do
         local d = BY_KEY[key]
@@ -979,6 +1022,7 @@ local function Arm()
             for _, e in ipairs(d.ev) do want[e] = true end
         end
         if d.poll then polled[key] = true end
+        if d.toggle then toggle = true end
     end
     if setUse then
         for _, e in ipairs(SET_EV) do want[e] = true end
@@ -1014,6 +1058,10 @@ local function Arm()
             DR.Drop("adcond")
         end
     end
+    -- The auto attack rows: the toggle driver keeps its events armed for
+    -- them and runs a pass on every change.
+    local DT = NS.DriverToggle
+    if DT and DT.Use then DT.Use("adcond", toggle and Conditions.Queue or nil) end
 end
 
 -- Subjects. A record type joins by registering once, from the module that owns

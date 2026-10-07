@@ -2,6 +2,7 @@
 -- flashes it: Shoot or Auto Shot repeating, melee Attack swinging. Its glow
 -- is drawn here; its alpha, grey and tint by Factory.SetState (f._adToggled).
 -- Factory.ApplyStyle hands every styled icon to Sync, Factory.Release to Drop.
+-- The auto attack conditions read the same state through Use.
 -- The game reports both toggles with plain events, in combat too.
 
 local ADDON, NS = ...
@@ -18,6 +19,8 @@ DT.ATTACK = 6603
 DT.REPEAT = { [75] = true, [5019] = true }
 DT.EVENTS = { "START_AUTOREPEAT_SPELL", "STOP_AUTOREPEAT_SPELL", "PLAYER_ENTER_COMBAT", "PLAYER_LEAVE_COMBAT" }
 DT.frames = {}   -- [icon frame] = rec, icons with the toggle glow or a toggled-on look
+-- [owner] = fn, readers besides the icons (the auto attack conditions)
+DT.users = {}
 DT.repeating = false
 DT.attacking = false
 DT.armed = false
@@ -150,6 +153,7 @@ function DT.OnEvent(event)
         DT.attacking = false
     end
     DT.ApplyAll()
+    for _, fn in pairs(DT.users) do fn() end
 end
 
 -- Events.On registers directly, and a client throws on an event it lacks.
@@ -157,9 +161,9 @@ function DT.Valid(e)
     return not (C_EventUtils and C_EventUtils.IsEventValid and not C_EventUtils.IsEventValid(e))
 end
 
--- The events stay registered only while an icon wants the glow.
+-- The events stay registered only while an icon or a reader wants them.
 function DT.Arm()
-    local want = next(DT.frames) ~= nil
+    local want = next(DT.frames) ~= nil or next(DT.users) ~= nil
     if want == DT.armed then return end
     DT.armed = want
     for _, e in ipairs(DT.EVENTS) do
@@ -192,3 +196,18 @@ function DT.Drop(f)
     DT.Stop(f)
     DT.Arm()
 end
+
+-- A reader's fn runs after every change, and once when its use arms the
+-- events, as the state is only known from then on. A nil fn drops it.
+function DT.Use(owner, fn)
+    if DT.users[owner] == fn then return end
+    DT.users[owner] = fn
+    local was = DT.armed
+    DT.Arm()
+    if fn and DT.armed and not was then fn() end
+end
+
+-- Melee Attack swinging, an auto-repeat spell repeating: false while nothing
+-- keeps the events armed.
+function DT.Swinging() return DT.armed and DT.attacking == true end
+function DT.Shooting() return DT.armed and DT.repeating == true end

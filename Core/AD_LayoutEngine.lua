@@ -655,8 +655,12 @@ local function EnsureLayoutFrame(rec)
         f.dragLabel = f.drag:CreateFontString(nil, "OVERLAY")
         f.dragLabel:SetFont(STANDARD_TEXT_FONT, 11, "OUTLINE")
         f.dragLabel:SetPoint("TOP", 0, -3)
-        f.drag:SetScript("OnDragStart", function() f:StartMoving() end)
+        f.drag:SetScript("OnDragStart", function()
+            if Store.Locked(rec) then return end
+            f:StartMoving()
+        end)
         f.drag:SetScript("OnDragStop", function()
+            if Store.Locked(rec) then return end
             f:StopMovingOrSizing()
             local cx, cy = f:GetCenter()
             local ux, uy = UIParent:GetCenter()
@@ -678,6 +682,12 @@ local function EnsureGroupFrame(rec)
         groupFrames[rec.id] = f
     end
     return f
+end
+
+-- Dragged on screen only while editing, never under a lock (on the record,
+-- its group or its layout).
+local function CanMove(rec)
+    return editMode and not Store.Locked(rec)
 end
 
 -- Saves a drop: round the offset, store it, then re-place from the stored
@@ -743,9 +753,14 @@ local function EnsureGroupChrome(gf)
     -- with names off the tab is a blank grip: its tooltip names the group
     bar:SetScript("OnEnter", function()
         bar.fs:SetTextColor(1, 1, 0.5)
-        if bar.fs:GetText() == "" and bar._adName then
+        -- a locked group says why it does not move
+        if (bar.fs:GetText() == "" or bar._adLocked) and bar._adName then
             GameTooltip:SetOwner(bar, "ANCHOR_TOP")
             GameTooltip:SetText(bar._adName, 1, 1, 1)
+            if bar._adLocked then
+                GameTooltip:AddLine("Locked: it stays where it is. Unlock it beside its eye in the list.",
+                    0.8, 0.8, 0.8, true)
+            end
             GameTooltip:Show()
         end
     end)
@@ -755,9 +770,15 @@ local function EnsureGroupChrome(gf)
         if GameTooltip:IsOwned(bar) then GameTooltip:Hide() end
     end)
     bar:SetScript("OnDragStart", function()
-        if gf:IsMovable() then gf:StartMoving() end
+        if gf:IsMovable() then
+            gf._adMoving = true
+            gf:StartMoving()
+        end
     end)
     bar:SetScript("OnDragStop", function()
+        -- a drag that never started (a locked group) saves nothing
+        if not gf._adMoving then return end
+        gf._adMoving = nil
         gf:StopMovingOrSizing()
         local grec = Store.Get(gf._adRecId)
         if grec and Store.Resolve(grec, "anchor", "anchorEnabled") == true
@@ -841,9 +862,15 @@ local function WireBarDrag(f)
         -- Pinned to the target's nameplate: the offset sliders place it, since
         -- its rect can be secret and a drag reads it.
         if self._adPlatePin then return end
-        if self:IsMovable() and self:IsMouseEnabled() then self:StartMoving() end
+        if self:IsMovable() and self:IsMouseEnabled() then
+            self._adMoving = true
+            self:StartMoving()
+        end
     end)
     f:SetScript("OnDragStop", function(self)
+        -- a drag that never started (a locked bar, a nameplate pin) saves nothing
+        if not self._adMoving then return end
+        self._adMoving = nil
         self:StopMovingOrSizing()
         if self._adPlatePin then return end
         local rec = Store.Get(self._adRecId)
@@ -886,7 +913,7 @@ local function PlaceBar(rec, container)
     WireBarDrag(f)
     -- An anchored bar stays draggable: the drag edits its offsets, so it never
     -- detaches from its target.
-    f:SetMovable(editMode)
+    f:SetMovable(CanMove(rec))
     f:EnableMouse(editMode)
     local ch = EnsureBarChrome(f)
     -- Settings "Edit buttons on screen" can keep the bars' chips away; the
@@ -921,7 +948,8 @@ local function FindDropGroup(cx, cy, iconId)
     local rec = Store.Get(iconId)
     for gid, gf in pairs(groupFrames) do
         local grec = Store.Get(gid)
-        if grec and gf:IsShown()
+        -- a locked group takes no new icon from the screen
+        if grec and gf:IsShown() and not Store.Locked(grec)
             and not (rec and not Store.GroupTakes(grec, rec.kind)) then
             local l, r, t, b = gf:GetLeft(), gf:GetRight(), gf:GetTop(), gf:GetBottom()
             if l and cx >= l - 16 and cx <= r + 16 and cy >= b - 16 and cy <= t + 16 then
@@ -1176,6 +1204,8 @@ local function WireIconDrag(f)
         end)
     end)
     f:SetScript("OnDragStop", function(self)
+        -- a drag that never started (a locked icon) leaves it where it is
+        if not (dragState and dragState.id == self._adRecId) then return end
         self:StopMovingOrSizing()
         self:SetScript("OnUpdate", nil)
         HideDropIndicators()
@@ -1394,7 +1424,9 @@ local function UpdateGroupArrows(gf, rec)
     -- one showing every aura on a unit grows its Rows and Columns (off plates)
     local grows = not Engine.HandlerFor(rec)
         or (Store.ShowsAll(rec) and Store.Resolve(rec, "unitAuras", "unit") ~= "nameplate")
+    -- a lock keeps the grid's size as it is too
     local want = editMode and Store.GetSetting("showLayoutArrows") ~= false
+        and not Store.Locked(rec)
         and NS.Options ~= nil and NS.Options.SelectedGroupId ~= nil
         and NS.Options.SelectedGroupId() == rec.id
         and grows
@@ -1491,8 +1523,9 @@ local function WireGroupEdit(gf, rec)
         ch.bar:SetFrameLevel(gf:GetFrameLevel() + 1)
     end
     -- The title bar is the drag handle; the container never takes the mouse.
-    gf:SetMovable(editMode)
+    gf:SetMovable(CanMove(rec))
     gf:EnableMouse(false)
+    ch.bar._adLocked = Store.Locked(rec)
     UpdateGroupArrows(gf, rec)
 end
 
@@ -1697,7 +1730,7 @@ local function PlaceGroup(group, container, flowMode)
         -- In edit mode grid icons drag into other groups, within this one, or
         -- out to a free position; otherwise they are click-through.
         WireIconDrag(f)
-        f:SetMovable(editMode)
+        f:SetMovable(CanMove(rec))
         Factory.ApplyMouse(f, editMode, rec)
         Factory.SetEditMode(f, rec, editMode)
         GhostTag(f, rec)
@@ -1796,7 +1829,7 @@ function Engine.Rebuild()
             container:ClearAllPoints()
             container:SetPoint("CENTER", UIParent, "CENTER", layout.pos.x or 0, layout.pos.y or 0)
             container:Show()
-            container.dragLabel:SetText(layout.name)
+            container.dragLabel:SetText(Store.LockedSelf(layout) and (layout.name .. "  (locked)") or layout.name)
             container.drag:SetShown(moveMode)
             GhostTag(container, layout, 1)
 
@@ -1876,7 +1909,7 @@ function Engine.Rebuild()
                     Factory.ApplyStyle(f, rec)
                     NS.DriverCooldown.Attach(rec, f)
                     WireIconDrag(f)
-                    f:SetMovable(editMode)
+                    f:SetMovable(CanMove(rec))
                     Factory.ApplyMouse(f, editMode, rec)
                     Factory.SetEditMode(f, rec, editMode)
                     GhostTag(f, rec)

@@ -75,21 +75,58 @@ end
 local pending = {}   -- [key] = fn
 local queued = false
 
+-- Named, so the deep profiler can time everything queued work runs.
+function Events.RunPending()
+    queued = false
+    local run = pending
+    pending = {}
+    local P = NS.Perf
+    if P and P.on then
+        for key, f in pairs(run) do P.Top(P.Key("next frame", "", key), f) end
+        return
+    end
+    for _, f in pairs(run) do
+        f()
+    end
+end
+
 function Events.Coalesce(key, fn)
     pending[key] = fn
     if queued then return end
     queued = true
-    C_Timer.After(0, function()
-        queued = false
-        local run = pending
-        pending = {}
-        local P = NS.Perf
-        if P and P.on then
-            for key, f in pairs(run) do P.Top(P.Key("next frame", "", key), f) end
-            return
+    C_Timer.After(0, Events.RunPending)
+end
+
+-- Coalescing with a cap, for event storms (SPELL_UPDATE_USABLE comes ten
+-- times a second while power moves). The first request runs the next frame.
+-- Out of combat a later one waits until gap seconds after the last run; in
+-- combat, or when urgent, it runs the next frame. The last request always runs.
+local capped = {}    -- [key] = { at = last run, gen, armed, fn, run }
+
+function Events.CoalesceCapped(key, fn, gap, urgent)
+    local c = capped[key]
+    if not c then
+        c = { at = -math.huge, gen = 0 }
+        c.run = function()
+            c.at = GetTime()
+            c.fn()
         end
-        for _, f in pairs(run) do
-            f()
-        end
+        capped[key] = c
+    end
+    c.fn = fn
+    local wait = c.at + gap - GetTime()
+    if urgent or wait <= 0 or InCombatLockdown() then
+        -- an armed timer stands down
+        c.gen, c.armed = c.gen + 1, false
+        Events.Coalesce(key, c.run)
+        return
+    end
+    if c.armed then return end
+    c.armed = true
+    local gen = c.gen
+    C_Timer.After(wait, function()
+        if c.gen ~= gen then return end
+        c.armed = false
+        Events.Coalesce(key, c.run)
     end)
 end

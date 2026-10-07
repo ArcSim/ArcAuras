@@ -19,6 +19,8 @@ Options.Home = HM
 -- a layout that loads here: the Modules cards' ON green
 HM.ON = { 0.35, 0.85, 0.45 }
 HM.GAP, HM.HEAD_H = 10, 24
+-- a heading's chevron: the theme's, 12 square, its title CHEV_GAP to its right
+HM.CHEV, HM.CHEV_GAP = 12, 6
 HM.HERO_H, HM.TILE_H, HM.TILE_MIN = 58, 60, 150
 -- a tile's words start 14 in and stop 12 short of its right edge
 HM.TILE_PAD = 26
@@ -157,12 +159,18 @@ function HM.MakeLink(parent, text, onClick)
 end
 
 -- A section title in the accent with a hairline running on to the right, and
--- a link at the far right when one is given. The caller sets the width.
-function HM.MakeHead(parent, text, linkText, onLink)
+-- a link at the far right when one is given. The caller sets the width. The
+-- title and its rule are one click target that folds the section `key`, the
+-- theme's chevron at the title's left; the link keeps its own click.
+function HM.MakeHead(parent, text, linkText, onLink, key)
     local h = CreateFrame("Frame", nil, parent)
     h:SetHeight(HM.HEAD_H)
+    h._key = key
+    local top = math.floor((HM.HEAD_H - HM.CHEV) / 2)
+    h.chev = AT.MakeChevron(h)
+    h.chev:SetPoint("TOPLEFT", h, "TOPLEFT", 0, -top)
     h.title = HM.Text(h, 11, COL.arc)
-    h.title:SetPoint("LEFT", 2, 0)
+    h.title:SetPoint("LEFT", h.chev, "RIGHT", HM.CHEV_GAP, 0)
     h.title:SetText(string.upper(text))
     if linkText then
         h.link = HM.MakeLink(h, linkText, onLink)
@@ -177,7 +185,56 @@ function HM.MakeHead(parent, text, linkText, onLink)
     else
         h.rule:SetPoint("RIGHT", h, "RIGHT", 0, 0)
     end
+    -- the target ends where the rule does, so the link (or the Updates pager)
+    -- past it never folds anything; the rule's right end sits mid-heading
+    h.hit = CreateFrame("Button", nil, h)
+    h.hit:SetHeight(HM.HEAD_H)
+    h.hit:SetPoint("TOPLEFT", h, "TOPLEFT", 0, 0)
+    h.hit:SetPoint("TOPRIGHT", h.rule, "RIGHT", 0, top + HM.CHEV / 2)
+    h.hit:RegisterForClicks("LeftButtonUp")
+    h.hit:SetScript("OnEnter", function()
+        h._hot = true
+        HM.PaintHead(h)
+    end)
+    h.hit:SetScript("OnLeave", function()
+        h._hot = nil
+        HM.PaintHead(h)
+    end)
+    h.hit:SetScript("OnClick", function() HM.Toggle(key) end)
+    HM.PaintHead(h)
     return h
+end
+
+-- The Home sections the player folded, kept for the account in the window's
+-- store (Store.UI().homeShut[key]); every one is open until its heading is
+-- clicked.
+function HM.Shut(key)
+    local u = Store.UI and Store.UI()
+    return key ~= nil and u ~= nil and u.homeShut ~= nil and u.homeShut[key] == true
+end
+
+-- A heading's click folds or opens its section; the page lays itself out again
+-- so what follows moves up or back down.
+function HM.Toggle(key)
+    local u = Store.UI and Store.UI()
+    if not (key and u) then return end
+    local set = u.homeShut or {}
+    local shut = not set[key]
+    set[key] = shut or nil
+    u.homeShut = next(set) and set or nil
+    AT.CloseDropdown()
+    PlaySound(shut and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF
+        or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON, "Master")
+    HM.Refresh()
+end
+
+-- Open, the chevron points down; folded, right. Under the mouse the title and
+-- the chevron brighten to the text colour, as the theme's folding sections do.
+function HM.PaintHead(h)
+    local c = h._hot and COL.ink or COL.arc
+    HM.Color(h.title, c)
+    h.chev:SetColor(c)
+    h.chev:SetDown(not HM.Shut(h._key))
 end
 
 -- What there is
@@ -956,14 +1013,18 @@ end
 
 -- The main column: My Layouts (a card per layout that loads here, then the
 -- "also in your collection" rows, or a line when there are none), then the
--- Spotlight. Returns its height.
+-- Spotlight. A folded section keeps its heading alone. Returns its height.
 function HM.LayMain(row, st, w)
     local M, c = row.M, st.census
     row.headL:ClearAllPoints()
     row.headL:SetPoint("TOPLEFT", M, "TOPLEFT", 0, 0)
     row.headL:SetWidth(w)
-    local y = HM.HEAD_H + 8
-    for i, lay in ipairs(c.loaded) do
+    HM.PaintHead(row.headL)
+    local shut = HM.Shut(row.headL._key)
+    local loaded, others = c.loaded, c.others
+    if shut then loaded, others = {}, {} end
+    local y = HM.HEAD_H + (shut and 0 or 8)
+    for i, lay in ipairs(loaded) do
         local card = HM.cards[i]
         if not card then
             card = HM.MakeCard(M)
@@ -975,17 +1036,17 @@ function HM.LayMain(row, st, w)
         card:Show()
         y = y + h + HM.GAP
     end
-    for i = #c.loaded + 1, #HM.cards do HM.cards[i]:Hide() end
-    row.cap:SetShown(#c.others > 0)
-    if #c.others > 0 then
-        if #c.loaded > 0 then y = y + 6 end
+    for i = #loaded + 1, #HM.cards do HM.cards[i]:Hide() end
+    row.cap:SetShown(#others > 0)
+    if #others > 0 then
+        if #loaded > 0 then y = y + 6 end
         row.cap:ClearAllPoints()
         row.cap:SetPoint("TOPLEFT", M, "TOPLEFT", 2, -y)
         y = y + 20
         -- two to a line where the column holds two and every name fits its half
         local cols = (w >= 2 * HM.ROW_MIN + HM.ROW_GAP) and 2 or 1
         local half = math.floor((w - HM.ROW_GAP) / 2)
-        for i, lay in ipairs(c.others) do
+        for i, lay in ipairs(others) do
             local r = HM.others[i]
             if not r then
                 r = HM.MakeOther(M)
@@ -995,7 +1056,7 @@ function HM.LayMain(row, st, w)
             if math.ceil(HM.Width(r.name)) > HM.NameRoom(r, half, false) then cols = 1 end
         end
         local ow = math.floor((w - (cols - 1) * HM.ROW_GAP) / cols)
-        for i, lay in ipairs(c.others) do
+        for i, lay in ipairs(others) do
             local r = HM.others[i]
             r:SetWidth(ow)
             HM.FillOther(r, lay, ow)
@@ -1004,11 +1065,12 @@ function HM.LayMain(row, st, w)
             r:SetPoint("TOPLEFT", M, "TOPLEFT", col * (ow + HM.ROW_GAP), -(y + line * (HM.ROW_H + HM.ROW_GAP)))
             r:Show()
         end
-        y = y + math.ceil(#c.others / cols) * (HM.ROW_H + HM.ROW_GAP)
+        y = y + math.ceil(#others / cols) * (HM.ROW_H + HM.ROW_GAP)
     end
-    for i = #c.others + 1, #HM.others do HM.others[i]:Hide() end
-    row.none:SetShown(c.total == 0)
-    if c.total == 0 then
+    for i = #others + 1, #HM.others do HM.others[i]:Hide() end
+    local none = c.total == 0 and not shut
+    row.none:SetShown(none)
+    if none then
         row.none:ClearAllPoints()
         row.none:SetPoint("TOPLEFT", M, "TOPLEFT", 2, -y)
         y = y + 22
@@ -1018,15 +1080,18 @@ function HM.LayMain(row, st, w)
 end
 
 -- The rail: the waiting updates one at a time (the heading pages through
--- them), or a calm box, then What's New. Returns its height.
+-- them), or a calm box, then What's New. A folded section keeps its heading
+-- alone, and folded Updates drops its pager with the card. Returns its height.
 function HM.LayRail(row, st, w)
     local R, h = row.R, row.headU
     h:ClearAllPoints()
     h:SetPoint("TOPLEFT", R, "TOPLEFT", 0, 0)
     h:SetWidth(w)
+    HM.PaintHead(h)
     local list = st.pending
     local n = #list
-    local some = n > 0
+    local shut = HM.Shut(h._key)
+    local some = n > 0 and not shut
     h.pos:SetShown(some)
     h.prev:SetShown(some)
     h.next:SetShown(some)
@@ -1038,15 +1103,16 @@ function HM.LayRail(row, st, w)
     row.upd:SetShown(some)
     row.capU:SetShown(some)
     row.all:SetShown(some)
-    row.calm:SetShown(not some)
-    local y = HM.HEAD_H + 8
-    if not some then
-        HM.updIndex = nil
+    local calm = n == 0 and not shut
+    row.calm:SetShown(calm)
+    if n == 0 then HM.updIndex = nil end
+    local y = HM.HEAD_H + (shut and 0 or 8)
+    if calm then
         row.calm:SetWidth(w)
         row.calm:ClearAllPoints()
         row.calm:SetPoint("TOPLEFT", R, "TOPLEFT", 0, -y)
         y = y + HM.CALM_H + HM.GAP
-    else
+    elseif some then
         -- a shorter list (Later, an update made) pulls the index back inside it
         local i = math.max(1, math.min(HM.updIndex or 1, n))
         HM.updIndex = i
@@ -1074,10 +1140,16 @@ function HM.LayRail(row, st, w)
         row.headN:ClearAllPoints()
         row.headN:SetPoint("TOPLEFT", R, "TOPLEFT", 0, -y)
         row.headN:SetWidth(w)
-        y = y + HM.HEAD_H + 8
-        row.notes:ClearAllPoints()
-        row.notes:SetPoint("TOPLEFT", R, "TOPLEFT", 0, -y)
-        y = y + HM.LayNotes(row.notes, w)
+        HM.PaintHead(row.headN)
+        y = y + HM.HEAD_H
+        local open = not HM.Shut(row.headN._key)
+        row.notes:SetShown(open)
+        if open then
+            y = y + 8
+            row.notes:ClearAllPoints()
+            row.notes:SetPoint("TOPLEFT", R, "TOPLEFT", 0, -y)
+            y = y + HM.LayNotes(row.notes, w)
+        end
     end
     return y
 end
@@ -1088,7 +1160,7 @@ function HM.MainRow(pg)
     local row = AT.AddRow(pg, 200)
     row.M = CreateFrame("Frame", nil, row)
     row.R = CreateFrame("Frame", nil, row)
-    row.headL = HM.MakeHead(row.M, "My Layouts")
+    row.headL = HM.MakeHead(row.M, "My Layouts", nil, nil, "layouts")
     row.cap = HM.Text(row.M, 10, COL.faint)
     row.cap:SetText("ALSO IN YOUR COLLECTION")
     row.none = HM.Text(row.M, 12, COL.dim)
@@ -1096,7 +1168,7 @@ function HM.MainRow(pg)
     local NL = NS.NewLayout
     row.spot = HM.MakeSpot(row.M, (NL and NL.SPOTLIGHT) or {})
     -- the heading pages through the waiting updates
-    local h = HM.MakeHead(row.R, "Updates")
+    local h = HM.MakeHead(row.R, "Updates", nil, nil, "updates")
     h.next = HM.MakeArrow(h, "right")
     h.next:SetPoint("RIGHT", h, "RIGHT", 0, 0)
     h.prev = HM.MakeArrow(h, "left")
@@ -1130,7 +1202,7 @@ function HM.MainRow(pg)
     if ver then
         row.headN = HM.MakeHead(row.R, "What's New", "All notes", function()
             if CL.Show then CL.Show() end
-        end)
+        end, "notes")
         row.notes = HM.MakeNotes(row.R, ver)
     end
     row._sync = function()
@@ -1608,7 +1680,7 @@ function HM.MakeSpot(parent, list)
     local sp = { cards = {} }
     sp.head = HM.MakeHead(parent, "Arc Auras Layout Spotlight", (#list > 0) and "Browse all layouts" or nil, function()
         Options.Select("newlayout")
-    end)
+    end, "spotlight")
     for _, g in ipairs(HM.Makers(list)) do
         sp.cards[#sp.cards + 1] = g.single and HM.MakePack(parent, g[1]) or HM.MakeMaker(parent, g)
     end
@@ -1622,11 +1694,16 @@ function HM.MakeSpot(parent, list)
 end
 
 -- Lays the Spotlight out in `parent` from y0 down, w wide, one card to a
--- line. Returns its height.
+-- line; folded, the heading alone. Returns its height.
 function HM.LaySpot(sp, parent, y0, w)
     sp.head:ClearAllPoints()
     sp.head:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -y0)
     sp.head:SetWidth(w)
+    HM.PaintHead(sp.head)
+    local open = not HM.Shut(sp.head._key)
+    for _, c in ipairs(sp.cards) do c:SetShown(open) end
+    if sp.share then sp.share:SetShown(open) end
+    if not open then return HM.HEAD_H end
     local y = y0 + HM.HEAD_H + 8
     for _, c in ipairs(sp.cards) do
         local h = HM.PACK_H

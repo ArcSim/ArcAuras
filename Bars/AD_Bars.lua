@@ -420,7 +420,9 @@ Bars.DurationLayerPlan = DurationLayerPlan
 -- tick positions as fractions of the bar (0 < p < 1) from the ticks section.
 -- unitMax = the bar's full value in its own unit (stacks / seconds / power)
 -- or nil when unknown; integerUnit = discrete units; costs = extra fractions
--- already resolved (resource spell costs).
+-- already resolved (resource spell costs). Custom mode also returns from[i]:
+-- the nth number typed that mark i draws (0 = a cost mark), which Color each
+-- tick paints by; every other mode wears one colour.
 local function TickFractions(rec, unitMax, integerUnit, costs)
     if R(rec, "ticks", "ticksShow") ~= true then return nil end
     local mode = R(rec, "ticks", "tickMode") or "percent"
@@ -430,9 +432,12 @@ local function TickFractions(rec, unitMax, integerUnit, costs)
         and ((rec.driver and rec.driver.unit) or "player") == "player") then
         mode = "percent"
     end
-    local out = {}
-    local function add(p)
-        if p and p > 0.0005 and p < 0.9995 then out[#out + 1] = p end
+    local out, src = {}, {}
+    local function add(p, k)
+        if p and p > 0.0005 and p < 0.9995 then
+            out[#out + 1] = p
+            src[#src + 1] = k or 0
+        end
     end
     if mode == "all" then
         -- one per unit while that is a sane count, else percent steps
@@ -450,21 +455,30 @@ local function TickFractions(rec, unitMax, integerUnit, costs)
         local asPct = R(rec, "ticks", "tickAsPercent") == true
         local scale = R(rec, "ticks", "tickScale") or 0
         if scale <= 0 then scale = unitMax or 0 end
-        for v in tostring(R(rec, "ticks", "tickValues") or ""):gmatch("[%d%.]+") do
-            local n = tonumber(v)
-            if n then
-                if asPct then add(n / 100) elseif scale > 0 then add(n / scale) end
-            end
+        for k, n in ipairs(NS.Schema.TickValues(R(rec, "ticks", "tickValues"))) do
+            if asPct then add(n / 100, k) elseif scale > 0 then add(n / scale, k) end
         end
     end
-    for _, p in ipairs(costs or {}) do add(p) end
+    for _, p in ipairs(costs or {}) do add(p, 0) end
     if #out == 0 then return nil end
-    table.sort(out)
-    local dd = {}
-    for _, p in ipairs(out) do
-        if not dd[#dd] or math.abs(dd[#dd] - p) > 0.0005 then dd[#dd + 1] = p end
+    -- in spot order; a spot several numbers share keeps the lowest of them
+    -- and wears the colour of the first one typed
+    local order = {}
+    for i = 1, #out do order[i] = i end
+    table.sort(order, function(a, b)
+        if out[a] ~= out[b] then return out[a] < out[b] end
+        return a < b
+    end)
+    local dd, from = {}, {}
+    for _, i in ipairs(order) do
+        local p, k, n = out[i], src[i], #dd
+        if n == 0 or math.abs(dd[n] - p) > 0.0005 then
+            dd[n + 1], from[n + 1] = p, k
+        elseif k > 0 and (from[n] == 0 or k < from[n]) then
+            from[n] = k
+        end
     end
-    return dd
+    return dd, (mode == "custom") and from or nil
 end
 Bars.TickFractions = TickFractions
 
@@ -786,9 +800,13 @@ local function LayoutDividers(shell, rec, n)
     local len = (vertical and shell.fill:GetHeight() or shell.fill:GetWidth()) or 0
     local stride = (count > 0 and len > 0) and (len / n) or 0
     local c = R(rec, "segments", "dividerColor") or { 0.039, 0.067, 0.125, 1 }
-    -- segmentSpacing is the gap width in physical pixels. A divider is a
-    -- hairline strip, so it is never thinner than 2 pixels (see LayoutTicks).
-    local px = Px(shell) * math.max(2, R(rec, "segments", "segmentSpacing") or 2)
+    -- segmentSpacing is the divider's width in whole physical pixels, down to
+    -- one, placed like a tick mark (LayoutTicks): snapped to its pixel, edges
+    -- on whole pixels, an odd width's spare pixel right of it or below it.
+    local px = Px(shell)
+    local k = math.max(1, math.floor((R(rec, "segments", "segmentSpacing") or 2) + 0.5))
+    local thick = Bars.StripPx(shell, k)
+    local lead = vertical and (k - math.floor(k / 2)) or math.floor(k / 2)
     for i = 1, count do
         local d = shell.dividers[i]
         if not d then
@@ -797,15 +815,15 @@ local function LayoutDividers(shell, rec, n)
         end
         d:SetColorTexture(c[1], c[2], c[3], c[4] or 1)
         d:ClearAllPoints()
-        local at = stride * i - px * 0.5
+        local at = (math.floor(stride * i / px + 0.5) - lead) * px
         if vertical then
             d:SetPoint("BOTTOMLEFT", shell.fill, "BOTTOMLEFT", 0, at)
             d:SetPoint("BOTTOMRIGHT", shell.fill, "BOTTOMRIGHT", 0, at)
-            d:SetHeight(px)
+            d:SetHeight(thick)
         else
             d:SetPoint("TOPLEFT", shell.fill, "TOPLEFT", at, 0)
             d:SetPoint("BOTTOMLEFT", shell.fill, "BOTTOMLEFT", at, 0)
-            d:SetWidth(px)
+            d:SetWidth(thick)
         end
         d:Show()
     end
@@ -2272,13 +2290,14 @@ local function LayoutTicks(entry)
     -- A charge-slot cooldown bar has no ticks (its slot gaps are the marks);
     -- a pips bar draws cells. Other counted bars draw "Every point" marks
     -- from the live maximum.
-    local fracs
+    local fracs, from
     if not (entry.mode == "stack" and entry.kind == "cooldown") and not entry.pipsOn then
         local unitMax, integerUnit, costs = TickUnit(entry)
-        fracs = TickFractions(rec, unitMax, integerUnit, costs)
+        fracs, from = TickFractions(rec, unitMax, integerUnit, costs)
     end
-    -- a kind in its own file may hand its own marks (a deck bar's procs)
-    local KT = Bars.KINDS[entry.kind]; if KT and KT.TickFractions then fracs = KT.TickFractions(entry) end
+    -- a kind in its own file may hand its own marks (a deck bar's procs), in
+    -- one colour
+    local KT = Bars.KINDS[entry.kind]; if KT and KT.TickFractions then fracs, from = KT.TickFractions(entry), nil end
     if not fracs then
         for _, t in ipairs(pool) do t:Hide() end
         entry.tickCount = 0
@@ -2303,16 +2322,30 @@ local function LayoutTicks(entry)
     local vertical = (R(rec, "fill", "orientation") or "HORIZONTAL") == "VERTICAL"
     local rev = R(rec, "fill", "reverseFill") == true
     local px = Px(shell)
-    -- A strip one physical pixel thick at a fractional position can rasterise
-    -- to nothing, and a dragged bar is fractional every frame, so a mark is at
-    -- least two physical pixels (like the theme's AT.Hairline), which always
-    -- cover a pixel centre. SetSnapToPixelGrid is no fix: strips keep the
-    -- default sampling.
-    local thick = px * math.max(2, R(rec, "ticks", "tickThickness") or 2)
+    -- A mark is the picked whole number of physical pixels, down to one. A
+    -- bar at rest sits on whole pixels, so a mark whose edges do too draws
+    -- crisp; a one-pixel mark may shimmer only while the bar is dragged.
+    -- SetSnapToPixelGrid is no fix: strips keep the default sampling.
+    local tn = math.max(1, math.floor((R(rec, "ticks", "tickThickness") or 2) + 0.5))
+    local thick = Bars.StripPx(shell, tn)
+    -- pixels before the mark's spot, counted from the fill origin: centring
+    -- an odd count would put both edges on half pixels, so its spare pixel
+    -- goes right of the spot (below on a standing bar), either fill direction
+    local lead = (vertical == rev) and math.floor(tn / 2) or (tn - math.floor(tn / 2))
     local hp = (R(rec, "ticks", "tickHeight") or 100) / 100
     local anchor = R(rec, "ticks", "tickHeightAnchor") or "center"
     local c = R(rec, "ticks", "tickColor") or { 0, 0, 0, 1 }
     entry.tickRGBA = c   -- for the button-owned copies (see ApplyStyle's edgeRGBA)
+    -- Color each tick: the nth number typed wears colour n (the Tick color
+    -- first, the sixth past six), a cost mark the Tick color. Colour only: a
+    -- mark's spot and size never depend on it.
+    local cols
+    if from and R(rec, "ticks", "tickColorEach") == true then
+        cols = { c, R(rec, "ticks", "tickColor2") or c, R(rec, "ticks", "tickColor3") or c,
+            R(rec, "ticks", "tickColor4") or c, R(rec, "ticks", "tickColor5") or c,
+            R(rec, "ticks", "tickColor6") or c }
+    end
+    entry.tickRGBAs = cols and {} or nil
     local len = vertical and H or W
     local cross = vertical and W or H
     local tickCross = math.max(px, math.floor(cross * hp / px + 0.5) * px)
@@ -2325,10 +2358,15 @@ local function LayoutTicks(entry)
             t = shell.overlay:CreateTexture(nil, "ARTWORK", nil, 1)
             pool[n] = t
         end
-        t:SetColorTexture(c[1], c[2], c[3], c[4] or 1)
+        local tc = c
+        if cols then
+            tc = cols[math.min(math.max(from[n] or 1, 1), 6)]
+            entry.tickRGBAs[n] = tc
+        end
+        t:SetColorTexture(tc[1], tc[2], tc[3], tc[4] or 1)
         t:ClearAllPoints()
-        -- centred on the snapped position, measured from the fill origin
-        local pos = math.floor(len * p / px + 0.5) * px - thick * 0.5
+        -- from the snapped position, measured from the fill origin
+        local pos = (math.floor(len * p / px + 0.5) - lead) * px
         if vertical then
             t:SetSize(tickCross, thick)
             local y = rev and -pos or pos
@@ -4818,7 +4856,8 @@ AuraOwnChromeSync = function(entry)
             if p then t:SetPoint(p, rel, rp, x, y) end
             t:SetSize(srcT:GetSize())
         end
-        local tc = entry.tickRGBA or { 0, 0, 0, 1 }
+        -- each copy wears its original's colour (Color each tick)
+        local tc = (entry.tickRGBAs and entry.tickRGBAs[i]) or entry.tickRGBA or { 0, 0, 0, 1 }
         t:SetColorTexture(tc[1], tc[2], tc[3], tc[4] or 1)
         t:Show()
     end

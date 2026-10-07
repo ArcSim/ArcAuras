@@ -18,7 +18,8 @@ NS.OldAuraEngine = NS.IsForever ~= true and Enum ~= nil
     and Enum.CustomAuraButtonDispelTypeTextureStyle ~= nil
     and Enum.CustomAuraButtonDispelTypeTextureStyle.CustomAsset == nil
 
-Schema.ICON_KINDS = { "spell", "item", "trinket", "timer", "totem", "aura", "ammo", "enchant", "special", "groupbuff" }
+Schema.ICON_KINDS = { "spell", "item", "trinket", "timer", "totem", "aura", "ammo", "enchant", "special", "groupbuff",
+    "stance" }
 -- A reminder group (Drivers\AD_DriverReminders.lua) is a pulse window: its
 -- members are reminder records, never icons.
 Schema.GROUP_KINDS = { "cooldown", "aura", "reminder" }
@@ -200,7 +201,14 @@ Schema.SOUND_AURA_UNIT_LABELS = { player = "You", target = "Your target", focus 
 -- special: a Special Aura (Core\AD_SpecialIcon.lua over NS.Special, retail
 -- only): a deck's position on the stack text, its procs and chance on the
 -- labels, "all procs used" or a running internal cooldown as the cooldown look.
+-- stance: the stance you are in, or one stance lit while you are in it
+-- (Drivers\AD_DriverStance.lua): in it is the ready look, not in it the
+-- cooldown look. It has no swipe, sounds, count or timer.
 local CD  = { spell = true, item = true, trinket = true, timer = true, totem = true, enchant = true, special = true }
+-- the ready look's grey out, both state tints and the ready glow: the
+-- cooldown kinds and a stance icon (In the stance / Not in it)
+local CDST = { spell = true, item = true, trinket = true, timer = true, totem = true, enchant = true, special = true,
+    stance = true }
 -- the cooldown-driven sounds; a special icon's own pair is the proc edge
 local USE_CD = { spell = true, item = true, trinket = true, timer = true, enchant = true }
 local USE = { spell = true, item = true, trinket = true, timer = true, enchant = true, special = true }
@@ -212,16 +220,16 @@ local SPC = { special = true }
 -- Every kind but aura: holder-only options (keep bright) mean nothing on an
 -- engine-drawn aura button.
 local NA  = { spell = true, item = true, trinket = true, timer = true, totem = true, ammo = true,
-    enchant = true, special = true }
+    enchant = true, special = true, stance = true }
 -- Stack text: only kinds something writes a count for (spell charges, item and
 -- ammo bag counts, aura applications, timer stacks, enchant charges, a deck's
 -- position, a group buff's have / total). Trinkets have none.
 local STK = { spell = true, item = true, timer = true, aura = true, ammo = true, enchant = true, special = true,
     groupbuff = true }
--- The two-state dim: the cooldown kinds, and a group buff (someone lacks it /
--- everyone has it, Drivers\AD_DriverGroupBuff.lua).
+-- The two-state dim: the cooldown kinds, a group buff (someone lacks it /
+-- everyone has it, Drivers\AD_DriverGroupBuff.lua) and a stance icon.
 local CDGB = { spell = true, item = true, trinket = true, timer = true, totem = true, enchant = true, special = true,
-    groupbuff = true }
+    groupbuff = true, stance = true }
 -- The duration text: kinds with a time to count down (not ammo, not a group
 -- buff: their text is a count).
 local DUR = { spell = true, item = true, trinket = true, timer = true, totem = true, enchant = true, special = true,
@@ -234,7 +242,7 @@ local AMMO_CT = { ammo = true, spell = true }
 -- The kinds whose custom texts follow their two states (the first two rows
 -- of their Conditions table: ready / on cooldown, active / missing, ...).
 local TWO = { spell = true, item = true, trinket = true, timer = true, totem = true, ammo = true,
-    enchant = true, special = true, groupbuff = true }
+    enchant = true, special = true, groupbuff = true, stance = true }
 -- "Minutes and seconds" cutoffs in seconds, for icons and bars alike.
 local ABBREV_VALUES = { 0, 120, 300, 600, 3600 }
 local ABBREV_LABELS = { [0] = "Off", [120] = "Under 2 minutes", [300] = "Under 5 minutes",
@@ -396,12 +404,13 @@ Schema.icon = {
     states = { push = true, inherit = true, fields = {
         readyAlpha    = { d = 1.0,  t = "num", min = 0, max = 1, label = "Ready alpha" },
         -- Not on ammo icons: they never have a cooldown. A group buff's is
-        -- "everyone has it", hidden until the user shows it.
-        cooldownAlpha = { d = 1.0, dk = { groupbuff = 0 }, t = "num", min = 0, max = 1, kinds = CDGB,
+        -- "everyone has it", hidden until the user shows it; a stance icon's
+        -- is "not in it", dimmed and greyed so the stance you are in stands out.
+        cooldownAlpha = { d = 1.0, dk = { groupbuff = 0, stance = 0.6 }, t = "num", min = 0, max = 1, kinds = CDGB,
             label = "On cooldown alpha" },
         cooldownDesaturate = { d = true, t = "bool", kinds = CDGB, label = "Desaturate on cooldown" },
         -- the ready look (a Custom Icon's Active) can grey out too
-        readyDesaturate = { d = false, t = "bool", kinds = CD, label = "Desaturate when ready" },
+        readyDesaturate = { d = false, t = "bool", kinds = CDST, label = "Desaturate when ready" },
         -- On: duration, stack and label texts stay bright while the icon dims.
         -- Off: they follow the state alpha.
         preserveDurationText = { d = true, t = "bool", label = "Keep texts bright while dimmed" },
@@ -417,38 +426,38 @@ Schema.icon = {
         -- spent the last of two (Drivers\AD_DriverCooldown.lua ShadowState).
         ignoreHardICD = { d = false, t = "bool", kinds = SP, showIf = ChargeShows, label = "Ignore hard ICD",
             desc = "For a charge spell that also locks for a while after each cast: show its charges and recharge, not that lock." },
-        readyGlow = { d = false, t = "bool", kinds = CD, label = "Glow when ready" },
-        readyGlowType = { d = "button", t = "enum", values = GLOW_STYLES, labels = GLOW_STYLE_LABELS, kinds = CD, label = "Glow style", dep = { field = "readyGlow" } },
-        readyGlowColor = { d = { 0.95, 0.95, 0.32, 1 }, t = "color", kinds = CD, label = "Glow color", dep = { field = "readyGlow" } },
-        readyGlowSpeed = { adv = "glow", d = 0.25, t = "num", min = 0.05, max = 1, kinds = CD, label = "Glow speed",
+        readyGlow = { d = false, t = "bool", kinds = CDST, label = "Glow when ready" },
+        readyGlowType = { d = "button", t = "enum", values = GLOW_STYLES, labels = GLOW_STYLE_LABELS, kinds = CDST, label = "Glow style", dep = { field = "readyGlow" } },
+        readyGlowColor = { d = { 0.95, 0.95, 0.32, 1 }, t = "color", kinds = CDST, label = "Glow color", dep = { field = "readyGlow" } },
+        readyGlowSpeed = { adv = "glow", d = 0.25, t = "num", min = 0.05, max = 1, kinds = CDST, label = "Glow speed",
             dep = { { field = "readyGlow" }, { field = "readyGlowType", anyOf = GLOW_SPEED_STYLES } } },
-        readyGlowLines = { adv = "glow", d = 8, t = "int", min = 1, max = 16, kinds = CD, label = "Glow lines",
+        readyGlowLines = { adv = "glow", d = 8, t = "int", min = 1, max = 16, kinds = CDST, label = "Glow lines",
             dep = { { field = "readyGlow" }, { field = "readyGlowType", value = "pixel" } } },
-        readyGlowThickness = { adv = "glow", d = 2, t = "int", min = 1, max = 20, kinds = CD, label = "Glow thickness",
+        readyGlowThickness = { adv = "glow", d = 2, t = "int", min = 1, max = 20, kinds = CDST, label = "Glow thickness",
             dep = { { field = "readyGlow" }, { field = "readyGlowType", value = "pixel" } } },
-        readyGlowLength = { adv = "glow", d = 0, t = "int", min = 0, max = 40, kinds = CD, label = "Glow line length (0 = auto)",
+        readyGlowLength = { adv = "glow", d = 0, t = "int", min = 0, max = 40, kinds = CDST, label = "Glow line length (0 = auto)",
             dep = { { field = "readyGlow" }, { field = "readyGlowType", value = "pixel" } } },
-        readyGlowParticles = { adv = "glow", d = 4, t = "int", min = 1, max = 16, kinds = CD, label = "Glow particles",
+        readyGlowParticles = { adv = "glow", d = 4, t = "int", min = 1, max = 16, kinds = CDST, label = "Glow particles",
             dep = { { field = "readyGlow" }, { field = "readyGlowType", value = "autocast" } } },
-        readyGlowIntensity = { adv = "glow", d = 1, t = "num", min = 0.1, max = 1, kinds = CD, label = "Glow intensity",
+        readyGlowIntensity = { adv = "glow", d = 1, t = "num", min = 0.1, max = 1, kinds = CDST, label = "Glow intensity",
             dep = { field = "readyGlow" } },
-        readyGlowScale = { adv = "glow", d = 1, t = "num", min = 0.5, max = 2, kinds = CD, label = "Glow size",
+        readyGlowScale = { adv = "glow", d = 1, t = "num", min = 0.5, max = 2, kinds = CDST, label = "Glow size",
             dep = { { field = "readyGlow" }, { field = "readyGlowType", value = "autocast" } } },
-        readyGlowXOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = CD, label = "Glow X offset",
+        readyGlowXOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = CDST, label = "Glow X offset",
             dep = { field = "readyGlow" } },
-        readyGlowYOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = CD, label = "Glow Y offset",
+        readyGlowYOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = CDST, label = "Glow Y offset",
             dep = { field = "readyGlow" } },
         -- Move shifts the glow without resizing it; the X/Y offsets above grow
         -- or shrink it.
-        readyGlowMoveX = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = CD, label = "Glow move X",
+        readyGlowMoveX = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = CDST, label = "Glow move X",
             dep = { field = "readyGlow" } },
-        readyGlowMoveY = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = CD, label = "Glow move Y",
+        readyGlowMoveY = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = CDST, label = "Glow move Y",
             dep = { field = "readyGlow" } },
-        readyGlowCombatOnly = { d = false, t = "bool", kinds = CD, label = "Glow only in combat",
+        readyGlowCombatOnly = { d = false, t = "bool", kinds = CDST, label = "Glow only in combat",
             dep = { field = "readyGlow" } },
-        readyGlowStrata = { adv = "glow", d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }, kinds = CD, label = "Glow strata",
+        readyGlowStrata = { adv = "glow", d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }, kinds = CDST, label = "Glow strata",
             dep = { field = "readyGlow" } },
-        readyGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = CD, label = "Glow frame level",
+        readyGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = CDST, label = "Glow frame level",
             dep = { field = "readyGlow" } },
         -- Glows while the real cooldown runs (the GCD never counts: the
         -- driver's dim state ignores it); a special icon's "all procs used"
@@ -484,10 +493,10 @@ Schema.icon = {
             dep = { field = "cooldownGlow" } },
         cooldownGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = CDG, label = "Cooldown glow frame level",
             dep = { field = "cooldownGlow" } },
-        readyTintEnabled = { d = false, t = "bool", kinds = CD, label = "Ready tint" },
-        readyTintColor = { d = { 1, 1, 1, 1 }, t = "color", kinds = CD, label = "Ready tint color", dep = { field = "readyTintEnabled" } },
-        cooldownTintEnabled = { d = false, t = "bool", kinds = CD, label = "Cooldown tint" },
-        cooldownTintColor = { d = { 0.5, 0.5, 0.5, 1 }, t = "color", kinds = CD, label = "Cooldown tint color", dep = { field = "cooldownTintEnabled" } },
+        readyTintEnabled = { d = false, t = "bool", kinds = CDST, label = "Ready tint" },
+        readyTintColor = { d = { 1, 1, 1, 1 }, t = "color", kinds = CDST, label = "Ready tint color", dep = { field = "readyTintEnabled" } },
+        cooldownTintEnabled = { d = false, t = "bool", kinds = CDST, label = "Cooldown tint" },
+        cooldownTintColor = { d = { 0.5, 0.5, 0.5, 1 }, t = "color", kinds = CDST, label = "Cooldown tint color", dep = { field = "cooldownTintEnabled" } },
         -- On by default, mirroring Blizzard's own proc overlay.
         procGlow = { d = true, t = "bool", kinds = SP, label = "Proc glow" },
         procGlowType = { d = "proc", t = "enum", values = PROC_GLOW_STYLES, labels = GLOW_STYLE_LABELS, kinds = SP, label = "Proc glow style", dep = { field = "procGlow" } },
@@ -973,6 +982,13 @@ Schema.icon = {
         countShows = { d = "haveTotal", t = "enum", values = { "haveTotal", "missing", "have" },
             labels = { haveTotal = "Have / total (3/5)", missing = "Missing (2)", have = "Have (3)" },
             label = "Count shows", dep = { section = "text", field = "stackText" } },
+    } },
+    -- A stance icon (Drivers\AD_DriverStance.lua): the stance you are in, or
+    -- one stance (rec.driver.spellID) lit while you are in it. Per icon.
+    stance = { kinds = { stance = true }, fields = {
+        shows = { d = "current", t = "enum", values = { "current", "one" },
+            labels = { current = "Your current stance", one = "One stance" }, label = "Shows",
+            desc = "Your current stance: the stance, form or aura you are in, greyed while in none. One stance: that one, lit while you are in it." },
     } },
     -- A totem's pulse: a bar under the art that refills at every pulse,
     -- counted from when the totem went down (NS.DriverTotem).
@@ -1578,8 +1594,8 @@ Schema.iconGroup = {
         -- its cell for dragging (gpos is its identity). On an aura group it
         -- switches live view: on packs the engine rows with auras that are up,
         -- off keeps a static grid. The other dynamic fields are cooldown-only.
-        dynamicLayout = { inherit = false, d = false, t = "bool", label = "Dynamic: compact icons",
-            desc = "Icons pack together while you play." },
+        dynamicLayout = { inherit = false, d = false, t = "bool", label = "Close gaps",
+            desc = "Empty spots close up while you play: a spot with no icon, or with an icon that is not loaded." },
         -- A Dynamic aura group's direction (Drivers\AD_DriverAuraRows.lua):
         -- Horizontal packs each grid row sideways (Left / Center / Right),
         -- Vertical each column (Up / Center / Down). The alignment value is
@@ -1589,6 +1605,16 @@ Schema.iconGroup = {
             labels = { horizontal = "Horizontal", vertical = "Vertical" },
             label = "Pack direction",
             desc = "Horizontal packs each row sideways; Vertical packs each column up or down." },
+        -- Time left: one engine aura group per unit holds every member's
+        -- spells and the game sorts it (AR.PlaceFlows), so it sorts in combat
+        -- with nothing read; the members share one look and only auras that
+        -- are up show. Only where the game has the aura engine.
+        dynamicSort = { inherit = false, d = "editor", t = "enum", kinds = GK_AU,
+            values = { "editor", "time" },
+            labels = { editor = "Editor's order", time = "Time left" },
+            label = "Order", dep = { field = "dynamicLayout" },
+            showIf = function() return NS.DriverAuraGroups ~= nil and NS.DriverAuraGroups.IsAvailable() end,
+            desc = "Editor's order keeps your order. Time left puts the aura closest to running out first; auras that never end come last." },
         -- Shape-aware: one row offers left/center/right, one column
         -- top/center/bottom, a grid six gravity modes. Remapped per shape at
         -- read time (LayoutEngine.EffectiveAlignment); hidden, since a bespoke
@@ -1601,20 +1627,24 @@ Schema.iconGroup = {
         -- opacity 0. Aura icons stay: their presence cannot be read in combat.
         dynamicCollapse = { inherit = false, d = "none", t = "enum", kinds = GK_CD,
             values = { "none", "ready", "cooldown", "hidden" },
-            labels = { none = "Never", ready = "They are ready",
-                cooldown = "They are on cooldown", hidden = "Their opacity is 0" },
-            label = "Icons drop out when", dep = { field = "dynamicLayout" } },
+            labels = { none = "Nothing else", ready = "Ready icons",
+                cooldown = "Icons on cooldown", hidden = "Icons at opacity 0" },
+            label = "Also count as empty", dep = { field = "dynamicLayout" },
+            desc = "Icons in this state give up their spot too, and take one again when it ends." },
         dynamicOrder = { inherit = false, d = "priority", t = "enum", values = { "priority", "fcfs" }, kinds = GK_CD,
-            labels = { priority = "Priority (cell order)", fcfs = "First come, first served" },
-            label = "Icon order", dep = { { field = "dynamicLayout" },
-                { field = "dynamicCollapse", notValue = "none" } } },
+            labels = { priority = "Takes its spot back", fcfs = "Joins the end" },
+            label = "A returning icon", dep = { { field = "dynamicLayout" },
+                { field = "dynamicCollapse", notValue = "none" } },
+            desc = "Where an icon goes when it shows again. Only for a single row or column." },
         dynamicShrink = { d = false, t = "bool", kinds = GK_CD,
-            label = "Shrink container to content", dep = { field = "dynamicLayout" } },
+            label = "Shrink the group to fit", dep = { field = "dynamicLayout" },
+            desc = "The group's box hugs the icons that are showing; anything anchored to it moves with it." },
         smoothMovement = { d = false, t = "bool", kinds = GK_CD,
-            label = "Smooth movement", dep = { field = "dynamicLayout" } },
+            label = "Slide into place", dep = { field = "dynamicLayout" },
+            desc = "Icons glide to their new spot instead of jumping." },
         -- Seconds. fmt keeps the generic slider from showing 0..1 as a percent.
         smoothDuration = { d = 0.18, t = "num", min = 0.05, max = 0.4, kinds = GK_CD,
-            label = "Smooth duration (s)", fmt = "%.2f",
+            label = "Slide time (s)", fmt = "%.2f",
             dep = { { field = "dynamicLayout" }, { field = "smoothMovement" } } },
     } },
     look = { push = true, inherit = true, kinds = { cooldown = true, aura = true, reminder = true }, fields = {
@@ -1704,25 +1734,46 @@ Schema.iconGroup = {
     } },
     -- Debuff type looks on a group showing every aura on a unit: parts the game
     -- shows on its buttons only for the dispel types given them
-    -- (Drivers\AD_TypeLooks.lua). Per group: no layout look, no push. Each
-    -- type's own fields are added after this table from Schema.TYPE_LOOKS.
+    -- (Drivers\AD_TypeLooks.lua), and with a full look per type one engine
+    -- aura group per type (Drivers\AD_DriverUnitAuras.lua). Per group: no
+    -- layout look, no push. Each type's own fields are added after this table
+    -- from Schema.TYPE_LOOKS; a type's full look lives in rec.fullLooks.
     typeLook = { kinds = GK_AU, fields = {
-        looks = { d = "off", t = "enum", values = { "off", "parts" }, newAuraEngine = true,
-            labels = { off = "Off", parts = "Colors and badges" }, label = "Debuff type looks",
-            desc = "Colors and badges: each debuff type can have its own border, badge, color wash, label and glow, in the order the game shows them. Click a type's icon at the top of the group.",
+        looks = { d = "off", t = "enum", values = { "off", "parts", "full" }, newAuraEngine = true,
+            labels = { off = "Off", parts = "Colors and badges", full = "Full look per type" },
+            -- kept in the list while picked, so the box never shows a bare key
+            valueIf = { full = function(rec)
+                return Schema.TypeFullOK(rec) or NS.Store.Resolve(rec, "typeLook", "looks") == "full"
+            end },
+            label = "Debuff type looks",
+            desc = "Colors and badges keeps the game's order. Full look per type also gives each type its own size, swipe, texts and glows, in the order you pick.",
             dep = { section = "unitAuras", field = "shows", value = "unit" } },
         washAlpha = { d = 0.3, t = "num", min = 0.05, max = 1, step = 0.05, label = "Color wash strength",
-            dep = { { field = "looks", value = "parts" }, { section = "unitAuras", field = "shows", value = "unit" } } },
+            dep = { { field = "looks", anyOf = { parts = true, full = true } },
+                { section = "unitAuras", field = "shows", value = "unit" } } },
         labelSize = { d = 12, t = "int", min = 6, max = 32, label = "Label size",
-            dep = { { field = "looks", value = "parts" }, { section = "unitAuras", field = "shows", value = "unit" } } },
+            dep = { { field = "looks", anyOf = { parts = true, full = true } },
+                { section = "unitAuras", field = "shows", value = "unit" } } },
         labelAnchor = { d = "BOTTOMRIGHT", t = "enum", values = POINTS,
             labels = { TOPLEFT = "Top left", TOP = "Top", TOPRIGHT = "Top right", LEFT = "Left", CENTER = "Center",
                 RIGHT = "Right", BOTTOMLEFT = "Bottom left", BOTTOM = "Bottom", BOTTOMRIGHT = "Bottom right" },
             label = "Label position",
-            dep = { { field = "looks", value = "parts" }, { section = "unitAuras", field = "shows", value = "unit" } } },
+            dep = { { field = "looks", anyOf = { parts = true, full = true } },
+                { section = "unitAuras", field = "shows", value = "unit" } } },
         glowSize = { d = 1.4, t = "num", min = 1, max = 2.5, step = 0.05, fmt = "%.2f", label = "Glow size",
             desc = "How far the glow reaches past the icon: 1 sits on its edge.",
-            dep = { { field = "looks", value = "parts" }, { section = "unitAuras", field = "shows", value = "unit" } } },
+            dep = { { field = "looks", anyOf = { parts = true, full = true } },
+                { section = "unitAuras", field = "shows", value = "unit" } } },
+        ownLine = { d = false, t = "bool", label = "Each type on its own line",
+            desc = "Each type starts a new line. Off: the types follow straight on, with no gap between them.",
+            showIf = function(rec) return Schema.TypeFullOK(rec) end,
+            dep = { { field = "looks", value = "full" }, { section = "unitAuras", field = "shows", value = "unit" } } },
+        -- The types' keys in the order they show, comma separated; "" or a
+        -- short list reads as the strip's order (TL.Order). A bespoke row
+        -- moves the picked type (UI\AD_UnitAuraOptions.lua).
+        order = { d = "", t = "text", hidden = true, label = "Type order",
+            showIf = function(rec) return Schema.TypeFullOK(rec) end,
+            dep = { { field = "looks", value = "full" }, { section = "unitAuras", field = "shows", value = "unit" } } },
     } },
     -- A reminder group's pulse (Drivers\AD_DriverReminders.lua), ArcUI v1's
     -- Cooldown Reminder window: each reminder that fires pulses at the group's
@@ -1856,7 +1907,8 @@ Schema.TYPE_LOOKS = {
 }
 do
     local fields = Schema.iconGroup.typeLook.fields
-    local dep = { { field = "looks", value = "parts" }, { section = "unitAuras", field = "shows", value = "unit" } }
+    local dep = { { field = "looks", anyOf = { parts = true, full = true } },
+        { section = "unitAuras", field = "shows", value = "unit" } }
     local never = function() return false end
     for _, t in ipairs(Schema.TYPE_LOOKS) do
         local k, name = t.key, t.label
@@ -1876,6 +1928,79 @@ do
             desc = "A word on the icon in this type's color. Size and position are under All.", dep = dep }
         fields["glow" .. k] = { d = false, t = "bool", label = name .. " glow",
             desc = "A soft glow around the icon in this type's color. Glow size is under All.", dep = dep }
+    end
+end
+Schema.TYPE_KEYS = {}
+for _, t in ipairs(Schema.TYPE_LOOKS) do Schema.TYPE_KEYS[t.key] = true end
+
+-- A full look per type splits one half into an engine aura group per type:
+-- Buffs or Debuffs alone (a group per type cannot start the debuffs on a new
+-- line once its first type is empty), off the plates (a group per type on
+-- every plate is too many frames). Elsewhere the types show Colors and badges.
+function Schema.TypeFullOK(rec)
+    local unit, _, both = Schema.UnitAuraShape(rec)
+    return unit ~= "nameplate" and both ~= true
+end
+
+-- What a type's full look may set: the icon look rows a show-all group's
+-- buttons honour (Factory.StyleAuraButton), by block, in the order the type's
+-- rows show them (UI\AD_UnitAuraOptions.lua). Glows add every numbered glow's
+-- fields but Glow for and only in combat, which need a lane of the icon's own.
+Schema.TYPE_FULL_BLOCKS = {
+    -- worded apart from the group's own Icon scale on the same sub-tab
+    { tab = "Icon", title = "Size", section = "position",
+        fields = { "useGroupScale", "iconScale", "iconWidth", "iconHeight" },
+        labels = { useGroupScale = "Use the group's size", iconScale = "This type's scale",
+            iconWidth = "This type's width (0 = auto)", iconHeight = "This type's height (0 = auto)" } },
+    { tab = "Icon", title = "Look", section = "appearance", fields = { "zoom", "aspectRatio", "padding" } },
+    { tab = "Icon", title = "Art", section = "appearance", fields = { "forceHideIcon", "customIconFrom", "customIcon" } },
+    { tab = "Icon", title = "Border", section = "appearance",
+        fields = { "borderEnabled", "borderColor", "borderThickness", "borderInset", "dispelBorder" } },
+    { tab = "Icon", title = "Shadow", section = "appearance", fields = { "shadowEnabled", "shadowSize" } },
+    { tab = "Icon", title = "Swipe", section = "auraSwipe",
+        fields = { "swipeShow", "swipeColor", "swipeReverse", "swipeEdge", "edgeColor", "edgeScale", "swipeBling" } },
+    { tab = "Icon", title = "While the aura is up", section = "auraActive",
+        fields = { "activeAlpha", "activeDesaturate", "activeTintEnabled", "activeTintColor", "activePreserveText" } },
+    { tab = "Glows", glows = true, section = "auraActive" },
+    { tab = "Text", title = "Duration text", section = "text",
+        fields = { "durationText", "durationRounding", "durationFont", "durationSize", "durationColor",
+            "durationOutline", "durationShadow", "durationAnchor", "durationX", "durationY" } },
+    { tab = "Text", title = "Format", section = "text",
+        fields = { "durationAbbrev", "durationDecimals", "durationDecimalThreshold" } },
+    { tab = "Text", title = "Color by time left", section = "text",
+        fields = { "durationColorBands", "durBand1Sec", "durBand1Color", "durBand2Sec", "durBand2Color",
+            "durBand3Sec", "durBand3Color", "durBandCount" } },
+    { tab = "Text", title = "Stacks", section = "text",
+        fields = { "stackText", "stackFont", "stackSize", "stackColor", "stackOutline", "stackShadow",
+            "stackAnchor", "stackX", "stackY", "stackShowSingle" } },
+    { tab = "Text", title = "Color by count", section = "text",
+        fields = { "stackColorBands", "stkBand1Min", "stkBand1Color", "stkBand2Min", "stkBand2Color",
+            "stkBand3Min", "stkBand3Color", "stkBandCount" } },
+}
+Schema.TYPE_FULL_GLOW_SKIP = { activeGlowFor = true, activeGlowCombatOnly = true }
+
+-- [section] = { [field] = true }: the fields a type's full look keeps
+-- (Store.CleanTypeLooks drops the rest).
+Schema.TYPE_FULL_FIELDS = {}
+do
+    local out = Schema.TYPE_FULL_FIELDS
+    local function Add(section, field)
+        local sec = Schema.icon[section]
+        if not (sec and sec.fields[field]) then return end
+        out[section] = out[section] or {}
+        out[section][field] = true
+    end
+    for _, b in ipairs(Schema.TYPE_FULL_BLOCKS) do
+        if b.glows then
+            for k = 1, Schema.AURA_GLOW_SLOTS or 1 do
+                local suf = (k > 1) and tostring(k) or ""
+                for _, name in ipairs(Schema.AURA_GLOW_FIELDS) do
+                    if not Schema.TYPE_FULL_GLOW_SKIP[name] then Add(b.section, name .. suf) end
+                end
+            end
+        else
+            for _, f in ipairs(b.fields) do Add(b.section, f) end
+        end
     end
 end
 
@@ -2072,6 +2197,22 @@ Schema.DeckTemplateHint = function(which)
         return SBm and SBm.TemplateHint(rec, which) or ""
     end
 end
+-- The numbers of a custom tick list in the order typed: one parse for the
+-- marks (Bars\AD_Bars.lua TickFractions) and the panel's colour rows, so
+-- Color each tick's "Tick n color" is always the nth number drawn.
+function Schema.TickValues(s)
+    local out = {}
+    for v in tostring(s or ""):gmatch("[%d%.]+") do
+        local n = tonumber(v)
+        if n then out[#out + 1] = n end
+    end
+    return out
+end
+-- Color each tick's rows past the first: one per number in the list.
+local function EachTickDep(n)
+    return { { field = "tickColorEach" }, { field = "ticksShow" }, { field = "tickMode", value = "custom" },
+        { field = "tickValues", listMin = n } }
+end
 
 Schema.bar = {
     size = { push = true, fields = {
@@ -2163,25 +2304,27 @@ Schema.bar = {
         -- off-hand track splits the fill its own way, so the two never show together.
         swingClosing = { d = false, t = "bool", kinds = { swing = true },
             dep = { field = "swingOffhand", value = false }, label = "Fill closes in from both ends" },
+        -- The panel draws the tick rows under the custom ticks (Appearance >
+        -- Ticks), so their words say swing and never repeat a custom tick row's.
         swingTicks = { d = false, t = "bool", kinds = { swing = true }, label = "Tick before the swing lands" },
         swingTickTime = { d = 0.5, t = "num", min = 0.1, max = 1.5, step = 0.05, fmt = "%g",
             kinds = { swing = true }, dep = { field = "swingTicks" }, label = "Time before it lands (s)" },
         swingTickColor = { d = { 1, 1, 1, 0.9 }, t = "color", alpha = true, kinds = { swing = true },
-            dep = { field = "swingTicks" }, label = "Tick color" },
+            dep = { field = "swingTicks" }, label = "Swing tick color" },
         -- Up to three ticks: tick 1 is the pair above, so saved bars read the
         -- same; ticks 2 and 3 default to a GCD line and a seal-twist line.
         swingTickCount = { d = 1, t = "enum", values = { 1, 2, 3 }, labels = { "1 tick", "2 ticks", "3 ticks" },
-            kinds = { swing = true }, dep = { field = "swingTicks" }, label = "Number of ticks" },
+            kinds = { swing = true }, dep = { field = "swingTicks" }, label = "Number of swing ticks" },
         swingTick2Time = { d = 1.5, t = "num", min = 0.1, max = 1.5, step = 0.05, fmt = "%g", kinds = { swing = true },
             dep = { { field = "swingTicks" }, { field = "swingTickCount", min = 2 } },
-            label = "Tick 2 time before it lands (s)" },
+            label = "Swing tick 2 time before it lands (s)" },
         swingTick2Color = { d = { 0.4, 1, 0.4, 0.9 }, t = "color", alpha = true, kinds = { swing = true },
-            dep = { { field = "swingTicks" }, { field = "swingTickCount", min = 2 } }, label = "Tick 2 color" },
+            dep = { { field = "swingTicks" }, { field = "swingTickCount", min = 2 } }, label = "Swing tick 2 color" },
         swingTick3Time = { d = 0.4, t = "num", min = 0.1, max = 1.5, step = 0.05, fmt = "%g", kinds = { swing = true },
             dep = { { field = "swingTicks" }, { field = "swingTickCount", min = 3 } },
-            label = "Tick 3 time before it lands (s)" },
+            label = "Swing tick 3 time before it lands (s)" },
         swingTick3Color = { d = { 1, 0.45, 0.9, 0.9 }, t = "color", alpha = true, kinds = { swing = true },
-            dep = { { field = "swingTicks" }, { field = "swingTickCount", min = 3 } }, label = "Tick 3 color" },
+            dep = { { field = "swingTicks" }, { field = "swingTickCount", min = 3 } }, label = "Swing tick 3 color" },
         -- Swing and timer bars: a bright line on the fill's moving edge while
         -- it runs (Bars\AD_BarSpark.lua), on each half with the closing fill.
         edgeSpark = { d = false, t = "bool", kinds = { swing = true, timer = true },
@@ -2286,8 +2429,9 @@ Schema.bar = {
         -- Charge-slot bars use gaps, so only power-stack bars draw dividers.
         dividerColor = { d = { 0.039, 0.067, 0.125, 1 }, t = "color", alpha = true, kinds = { stack = true },
             label = "Divider color", dep = { field = "segmentsShow" } },
-        -- Gap between segments, in pixel units.
-        segmentSpacing = { d = 1, t = "int", min = 1, max = 10, label = "Segment spacing", dep = { field = "segmentsShow" } },
+        -- Physical pixels: the gap between charge slots, or a power-stack bar's
+        -- divider width (dk: 2 there, the width its dividers draw by default).
+        segmentSpacing = { d = 1, dk = { stack = 2 }, t = "int", min = 1, max = 10, label = "Segment spacing", dep = { field = "segmentsShow" } },
         -- Keyed off the ready state, which is not secret; never a count read.
         fullColorEnabled = { d = false, t = "bool", kinds = BK_CD, label = "Full charges color" },
         fullColor = { d = { 0.482, 0.847, 0.561, 1 }, t = "color", alpha = true, kinds = BK_CD, label = "Full charges color value", dep = { field = "fullColorEnabled" } },
@@ -2713,7 +2857,19 @@ Schema.bar = {
             valueIf = { pertick = function(r) return r.barKind == "cast" and ((r.driver and r.driver.unit) or "player") == "player" end } },
         tickPercent = { inherit = false, kinds = BK_TICKMODE, d = 25, t = "int", min = 5, max = 50, label = "Tick every (%)",
             dep = { { field = "ticksShow" }, { field = "tickMode", value = "percent" } } },
+        -- labelFn (record -> words or nil): on a swing bar the list says where
+        -- it counts from, the fill's start: the swing's start, or its landing
+        -- on a drain bar. The swing ticks always count back from the landing.
         tickValues = { inherit = false, kinds = BK_TICKMODE, d = "", t = "text", label = "Custom ticks (comma list)",
+            labelFn = function(r)
+                local S = NS.Store
+                if not (S and r and r.barKind == "swing") then return nil end
+                local unit = S.Resolve(r, "ticks", "tickAsPercent") == true and "percent" or "seconds"
+                if S.Resolve(r, "fill", "fillMode") == "drain" then
+                    return "Custom ticks, " .. unit .. " before the swing lands"
+                end
+                return "Custom ticks, " .. unit .. " from the swing's start"
+            end,
             dep = { { field = "ticksShow" }, { field = "tickMode", value = "custom" } } },
         tickAsPercent = { inherit = false, kinds = BK_TICKMODE, d = false, t = "bool", label = "Custom ticks are percent",
             dep = { { field = "ticksShow" }, { field = "tickMode", value = "custom" } } },
@@ -2734,9 +2890,25 @@ Schema.bar = {
         tickChannelOnly = { inherit = false, d = false, t = "bool", kinds = BK_CAST, label = "Tick marks on channels only",
             dep = { field = "ticksShow" } },
         tickColor = { d = { 0, 0, 0, 1 }, t = "color", alpha = true, label = "Tick color", dep = { field = "ticksShow" } },
-        -- Min 2: a one-pixel mark at a fractional position (a dragged bar, a
-        -- fractional UI scale) can rasterise to nothing.
-        tickThickness = { d = 2, t = "int", min = 2, max = 10, label = "Tick thickness", dep = { field = "ticksShow" } },
+        -- Custom values only: the nth number typed wears tick colour n (the
+        -- Tick color is the first; numbers past six wear the sixth). Per bar
+        -- like the list it numbers, and off by default, so a saved bar keeps
+        -- its one colour.
+        tickColorEach = { inherit = false, kinds = BK_TICKMODE, d = false, t = "bool", label = "Color each tick",
+            desc = "Each number in the custom list wears its own colour, in the order you typed them; the Tick color is the first.",
+            dep = { { field = "ticksShow" }, { field = "tickMode", value = "custom" } } },
+        tickColor2 = { inherit = false, kinds = BK_TICKMODE, d = { 0.4, 1, 0.4, 1 }, t = "color", alpha = true,
+            label = "Tick 2 color", dep = EachTickDep(2) },
+        tickColor3 = { inherit = false, kinds = BK_TICKMODE, d = { 1, 0.45, 0.9, 1 }, t = "color", alpha = true,
+            label = "Tick 3 color", dep = EachTickDep(3) },
+        tickColor4 = { inherit = false, kinds = BK_TICKMODE, d = { 1, 0.82, 0, 1 }, t = "color", alpha = true,
+            label = "Tick 4 color", dep = EachTickDep(4) },
+        tickColor5 = { inherit = false, kinds = BK_TICKMODE, d = { 0.25, 0.8, 1, 1 }, t = "color", alpha = true,
+            label = "Tick 5 color", dep = EachTickDep(5) },
+        tickColor6 = { inherit = false, kinds = BK_TICKMODE, d = { 1, 0.4, 0.2, 1 }, t = "color", alpha = true,
+            label = "Tick 6 color", dep = EachTickDep(6) },
+        -- Physical pixels, down to one: LayoutTicks puts every edge on a whole pixel.
+        tickThickness = { d = 2, t = "int", min = 1, max = 10, label = "Tick thickness", dep = { field = "ticksShow" } },
         tickHeight = { d = 100, t = "int", min = 10, max = 100, label = "Tick height (%)", dep = { field = "ticksShow" } },
         tickHeightAnchor = { d = "center", t = "enum", values = { "center", "start", "end" }, label = "Tick height anchor", dep = { field = "ticksShow" } },
     } },
@@ -2914,6 +3086,15 @@ Schema.bar = {
         latencyOn = { d = false, t = "bool", label = "Latency zone",
             desc = "The end of your cast that your connection's delay covers: start the next cast once the fill reaches it." },
         latencyColor = { d = { 1, 0.25, 0.2, 0.55 }, t = "color", alpha = true, label = "Latency color", dep = { field = "latencyOn" } },
+        -- Where the game's spell queue window opens (the SpellQueueWindow
+        -- setting before the cast ends); never on channels.
+        queueTickOn = { d = false, t = "bool", label = "Spell queue tick",
+            desc = "A mark where your next spell can be queued: press it past the mark and it goes off as soon as this cast ends." },
+        queueTickColor = { d = { 0.35, 0.85, 1, 1 }, t = "color", alpha = true, label = "Queue tick color",
+            dep = { field = "queueTickOn" } },
+        -- physical pixels, down to one, like the tick marks
+        queueTickWidth = { d = 2, t = "int", min = 1, max = 8, label = "Queue tick width",
+            dep = { field = "queueTickOn" } },
         hideBlizzard = { inherit = false, d = false, t = "bool", label = "Hide Blizzard's castbar",
             desc = "Hides the game's own castbar under your character while this castbar is loaded. Turning it off brings the game's castbar back on your next cast." },
     } },

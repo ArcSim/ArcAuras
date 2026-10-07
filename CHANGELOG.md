@@ -1,5 +1,40 @@
 # Arc Auras
 
+## 2.3.0
+
+Stance icons, a lock for layouts and groups, a sidebar View and pack updates you can undo.
+
+### New Features
+
+- **Stance icon** - Add > Icon > Stance shows the stance, form or aura you are in, or one stance that lights up while you are in it.
+- **Lock in place** - A padlock beside a layout's or group's eye keeps it from being dragged on screen. It shows on hover and stays while locked, and Position has the same switch.
+- **Sidebar View** - List everything, only what loads on this character, a section per class, or one class, with class marks.
+- **Pack updates** - Undo the last update, keep your own version of any item, and pack items you deleted stay deleted.
+- **Pack info** - A pack can carry its name, version, link and notes. You see them before you import, with any sounds, fonts or textures you don't have.
+- **Order by time left** - Aura groups with Close gaps on can put the aura closest to running out first, in one shared look.
+- **Full look per type** - Each debuff type can have its own size, swipe, texts and glows, in the order you pick.
+- **Conditions in aura groups** - Aura icons in a group with Close gaps off get their own Load When, Never Load When and Fade When.
+- **New conditions** - Pet has no target, Auto Shot or Shoot, Melee attack is on, Not attacking, and Moving, shooting.
+- **Castbar** - Multi-Shot and similar casts show from the moment you press them, and a Spell queue tick marks when you can queue your next spell.
+- **Color each tick** - Each number in a custom tick list can have its own color.
+
+### Improvements
+
+- **Clearer group options** - Dynamic is now Close gaps, with plainer names for its other options.
+- **Swing ticks** - A swing bar's ticks, like the GCD and twist ticks, now sit in Appearance > Ticks with the custom ticks.
+- **Thin ticks** - Tick marks and dividers can be 1 pixel thick.
+- **Home page** - Click a section's heading to fold it.
+- **Performance** - Less CPU while your mana or energy refills.
+- **Texts over glows** - Duration and stack texts always sit over the glows on aura group buttons.
+
+### Bug Fixes
+
+- **Duration text** - Turning it off on aura icons now sticks without a /reload.
+- **Resource bar looks** - A look per form or talent no longer forgets a switch you turned off when you log in.
+- **Buffs and debuffs** - Aura groups showing both now add their debuffs reliably.
+- **Missing Buffs** - No longer offers Omen of Clarity, which is passive here.
+- **Load When** - No longer promises silence on aura icons: the game still plays their sounds.
+
 ## 2.2.0
 
 Texts you can pin anywhere, a Sound item, a tidier Home page and pixel-perfect spacing.

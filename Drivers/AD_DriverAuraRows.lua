@@ -10,12 +10,16 @@
 -- its piece is born in a stage of ours, made with the opt-in template so it
 -- may anchor to pieces, and the row steps past it by what it shows
 -- (AR.Step).
+-- Order Time left: one flow per unit holds every member's spells and the
+-- game sorts it, so the order holds in combat with no duration read
+-- (AR.PlaceFlows).
 local ADDON, NS = ...
 local Store, Events = NS.Store, NS.Events
 local AR = {
     -- [groupId] = { pieces = { [recId] = piece }, copies = { [recId] = piece },
-    --   lanes = { ["recId:slot"] = lane } }
+    --   lanes = { ["recId:slot"] = lane }, flows = { ["unit|filter"] = piece } }
     runtimes = {},
+    looks = {},      -- [groupId] = { [unit] = the record its flow's buttons wear }
     pool = { player = {}, target = {}, pet = {} },   -- pieces no group uses, by unit
     spool = { player = {}, target = {}, pet = {} },  -- the same, born in a stage
     lpool = { player = {}, target = {}, pet = {} },  -- glow lanes no group uses
@@ -164,7 +168,7 @@ function AR.Make(unit, staged, lane)
         end,
         layout = { elementSpacing = 0, lineSpacing = 0, groupSpacing = 0, groupLineSpacing = 0 },
     })
-    p.sent = { sig = DA.FilterSig(G.ParkMap()), filter = AR.BASE[unit], cap = 0 }
+    p.sent = { sig = DA.FilterSig(G.ParkMap()), filter = AR.BASE[unit], cap = 0, order = "default" }
     return p
 end
 
@@ -189,6 +193,7 @@ function AR.Give(p)
         AR.StopGlows(p)
     end
     p.rec, p.slotRecs[1], p.copy, p.shape, p.slot, p.rowLanes, p.piece = nil, nil, nil, nil, nil, nil, nil
+    p.flow = nil
     if AR.Send(p, nil) then AR.pending = true end
     local list = ((p.lane and AR.lpool) or (p.stage and AR.spool) or AR.pool)[p.unit]
     list[#list + 1] = p
@@ -197,7 +202,7 @@ end
 -- The piece's filter, ids and frame cap for rec (nil parks it), out of combat
 -- only. True when it has to wait.
 function AR.Send(p, rec)
-    local G, DA = NS.DriverAuraGroups, NS.DriverAura
+    local G = NS.DriverAuraGroups
     local ids, fstr, exempt = G.ParkMap(), AR.BASE[p.unit], false
     if rec then
         local i, f, e = G.MemberMapFor(rec, p.unit)
@@ -206,24 +211,47 @@ function AR.Send(p, rec)
             if p.lane then ids = AR.LaneIDs(rec, p.slot, i) or G.ParkMap() end
         end
     end
+    -- a parked piece shows nothing, so its order waits for its next use
+    return AR.SendSet(p, ids, fstr, exempt, 1, rec and "default" or p.sent.order)
+end
+
+-- What a piece shows: the ids passing fstr, n members' worth of buttons, in
+-- this order ("default", or "time": the game sorts by time left). Out of
+-- combat only and never twice unchanged (each send restarts what the piece's
+-- buttons show). True when it has to wait.
+function AR.SendSet(p, ids, fstr, exempt, n, order)
+    local G, DA = NS.DriverAuraGroups, NS.DriverAura
     local parked = ids[0] ~= nil
+    -- the cap while the target's hostility gate is open (AR.Recap)
+    p.capOpen = (G.SLOT_CAP[p.unit] or 1) * n
     local cap = 0
     if not parked then
-        cap = G.SLOT_CAP[p.unit] or 1
+        cap = p.capOpen
         if p.unit == "target" and not exempt and G.TargetFiltersHonored() ~= true then cap = 0 end
     end
     p.exempt = exempt
     local sig = DA.FilterSig(ids)
     local s = p.sent
-    if s.sig == sig and s.filter == fstr and s.cap == cap then return false end
+    if s.sig == sig and s.filter == fstr and s.cap == cap and s.order == order then return false end
     if InCombatLockdown() then return true end
     local c = p.c
     if parked then c:SetAuraGroupMaxFrameCount(AR.KEY, 0) end
     if s.filter ~= fstr then c:SetAuraGroupFilterString(AR.KEY, fstr) end
+    if s.order ~= order and c.SetAuraGroupSortMethod then c:SetAuraGroupSortMethod(AR.KEY, AR.Sort(order)) end
     if s.sig ~= sig then c:SetAuraGroupCandidateFilters(AR.KEY, { includeSpellIDs = ids }) end
     if not parked then c:SetAuraGroupMaxFrameCount(AR.KEY, cap) end
-    s.sig, s.filter, s.cap = sig, fstr, cap
+    s.sig, s.filter, s.cap, s.order = sig, fstr, cap, order
     return false
+end
+
+-- The game's sort for an order: its own default, or the aura closest to
+-- running out first (auras that never end last). Its values stand in for a
+-- client that has not loaded the aura engine yet.
+AR.SORT_IDS = { Default = 0, ExpirationOnly = 5 }
+function AR.Sort(order)
+    local name = (order == "time") and "ExpirationOnly" or "Default"
+    local E, D = AuraContainerSortMethod, AuraContainerSortDirection
+    return (E and E[name]) or AR.SORT_IDS[name], (D and D.Normal) or 0
 end
 
 -- Glow lanes: a glow the row's button cannot draw (one spell picked, or one
@@ -360,9 +388,11 @@ function AR.Grid(g, members)
         local row, col = math.floor(k / cols), k % cols
         if growthH == "LEFT" then col = cols - 1 - col end
         if growthV == "UP" then row = rows - 1 - row end
-        cells[#cells + 1] = { rec = rec, row = row, col = col }
+        -- k: its cell in the editor's order, before the growth flips
+        cells[#cells + 1] = { rec = rec, row = row, col = col, k = k }
     end
     return { w = w, h = h, sx = sx, sy = sy, cols = cols, rows = rows, pad = pad, cells = cells,
+        right = growthH ~= "LEFT", down = growthV ~= "UP",
         boxW = cols * w + (cols - 1) * sx + pad * 2, boxH = rows * h + (rows - 1) * sy + pad * 2 }
 end
 
@@ -695,6 +725,7 @@ function AR.Mirror(g, rt, gf)
         G.MirrorOnto(q.c, gf, on)
         q.c:SetAlpha(0)
     end
+    for _, p in pairs(rt.flows or {}) do G.MirrorOnto(p.c, gf, on) end
     -- lanes sit over every piece's button
     local gl = gf and gf:GetFrameLevel()
     local combat = DA ~= nil and DA.InCombat ~= nil and DA.InCombat()
@@ -710,9 +741,19 @@ function AR.Place(g, gf, editMode)
     local grid = AR.Grid(g, AR.Members(g))
     gf:SetSize(math.max(grid.boxW, AR.Snap(4)), math.max(grid.boxH, AR.Snap(4)))
     AR.placed[g.id] = gf
-    local rt = AR.runtimes[g.id] or { pieces = {}, copies = {}, lanes = {} }
+    local rt = AR.runtimes[g.id] or { pieces = {}, copies = {}, lanes = {}, flows = {} }
     rt.lanes = rt.lanes or {}
+    rt.flows = rt.flows or {}
     AR.runtimes[g.id] = rt
+    if AR.TimeLeft(g) then
+        AR.PlaceFlows(g, gf, rt, grid)
+        AR.Mirror(g, rt, gf)
+        return
+    end
+    for key, p in pairs(rt.flows) do
+        AR.Give(p)
+        rt.flows[key] = nil
+    end
     local axis, align = AR.Pack(g)
     local vertical = axis == "vertical"
     -- a line is a row (Horizontal) or a column (Vertical)
@@ -816,6 +857,163 @@ function AR.PlaceLanes(rt, grid)
     end
 end
 
+-- Order Time left. A piece is one icon's own aura group, and the game sorts
+-- only inside one aura group, so here each unit's members share one flow: a
+-- piece holding all their spells, sorted by the game, which works in combat
+-- and reads nothing. The trade: no piece per icon, so no own look and no
+-- Missing look; only auras that are up show, in the look a new aura icon in
+-- the group would have.
+function AR.TimeLeft(g)
+    return Store.Resolve(g, "arrangement", "dynamicSort") == "time"
+end
+
+-- A plain aura icon of the group, never saved: what a flow's buttons wear.
+function AR.LookRec(g, unit)
+    local t = AR.looks[g.id] or {}
+    AR.looks[g.id] = t
+    local r = t[unit]
+    if not r then
+        r = { type = "icon", kind = "aura", o = {}, c = {}, driver = {} }
+        t[unit] = r
+    end
+    r.groupId = g.id
+    r.driver.unit = unit
+    r.driver.auraType = (unit == "target") and "debuff" or "buff"
+    return r
+end
+
+-- The group's flows, one per unit and Cast by (a flow has one filter string),
+-- in the order their first member sits in the editor (by rows, or by columns
+-- when packing Vertical): each with its members' spell IDs, how many members,
+-- and whether every ID is spared the target's hostility gate.
+function AR.FlowList(g, grid, axis)
+    local G = NS.DriverAuraGroups
+    local cells, cols = {}, grid.cols
+    for _, cell in ipairs(grid.cells) do cells[#cells + 1] = cell end
+    local function Rank(cell)
+        if axis == "vertical" then return (cell.k % cols) * 100000 + math.floor(cell.k / cols) end
+        return cell.k
+    end
+    table.sort(cells, function(a, b) return Rank(a) < Rank(b) end)
+    local list, byKey = {}, {}
+    for _, cell in ipairs(cells) do
+        local unit = AR.UnitOf(cell.rec)
+        if unit then
+            local ids, fstr, exempt = G.MemberMapFor(cell.rec, unit)
+            local key = unit .. "|" .. fstr
+            local f = byKey[key]
+            if not f then
+                f = { key = key, unit = unit, fstr = fstr, ids = {}, n = 0, exempt = true }
+                byKey[key] = f
+                list[#list + 1] = f
+            end
+            for id in pairs(ids) do f.ids[id] = true end
+            f.n = f.n + 1
+            f.exempt = f.exempt and exempt == true
+        end
+    end
+    return list
+end
+
+-- A flow's layout: Columns icons a line (Rows a column when Vertical), each a
+-- cell and its spacing on, lines wrapping as the grid's do. Every line is one
+-- unit longer across and hangs that unit back (lineSpacing), so an empty flow
+-- (one unit) takes no room and the next one starts exactly a line on.
+function AR.ShapeFlow(p, grid, axis)
+    local vertical = axis == "vertical"
+    local w, h, sx, sy = grid.w, grid.h, grid.sx, grid.sy
+    local per, pw, ps = grid.cols, w, sx
+    if vertical then per, pw, ps = grid.rows, h, sy end
+    local key = table.concat({ "flow", axis, w, h, sx, sy, per, tostring(grid.right), tostring(grid.down) }, ":")
+    if p.shape == key then return end
+    p.shape = key
+    local c = p.c
+    c:SetAuraGroupLayout(AR.KEY, { elementSpacing = ps, lineSpacing = -AR.EMPTY, groupSpacing = 0,
+        groupLineSpacing = 0,
+        elementWidth = vertical and math.max(0, w + sx + AR.EMPTY) or w,
+        elementHeight = vertical and h or math.max(0, h + sy + AR.EMPTY) })
+    local AX = AnchorUtil and AnchorUtil.FlowLayoutAxis
+    if AX and c.SetFlowLayoutAxis then c:SetFlowLayoutAxis(vertical and AX.Vertical or AX.Horizontal) end
+    local FD = AnchorUtil and AnchorUtil.FlowDirection
+    if FD and c.SetFlowLayoutGrowthDirection then
+        c:SetFlowLayoutGrowthDirection(grid.right and FD.Right or FD.Left, grid.down and FD.Down or FD.Up)
+    end
+    if c.SetFlowLayoutAnchorPoint then
+        c:SetFlowLayoutAnchorPoint((grid.down and "TOP" or "BOTTOM") .. (grid.right and "LEFT" or "RIGHT"))
+    end
+    if c.SetFlowLayoutPadding then c:SetFlowLayoutPadding(0, 0, 0, 0) end
+    -- past one line's last icon and short of the next one's end: exactly per fit
+    local span = per * pw + (per - 1) * ps
+    if c.SetFlowLayoutMaximumLineSize then c:SetFlowLayoutMaximumLineSize(span + math.max(0.5, (pw + ps) / 2)) end
+end
+
+-- Where a flow sits. The first: on the group's edge or middle that Alignment
+-- picks, lines stacking from the growth's start edge; each next one hangs off
+-- the last one's far side, one unit back. Fill direction is the reading order.
+-- A centered flow leans a quarter pixel (AR.Lean), as a centered row does.
+function AR.PinFlow(p, prev, gf, grid, axis, align)
+    local c, E, pad = p.c, AR.EMPTY, grid.pad
+    c:ClearAllPoints()
+    if axis == "vertical" then
+        local v = (align == "top" and "TOP") or (align == "bottom" and "BOTTOM") or ""
+        local near, far = grid.right and "LEFT" or "RIGHT", grid.right and "RIGHT" or "LEFT"
+        if prev then
+            c:SetPoint(v .. near, prev.c, v .. far, grid.right and -E or E, 0)
+        else
+            local y = (v == "TOP" and -pad) or (v == "BOTTOM" and pad) or AR.Lean()
+            c:SetPoint(v .. near, gf, v .. near, grid.right and pad or -pad, y)
+        end
+        return
+    end
+    local hp = (align == "left" and "LEFT") or (align == "right" and "RIGHT") or ""
+    local near, far = grid.down and "TOP" or "BOTTOM", grid.down and "BOTTOM" or "TOP"
+    if prev then
+        c:SetPoint(near .. hp, prev.c, far .. hp, 0, grid.down and E or -E)
+    else
+        local x = (hp == "LEFT" and pad) or (hp == "RIGHT" and -pad) or -AR.Lean()
+        c:SetPoint(near .. hp, gf, near .. hp, x, grid.down and -pad or pad)
+    end
+end
+
+-- Time left in play: the pieces, copies and glow lanes go back to the pool
+-- and each flow is taken from it, sent its members' spells, sorted, shaped,
+-- pinned and styled (a flow too waits for the settle edge to be made or sent).
+function AR.PlaceFlows(g, gf, rt, grid)
+    local G = NS.DriverAuraGroups
+    for _, set in ipairs({ rt.pieces, rt.copies, rt.lanes }) do
+        for k, p in pairs(set) do
+            AR.Give(p)
+            set[k] = nil
+        end
+    end
+    local axis, align = AR.Pack(g)
+    local keep, prev = {}, nil
+    for _, f in ipairs(AR.FlowList(g, grid, axis)) do
+        local p = rt.flows[f.key] or AR.Take(f.unit)
+        if p then
+            rt.flows[f.key] = p
+            keep[f.key] = true
+            local look = AR.LookRec(g, f.unit)
+            p.rec, p.slotRecs[1], p.flow, p.rowLanes = look, look, f.key, nil
+            p.cfg.iconW, p.cfg.iconH = grid.w, grid.h
+            p.slotDims[1] = { w = grid.w, h = grid.h }
+            if AR.SendSet(p, f.ids, f.fstr, f.exempt, f.n, "time") then AR.pending = true end
+            AR.ShapeFlow(p, grid, axis)
+            AR.PinFlow(p, prev, gf, grid, axis, align)
+            prev = p
+        end
+    end
+    for key, p in pairs(rt.flows) do
+        if not keep[key] then
+            AR.Give(p)
+            rt.flows[key] = nil
+        end
+    end
+    for _, p in pairs(rt.flows) do
+        if G.StyleButtons(p) then AR.pending = true end
+    end
+end
+
 function AR.Release(g)
     local gid = g.id
     AR.placed[gid] = nil
@@ -833,20 +1031,26 @@ function AR.Release(g)
         AR.Give(L)
         rt.lanes[key] = nil
     end
+    for key, p in pairs(rt.flows or {}) do
+        AR.Give(p)
+        rt.flows[key] = nil
+    end
     AR.runtimes[gid] = nil
+    AR.looks[gid] = nil
 end
 
--- Target swaps: re-cap the hostility gate on every target piece and copy, then
--- rescan. An unknown (secret) answer keeps the caps the last plain one set.
+-- Target swaps: re-cap the hostility gate on every target piece, copy and
+-- flow, then rescan. An unknown (secret) answer keeps the caps the last plain
+-- one set.
 function AR.Recap(rescan)
     local G = NS.DriverAuraGroups
     local honored = G.TargetFiltersHonored()
     for _, rt in pairs(AR.runtimes) do
-        for _, set in ipairs({ rt.pieces, rt.copies, rt.lanes or {} }) do
+        for _, set in ipairs({ rt.pieces, rt.copies, rt.lanes or {}, rt.flows or {} }) do
             for _, p in pairs(set) do
                 if p.unit == "target" and p.rec then
                     if honored ~= nil and p.sent.sig ~= NS.DriverAura.FilterSig(G.ParkMap()) then
-                        local cap = (p.exempt or honored) and G.SLOT_CAP.target or 0
+                        local cap = (p.exempt or honored) and (p.capOpen or G.SLOT_CAP.target) or 0
                         if p.sent.cap ~= cap then
                             p.c:SetAuraGroupMaxFrameCount(AR.KEY, cap)
                             p.sent.cap = cap
@@ -863,7 +1067,7 @@ end
 function AR.OnPet(_, unit)
     if unit ~= nil and not (issecretvalue and issecretvalue(unit)) and unit ~= "player" then return end
     for _, rt in pairs(AR.runtimes) do
-        for _, set in ipairs({ rt.pieces, rt.copies, rt.lanes or {} }) do
+        for _, set in ipairs({ rt.pieces, rt.copies, rt.lanes or {}, rt.flows or {} }) do
             for _, p in pairs(set) do
                 if p.unit == "pet" and p.c:IsShown() and p.c.UpdateAllAuras then p.c:UpdateAllAuras() end
             end
@@ -904,8 +1108,8 @@ function AR.Sweep()
 end
 
 -- Load window: the pool gets a piece for every icon of every Dynamic aura group,
--- plus the copies a centered row needs, the one time creation is legal in
--- combat or an instance.
+-- plus the copies a centered row needs (a group ordered by Time left: one per
+-- flow), the one time creation is legal in combat or an instance.
 function AR.PreBuild()
     if not AR.Available() then return end
     local need = { player = 0, target = 0, pet = 0 }
@@ -916,7 +1120,12 @@ function AR.PreBuild()
     local DA = NS.DriverAura
     for _, layout in ipairs(Store.Layouts()) do
         for _, g in ipairs((Store.ChildrenOf(layout))) do
-            if AR.On(g) then
+            if AR.On(g) and AR.TimeLeft(g) then
+                -- Time left: a flow per unit and Cast by, nothing per icon
+                for _, f in ipairs(AR.FlowList(g, AR.Grid(g, AR.Members(g)), (AR.Pack(g)))) do
+                    need[f.unit] = need[f.unit] + 1
+                end
+            elseif AR.On(g) then
                 local grid = AR.Grid(g, AR.Members(g))
                 local rows = {}
                 for _, cell in ipairs(grid.cells) do

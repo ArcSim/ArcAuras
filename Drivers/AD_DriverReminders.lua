@@ -1388,7 +1388,8 @@ local CD_EVENTS = { "SPELL_UPDATE_COOLDOWN", "SPELL_UPDATE_CHARGES", "SPELL_UPDA
     "BAG_UPDATE_COOLDOWN", "PLAYER_EQUIPMENT_CHANGED", "SPELLS_CHANGED", "PLAYER_ENTERING_WORLD" }
 local RERESOLVE = { SPELLS_CHANGED = true, PLAYER_EQUIPMENT_CHANGED = true, PLAYER_ENTERING_WORLD = true }
 local PROC_EVENTS = { "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE" }
-local USABLE_EVENTS = { "SPELL_UPDATE_USABLE", "PLAYER_TARGET_CHANGED" }
+local USABLE_EVENTS = { "SPELL_UPDATE_USABLE", "PLAYER_TARGET_CHANGED", "PLAYER_REGEN_DISABLED" }
+RM.USAB_GAP = 0.25   -- out of combat, seconds between "when usable" re-reads at most
 
 function RM.OnWorld(e)
     if RERESOLVE[e] then RM.reresolve = true end
@@ -1457,8 +1458,10 @@ function RM.ArmEnchant(on)
     end
 end
 
--- "When usable" re-reads on usability news and on a new target, a frame at a
--- time: SPELL_UPDATE_USABLE comes in bursts.
+-- "When usable" re-reads on usability news, on a new target and at combat's
+-- start. SPELL_UPDATE_USABLE comes ten times a second while power moves, so
+-- out of combat it re-reads at most every RM.USAB_GAP; the other two (and any
+-- usability news in combat) re-read the next frame.
 function RM.ArmUsable(on)
     if on == RM.armed.usab then return end
     RM.armed.usab = on
@@ -1466,7 +1469,10 @@ function RM.ArmUsable(on)
         if not on then
             Events.Off(e, "adrem_usab")
         elseif Valid(e) then
-            Events.On(e, "adrem_usab", function() Events.Coalesce("adrem_usab", RM.UsableAll) end)
+            local urgent = e ~= "SPELL_UPDATE_USABLE"
+            Events.On(e, "adrem_usab", function()
+                Events.CoalesceCapped("adrem_usab", RM.UsableAll, RM.USAB_GAP, urgent)
+            end)
         end
     end
 end

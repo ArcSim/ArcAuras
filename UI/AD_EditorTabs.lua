@@ -247,6 +247,7 @@ ET.GLOW_WHEN = {
     cooldown = "the cooldown runs",
     active = function(rec)
         if rec.kind == "timer" then return "it is active" end
+        if rec.kind == "stance" then return ET.StanceOne(rec) and "you are in it" or "you are in a stance" end
         return rec.kind == "totem" and "the totem is out" or "the weapon has it"
     end,
     inactive = "it is not active",
@@ -364,6 +365,10 @@ end
 function ET.SpecialTimer(r)
     local O = NS.Options
     return r ~= nil and O ~= nil and O.SpecialIsTimer ~= nil and O.SpecialIsTimer(r) == true
+end
+-- A stance icon set to one stance (else it shows your current stance).
+function ET.StanceOne(r)
+    return r ~= nil and Store.Resolve(r, "stance", "shows") == "one"
 end
 local SPELL_COOLDOWN = {}
 for k, v in pairs(COOLDOWN) do SPELL_COOLDOWN[k] = v end
@@ -489,6 +494,18 @@ ET.STATES = {
         { key = "covered", label = "Everyone has it", when = "while the buff is covered", alpha = COOLDOWN.alpha,
           grey = COOLDOWN.grey, alphaTip = "0 hides it (the default): it shows only while the buff is missing.",
           labelFn = function(r) return GBNobody(r) and "Someone has it" or "Everyone has it" end },
+    },
+    -- a Stance icon (Drivers\AD_DriverStance.lua): in it is the ready
+    -- bucket, not in it the cooldown bucket; worded for what it shows
+    stance = {
+        { key = "active", label = "In the stance", when = "while you are in it", alpha = READY.alpha,
+          grey = READY.grey, tint = READY.tint, alphaTip = READY.alphaTip,
+          labelFn = function(r) return ET.StanceOne(r) and "In this stance" or "In a stance" end,
+          fx = { glow = { "states.readyGlow" } } },
+        { key = "inactive", label = "Not in the stance", when = "while you are not in it", alpha = COOLDOWN.alpha,
+          grey = COOLDOWN.grey, tint = COOLDOWN.tint,
+          labelFn = function(r) return ET.StanceOne(r) and "Not in it" or "No stance" end },
+        WARNING,
     },
 }
 

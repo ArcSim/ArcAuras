@@ -98,9 +98,10 @@ local function StyleSlotButton(b, rt)
     local dims = rt.slotDims and rt.slotDims[b._adSlotIndex or 0]
     local w = (dims and dims.w) or rt.cfg.iconW or 36
     local h = (dims and dims.h) or rt.cfg.iconH or 36
-    -- rt.erase: a piece born in its Missing look's stage
+    -- rt.erase: a piece born in its Missing look's stage; rec._adRowGlows: a
+    -- look whose button draws every glow but a Missing one (a type's full look)
     Factory.StyleAuraButton(b, rec, h, { w = w, h = h, ghost = false, erase = rt.erase == true,
-        rowGlows = rt.rowGlows == true, rowLanes = rt.rowLanes })
+        rowGlows = rt.rowGlows == true or rec._adRowGlows == true, rowLanes = rt.rowLanes })
     -- a runtime's own parts after the look (a show-all group's type looks)
     if rt.afterStyle then rt.afterStyle(b, rt, rec, w, h) end
 end

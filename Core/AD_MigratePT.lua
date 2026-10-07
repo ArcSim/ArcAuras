@@ -619,7 +619,7 @@ function MP.MapBar(bar, t, def)
     O("icon", "iconShow", t.barIconEnabled == true)
     O("text", "nameShow", false)
     O("ticks", "tickColor", Color(t.barTickR, t.barTickG, t.barTickB, t.barTickA))
-    O("ticks", "tickThickness", Clamp(t.barTickThickness or 2, 2, 10))
+    O("ticks", "tickThickness", Clamp(t.barTickThickness or 2, 1, 10))
     -- the two texts: sizes as ProcTracker drew them (bar texts do not scale)
     local counter = MP.COUNTER[def and def.id or ""]
     local function BarText(pre, on, tpl, size, font, anchor, ox, oy, fx, fy, state, c, e, h, f)

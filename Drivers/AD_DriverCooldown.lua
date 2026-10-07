@@ -983,12 +983,29 @@ FeedUsability = function(a)
     if a.edgeOn then EdgeFrom(a, now) else a.usableLast = nil end
 end
 
+-- One read per spell per pass. An icon is fed only when an input of its last
+-- feed moved: the spell, its usable and no-mana answers, its cooldown flag,
+-- the settings, or a writer dropped its signature. Range answers arrive by
+-- their own event and feed their icons there; the fallback range read feeds all.
 local function FeedUsabilityAll()
     wipe(passU)
     wipe(passM)
+    local byEvent = RangeByEvent()
     -- one target read per pass, for the fallback's range reads only
-    inPass, passTarget = true, (not RangeByEvent()) and MaybeTarget()
-    for _, a in pairs(attached) do FeedUsability(a) end
+    inPass, passTarget = true, (not byEvent) and MaybeTarget()
+    for _, a in pairs(attached) do
+        local f = a.frame
+        local sid = a.effSid or (a.rec.driver and a.rec.driver.spellID)
+        local gate
+        if byEvent and sid and C_Spell.IsSpellUsable then
+            local u, m = UsableKeys(sid)
+            gate = sid * 32 + u * 4 + m + (f._adOnCooldown and 16 or 0)
+        end
+        if gate == nil or gate ~= a.usabGate or f._adUsabSig == nil or a.cfgGen ~= cfgGen then
+            FeedUsability(a)
+        end
+        a.usabGate = gate
+    end
     inPass = false
 end
 
@@ -1072,6 +1089,7 @@ local function FeedAmmoAll()
     FeedAllItems()
 end
 
+local USAB_GAP = 0.25   -- out of combat, seconds between usability passes at most
 local registered = false
 local function EnsureEvents()
     if registered then return end
@@ -1116,11 +1134,17 @@ local function EnsureEvents()
         if unit and unit ~= "player" then return end
         Events.Coalesce("adcd_feedammo", FeedAmmoAll)
     end)
+    -- SPELL_UPDATE_USABLE comes ten times a second while power moves: out of
+    -- combat the pass runs at most every USAB_GAP; a new target and combat's
+    -- start run it the next frame.
     Events.On("SPELL_UPDATE_USABLE", "adcd", function()
-        Events.Coalesce("adcd_usab", FeedUsabilityAll)
+        Events.CoalesceCapped("adcd_usab", FeedUsabilityAll, USAB_GAP)
     end)
     Events.On("PLAYER_TARGET_CHANGED", "adcd_usab", function()
-        Events.Coalesce("adcd_usab", FeedUsabilityAll)
+        Events.CoalesceCapped("adcd_usab", FeedUsabilityAll, USAB_GAP, true)
+    end)
+    Events.On("PLAYER_REGEN_DISABLED", "adcd_usab", function()
+        Events.CoalesceCapped("adcd_usab", FeedUsabilityAll, USAB_GAP, true)
     end)
     Events.On("PLAYER_TOTEM_UPDATE", "adcd_totem", function()
         Events.Coalesce("adcd_feedtotems", FeedAllTotems)
@@ -1226,6 +1250,7 @@ local function MaybeReleaseEvents()
     Events.Off("UNIT_INVENTORY_CHANGED", "adcd_ammo")
     Events.Off("SPELL_UPDATE_USABLE", "adcd")
     Events.Off("PLAYER_TARGET_CHANGED", "adcd_usab")
+    Events.Off("PLAYER_REGEN_DISABLED", "adcd_usab")
     if rangeTicker then
         rangeTicker:Cancel()
         rangeTicker = nil
@@ -1289,6 +1314,9 @@ function Driver.Attach(rec, f)
         elseif rec.kind == "groupbuff" and NS.DriverGroupBuff then
             -- a Group Buff: who in the group has it (Drivers\AD_DriverGroupBuff.lua)
             NS.DriverGroupBuff.Attach(rec, f)
+        elseif rec.kind == "stance" and NS.DriverStance then
+            -- a Stance icon: the stance bar (Drivers\AD_DriverStance.lua)
+            NS.DriverStance.Attach(rec, f)
         else
             Factory.SetState(f, rec, false)
         end
@@ -1354,6 +1382,7 @@ function Driver.Detach(id)
     if NS.DriverCustom then NS.DriverCustom.Detach(id) end
     if NS.SpecialIcon then NS.SpecialIcon.Detach(id) end
     if NS.DriverGroupBuff then NS.DriverGroupBuff.Detach(id) end
+    if NS.DriverStance then NS.DriverStance.Detach(id) end
     local a = attached[id]
     if a then
         SetRangeWant(a, nil)
@@ -1384,6 +1413,7 @@ function Driver.Refeed(id)
     if NS.DriverCustom then NS.DriverCustom.Refeed(id) end
     if NS.SpecialIcon then NS.SpecialIcon.Refeed(id) end
     if NS.DriverGroupBuff then NS.DriverGroupBuff.Refeed(id) end
+    if NS.DriverStance then NS.DriverStance.Refeed(id) end
 end
 
 -- A spell icon whose spell has charges (its current rank or override once

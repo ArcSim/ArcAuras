@@ -1,15 +1,17 @@
 -- AD_DriverUnitAuras: aura groups that show every aura on one unit, drawn by the game in AuraContainers the group owns.
 -- It places such a group for the layout engine (Engine.RegisterGroupClaim): one container follows the unit, or one per enemy nameplate; the member rows skip it.
+-- A full look per type adds a second container on the unit, one aura group per dispel type, shown in the first one's place.
 -- The game reads the auras and draws the buttons, so it works in combat; nothing here reads an aura or a rect, and a unit answer is never compared unguarded.
 local ADDON, NS = ...
 local Store = NS.Store
 local Events = NS.Events
 
 local UA = {
-    runtimes = {},   -- [groupId] = { cs, c, sent, buttons, engines, slotRecs, slotDims, cfg, mode, want, short, bound, hostile, pin, hasD }
+    runtimes = {},   -- [groupId] = { cs, c, sent, buttons, engines, slotRecs, slotDims, cfg, mode, want, short, bound, hostile, pin, hasD, full, fullOn }
     placed = {},     -- [groupId] = its group frame while the engine draws it
     looks = {},      -- [groupId] = the record its buttons are styled from
     looksD = {},     -- [groupId] = the same for its debuff half (Buffs and debuffs)
+    typeRecs = {},   -- [groupId] = { [type] = the record a type's buttons are styled from }
     blocked = {},    -- [groupId] = true while its first container waits to be made
     armed = {},      -- [unit] = true while its swap event listens
     platesArmed = false,
@@ -22,6 +24,14 @@ UA.KEY = "adUnitAuras"
 -- Buffs and debuffs: the debuffs are a second aura group in the same container
 UA.KEY_D = UA.KEY .. "D"
 UA.KEYS = { UA.KEY }
+-- A full look per type: a container of its own with one aura group per type,
+-- keyed by the type ("adUnitAurasTMagic"); type i's buttons are slot 10 + i.
+UA.KEY_T = UA.KEY .. "T"
+UA.TYPE_SLOT = 10
+UA.TYPED = { Magic = true, Curse = true, Disease = true, Poison = true }
+UA.NO_KEYS = {}
+-- a type with no look of its own reads through this (never written)
+UA.NO_LOOK = setmetatable({}, { __newindex = function() end })
 UA.UNITS = { player = true, pet = true, target = true, focus = true, nameplate = true }
 -- The unit token stays the same when it points at someone new, and the
 -- container re-reads only on its own unit's aura events.
@@ -111,7 +121,12 @@ function UA.Config(g)
             dispelSig = (dispelSig and (dispelSig .. ",") or "") .. d.name
         end
     end
+    -- a full look per type: its switch, the types' order, a line each or not
+    local TL = NS.TypeLooks
+    local types = TL and TL.Order(g) or {}
     return {
+        full = TL ~= nil and TL.Full(g) == true, types = types,
+        ownLine = Store.Resolve(g, "typeLook", "ownLine") == true,
         dispel = dispel, dispelSig = dispelSig,
         unit = unit, plates = plates, harmful = harmful, both = both, hide = hide, hideD = hideD, count = count,
         rows = rows, cols = cols, cap = cap,
@@ -196,8 +211,17 @@ function UA.Plan(g, cfg)
     local pw, ps, cw, cs = w, sx, h, sy
     if vertical then pw, ps, cw, cs = h, sy, w, sx end
     local span = per * pw + (per - 1) * ps
+    -- past one line's buttons and short of the next one's end, so exactly
+    -- `per` fit, whatever the spacing
+    local lineSize = span + math.max(0.5, (pw + ps) / 2)
     local n = lines * blocks
     local bw, bh = span, n * cw + (n - 1) * cs
+    -- each type on its own line: a block per type that can show
+    local typeBlocks = (cfg.full and cfg.ownLine) and UA.TypeBlocks(g, cfg, vertical, lineSize, ps, cs) or nil
+    if typeBlocks then
+        blocks = #typeBlocks
+        bw, bh = typeBlocks.span, typeBlocks.cross
+    end
     if vertical then bw, bh = bh, bw end
     bw, bh = math.max(Snap(4), bw + 2 * pad), math.max(Snap(4), bh + 2 * pad)
     local corner = (down and "TOP" or "BOTTOM") .. (right and "LEFT" or "RIGHT")
@@ -213,11 +237,66 @@ function UA.Plan(g, cfg)
     return {
         w = w, h = h, sx = sx, sy = sy, per = per, lines = lines, blocks = blocks, cap = cap, pad = pad,
         right = right, down = down, vertical = vertical, corner = corner, pin = pin, ox = ox, oy = oy,
-        -- past one line's buttons and short of the next one's end, so exactly
-        -- `per` fit, whatever the spacing
-        lineSize = span + math.max(0.5, (pw + ps) / 2),
-        boxW = bw, boxH = bh,
+        lineSize = lineSize, boxW = bw, boxH = bh, typeBlocks = typeBlocks,
     }
+end
+
+-- A type's button size: its own look's (Use group scale off), else the
+-- group's, rounded as the engine rounds a member's (Engine.IconSize).
+function UA.TypeSize(g, cfg, key)
+    local E = NS.LayoutEngine
+    if E and E.IconSize then return E.IconSize(UA.TypeRec(g, cfg, key)) end
+    local w, h = NS.DriverAuraGroups.GroupDims(g)
+    return w, h
+end
+
+-- Each type on its own line: a block per type that can show, in their order,
+-- each at its type's size and as many to a line as the flow's line fits
+-- (lineSize; ps / cs the gaps along and across), its lines one under another
+-- with the same gap between blocks. span / cross: the box's two sides.
+function UA.TypeBlocks(g, cfg, vertical, lineSize, ps, cs)
+    local TL = NS.TypeLooks
+    if not TL then return nil end
+    local out, span, at = {}, 0, 0
+    for _, key in ipairs(cfg.types) do
+        if TL.Shows(cfg.dispel, key) then
+            local w, h = UA.TypeSize(g, cfg, key)
+            local tp, tc = w, h
+            if vertical then tp, tc = h, w end
+            local per = math.max(1, math.min(cfg.cap, math.floor((lineSize - tp) / (tp + ps)) + 1))
+            local lines = math.ceil(cfg.cap / per)
+            out[#out + 1] = { key = key, w = w, h = h, per = per, lines = lines, at = at }
+            span = math.max(span, per * tp + (per - 1) * ps)
+            at = at + lines * tc + (lines - 1) * cs + cs
+        end
+    end
+    if #out == 0 then return nil end
+    out.span, out.cross = span, at - cs
+    return out
+end
+
+-- Cell k (from 0) of type block b, placed as UA.CellXY places a plain cell.
+function UA.TypeCellXY(p, b, k)
+    local tp, tc, ps, cs = b.w, b.h, p.sx, p.sy
+    if p.vertical then tp, tc, ps, cs = b.h, b.w, p.sy, p.sx end
+    local a = p.pad + (k % b.per) * (tp + ps)
+    local c = p.pad + b.at + math.floor(k / b.per) * (tc + cs)
+    local x, y = a, c
+    if p.vertical then x, y = c, a end
+    return (p.right and x or -x) + p.ox, (p.down and -y or y) + p.oy
+end
+
+-- Mark i's offset and size: a plain cell, or with a block per type, cell
+-- (i - 1) % cap of the block i falls in.
+function UA.MarkAt(p, i)
+    local tb = p.typeBlocks
+    if not tb then
+        local x, y = UA.CellXY(p, i)
+        return x, y, p.w, p.h
+    end
+    local b = tb[math.floor((i - 1) / p.cap) + 1]
+    local x, y = UA.TypeCellXY(p, b, (i - 1) % p.cap)
+    return x, y, b.w, b.h
 end
 
 -- Cell i's offset from the pin, where the flow puts its i-th button once the
@@ -248,16 +327,35 @@ function UA.LookRec(g, cfg, debuffs)
     return r
 end
 
+-- The same for one type of a full look per type, its overrides the type's
+-- own (g.fullLooks[key], Store.TypeLookProxy edits them). Its button has no
+-- holder and no lane: it draws every glow but a Missing one itself.
+function UA.TypeRec(g, cfg, key)
+    local recs = UA.typeRecs[g.id]
+    if not recs then
+        recs = {}
+        UA.typeRecs[g.id] = recs
+    end
+    local r = recs[key]
+    if not r then
+        r = { type = "icon", kind = "aura", c = {}, driver = {}, _adNoHolder = true, _adRowGlows = true }
+        recs[key] = r
+    end
+    r.groupId = g.id
+    r.o = (g.fullLooks and g.fullLooks[key]) or UA.NO_LOOK
+    r.driver.unit = cfg.unit
+    r.driver.auraType = cfg.harmful and "debuff" or "buff"
+    return r
+end
+
 -- Containers are made in the load window, else only out of combat with auras
 -- plain: the game blocks creation otherwise.
 function UA.CanMake()
     return not (UA.loadWindowOver and (InCombatLockdown() or NS.DriverAuraGroups.AurasSecretNow()))
 end
 
--- One container with one aura group, following `unit`, its buttons dressed
--- as they are made (the always-legal write window). Every later edit is a
--- setter: a container is never re-slotted.
-function UA.MakeContainer(g, rt, cfg, unit)
+-- A new, empty container following `unit`, hidden; nil without aura groups.
+function UA.NewContainer(unit)
     if C_AddOns and C_AddOns.IsAddOnLoaded and not C_AddOns.IsAddOnLoaded("Blizzard_AuraContainer") then
         C_AddOns.LoadAddOn("Blizzard_AuraContainer")
     end
@@ -271,18 +369,35 @@ function UA.MakeContainer(g, rt, cfg, unit)
     c:SetEnabled(true)
     c:EnableMouse(false)
     c:Hide()
+    return c
+end
+
+-- One container following `unit` with every aura group it needs, all added at
+-- its birth: the first half, and the debuffs with withD (the game can refuse
+-- a group added once a container has shown auras). Its buttons are dressed as
+-- they are made (the always-legal write window). Every later edit is a
+-- setter: a container is never re-slotted. The caller puts it in rt.cs.
+function UA.MakeContainer(g, rt, cfg, unit, withD)
+    local c = UA.NewContainer(unit)
+    if not c then return nil end
     local filters, sig = UA.Filters(cfg)
-    c:AddAuraGroup(UA.KEY, cfg.filter, UA.GroupOptions(rt, cfg, filters, 1))
+    c:AddAuraGroup(UA.KEY, cfg.filter, UA.GroupOptions(rt, cfg, filters, 1, nil, c))
     c._adSent = { unit = unit, filter = cfg.filter, cap = cfg.cap, order = cfg.order, hide = sig }
-    rt.cs[#rt.cs + 1] = c
+    if withD then
+        rt.slotRecs[2] = UA.LookRec(g, cfg, true)
+        local fD, sigD = UA.Filters(cfg, true)
+        c:AddAuraGroup(UA.KEY_D, cfg.filterD, UA.GroupOptions(rt, cfg, fD, 2, nil, c))
+        c._adSentD = { on = true, filter = cfg.filterD, cap = cfg.cap, order = cfg.order, hide = sigD }
+    end
     rt.engines[#rt.engines + 1] = c
     return c
 end
 
--- One half's aura group: slot 1 the first half, 2 the debuffs. Its buttons
--- are dressed from rt.slotRecs[slot] as they are made, every batch the game
--- makes later too.
-function UA.GroupOptions(rt, cfg, filters, slot)
+-- One half's aura group: slot 1 the first half, 2 the debuffs (a full look
+-- per type: one type's, layout its own). Its buttons are dressed from
+-- rt.slotRecs[slot] as they are made, every batch the game makes later too.
+-- owner: their container, so a replaced one's buttons can be let go.
+function UA.GroupOptions(rt, cfg, filters, slot, layout, owner)
     local G, DA = NS.DriverAuraGroups, NS.DriverAura
     local method, dir = UA.Sort(cfg.order)
     return {
@@ -291,9 +406,13 @@ function UA.GroupOptions(rt, cfg, filters, slot)
         candidateFilters = filters,
         initializeFrame = function(b)
             if DA and DA.WireButton then DA.WireButton(b) end
-            b:SetSize(rt.cfg.iconW, rt.cfg.iconH)
-            b._adAppliedW, b._adAppliedH = rt.cfg.iconW, rt.cfg.iconH
+            -- a type's own size, else the group's
+            local d = rt.slotDims[slot]
+            local w, h = (d and d.w) or rt.cfg.iconW, (d and d.h) or rt.cfg.iconH
+            b:SetSize(w, h)
+            b._adAppliedW, b._adAppliedH = w, h
             b._adSlotIndex = slot
+            b._adOwner = owner
             b:EnableMouse(false)
             if not b._adCollected then
                 b._adCollected = true
@@ -301,7 +420,7 @@ function UA.GroupOptions(rt, cfg, filters, slot)
             end
             G.StyleSlotButton(b, rt)
         end,
-        layout = UA.HalfLayout(rt.cfg.sx, rt.cfg.sy, slot == 2, cfg.newLine),
+        layout = layout or UA.HalfLayout(rt.cfg.sx, rt.cfg.sy, slot == 2, cfg.newLine),
     }
 end
 
@@ -314,21 +433,150 @@ function UA.HalfLayout(ex, ly, debuffs, newLine)
     return t
 end
 
--- Buffs and debuffs: the debuff half joins the unit's container the first
--- time a group needs it, under the creation rule, else at the settle edge. A
--- group is never removed, only switched off (UA.Push).
-function UA.AddDebuffs(g, rt, cfg)
-    if rt.hasD or not cfg.both then return end
+-- Buffs and debuffs: the debuff half is born with the first container. When
+-- the halves a group needs change, a new first container with them replaces
+-- it under the creation rule, else at the settle edge; until then the old one
+-- keeps the halves it was born with (UA.Push switches its debuffs off where
+-- the client can).
+function UA.Halves(g, rt, cfg)
+    if (rt.hasD == true) == (cfg.both == true) then return end
     if not UA.CanMake() then
         UA.pending = true
         return
     end
-    local c = rt.cs[1]
-    rt.slotRecs[2] = UA.LookRec(g, cfg, true)
-    local filters, sig = UA.Filters(cfg, true)
-    c:AddAuraGroup(UA.KEY_D, cfg.filterD, UA.GroupOptions(rt, cfg, filters, 2))
-    c._adSentD = { on = true, filter = cfg.filterD, cap = cfg.cap, order = cfg.order, hide = sig }
-    rt.hasD = true
+    local c = UA.MakeContainer(g, rt, cfg, cfg.plates and UA.Token(1) or cfg.unit, cfg.both)
+    if not c then return end
+    -- the old one hidden and let go: a hidden container listens to nothing
+    local old = rt.cs[1]
+    UA.Unbind(rt, 1)
+    for i = #rt.engines, 1, -1 do
+        if rt.engines[i] == old then table.remove(rt.engines, i) end
+    end
+    for i = #rt.buttons, 1, -1 do
+        if rt.buttons[i]._adOwner == old then table.remove(rt.buttons, i) end
+    end
+    rt.cs[1] = c
+    rt.c, rt.sent, rt.hasD = c, c._adSent, cfg.both == true
+end
+
+-- Full look per type
+
+-- One type's candidate filters: the half's (hide list, Dispel types boxes)
+-- plus the game's own dispel-type filter, so the game sorts each aura into
+-- its type's group and nothing here reads a type. No type: every aura of none
+-- of the four. A type the boxes leave out gets an empty set: nothing shows.
+function UA.TypeFilters(cfg, key)
+    local base, sig = UA.Filters(cfg)
+    local f = {}
+    for k, v in pairs(base) do f[k] = v end
+    if key == "None" then
+        f.excludeDispelTypes = UA.TYPED
+    elseif NS.TypeLooks.Shows(cfg.dispel, key) then
+        f.includeDispelTypes = { [key] = true }
+    else
+        f.includeDispelTypes = {}
+    end
+    return f, sig .. "|t:" .. key
+end
+
+-- A type's spacing, as a half's with no gap of its own, so the types pack;
+-- the flow puts the groups in layoutIndex order (pos: the type's place), each
+-- on a new line when asked. An empty group takes no line.
+function UA.TypeLayout(ex, ly, ownLine, pos)
+    return { elementSpacing = ex, lineSpacing = ly, groupSpacing = 0, groupLineSpacing = ly,
+        forceNewLine = ownLine == true, layoutIndex = pos }
+end
+
+-- The place of each type in the order: [key] = 1..5.
+function UA.TypePos(cfg)
+    local pos = {}
+    for i, key in ipairs(cfg.types) do pos[key] = i end
+    return pos
+end
+
+-- Each type's look record and button size into the runtime's slots.
+function UA.TypeSlots(g, rt, cfg)
+    for i, t in ipairs(NS.Schema.TYPE_LOOKS) do
+        local slot = UA.TYPE_SLOT + i
+        rt.slotRecs[slot] = UA.TypeRec(g, cfg, t.key)
+        local w, h = UA.TypeSize(g, cfg, t.key)
+        local d = rt.slotDims[slot] or {}
+        d.w, d.h = w, h
+        rt.slotDims[slot] = d
+    end
+end
+
+-- A full look per type: a container of its own holding one aura group per
+-- type, all made in one go at its birth as the first one is (never
+-- re-slotted), under the same creation rule (else the settle edge). It shows
+-- in the first one's place while the look is on; the hidden one listens to
+-- nothing.
+function UA.MakeFull(g, rt, cfg)
+    if rt.full or not cfg.full then return end
+    if not UA.CanMake() then
+        UA.pending = true
+        return
+    end
+    local c = UA.NewContainer(cfg.unit)
+    if not c then return end
+    UA.TypeSlots(g, rt, cfg)
+    local pos = UA.TypePos(cfg)
+    local sent = { unit = cfg.unit, groups = {} }
+    for i, t in ipairs(NS.Schema.TYPE_LOOKS) do
+        local key = UA.KEY_T .. t.key
+        local filters, sig = UA.TypeFilters(cfg, t.key)
+        c:AddAuraGroup(key, cfg.filter, UA.GroupOptions(rt, cfg, filters, UA.TYPE_SLOT + i,
+            UA.TypeLayout(rt.cfg.sx, rt.cfg.sy, cfg.ownLine, pos[t.key])))
+        sent.groups[key] = { filter = cfg.filter, cap = cfg.cap, order = cfg.order, hide = sig }
+    end
+    c._adSent = sent
+    rt.full = c
+    rt.engines[#rt.engines + 1] = c
+end
+
+-- What changed for the type groups since the last send (UA.Push's rules: the
+-- unit and each group's filter, hide list, order and cap, waiting out combat).
+function UA.PushFull(g, rt, cfg)
+    local c = rt.full
+    if not c or cfg.plates then return end
+    UA.TypeSlots(g, rt, cfg)
+    local s = c._adSent
+    if s.unit ~= cfg.unit then
+        if InCombatLockdown() then
+            UA.pending = true
+            return
+        end
+        c:SetUnit(cfg.unit)
+        s.unit = cfg.unit
+    end
+    for _, t in ipairs(NS.Schema.TYPE_LOOKS) do
+        local key = UA.KEY_T .. t.key
+        local filters, sig = UA.TypeFilters(cfg, t.key)
+        if UA.SendHalf(c, key, s.groups[key], cfg.filter, filters, sig, cfg) then
+            UA.pending = true
+            return
+        end
+    end
+end
+
+-- The type groups' flow: the first container's line, padding and corner,
+-- and each type's spacing and place (a layout send replaces the whole set).
+function UA.FlowFull(c, p, cfg)
+    local ex, ly = p.sx, p.sy
+    if p.vertical then ex, ly = p.sy, p.sx end
+    NS.DriverAuraGroups.ApplyFlow(c, UA.NO_KEYS, ex, ly, p.lineSize, p.pad, p.right, p.down)
+    local AX = AnchorUtil and AnchorUtil.FlowLayoutAxis
+    if AX and c.SetFlowLayoutAxis then c:SetFlowLayoutAxis(p.vertical and AX.Vertical or AX.Horizontal) end
+    if not c.SetAuraGroupLayout then return end
+    local pos = UA.TypePos(cfg)
+    for _, t in ipairs(NS.Schema.TYPE_LOOKS) do
+        c:SetAuraGroupLayout(UA.KEY_T .. t.key, UA.TypeLayout(ex, ly, cfg.ownLine, pos[t.key]))
+    end
+end
+
+-- The container in play: the full look's while it is on, else the first.
+function UA.Shown(rt)
+    return (rt.fullOn and rt.full) or rt.cs[1]
 end
 
 -- After a button's look: the group's debuff type looks (Drivers\AD_TypeLooks.lua).
@@ -352,9 +600,10 @@ function UA.Build(g)
     rt = { cs = {}, buttons = {}, engines = {}, slotDims = {}, bound = {}, hostile = {},
         slotRecs = { UA.LookRec(g, cfg) }, cfg = { iconW = p.w, iconH = p.h, sx = p.sx, sy = p.sy },
         mode = cfg.plates and "plates" or "unit", want = 1, gid = g.id, afterStyle = UA.AfterStyle }
-    local c = UA.MakeContainer(g, rt, cfg, cfg.plates and UA.Token(1) or cfg.unit)
+    local c = UA.MakeContainer(g, rt, cfg, cfg.plates and UA.Token(1) or cfg.unit, cfg.both)
     if not c then return nil end
-    rt.c, rt.sent = c, c._adSent
+    rt.cs[1] = c
+    rt.c, rt.sent, rt.hasD = c, c._adSent, cfg.both == true
     UA.runtimes[g.id] = rt
     UA.blocked[g.id] = nil
     return rt
@@ -371,7 +620,9 @@ function UA.Pool(g, rt, cfg)
             UA.pending = true
             break
         end
-        if not UA.MakeContainer(g, rt, cfg, UA.Token(#rt.cs + 1)) then break end
+        local c = UA.MakeContainer(g, rt, cfg, UA.Token(#rt.cs + 1))
+        if not c then break end
+        rt.cs[#rt.cs + 1] = c
     end
     rt.short = #rt.cs < want
 end
@@ -407,7 +658,8 @@ function UA.Push(g, rt)
         end
     end
     if not rt.hasD then return end
-    -- the debuff half: on only while both show
+    -- the debuff half: on only while both show (off only while its
+    -- container's replacement waits, UA.Halves)
     rt.slotRecs[2] = UA.LookRec(g, cfg, true)
     local c, s = rt.cs[1], rt.cs[1]._adSentD
     local on = cfg.both == true
@@ -480,6 +732,13 @@ function UA.Layout(rt, gf, p, cfg)
     c:ClearAllPoints()
     local lx, ly = UA.Lean(gf, p.pin)
     c:SetPoint(p.pin, gf, p.pin, lx, ly)
+    -- the full look's container: the same flow and the same pin
+    local f = rt.full
+    if f then
+        UA.FlowFull(f, p, cfg)
+        f:ClearAllPoints()
+        f:SetPoint(p.pin, gf, p.pin, lx, ly)
+    end
 end
 
 -- Fill down first turns the flow's axis: a line runs down, so each spacing
@@ -534,10 +793,10 @@ function UA.Marks(gf, p, on)
             t:SetAlpha(UA.MARK_ALPHA)
             host.cells[i] = t
         end
-        local x, y = UA.CellXY(p, i)
+        local x, y, w, h = UA.MarkAt(p, i)
         t:ClearAllPoints()
         t:SetPoint(p.corner, gf, p.pin, x + lx, y + ly)
-        t:SetSize(p.w, p.h)
+        t:SetSize(w, h)
         t:Show()
     end
     for i = n + 1, #host.cells do host.cells[i]:Hide() end
@@ -679,16 +938,25 @@ function UA.Place(g, gf, editMode)
         rt.pin = { edge = cfg.edge, x = cfg.x, y = cfg.y }
         UA.Pool(g, rt, cfg)
         if not cfg.plates then UA.UnbindAll(rt) end
-        UA.AddDebuffs(g, rt, cfg)
+        UA.Halves(g, rt, cfg)
+        UA.MakeFull(g, rt, cfg)
         UA.Layout(rt, gf, p, cfg)
         UA.Push(g, rt)
+        UA.PushFull(g, rt, cfg)
         if G.StyleButtons(rt) then UA.pending = true end
+        -- the full look's container stands in for the first once it exists
+        rt.fullOn = cfg.full and rt.full ~= nil and not cfg.plates
         if cfg.plates then
+            if rt.full then rt.full:Hide() end
             UA.BindAll(g, rt, gf)
         else
             -- live with the window open too: the auras show over the cells
-            G.MirrorOnto(rt.cs[1], gf, UA.Drawn(g))
-            for i = 2, #rt.cs do rt.cs[i]:Hide() end
+            local live = UA.Shown(rt)
+            G.MirrorOnto(live, gf, UA.Drawn(g))
+            for _, c in ipairs(rt.cs) do
+                if c ~= live then c:Hide() end
+            end
+            if rt.full and rt.full ~= live then rt.full:Hide() end
         end
     end
     UA.ArmSwaps()
@@ -702,6 +970,7 @@ function UA.Release(g)
     if rt then
         UA.UnbindAll(rt)
         for _, c in ipairs(rt.cs) do c:Hide() end
+        if rt.full then rt.full:Hide() end
     end
     local E = NS.LayoutEngine
     local gf = E and E.GetGroupFrame and E.GetGroupFrame(gid)
@@ -710,14 +979,24 @@ function UA.Release(g)
     UA.ArmPlates()
 end
 
--- True while the group's first container, or its debuff half, waits for
--- combat to end or auras to turn plain (the options window says so).
+-- True while the group's first container, a new one for a change of halves
+-- or its full look's container waits for combat to end or auras to turn plain
+-- (the options window says so).
 function UA.Waiting(g)
     if g == nil then return false end
     local rt = UA.runtimes[g.id]
     if rt == nil then return UA.blocked[g.id] == true end
     local _, _, both = NS.Schema.UnitAuraShape(g)
-    return both == true and rt.hasD ~= true
+    if (both == true) ~= (rt.hasD == true) then return true end
+    return UA.FullWaiting(g)
+end
+
+-- True while a full look per type is on and its container is not made yet.
+function UA.FullWaiting(g)
+    local TL = NS.TypeLooks
+    if not (TL and g and g.id and TL.Full(g)) then return false end
+    local rt = UA.runtimes[g.id]
+    return rt == nil or rt.full == nil
 end
 
 -- True while the plate pool is smaller than Nameplates covered.
@@ -754,7 +1033,8 @@ function UA.OnSwap(unit, who)
     end
     for gid in pairs(UA.placed) do
         local rt = UA.runtimes[gid]
-        if rt and rt.sent.unit == unit and rt.c:IsShown() and rt.c.UpdateAllAuras then rt.c:UpdateAllAuras() end
+        local c = rt and UA.Shown(rt)
+        if c and rt.sent.unit == unit and c:IsShown() and c.UpdateAllAuras then c:UpdateAllAuras() end
     end
 end
 
@@ -808,7 +1088,8 @@ function UA.PreBuild()
                 if rt then
                     local cfg = UA.Config(g)
                     UA.Pool(g, rt, cfg)
-                    UA.AddDebuffs(g, rt, cfg)
+                    UA.Halves(g, rt, cfg)
+                    UA.MakeFull(g, rt, cfg)
                 end
             end
         end
@@ -830,7 +1111,7 @@ Events.OnMessage("AD_VISIBILITY", "adua", function()
                     if rt.bound[i] then UA.MirrorPlate(g, rt, i, gf) end
                 end
             else
-                G.MirrorOnto(rt.cs[1], gf, UA.Drawn(g))
+                G.MirrorOnto(UA.Shown(rt), gf, UA.Drawn(g))
             end
         end
     end

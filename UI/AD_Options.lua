@@ -114,14 +114,18 @@ local KIND_TABS = {
     special = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
     -- a Group Buff: its count and its two states, no glows or sounds
     groupbuff = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    -- a Stance icon: in the stance or not, no swipe, count or sounds
+    stance = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
 }
 
--- An aura-group icon is drawn by the group's engine rows, which cannot hide or
--- fade one member in combat, so its conditions and Visibility live on the group.
+-- An aura-group icon, and whether its group packs it (Close gaps on). Packed
+-- rows are the game's, which cannot hide or fade one member in combat, so a
+-- packed member's Load When and Fade When live on the group.
 local function InAuraGroup(rec)
-    if not (rec and rec.type == "icon" and rec.groupId) then return false end
+    if not (rec and rec.type == "icon" and rec.groupId) then return false, false end
     local g = Store.Get(rec.groupId)
-    return g ~= nil and g.groupKind == "aura"
+    if not (g ~= nil and g.groupKind == "aura") then return false, false end
+    return true, Store.Resolve(g, "arrangement", "dynamicLayout") == true
 end
 
 -- Options.iconTabEmpty(rec, tab), set by the icon editor, drops a tab none of
@@ -303,10 +307,11 @@ Options.ICON_PILL_COLORS = {
     enchant = { 0.72, 0.80, 0.92 },   -- steel
     special = { 0.98, 0.72, 0.22 },   -- amber
     groupbuff = { 0.55, 0.80, 1.00 }, -- sky
+    stance = { 0.85, 0.60, 0.40 },    -- bronze
 }
 Options.ICON_PILL_WORDS = { spell = "CD Icon", aura = "Aura Icon", timer = "Custom Icon",
     item = "Item Icon", trinket = "Trinket Icon", totem = "Totem Icon", ammo = "Ammo Icon",
-    enchant = "Enchant Icon", special = "Special Icon", groupbuff = "Group Buff Icon" }
+    enchant = "Enchant Icon", special = "Special Icon", groupbuff = "Group Buff Icon", stance = "Stance Icon" }
 function Options.IconPillText(kind)
     local text = Options.ICON_PILL_WORDS[kind]
     if not text then return "Icon", COL.dim end
@@ -1325,6 +1330,8 @@ function Options.DepOK(rec, family, section, d, tier)
     if d.notValue ~= nil then return v ~= d.notValue end
     if d.min ~= nil then return type(v) == "number" and v >= d.min end
     if d.anyOf ~= nil then return v ~= nil and d.anyOf[v] == true end
+    -- listMin: a typed tick list holds that many numbers (a colour row per number)
+    if d.listMin ~= nil then return #Schema.TickValues(v) >= d.listMin end
     local want = d.value
     if want == nil then want = true end
     if type(want) == "boolean" then return (v == true) == want end
@@ -1739,6 +1746,22 @@ local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
                 reveal = opts and opts.reveal or nil }
             -- the search opens the fold before it flashes the row
             if isAdv[field] then row._adFold = fold end
+            -- def.labelFn(rec): the row's words for the record shown (nil: the
+            -- label), set before the "(mixed)" mark reads them; the search
+            -- keeps the schema label
+            if def.labelFn and row._colLabel then
+                local inner = row._sync
+                row._sync = function()
+                    if inner then inner() end
+                    local r = ctx()
+                    local want = (r and def.labelFn(r)) or label
+                    if row._adLabelNow ~= want then
+                        row._adLabelNow = want
+                        row._colLabel:SetText(want)
+                        if row._adPlainLabel ~= nil then row._adPlainLabel = want end
+                    end
+                end
+            end
             -- "(mixed)" after the label while several records disagree
             if Options.MultiSelect then
                 Options.MultiSelect.MarkRow(row, ctx, section, field, def.showPick or def.statePick)
@@ -2851,8 +2874,9 @@ local function ConditionRows(pg, ctx, tabVisible)
     if C then
         local whenVis = function()
             local r = ctx()
+            local _, packed = InAuraGroup(r)
             -- a wheel's key cannot change in combat, so it takes no Load When rules
-            return tabVisible() and not InAuraGroup(r) and not (r and r.type == "bar" and r.barKind == "wheel")
+            return tabVisible() and not packed and not (r and r.type == "bar" and r.barKind == "wheel")
         end
         AT.Section(pg, "Load When",
             { collapsible = true, store = uiStore, visibleFn = whenVis })
@@ -2863,7 +2887,11 @@ local function ConditionRows(pg, ctx, tabVisible)
             local head = C.MatchAll(r, "loadWhen")
                 and "Loads only while EVERY checked condition is true."
                 or "Loads only while at least one checked condition is true."
-            return head .. " Unloaded, it is gone completely - no mouse, no sounds, no cell in a dynamic group - and it is back the moment that changes, in combat too."
+            -- the game plays an aura icon's sounds itself, so unloading cannot stop them
+            if r and r.kind == "aura" then
+                return head .. " Unloaded, it is hidden with no mouse and back the moment that changes, in combat too; the game still plays its aura sounds."
+            end
+            return head .. " Unloaded, it is gone completely - no mouse, no sounds, no spot in a dynamic group - and it is back the moment that changes, in combat too."
         end)
         CondMatchRow(pg, ctx, whenVis, "loadWhen")
         CondGrid(pg, ctx, whenVis, "loadWhen")
@@ -2882,8 +2910,22 @@ local function ConditionRows(pg, ctx, tabVisible)
         -- the set-pieces load rule (retail; UI\AD_SpecialOptions.lua)
         if Options.SetPiecesRows then Options.SetPiecesRows(pg, ctx, whenVis, uiStore, win) end
         AT.Section(pg, nil)
-        AT.RowDesc(pg, "Set these on the icon's Aura Group: it cannot hide one member in combat.", 20,
-            function() return tabVisible() and InAuraGroup(ctx()) end)
+        -- A packed member keeps its own rules: they apply again once its group's
+        -- Close gaps is off. saved: the note for a member that has some.
+        local packedNote = function(saved)
+            local r = ctx()
+            local _, packed = InAuraGroup(r)
+            if not (tabVisible() and packed) then return false end
+            local own = (C.RangeRule ~= nil and C.RangeRule(r) ~= nil) or (C.SetRule ~= nil and C.SetRule(r) ~= nil)
+            for _, list in ipairs(C.LISTS or {}) do
+                if C.Count(r, list) > 0 then own = true end
+            end
+            return own == saved
+        end
+        AT.RowDesc(pg, "With Close gaps on, set these on the Aura Group.", 20,
+            function() return packedNote(false) end)
+        AT.RowDesc(pg, "This icon's own rules wait until Close gaps is off: set these on the Aura Group.", 20,
+            function() return packedNote(true) end)
         AT.RowDesc(pg, "A wheel loads by class, spec, talents and spells: its key cannot change during combat.", 20,
             function()
                 local r = ctx()
@@ -3819,6 +3861,102 @@ function Options.PaintEye(b, rec)
     show:Show()
 end
 
+-- The lock beside a layout's or group's eye: locked, nothing in it moves or
+-- reshapes from the screen while this window is open, and the panel still
+-- edits it (Store.Locked). It shows while its row is under the mouse or while
+-- it locks itself, so the rail stays clean; Position's "Lock in place" is the
+-- same switch. Drawn like the eye: one tinted texture per state.
+Options.LOCK_TEX = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\AD_Lock"
+Options.LOCK_OPEN_TEX = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\AD_LockOpen"
+
+function Options.MakeLock(parent)
+    local b = CreateFrame("Button", nil, parent)
+    b:SetSize(20, 18)
+    -- the row or tile whose hover shows it
+    b._host = parent
+    -- each texture gets its file once, as on the eye
+    b.shut = b:CreateTexture(nil, "OVERLAY")
+    b.shut:SetSize(18, 18)
+    b.shut:SetPoint("CENTER", 0, 0)
+    b.shut:SetTexture(Options.LOCK_TEX)
+    b.open = b:CreateTexture(nil, "OVERLAY")
+    b.open:SetSize(18, 18)
+    b.open:SetPoint("CENTER", 0, 0)
+    b.open:SetTexture(Options.LOCK_OPEN_TEX)
+    b.open:Hide()
+    b:SetScript("OnEnter", function(s)
+        s._hot = true
+        Options.PaintLock(s, s._rec)
+    end)
+    b:SetScript("OnLeave", function(s)
+        s._hot = nil
+        Options.PaintLock(s, s._rec)
+    end)
+    b:SetScript("OnClick", function(s)
+        AT.CloseDropdown()
+        local rec = s._rec
+        if not rec then return end
+        local on = not Store.LockedSelf(rec)
+        Store.SetLocked(rec, on)
+        PlaySound(on and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON
+                     or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF, "Master")
+        RefreshAll()
+    end)
+    -- Hooked after the SetScript calls above, or they would replace it.
+    AT.Tooltip(b, function()
+        local r = b._rec
+        if r and Store.LockedSelf(r) then return "Locked" end
+        if r and Store.Locked(r) then return "Locked by its layout" end
+        return "Lock in place"
+    end, function()
+        local r = b._rec
+        if not r then return nil end
+        if Store.Locked(r) then return "It can't be dragged on screen." end
+        return "Stops it being dragged on screen."
+    end)
+    b:Hide()
+    return b
+end
+
+-- Shown while its row or tile is under the mouse (IsMouseOver counts the lock
+-- itself, so moving onto it keeps it) or while it locks itself. Shut while
+-- locked, cyan when locked here (its working state, like the eye's), grey
+-- when its layout locks it.
+function Options.PaintLock(b, rec)
+    b._rec = rec
+    if not rec then
+        b:Hide()
+        return
+    end
+    local own, any = Store.LockedSelf(rec), Store.Locked(rec)
+    local host = b._host
+    local over = b._hot == true or (host ~= nil and host:IsMouseOver() == true)
+    b:SetShown(own or over)
+    local c = (b._hot and COL.ink) or (own and COL.arc) or COL.faint
+    local show, hide = b.shut, b.open
+    if not any then show, hide = b.open, b.shut end
+    hide:Hide()
+    show:SetVertexColor(c[1], c[2], c[3], 1)
+    show:Show()
+end
+
+-- Position's "Lock in place" on a layout or a group: the same lock the
+-- sidebar's padlock sets.
+function Options.LockRow(pg, ctx, vis)
+    AT.RowToggle(pg, "Lock in place",
+        function() return Store.LockedSelf(ctx()) end,
+        function(v)
+            local r = ctx()
+            if not r then return end
+            Store.SetLocked(r, v)
+            RefreshAll()
+        end, vis)
+    AT.RowDesc(pg, "Its layout is locked, so it stays put anyway.", 20, function()
+        local r = ctx()
+        return vis() and r ~= nil and r.type == "group" and Store.Locked(r) and not Store.LockedSelf(r)
+    end)
+end
+
 local function RailRow(i)
     local row = railRows[i]
     if row then return row end
@@ -3839,8 +3977,9 @@ local function RailRow(i)
     row.name:SetJustifyH("LEFT")
     row.name:SetWordWrap(false)
     row.pill = KindPill(row)
-    -- Anchored per row kind in RefreshRail.
+    -- Anchored per row kind in RefreshRail; the lock only on layouts and groups.
     row.eye = Options.MakeEye(row)
+    row.lock = Options.MakeLock(row)
     row.badge = row:CreateFontString(nil, "OVERLAY")
     row.badge:SetFont(STANDARD_TEXT_FONT, 8, "")
     row.badge:SetPoint("RIGHT", -6, 0)
@@ -3848,6 +3987,11 @@ local function RailRow(i)
     row.badge:SetWordWrap(false)
     if row.badge.SetMaxLines then row.badge:SetMaxLines(1) end
     row.thumb = MakeThumb(row, 18, 20)
+    -- the class mark on the picture's corner (the View, RefreshRail)
+    row.cmark = row.thumb:CreateTexture(nil, "OVERLAY", nil, 7)
+    row.cmark:SetSize(11, 11)
+    row.cmark:SetPoint("CENTER", row.thumb, "BOTTOMRIGHT", 0, 1)
+    row.cmark:Hide()
     row.edit = AT.MakeSmallButton(row, "Edit", 38)
     row.edit:SetPoint("RIGHT", -4, 0)
     row.edit:SetHeight(16)
@@ -3878,8 +4022,92 @@ local function RailRow(i)
             .. " fails its load conditions on this character (" .. why
             .. "). It exists and can be edited; it just does not show here. Click its eye to draw it on screen while you edit."
     end)
+    -- the lock shows while the row is under the mouse
+    row:HookScript("OnEnter", function() Options.PaintLock(row.lock, row.lock._rec) end)
+    row:HookScript("OnLeave", function() Options.PaintLock(row.lock, row.lock._rec) end)
     railRows[i] = row
     return row
+end
+
+-- The sidebar's View, for the account (setting railView): nil lists everything
+-- as each layout orders it; "char" only what loads on this character;
+-- "byclass" the items that do not load here in a section per class;
+-- "only:<TAG>" one class's HUD, what holds to no class plus that class's own.
+-- A class no saved load condition names any more reads as nil.
+local function RailClassName(tag)
+    for _, cls in ipairs(Store.ClassSpecMatrix()) do
+        if cls.tag == tag then return cls.name end
+    end
+    return tag
+end
+
+local function RailClassHex(tag)
+    local c = RAID_CLASS_COLORS and RAID_CLASS_COLORS[tag]
+    if not c then return "ffffffff" end
+    return string.format("ff%02x%02x%02x", math.floor(c.r * 255 + 0.5),
+        math.floor(c.g * 255 + 0.5), math.floor(c.b * 255 + 0.5))
+end
+
+-- every class a saved load condition names
+function Options.RailClasses()
+    local set = {}
+    Store.EachRecord(function(_, rec)
+        for _, tag in ipairs((Store.ClassesOf(rec))) do set[tag] = true end
+    end)
+    return set
+end
+
+local function RailView()
+    local v = Store.GetSetting("railView")
+    if v == "char" or v == "byclass" then return v end
+    local tag = type(v) == "string" and v:match("^only:(.+)$")
+    if tag and Options.RailClasses()[tag] then return v end
+    return nil
+end
+Options.RailView = RailView
+
+-- the View's choices: the three ways, then each class your layouts name
+function Options.RailViewItems()
+    local items = {
+        { value = "all", text = "Everything" },
+        { value = "char", text = "This character" },
+        { value = "byclass", text = "By class" },
+    }
+    local tags = {}
+    for tag in pairs(Options.RailClasses()) do tags[#tags + 1] = tag end
+    table.sort(tags, function(a, b) return RailClassName(a) < RailClassName(b) end)
+    for _, tag in ipairs(tags) do
+        items[#items + 1] = { value = "only:" .. tag,
+            text = "|c" .. RailClassHex(tag) .. RailClassName(tag) .. "|r" }
+    end
+    return items
+end
+
+-- the one class a record's own conditions name, or nil
+local function OneClass(rec)
+    local cls = Store.ClassesOf(rec)
+    if #cls == 1 then return cls[1] end
+    return nil
+end
+
+-- A class mark: the class's own icon (its atlas on both clients, the
+-- character-create sheet where the atlas is missing), or none.
+local CLASS_SHEET = "Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES"
+local function PaintClassMark(t, tag)
+    local atlas = tag and GetClassAtlas and GetClassAtlas(tag:lower())
+    if atlas and C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(atlas) then
+        t:SetAtlas(atlas)
+        t:Show()
+        return
+    end
+    local tc = tag and CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[tag]
+    if not tc then
+        t:Hide()
+        return
+    end
+    t:SetTexture(CLASS_SHEET)
+    t:SetTexCoord(tc[1], tc[2], tc[3], tc[4])
+    t:Show()
 end
 
 local function BuildRailList()
@@ -3892,6 +4120,40 @@ local function BuildRailList()
     local q = S.Norm(ui.search)
     local filter = q ~= "" and { q = q, words = S.Words(q),
         num = q:match("^%d+$") and tonumber(q) or nil } or nil
+    -- the View holds while nothing is searched; a search lists every match
+    local view = (not filter) and RailView() or nil
+    local only = view and view:match("^only:(.+)$")
+    -- in a one-class view: what holds to no class, or holds to that one
+    local function ForOnly(rec)
+        local cls, limited = Store.ClassesOf(rec)
+        if not limited then return true end
+        for _, tag in ipairs(cls) do
+            if tag == only then return true end
+        end
+        return false
+    end
+    -- what a filtering view keeps; a count stands where the rest were
+    local function Keeps(rec)
+        if view == "char" then return Store.IsLoaded(rec) end
+        if only then return ForOnly(rec) end
+        return true
+    end
+    -- every one of them held to a single class that is not this character's
+    local me = Store.ClassTag and Store.ClassTag()
+    local function OthersOnly(recs)
+        for _, r in ipairs(recs) do
+            local tag = OneClass(r)
+            if not tag or tag == me then return false end
+        end
+        return true
+    end
+    -- classes in name order
+    local function ByName(map)
+        local tags = {}
+        for tag in pairs(map) do tags[#tags + 1] = tag end
+        table.sort(tags, function(a, b) return RailClassName(a) < RailClassName(b) end)
+        return tags
+    end
     local function Hit(rec)
         return S.RecScore(rec, filter.q, filter.words, filter.num) ~= nil
     end
@@ -3945,9 +4207,29 @@ local function BuildRailList()
                     list[#list + 1] = { kind = "group", rec = m, open = gopen and (count > 0 or rem),
                         count = count, rem = rem }
                     if gopen then
-                        for _, ic in ipairs(icons) do
+                        local function Row(ic)
                             list[#list + 1] = { kind = (ic.type == "reminder") and "reminder" or "groupicon",
                                 rec = ic, group = m }
+                        end
+                        if view == "char" or only then
+                            local gone = 0
+                            for _, ic in ipairs(icons) do
+                                if Keeps(ic) then Row(ic) else gone = gone + 1 end
+                            end
+                            if gone > 0 then list[#list + 1] = { kind = "hidden", count = gone, depth = 2 } end
+                        elseif view == "byclass" then
+                            -- the ones that load here first, the rest under a line
+                            local here, rest = {}, {}
+                            for _, ic in ipairs(icons) do
+                                if Store.IsLoaded(ic) then here[#here + 1] = ic else rest[#rest + 1] = ic end
+                            end
+                            for _, ic in ipairs(here) do Row(ic) end
+                            if #here > 0 and #rest > 0 then
+                                list[#list + 1] = { kind = "gsub", count = #rest, others = OthersOnly(rest) }
+                            end
+                            for _, ic in ipairs(rest) do Row(ic) end
+                        else
+                            for _, ic in ipairs(icons) do Row(ic) end
                         end
                         if rem and not filter then list[#list + 1] = { kind = "addrem", rec = m } end
                     end
@@ -3957,14 +4239,39 @@ local function BuildRailList()
                     list[#list + 1] = { kind = "bar", rec = m }
                 end
             end
+            local gone, byClass = 0, {}
             for _, m in ipairs(members) do
-                if notLoaded or Store.IsLoaded(m) then Add(m) else later[#later + 1] = m end
+                if view == "char" or only then
+                    -- a one-class view keeps that class's items in place, loaded here or not
+                    if Keeps(m) then Add(m) else gone = gone + 1 end
+                elseif notLoaded or Store.IsLoaded(m) then
+                    Add(m)
+                else
+                    local tag = (view == "byclass") and OneClass(m) or nil
+                    if tag then
+                        byClass[tag] = byClass[tag] or {}
+                        byClass[tag][#byClass[tag] + 1] = m
+                    else
+                        later[#later + 1] = m
+                    end
+                end
             end
             if not filter then list[#list + 1] = { kind = "addchild", rec = layout } end
+            if gone > 0 then list[#list + 1] = { kind = "hidden", count = gone, depth = 1 } end
+            local shutSet = Store.UI().nlShut
+            -- by class: a section per class, each folding on its own
+            for _, tag in ipairs(ByName(byClass)) do
+                local key = layout.id .. ":" .. tag
+                local shut = shutSet ~= nil and shutSet[key] == true
+                list[#list + 1] = { kind = "clsub", tag = tag, count = #byClass[tag], rec = layout,
+                    key = key, shut = shut }
+                if not shut then
+                    for _, m in ipairs(byClass[tag]) do Add(m) end
+                end
+            end
             if #later > 0 then
                 -- the section folds per layout (a panel preference); a search
                 -- always shows its matches
-                local shutSet = Store.UI().nlShut
                 local shut = (not filter) and shutSet ~= nil and shutSet[layout.id] == true
                 list[#list + 1] = { kind = "nlsub", count = #later, rec = layout, shut = shut }
                 if not shut then
@@ -3976,14 +4283,37 @@ local function BuildRailList()
     -- Layouts that fail their load conditions here still list, dimmed, under their
     -- own header.
     local loadedL, notLoadedL = {}, {}
+    local goneL = 0
     for _, layout in ipairs(Store.Layouts()) do
-        if Store.IsLoaded(layout) then
+        if only and not ForOnly(layout) then
+            goneL = goneL + 1
+        elseif Store.IsLoaded(layout) then
             loadedL[#loadedL + 1] = layout
+        elseif view == "char" then
+            goneL = goneL + 1
         else
             notLoadedL[#notLoadedL + 1] = layout
         end
     end
     for _, l in ipairs(loadedL) do AddLayout(l, false) end
+    -- by class: the layouts that do not load here, under a header per class
+    if view == "byclass" then
+        local byClass, rest = {}, {}
+        for _, l in ipairs(notLoadedL) do
+            local tag = OneClass(l)
+            if tag then
+                byClass[tag] = byClass[tag] or {}
+                byClass[tag][#byClass[tag] + 1] = l
+            else
+                rest[#rest + 1] = l
+            end
+        end
+        for _, tag in ipairs(ByName(byClass)) do
+            list[#list + 1] = { kind = "clhdr", tag = tag, count = #byClass[tag] }
+            for _, l in ipairs(byClass[tag]) do AddLayout(l, true) end
+        end
+        notLoadedL = rest
+    end
     if #notLoadedL > 0 then
         -- The header counts the unloaded layouts a search kept; none kept = no header.
         local at, before = #list + 1, #list
@@ -3994,14 +4324,19 @@ local function BuildRailList()
         end
         if n > 0 then table.insert(list, at, { kind = "nlhdr", count = n }) end
     end
+    if goneL > 0 then list[#list + 1] = { kind = "hidden", count = goneL, depth = 0, layouts = true } end
     if not filter then
         list[#list + 1] = { kind = "newlayout" }
     end
     return list
 end
+Options._buildRailList = BuildRailList   -- used by the offline tests
 
 local function RefreshRail()
     local list = BuildRailList()
+    -- class marks on the pictures in every View but Everything, never in a search
+    local marks = RailView() ~= nil and (ui.search or "") == ""
+    if Options.railView then Options.railView.Refresh() end
     -- layout id -> the layout pack whose newer version its copy lacks
     local packUpd = Options.Home and Options.Home.UpdateByLayout() or nil
     -- inside the scrolling list, which starts under the LAYOUTS caption
@@ -4019,6 +4354,7 @@ local function RefreshRail()
         row.thumb:Show()
         row.thumb:ClearAllPoints()
         row.thumb:SetPoint("LEFT", indent + (22 - row.thumb:GetWidth()) / 2, 0)
+        if marks then PaintClassMark(row.cmark, OneClass(rec)) end
         row.name:ClearAllPoints()
         row.name:SetPoint("LEFT", indent + 28, 0)
         row.name:SetPoint("RIGHT", -8, 0)
@@ -4033,8 +4369,8 @@ local function RefreshRail()
     for i, item in ipairs(list) do
         local row = RailRow(i)
         -- Air above every header but the first.
-        if i > 1 and (item.kind == "layout" or item.kind == "nlhdr"
-            or item.kind == "nlsub" or item.kind == "newlayout") then
+        if i > 1 and (item.kind == "layout" or item.kind == "nlhdr" or item.kind == "clhdr"
+            or item.kind == "nlsub" or item.kind == "clsub" or item.kind == "newlayout") then
             y = y - 5
         end
         local h = (item.kind == "layout") and 26 or 24
@@ -4051,6 +4387,9 @@ local function RefreshRail()
         row.guide:Hide()
         row.pill:Hide()
         row.eye:Hide()
+        -- a pooled row forgets its lock, so hovering an icon row shows none
+        Options.PaintLock(row.lock, nil)
+        row.cmark:Hide()
         row.badge:Hide()
         if row.upd then row.upd:Hide() end
         row.thumb:Hide()
@@ -4092,13 +4431,16 @@ local function RefreshRail()
             row.eye:ClearAllPoints()
             row.eye:SetPoint("RIGHT", row.add, "LEFT", -4, 0)
             Options.PaintEye(row.eye, rec)
+            row.lock:ClearAllPoints()
+            row.lock:SetPoint("RIGHT", row.eye, "LEFT", -2, 0)
+            Options.PaintLock(row.lock, rec)
             row.badge:SetText(Store.BadgeText(rec))
             row.badge:SetTextColor(SHR[1], SHR[2], SHR[3])
             local nw = (row.name.GetUnboundedStringWidth and row.name:GetUnboundedStringWidth()) or 0
             local bw = (row.badge.GetUnboundedStringWidth and row.badge:GetUnboundedStringWidth()) or 0
-            -- 17: the list's and the row's insets; 128: the buttons, the eye, their gaps
+            -- 17: the list's and the row's insets; 150: the buttons, the eye, the lock, their gaps
             local want = math.min(92, bw + 2)
-            local fit = math.min(want, (rail:GetWidth() or 0) - 17 - 22 - nw - 8 - 128)
+            local fit = math.min(want, (rail:GetWidth() or 0) - 17 - 22 - nw - 8 - 150)
             -- a newer version of the layout pack it came from takes the badge's
             -- place: a "v2" tag whose click offers it (UI\AD_Home.lua)
             local pe = packUpd and packUpd[rec.id]
@@ -4106,17 +4448,17 @@ local function RefreshRail()
                 if not row.upd then row.upd = Options.Home.MakeRailTag(row) end
                 Options.Home.PaintRailTag(row.upd, pe)
                 row.upd:ClearAllPoints()
-                row.upd:SetPoint("RIGHT", row.eye, "LEFT", -4, 0)
+                row.upd:SetPoint("RIGHT", row.lock, "LEFT", -4, 0)
                 row.upd:Show()
                 row.name:SetPoint("RIGHT", row.upd, "LEFT", -4, 0)
             elseif bw > 0 and (fit == want or fit >= 30) then
                 row.badge:ClearAllPoints()
-                row.badge:SetPoint("RIGHT", row.eye, "LEFT", -4, 0)
+                row.badge:SetPoint("RIGHT", row.lock, "LEFT", -4, 0)
                 row.badge:SetWidth(fit)
                 row.badge:Show()
                 row.name:SetPoint("RIGHT", row.badge, "LEFT", -4, 0)
             else
-                row.name:SetPoint("RIGHT", row.eye, "LEFT", -4, 0)
+                row.name:SetPoint("RIGHT", row.lock, "LEFT", -4, 0)
             end
             row.edit:SetScript("OnClick", function() Options.Select("layout", rec.id) end)
             row.export:SetScript("OnClick", function() Options.OpenExport(rec.id) end)
@@ -4128,6 +4470,51 @@ local function RefreshRail()
         elseif item.kind == "nlhdr" then
             -- Everything below this divider fails its load conditions on this character.
             row.name:SetText("NOT LOADED  (" .. (item.count or 0) .. ")")
+            PaintRailRow(row, false, "label")
+        elseif item.kind == "clhdr" then
+            -- By class: the layouts below hold to this class, which is not this character's
+            row.name:SetText("|c" .. RailClassHex(item.tag) .. RailClassName(item.tag):upper()
+                .. "  (" .. (item.count or 0) .. ")|r")
+            PaintRailRow(row, false, "label")
+        elseif item.kind == "clsub" then
+            -- By class, inside a layout: one class's items, folding like NOT LOADED
+            row.guide:Show()
+            row.chev:Show()
+            row.chev:ClearAllPoints()
+            row.chev:SetPoint("LEFT", 20, 0)
+            row.chev:SetDown(not item.shut)
+            row.name:ClearAllPoints()
+            row.name:SetPoint("LEFT", 36, 0)
+            row.name:SetPoint("RIGHT", -8, 0)
+            row.name:SetText("|c" .. RailClassHex(item.tag) .. RailClassName(item.tag):upper()
+                .. "  (" .. (item.count or 0) .. ")|r")
+            PaintRailRow(row, false, "label")
+            local key = item.key
+            row:SetScript("OnClick", function()
+                local u = Store.UI()
+                u.nlShut = u.nlShut or {}
+                u.nlShut[key] = (not item.shut) or nil
+                RefreshAll()
+            end)
+        elseif item.kind == "gsub" then
+            -- By class, inside a group: its icons that do not load here follow this line
+            row.guide:Show()
+            row.name:ClearAllPoints()
+            row.name:SetPoint("LEFT", 36, 0)
+            row.name:SetPoint("RIGHT", -8, 0)
+            row.name:SetText((item.others and "OTHER CLASSES  (" or "NOT LOADED  (") .. (item.count or 0) .. ")")
+            PaintRailRow(row, false, "label")
+        elseif item.kind == "hidden" then
+            -- where a View left rows out, how many
+            local depth = item.depth or 0
+            if depth > 0 then row.guide:Show() end
+            row.name:ClearAllPoints()
+            row.name:SetPoint("LEFT", (depth == 2 and 36) or (depth == 1 and 20) or 8, 0)
+            row.name:SetPoint("RIGHT", -8, 0)
+            local what = ""
+            if item.layouts then what = (item.count == 1) and " layout" or " layouts" end
+            row.name:SetText("+" .. (item.count or 0) .. what
+                .. ((RailView() == "char") and " not loaded here" or " for other classes"))
             PaintRailRow(row, false, "label")
         elseif item.kind == "nlsub" then
             -- the same divider inside a layout, at the children's indent; a
@@ -4155,6 +4542,10 @@ local function RefreshRail()
             Child(row, rec, 20)
             GroupPill(row.pill, rec.groupKind)
             PillRight(row)
+            row.lock:ClearAllPoints()
+            row.lock:SetPoint("RIGHT", row.eye, "LEFT", -2, 0)
+            Options.PaintLock(row.lock, rec)
+            row.name:SetPoint("RIGHT", row.lock, "LEFT", -3, 0)
             -- an open group with one of its icons (or reminders) in the editor
             -- lights that row instead
             local si = (ui.grpMode == "ico" and ui.selIconId and Store.Get(ui.selIconId))
@@ -4581,6 +4972,9 @@ function Options.LayoutTile(i)
     end)
     t.eye = Options.MakeEye(t)
     t.eye:SetPoint("TOPLEFT", 2, -5)
+    -- a group's tile only (FillLayoutTile)
+    t.lock = Options.MakeLock(t)
+    t.lock:SetPoint("LEFT", t.eye, "RIGHT", 0, 0)
     -- hover: the border lights while the cursor is anywhere on the tile, its
     -- buttons included (IsMouseOver covers the children, so moving onto the X
     -- or the eye never flickers it away)
@@ -4592,6 +4986,8 @@ function Options.LayoutTile(i)
             t:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1)
             t:SetAlpha(t._alpha or 1)
         end
+        -- a group's lock shows while the tile is hovered
+        Options.PaintLock(t.lock, t.lock._rec)
     end
     t.Hot(false)
     t:SetScript("OnEnter", function() t.Hot(true) end)
@@ -4603,7 +4999,7 @@ function Options.LayoutTile(i)
         AT.CloseDropdown()
         if t._open then t._open() end
     end)
-    for _, b in ipairs({ t.x, t.eye }) do
+    for _, b in ipairs({ t.x, t.eye, t.lock }) do
         b:HookScript("OnLeave", function()
             if not t:IsMouseOver() then t.Hot(false) end
         end)
@@ -4667,10 +5063,16 @@ function Options.FillLayoutTile(t, rec)
     local loaded = Store.IsLoaded(rec)
     t._alpha = 1
     Options.PaintEye(t.eye, rec)
+    local group = rec.type == "group"
+    Options.PaintLock(t.lock, group and rec or nil)
+    local how = {}
+    if loaded then how[#how + 1] = "the eye hides it on screen while you edit" end
+    if group then how[#how + 1] = "the lock keeps it from moving" end
+    how[#how + 1] = "the red x deletes it"
+    local tail = table.concat(how, ", ") .. "."
     t._tip = kindLine .. "\nLoad conditions: " .. (Store.BadgeText(rec))
         .. (loaded and "" or "  -  not loaded on this character. Its eye shows it while you edit")
-        .. "\nClick to edit it. " .. (loaded and "The eye hides it on screen while you edit, the red x deletes it."
-            or "The red x deletes it.")
+        .. "\nClick to edit it. " .. tail:sub(1, 1):upper() .. tail:sub(2)
     t.Hot(false)
 end
 
@@ -4840,6 +5242,7 @@ local function RefreshLayoutPane()
             or (ic.kind == "timer" and Options.CustomWhat and Options.CustomWhat(ic))
             or (ic.kind == "special" and Options.SpecialWhat and Options.SpecialWhat(ic))
             or (ic.kind == "groupbuff" and d.spellID and ("who has buff " .. d.spellID))
+            or (ic.kind == "stance" and Options.StanceWhat and Options.StanceWhat(ic))
             or (d.spellID and ("spell " .. d.spellID))
             or ic.kind or ""
         row.sub:SetText("Free icon  -  " .. what .. ", keeps its own position")
@@ -5612,6 +6015,33 @@ local function BuildLayoutPane()
         hd._chip:Set("layout", COL.dim)
         Options.FitBand(hbg._adBand)
     end
+    -- the layout's last pack update, while it can be undone: what it was,
+    -- and the undo, quiet at the end of the line
+    local und = AT.AddRow(pg, 26, function()
+        local l = SelLayout()
+        return l ~= nil and Store.UndoInfo(l.id) ~= nil
+    end)
+    und._fs = und:CreateFontString(nil, "OVERLAY")
+    und._fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    und._fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+    und._fs:SetJustifyH("LEFT")
+    und._fs:SetWordWrap(false)
+    und._btn = AT.MakeQuietButton(und, "Undo the last update", 140)
+    und._btn:SetPoint("RIGHT", -12, 0)
+    und._fs:SetPoint("LEFT", 10, 0)
+    und._fs:SetPoint("RIGHT", und._btn, "LEFT", -8, 0)
+    und._btn:SetScript("OnClick", function()
+        AT.CloseDropdown()
+        local l = SelLayout()
+        if l then Options.ConfirmUndo(l.id) end
+    end)
+    AT.Tooltip(und._btn, "Undo the last update",
+        "Puts back what the update changed, added or removed. Your changes since to the items it changed go too.")
+    und._sync = function()
+        local l = SelLayout()
+        und._fs:SetText((l and Options.UndoNote(l.id)) or "")
+    end
+    Options._layoutUndoRow = und
 
     -- The last three are the look tabs, filled by Options.BuildLayoutLooks
     -- once every item editor exists.
@@ -5652,6 +6082,7 @@ local function BuildLayoutPane()
     -- be anchored itself). Short enough to stack, so no sub-tabs.
     local layPosVis = function() return ui.layoutTab == "Position" end
     AT.Section(pg, "Position", { visibleFn = layPosVis })
+    Options.LockRow(pg, SelLayout, layPosVis)
     Options.PosRows(pg, SelLayout, layPosVis, nil)
     AT.Section(pg, "Mouse", { visibleFn = layPosVis })
     AT.RowDesc(pg, "Applies to every icon in this layout; groups and icons can override it.", 20,
@@ -5855,6 +6286,13 @@ local PREV_MODES = {
       tip = "The Not active look, with no timer running." },
     { key = "tloop", set = "timer", text = "Timer loop", w = 90,
       tip = "Not active, then a timer starts and runs out, then Not active again." },
+    -- a Stance icon's own two states
+    { key = "sin",   set = "stance", text = "In it",     w = 56,
+      tip = "The look while you are in the stance (any stance, for your current one). Drag any text on the icon to place it." },
+    { key = "sout",  set = "stance", text = "Not in it", w = 76,
+      tip = "The look while you are not in it (no stance, for your current one)." },
+    { key = "sloop", set = "stance", text = "Stance loop", w = 96,
+      tip = "In it, then not in it, then in it again." },
 }
 -- which text drags which fields; the countdown text is the swipe widget's
 -- own fontstring, fetched when the handles sync
@@ -5908,12 +6346,16 @@ function Options.PreviewMode(rec)
     local m = ui.prevMode or "off"
     local auraKey = (m == "aup" or m == "aloop" or m == "amiss")
     local timerKey = (m == "tact" or m == "tina" or m == "tloop")
+    local stanceKey = (m == "sin" or m == "sout" or m == "sloop")
     local aura = rec ~= nil and rec.kind == "aura"
     local timer = rec ~= nil and rec.kind == "timer"
+    local stance = rec ~= nil and rec.kind == "stance"
     if aura and not auraKey then return "aup" end
     if timer and not timerKey then return "tact" end
+    if stance and not stanceKey then return "sin" end
     if (not aura) and auraKey then return "off" end
     if (not timer) and timerKey then return "off" end
+    if (not stance) and stanceKey then return "off" end
     if m == "ovup" and not (NS.DriverAura and NS.DriverAura.OverlayOn(rec)) then return "off" end
     return m
 end
@@ -6104,6 +6546,17 @@ local function PreviewApplyMode(rec, f)
         if f == prevIcon then PreviewSyncHandles() end
         return
     end
+    if rec.kind == "stance" then
+        -- A Stance icon: In it is the ready look (its While active glow), Not
+        -- in it the cooldown look; the art is the live one, and no swipe runs.
+        Factory.SetProcGlow(f, rec, false)
+        if f.cooldown.Resume then f.cooldown:Resume() end
+        f.cooldown:Clear()
+        local active = (mode == "sin") or (mode == "sloop" and prevPhase == "ready")
+        Factory.SetState(f, rec, not active, not active)
+        if f == prevIcon then PreviewSyncHandles() end
+        return
+    end
     if mode == "ovup" then
         -- A spell icon's aura while up: the cooldown underneath with the stand-in
         -- aura button over it, as live.
@@ -6170,8 +6623,8 @@ local function PreviewTick(_, dt)
         if copy then PreviewRestyle(rec, copy) end
         -- ApplyStyle re-runs the ready and usable lanes on its own; the proc
         -- lane is event-driven, so it is re-asserted here (idempotent). An
-        -- aura icon's holder has no proc lane.
-        if not aura and rec.kind ~= "timer" then
+        -- aura icon's holder has no proc lane, nor has a timer or a stance.
+        if not aura and rec.kind ~= "timer" and rec.kind ~= "stance" then
             Factory.SetProcGlow(prevIcon, rec, prevPhase == "ready")
             if copy then Factory.SetProcGlow(copy, rec, prevPhase == "ready") end
         end
@@ -6495,8 +6948,10 @@ local function AttachPreview(parent, y, shown)
         return 0
     end
     local mode = Options.PreviewMode(rec)
-    prevBand:SetScript("OnUpdate", (mode == "loop" or mode == "aloop" or mode == "tloop") and PreviewTick or nil)
-    local set = (rec.kind == "aura") and "aura" or (rec.kind == "timer") and "timer" or "cd"
+    prevBand:SetScript("OnUpdate", (mode == "loop" or mode == "aloop" or mode == "tloop" or mode == "sloop")
+        and PreviewTick or nil)
+    local set = (rec.kind == "aura") and "aura" or (rec.kind == "timer") and "timer"
+        or (rec.kind == "stance") and "stance" or "cd"
     local ov = set == "cd" and NS.DriverAura ~= nil and NS.DriverAura.OverlayOn(rec) == true
     local shownChips, total = {}, -6
     for _, m in ipairs(PREV_MODES) do
@@ -7055,6 +7510,15 @@ local function BuildIconEditor(parent)
             local r = SelIcon()
             return trackVis() and r ~= nil and r.kind == "ammo"
         end)
+    -- A Stance icon: what it shows, then the stance it lights for
+    -- (UI\AD_StanceOptions.lua)
+    SectionRows(pg, "icon", "stance", SelIcon, function()
+        local r = SelIcon()
+        return trackVis() and r ~= nil and r.kind == "stance"
+    end, { "shows" })
+    if Options.StanceTrackRows then
+        Options.StanceTrackRows(pg, SelIcon, trackVis, win, function() RefreshAll() end)
+    end
 
     -- On this icon: what shows over the cooldown (an aura, its totem or a set
     -- duration on cast), then that source's rows; the look is on the Show &
@@ -7412,6 +7876,15 @@ local function BuildIconEditor(parent)
             local r = SelIcon()
             return sizeDef.vis() and r ~= nil and r.groupId ~= nil
         end)
+    -- a Time left group draws one sorted row per unit, so a member's own look
+    -- never reaches play
+    AT.RowDesc(pg, "Its group orders by Time left, so in play it wears a new aura icon's look.", 20,
+        function()
+            local r = SelIcon()
+            local _, packed = InAuraGroup(r)
+            return sizeDef.vis() and packed
+                and Store.Resolve(Store.Get(r.groupId), "arrangement", "dynamicSort") == "time"
+        end)
     local lookDef = Block("Appearance", "Icon", "Look", "appearance", {
         "zoom", "aspectRatio", "alpha", "padding", "keepBright", "keepBrightAllowDesat",
     })
@@ -7542,10 +8015,10 @@ local function BuildIconEditor(parent)
                 end })
         Card("While procs are left", "states", "readyGlow", nil, "Glow while procs are left",
             "a proc is still in the deck", { kindOnly = { special = true }, noLook = true, applies = Deck })
-        -- a totem or an enchant is up or gone, a Custom Icon active or not:
-        -- the same glows, worded so
+        -- a totem or an enchant is up or gone, a Custom Icon active or not,
+        -- you in a stance or not: the same glows, worded so
         Card("While active", "states", "readyGlow", nil, "Glow while active", W.active,
-            { kindOnly = { totem = true, enchant = true, timer = true }, noLook = true })
+            { kindOnly = { totem = true, enchant = true, timer = true, stance = true }, noLook = true })
         -- a totem set to one totem: out, but its buff not on you
         Card("While out of range", "states", "totemRangeGlow", nil, "Glow while out of range", W.range,
             { kindOnly = { totem = true }, noLook = true })
@@ -7676,10 +8149,13 @@ local function BuildIconEditor(parent)
     Options.LookBlock("icon", "Conditions", "When states overlap", "auraActive", { "activePreserveText" })
     SubPush("Conditions", "By State")
 
-    -- Conditions > Fade When: the fade rules. An aura-group member fades with
-    -- its group (InAuraGroup), so it has none.
+    -- Conditions > Fade When: the fade rules. A member its aura group packs
+    -- (Close gaps on) fades with the group, so it has none.
     VisibilityRows(pg, SelIcon, Pane("Conditions", "Fade When",
-        function(r) return not InAuraGroup(r) end))
+        function(r)
+            local _, packed = InAuraGroup(r)
+            return not packed
+        end))
 
     -- Text > Duration
     local durDef = Block("Text", "Duration", "Duration text", "text", {
@@ -7829,14 +8305,15 @@ local function BuildIconEditor(parent)
     local posDef = Block("Position", "Position", "Position", "position", {
         "offsetX", "offsetY", "strata", "frameLevel",
     })
-    -- Aura icons in an aura group: the engine lays the row out in play mode,
-    -- so only the size fields reach it.
-    AT.RowDesc(pg, "The game places aura group rows: these apply only while this window is open.", 20,
+    -- Aura icons in a packed aura group: the engine lays the row out in play
+    -- mode, so only the size fields reach it. A static group's member keeps
+    -- its own frame, whose offsets apply in play.
+    AT.RowDesc(pg, "With Close gaps on, the game places the row: these apply only while this window is open.", 20,
         function()
             if not posDef.vis() then return false end
             local r = SelIcon()
-            local g = r and r.groupId and Store.Get(r.groupId)
-            return r ~= nil and r.kind == "aura" and g ~= nil and g.groupKind == "aura"
+            local _, packed = InAuraGroup(r)
+            return r ~= nil and r.kind == "aura" and packed
         end)
     local mouseDef = Block("Position", "Position", "Mouse", "mouse", {
         "clickThrough", "showTooltip",
@@ -8196,8 +8673,8 @@ local function BuildGroupPane()
         return dynVis() and g ~= nil and g.groupKind ~= "aura"
     end
     SectionRows(pg, "iconGroup", "arrangement", SelGroup, dynVis, { "dynamicLayout" })
-    AT.RowDesc(pg, "Icons pack while you play; with this window open each keeps its own cell.", 20, dynCD)
-    AT.RowDesc(pg, "On: icons pack (Show while missing ones too). Off: every aura keeps its cell.", 20, dynAura)
+    AT.RowDesc(pg, "With this window open, every icon keeps its spot.", 20, dynCD)
+    AT.RowDesc(pg, "On: icons pack (Show while missing ones too). Off: every aura keeps its spot.", 20, dynAura)
     -- An aura group packs each grid row or column on its own
     -- (Drivers\AD_DriverAuraRows.lua): its direction, then Alignment in that
     -- direction's words, a row Left / Center / Right, a column Up / Center / Down.
@@ -8225,6 +8702,13 @@ local function BuildGroupPane()
                 { value = "right", text = "Right" } }
         end,
         auraDyn)
+    -- Order: Time left gives each unit one flow the game sorts
+    -- (Drivers\AD_DriverAuraRows.lua AR.PlaceFlows), so no icon keeps its own
+    -- look and a missing aura has nowhere to show.
+    SectionRows(pg, "iconGroup", "arrangement", SelGroup, dynVis, { "dynamicSort" })
+    AT.RowDesc(pg, "Time left shows only auras that are up, all in a new aura icon's look.", 20, function()
+        return auraDyn() and Store.Resolve(SelGroup(), "arrangement", "dynamicSort") == "time"
+    end)
     do
         -- The search walks one sample group per kind, mostly static ones: hand
         -- it the gate without the Dynamic check plus that switch, so "alignment"
@@ -8235,12 +8719,12 @@ local function BuildGroupPane()
                 dep = { field = "dynamicLayout", value = true } },
             baseVis = dynVis }
     end
-    AT.RowDesc(pg, "Icon order only applies to a single row or column.", 20,
+    AT.RowDesc(pg, "With more than one row and column, a returning icon always takes its spot back.", 20,
         function() return dynOn() and dynCD() and GroupShape() == "multi" end)
     AT.RowDesc(pg, "Live rows show buffs on you or your pet and debuffs on your target.", 20,
         function() return dynOn() and dynAura() end)
     SectionRows(pg, "iconGroup", "arrangement", SelGroup, dynVis, { "dynamicCollapse" })
-    AT.RowDesc(pg, "Aura icons always keep their cell; for auras that come and go, use an Aura Group.", 20,
+    AT.RowDesc(pg, "Aura icons always keep their spot; for auras that come and go, use an Aura Group.", 20,
         function() return dynOn() and dynCD() end)
     SectionRows(pg, "iconGroup", "arrangement", SelGroup, dynVis, {
         "dynamicOrder", "dynamicShrink", "smoothMovement", "smoothDuration",
@@ -8252,6 +8736,7 @@ local function BuildGroupPane()
         for _, f in ipairs(DYN_FIELDS) do list[#list + 1] = f end
         list[#list + 1] = "alignment"
         list[#list + 1] = "dynamicAxis"
+        list[#list + 1] = "dynamicSort"
         AT.Section(pg, nil, { visibleFn = gridVis })
         PushBar(pg, SelGroup, "arrangement", gridVis, list)
     end
@@ -8311,6 +8796,7 @@ local function BuildGroupPane()
     -- click-through and tooltip chain.
     local grpPosVis = GrpPos("Position")
     AT.Section(pg, "Position", { visibleFn = grpPosVis })
+    Options.LockRow(pg, SelGroup, grpPosVis)
     Options.PosRows(pg, SelGroup, grpPosVis, function(r)
         -- "anchored" = actually pinned right now: an anchor whose target
         -- is gone or hidden places free, so the sliders drive rec.pos there
@@ -10043,8 +10529,8 @@ local function BuildBarPane()
     SubPush("Appearance", "Icon")
 
     -- Appearance > Swing (swing bars): the off-hand track, the closing fill and
-    -- its ticks and the spark, as one sub-tab; the next-swing abilities have
-    -- their own (Next Swing, below).
+    -- the spark, as one sub-tab; the next-swing abilities have their own
+    -- (Next Swing, below), the ticks before the swing lands are on Ticks.
     local SW = "Swing"
     local offVis = BarBlock("Off-hand", "fill", "Appearance", {
         "swingOffhandStyle", "swingOffhandColor",
@@ -10057,13 +10543,10 @@ local function BuildBarPane()
         "swingOffhandLabel", "swingOffhandLabelText", "swingOffhandLabelPos",
         "swingOffhandLabelSize", "swingOffhandLabelColor",
     })
-    -- Halves that close in (its switch hides beside the off-hand track) and up
-    -- to three ticks before the swing lands (the count hides the rows of the
-    -- ticks not in use). The fields' kinds gate it.
-    BarBlock("Swing", "fill", "Appearance", {
-        "swingClosing", "swingTicks", "swingTickCount", "swingTickTime", "swingTickColor",
-        "swingTick2Time", "swingTick2Color", "swingTick3Time", "swingTick3Color",
-    }, nil, SW)
+    -- Halves that close in (its switch hides beside the off-hand track); the
+    -- ticks before the swing lands sit on Ticks with the custom ticks. The
+    -- field's kinds gate it.
+    BarBlock("Swing", "fill", "Appearance", { "swingClosing" }, nil, SW)
     BarBlock("Spark", "fill", "Appearance", {
         "edgeSpark", "edgeSparkColor", "edgeSparkWidth",
     }, function(r) return r.barKind == "swing" end, SW, true)
@@ -10092,11 +10575,24 @@ local function BuildBarPane()
         "ticksShow", "tickMode", "tickPercent", "tickValues", "tickAsPercent",
         "tickScale",
     }, NotPips)
+    -- A swing bar's ticks before the swing lands, in the same box right after
+    -- the custom ticks, so both kinds of tick are found in one place. They
+    -- are fill fields: a def of their own puts them in the push bar's fill
+    -- part and the layout looks, never in the ticks block's list.
+    do
+        local swingTicks = { "swingTicks", "swingTickCount", "swingTickTime", "swingTickColor",
+            "swingTick2Time", "swingTick2Color", "swingTick3Time", "swingTick3Color" }
+        table.insert(SEC_LISTS.Appearance, { title = "Ticks", section = "fill", fields = swingTicks, sub = "Ticks" })
+        SectionRows(pg, "bar", "fill", SelBar, tickVis, swingTicks)
+        Options.LookBlock("bar", "Appearance", "Ticks", "fill", swingTicks)
+    end
     BarSub(tickVis, "Spell costs", "ticks", {
         "tickSpells", "tickSpellIcons", "tickIconSize", "tickIconSide", "tickIconDim",
     })
+    -- Color each tick: the custom list's colours, one row per number typed
     BarSub(tickVis, "Marks", "ticks", {
-        "tickChannelOnly", "tickColor", "tickThickness", "tickHeight", "tickHeightAnchor",
+        "tickChannelOnly", "tickColor", "tickColorEach", "tickColor2", "tickColor3", "tickColor4",
+        "tickColor5", "tickColor6", "tickThickness", "tickHeight", "tickHeightAnchor",
     })
     -- a deck bar marks its procs (UI\AD_SpecialOptions.lua)
     if Options.SpecialBarBlocks then Options.SpecialBarBlocks("Ticks", BarBlock, PushBar, pg, SelBar) end
@@ -10398,7 +10894,7 @@ local function BuildBarPane()
     AT.RowDesc(pg, "0 hides the bar between casts.", 20, idleVis)
     -- your own casts only: a player castbar
     BarBlock("Your Casts", "cast", "Castbar", {
-        "latencyOn", "latencyColor", "hideBlizzard",
+        "latencyOn", "latencyColor", "queueTickOn", "queueTickColor", "queueTickWidth", "hideBlizzard",
     }, function(r) return (r.driver and r.driver.unit or "player") == "player" end, false)
     SubPush("Castbar", nil)
 
@@ -10705,6 +11201,8 @@ local function BuildAddWindow()
             -- retail has no ammo slot
             if NS.IsForever == true then items[#items + 1] = { value = "ammo", text = "Ammo" } end
             items[#items + 1] = { value = "enchant", text = "Weapon Enchant" }
+            -- a Stance icon: the stance bar drives it (its driver loads first)
+            if NS.DriverStance then items[#items + 1] = { value = "stance", text = "Stance" } end
             -- a Custom Icon: rules on plain events drive it (its engine loads first)
             if NS.DriverCustom then items[#items + 1] = { value = "timer", text = "Custom Icon" } end
             -- a Special Aura (retail), the Special tab's grid under it
@@ -10866,6 +11364,12 @@ local function BuildAddWindow()
         "The item, or several: the icon shows the first one you carry and can use.", "e.g. 5512", true)
     -- a Custom Icon's name and art (UI\AD_CustomOptions.lua)
     if Options.CustomAddRows then Options.CustomAddRows(pg, addWin, addState, "Icon") end
+    -- a Stance icon: what it shows, and the stance (UI\AD_StanceOptions.lua)
+    if Options.StanceAddRows then
+        Options.StanceAddRows(pg, addWin, addState,
+            function() return isIcon("stance")() and not addState.remGroupId end,
+            function() if UpdateCreate then UpdateCreate() end end)
+    end
     -- the Special tab's tracker list (UI\AD_SpecialOptions.lua)
     if Options.SpecialAddRows then Options.SpecialAddRows(pg, addWin, addState) end
 
@@ -11302,6 +11806,7 @@ local function BuildAddWindow()
             if ik == "groupbuff" then return #Options.ParseSpellIDs(addState.gbID) > 0 end
             if ik == "item" then return #Options.ParseSpellIDs(addState.itemID) > 0 end
             if ik == "timer" then return Options.CustomCreate ~= nil end
+            if ik == "stance" then return Options.StanceCanCreate ~= nil and Options.StanceCanCreate(addState) end
             return true
         elseif addState.cat == "Bar" then
             local bk = addState.barKind or "cooldown"
@@ -11466,6 +11971,9 @@ local function BuildAddWindow()
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
         elseif iconKind == "timer" then
             local rec = Options.CustomCreate and Options.CustomCreate(addState, dest, layoutId)
+            if rec then addWin:Hide() Options.SelectIconHome(rec) end
+        elseif iconKind == "stance" then
+            local rec = Options.StanceCreate and Options.StanceCreate(addState, dest, layoutId)
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
         elseif addState.cat == "Special" or iconKind == "special"
             or (addState.cat == "Bar" and addState.barKind == "special") then
@@ -11669,6 +12177,7 @@ local IE = {
     rowPool = {},   -- picker rows
     PICK_H = 176,   -- the export picker's window; a longer tree scrolls
     ROW_H = 22,
+    keep = {},      -- the update panel's Keep mine ticks, by uid
 }
 local railAddonRows = {}
 
@@ -12091,13 +12600,12 @@ local function BuildIEPane()
     IE.expStatus:SetJustifyH("LEFT")
     IE.expStatus:SetWordWrap(false)
 
+    -- the maker's pack info, a fold under the export row (IE.LayPane places
+    -- it and everything under it)
+    IE.BuildPackInfo()
+
     -- the string band: label left, the import target right on the same line
-    local yStr = -(54 + IE.PICK_H + 6 + 22 + 14)
-    local strLbl = iePane:CreateFontString(nil, "OVERLAY")
-    strLbl:SetFont(STANDARD_TEXT_FONT, 9, "")
-    strLbl:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
-    strLbl:SetPoint("TOPLEFT", 4, yStr)
-    strLbl:SetText("SHARE STRING - Ctrl+C to copy, or paste one here and press Import")
+    IE.strLbl = IE.Caps(iePane, "SHARE STRING - Ctrl+C to copy, or paste one here and press Import")
 
     IE.target = AT.MakeDropdown(win, iePane, 150, function()
         local items = {}
@@ -12107,7 +12615,6 @@ local function BuildIEPane()
         if #items == 0 then items[1] = { value = 0, text = "(a new layout)" } end
         return items
     end, IE.TargetId, function(v) ui.ieTargetId = v end)
-    IE.target:SetPoint("TOPRIGHT", iePane, "TOPRIGHT", -4, yStr + 6)
     AT.Tooltip(IE.target, "Items import into", "A string holding a group, icon or bar without its layout lands it in this layout. A string holding whole layouts makes new layouts.")
     local tgtLbl = iePane:CreateFontString(nil, "OVERLAY")
     tgtLbl:SetFont(STANDARD_TEXT_FONT, 9, "")
@@ -12115,9 +12622,10 @@ local function BuildIEPane()
     tgtLbl:SetPoint("RIGHT", IE.target, "LEFT", -6, 0)
     tgtLbl:SetText("ITEMS IMPORT INTO")
 
+    -- the pasted string's pack info and missing media, above the box
+    IE.peek = IE.InfoBlock(iePane)
+
     local boxHost = CreateFrame("Frame", nil, iePane, "BackdropTemplate")
-    boxHost:SetPoint("TOPLEFT", 0, yStr - 18)
-    boxHost:SetPoint("TOPRIGHT", -4, yStr - 18)
     boxHost:SetPoint("BOTTOM", iePane, "BOTTOM", 0, 60)
     AT.Skin(boxHost, COL.well, COL.line)
 
@@ -12135,11 +12643,14 @@ local function BuildIEPane()
         ieBox:SetWidth(math.max(60, (w or s:GetWidth() or 300) - 6))
         s:UpdateScroll()
     end)
-    ieBox:SetScript("OnTextChanged", function() ieScroll:UpdateScroll() end)
+    ieBox:SetScript("OnTextChanged", function()
+        ieScroll:UpdateScroll()
+        IE.QueuePeek()
+    end)
     -- clicking the empty well focuses the box (the editbox only spans its text)
     boxHost:EnableMouse(true)
     boxHost:SetScript("OnMouseUp", function() ieBox:SetFocus() end)
-    IE.boxHost = boxHost
+    IE.boxHost, IE.box = boxHost, ieBox
 
     -- the import's own option, on its line above the Import button
     local eg = CreateFrame("Button", nil, iePane)
@@ -12186,6 +12697,7 @@ local function BuildIEPane()
     -- One made for the other game warns on the first press (the update
     -- panel says it instead).
     impBtn:SetScript("OnClick", function()
+        IE.ShowUndo(nil)
         local text = ieBox and ieBox:GetText() or ""
         local plan, err = Store.PlanUpdate(text)
         if not plan then
@@ -12212,8 +12724,17 @@ local function BuildIEPane()
         ieBox:SetText("")
         IE.SetStatus("", true)
         IE.gameAck = nil
+        IE.ShowUndo(nil)
         if IE.upd then IE.upd:Hide() end
     end)
+
+    -- right after an update, its undo at the end of the line, quiet
+    IE.undoBtn = AT.MakeQuietButton(iePane, "Undo the update", 112)
+    IE.undoBtn:SetPoint("BOTTOMRIGHT", -4, 4)
+    IE.undoBtn:SetScript("OnClick", function() IE.RunUndo() end)
+    AT.Tooltip(IE.undoBtn, "Undo the update",
+        "Puts back what the update changed, added or removed. The layout's page offers it too, until its next update.")
+    IE.undoBtn:Hide()
 
     ieStatus = iePane:CreateFontString(nil, "OVERLAY")
     ieStatus:SetFont(STANDARD_TEXT_FONT, 11, "")
@@ -12225,6 +12746,9 @@ local function BuildIEPane()
     ieStatus:SetWordWrap(true)
     if ieStatus.SetMaxLines then ieStatus:SetMaxLines(2) end
     ieStatus:SetText("")
+    IE.LayPane()
+    -- the pack info fields and the string's lines wrap to the pane's width
+    iePane:HookScript("OnSizeChanged", function() IE.LayPane() end)
 end
 
 -- The plain import, or (asCopy) a copy linked to no pack: every item gets a
@@ -12349,6 +12873,388 @@ function IE.CheckRow(parent, get, set, tip)
     return b
 end
 
+-- one of the pane's small capital labels, faint
+function IE.Caps(parent, text)
+    local fs = parent:CreateFontString(nil, "OVERLAY")
+    fs:SetFont(STANDARD_TEXT_FONT, 9, "")
+    fs:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
+    fs:SetJustifyH("LEFT")
+    fs:SetText(text or "")
+    return fs
+end
+
+-- text from a string shows as itself: no colour, picture or link codes
+function IE.Safe(s)
+    return (tostring(s or ""):gsub("|", "||"))
+end
+
+function IE.Dim(s)
+    return ("|cff%02x%02x%02x"):format(math.floor(COL.dim[1] * 255 + 0.5), math.floor(COL.dim[2] * 255 + 0.5),
+        math.floor(COL.dim[3] * 255 + 0.5)) .. s .. "|r"
+end
+
+-- "Missing here: A, B, C, D and 2 more; they use the default until you add them."
+function IE.MediaNote(missing)
+    local names = {}
+    for i = 1, math.min(#missing, 4) do names[i] = IE.Safe(missing[i]) end
+    local more = #missing - #names
+    return "Missing here: " .. table.concat(names, ", ") .. ((more > 0) and (" and " .. more .. " more") or "")
+        .. "; they use the default until you add them."
+end
+
+-- A string's pack info and missing media as lines (IE.FillInfo lays them):
+-- the name and version, the notes (three lines at most), the link in a box to
+-- copy (never one that opens), then the media this client lacks.
+function IE.InfoBlock(parent)
+    local blk = CreateFrame("Frame", nil, parent)
+    blk:SetSize(10, 1)
+    local function Text(size, col, lines)
+        local fs = blk:CreateFontString(nil, "OVERLAY")
+        fs:SetFont(STANDARD_TEXT_FONT, size, "")
+        fs:SetTextColor(col[1], col[2], col[3])
+        fs:SetJustifyH("LEFT")
+        fs:SetJustifyV("TOP")
+        fs:SetWordWrap(lines > 1)
+        if fs.SetMaxLines then fs:SetMaxLines(lines) end
+        return fs
+    end
+    blk.head = Text(12, COL.ink, 1)
+    blk.notes = Text(11, COL.dim, 3)
+    blk.media = Text(11, COL.ink, 2)
+    blk.notes._lines, blk.media._lines = 3, 2
+    blk.linkLbl = IE.Caps(blk, "LINK")
+    local box = CreateFrame("EditBox", nil, blk, "BackdropTemplate")
+    box:SetHeight(20)
+    AT.Skin(box, COL.well)
+    box:SetFont(STANDARD_TEXT_FONT, 11, "")
+    box:SetTextInsets(6, 6, 0, 0)
+    box:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+    box:SetAutoFocus(false)
+    -- read only: the text is there to copy
+    box:SetScript("OnTextChanged", function(s, user)
+        if user then
+            s:SetText(s._v or "")
+            s:HighlightText()
+        end
+    end)
+    box:SetScript("OnEditFocusGained", function(s) s:HighlightText() end)
+    box:SetScript("OnEscapePressed", function(s) s:ClearFocus() end)
+    box:SetScript("OnEnterPressed", function(s) s:ClearFocus() end)
+    AT.Tooltip(box, "Link", "Click it and press Ctrl+C to copy it, then paste it into your browser.")
+    blk.link = box
+    blk:Hide()
+    return blk
+end
+
+-- Fills an info block and lays its lines top down at width w: the height it
+-- takes, 0 when there is nothing to say (it hides then). compact: the notes
+-- and the media take one line each.
+function IE.FillInfo(blk, info, missing, w, compact)
+    w = math.max(120, math.floor(w or 0))
+    blk:SetWidth(w)
+    local y = 0
+    local function Line(fs, text)
+        fs:SetShown(text ~= nil)
+        if text == nil then return end
+        if fs._lines and fs.SetMaxLines then fs:SetMaxLines(compact and 1 or fs._lines) end
+        fs:ClearAllPoints()
+        fs:SetPoint("TOPLEFT", blk, "TOPLEFT", 0, -y)
+        fs:SetWidth(w)
+        fs:SetText(text)
+        y = y + math.ceil(fs:GetStringHeight() or 12) + 4
+    end
+    local head
+    if info and (info.name or info.version) then
+        local ver = info.version and ("version " .. IE.Safe(info.version)) or nil
+        if info.name then
+            head = IE.Safe(info.name) .. (ver and ("   " .. IE.Dim(ver)) or "")
+        else
+            head = "Version " .. IE.Safe(info.version)
+        end
+    end
+    Line(blk.head, head)
+    Line(blk.notes, (info and info.notes) and IE.Safe(info.notes) or nil)
+    local link = info and info.link
+    blk.linkLbl:SetShown(link ~= nil)
+    blk.link:SetShown(link ~= nil)
+    if link then
+        local lw = math.ceil(blk.linkLbl:GetUnboundedStringWidth() or 24) + 8
+        blk.linkLbl:ClearAllPoints()
+        blk.linkLbl:SetPoint("LEFT", blk, "TOPLEFT", 0, -(y + 10))
+        blk.link:ClearAllPoints()
+        blk.link:SetPoint("TOPLEFT", blk, "TOPLEFT", lw, -y)
+        blk.link:SetWidth(math.max(60, w - lw))
+        blk.link._v = IE.Safe(link)
+        blk.link:SetText(blk.link._v)
+        blk.link:SetCursorPosition(0)
+        y = y + 20 + 4
+    end
+    Line(blk.media, (missing and #missing > 0) and IE.MediaNote(missing) or nil)
+    blk:SetHeight(math.max(1, y))
+    blk:SetShown(y > 0)
+    return y
+end
+
+-- The maker's pack info under the export row: a plain fold, shut until
+-- clicked, with a name, a version, a link and notes. They save as they are
+-- typed, on the layout the ticks point at (Store.PackInfoLayout), and every
+-- string made from it carries them.
+IE.PACK_FIELDS = {
+    { key = "name", label = "NAME", title = "Name", w = 180,
+      tip = "The pack's name. Whoever imports the string sees it first." },
+    { key = "version", label = "VERSION", title = "Version", w = 70,
+      tip = "Your version of the pack, for example 1.2. An update and its undo name it." },
+    { key = "link", label = "LINK", title = "Link",
+      tip = "Where to find the pack or you, a page or a Discord. It shows as text to copy." },
+    { key = "notes", label = "NOTES", title = "Notes",
+      tip = "What the pack is for, or what changed in this version." },
+}
+
+function IE.BuildPackInfo()
+    local fold = CreateFrame("Button", nil, iePane)
+    fold:SetHeight(18)
+    fold.chev = AT.MakeChevron(fold)
+    fold.chev:SetPoint("LEFT", 4, 0)
+    fold.lbl = IE.Caps(fold, "PACK INFO")
+    fold.lbl:SetPoint("LEFT", fold.chev, "RIGHT", 6, 0)
+    fold.note = fold:CreateFontString(nil, "OVERLAY")
+    fold.note:SetFont(STANDARD_TEXT_FONT, 10, "")
+    fold.note:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+    fold.note:SetPoint("LEFT", fold.lbl, "RIGHT", 10, 0)
+    fold.note:SetPoint("RIGHT", fold, "RIGHT", -4, 0)
+    fold.note:SetJustifyH("LEFT")
+    fold.note:SetWordWrap(false)
+    fold:SetScript("OnClick", function()
+        local u = Store.UI()
+        u.iePackOpen = (u.iePackOpen ~= true) or nil
+        PlaySound(u.iePackOpen and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON
+            or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF, "Master")
+        IE.LayPane()
+    end)
+    AT.Tooltip(fold, "Pack info", "A name, version, link and notes for your pack. Whoever imports the string sees them first.")
+    IE.packFold = fold
+    IE.packFields = {}
+    for _, d in ipairs(IE.PACK_FIELDS) do
+        local lbl = IE.Caps(iePane, d.label)
+        local b = CreateFrame("EditBox", nil, iePane, "BackdropTemplate")
+        b:SetHeight(20)
+        AT.Skin(b, COL.well)
+        b:SetFont(STANDARD_TEXT_FONT, 11, "")
+        b:SetTextInsets(6, 6, 0, 0)
+        b:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+        b:SetAutoFocus(false)
+        b:SetMaxLetters(Store.PACK_INFO_CAPS[d.key] or 60)
+        b:SetScript("OnTextChanged", function(s, user)
+            if not user then return end
+            local lay = IE.PackLayout()
+            if lay then
+                Store.SetPackInfo(lay.id, d.key, s:GetText() or "")
+                IE.SyncPackNote()
+            end
+        end)
+        b:SetScript("OnEnterPressed", function(s) s:ClearFocus() end)
+        b:SetScript("OnEscapePressed", function(s) s:ClearFocus() end)
+        b:SetScript("OnEditFocusGained", function(s)
+            s:SetBackdropBorderColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 1)
+        end)
+        b:SetScript("OnEditFocusLost", function(s)
+            s:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1)
+            IE.SyncPackInfo()
+        end)
+        AT.Tooltip(b, d.title, d.tip)
+        IE.packFields[#IE.packFields + 1] = { key = d.key, lbl = lbl, box = b, w = d.w }
+    end
+end
+
+-- the layout whose pack info the fields edit: the ticked one, else the
+-- layout of the first ticked item
+function IE.PackLayout()
+    return Store.PackInfoLayout(IE.SelectedIds())
+end
+
+function IE.SyncPackNote()
+    local fold = IE.packFold
+    if not fold then return end
+    local lay = IE.PackLayout()
+    local info = lay and Store.PackInfo(lay.id)
+    local t
+    if not lay then
+        t = "tick a layout to give its pack a name"
+    elseif info and info.name then
+        t = IE.Safe(info.name) .. (info.version and (" " .. IE.Safe(info.version)) or "")
+            .. ", saved with \"" .. IE.Safe(lay.name) .. "\""
+    else
+        t = "optional, saved with \"" .. IE.Safe(lay.name) .. "\": shown to whoever imports it"
+    end
+    fold.note:SetText(t)
+end
+
+function IE.SyncPackInfo()
+    if not IE.packFields then return end
+    local lay = IE.PackLayout()
+    local info = lay and Store.PackInfo(lay.id) or nil
+    for _, f in ipairs(IE.packFields) do
+        if not f.box:HasFocus() then f.box:SetText(info and info[f.key] or "") end
+        f.box:EnableMouse(lay ~= nil)
+        f.box:SetAlpha(lay and 1 or 0.45)
+        f.lbl:SetAlpha(lay and 1 or 0.45)
+    end
+    IE.SyncPackNote()
+end
+
+-- Places the pack info fold (and its fields while open), then the string
+-- band under it: the label and the import target, the pasted string's lines,
+-- the box.
+function IE.LayPane()
+    if not (IE.packFold and IE.boxHost) then return end
+    local w = iePane:GetWidth() or 0
+    if w < 100 then w = ((win and win:GetWidth()) or 1020) - 240 end
+    local y = -(54 + IE.PICK_H + 6 + 22 + 6)
+    local fold = IE.packFold
+    fold:ClearAllPoints()
+    fold:SetPoint("TOPLEFT", iePane, "TOPLEFT", 0, y)
+    fold:SetPoint("TOPRIGHT", iePane, "TOPRIGHT", -4, y)
+    local open = Store.UI().iePackOpen == true
+    fold.chev:SetDown(open)
+    y = y - 18 - 6
+    local by = {}
+    for _, f in ipairs(IE.packFields) do
+        f.lbl:SetShown(open)
+        f.box:SetShown(open)
+        by[f.key] = f
+    end
+    if open then
+        -- the boxes of both lines start on one rule after their labels
+        local col = math.max(math.ceil(by.name.lbl:GetUnboundedStringWidth() or 40),
+            math.ceil(by.notes.lbl:GetUnboundedStringWidth() or 40))
+        local x0 = 12 + col + 8
+        local yy = y
+        local function Lbl(f, x)
+            f.lbl:ClearAllPoints()
+            f.lbl:SetPoint("LEFT", iePane, "TOPLEFT", x, yy - 10)
+        end
+        local function Box(f, x, width)
+            f.box:ClearAllPoints()
+            f.box:SetPoint("TOPLEFT", iePane, "TOPLEFT", x, yy)
+            f.box:SetWidth(math.max(40, width))
+        end
+        Lbl(by.name, 12)
+        Box(by.name, x0, by.name.w)
+        local x = x0 + by.name.w + 14
+        Lbl(by.version, x)
+        x = x + math.ceil(by.version.lbl:GetUnboundedStringWidth() or 40) + 8
+        Box(by.version, x, by.version.w)
+        x = x + by.version.w + 14
+        Lbl(by.link, x)
+        x = x + math.ceil(by.link.lbl:GetUnboundedStringWidth() or 24) + 8
+        Box(by.link, x, (w - 4) - x)
+        yy = yy - 24
+        Lbl(by.notes, 12)
+        Box(by.notes, x0, (w - 4) - x0)
+        y = yy - 20 - 6
+    end
+    local yStr = y - 4
+    IE.strLbl:ClearAllPoints()
+    IE.strLbl:SetPoint("TOPLEFT", iePane, "TOPLEFT", 4, yStr)
+    IE.target:ClearAllPoints()
+    IE.target:SetPoint("TOPRIGHT", iePane, "TOPRIGHT", -4, yStr + 6)
+    local top = yStr - 18
+    local d = IE.peekData
+    local h = IE.FillInfo(IE.peek, d and d.info, d and d.missing, w - 12)
+    -- a short window keeps the box usable: the lines shrink to one each
+    local paneH = iePane:GetHeight() or 0
+    if h > 0 and paneH > 100 and paneH + (top - h - 2) - 60 < 80 then
+        h = IE.FillInfo(IE.peek, d and d.info, d and d.missing, w - 12, true)
+    end
+    if h > 0 then
+        IE.peek:ClearAllPoints()
+        IE.peek:SetPoint("TOPLEFT", iePane, "TOPLEFT", 4, top)
+        top = top - h - 2
+    end
+    IE.boxHost:SetPoint("TOPLEFT", iePane, "TOPLEFT", 0, top)
+    IE.boxHost:SetPoint("TOPRIGHT", iePane, "TOPRIGHT", -4, top)
+    IE.SyncPackInfo()
+end
+
+-- The pasted (or just exported) string's pack info and missing media, read
+-- a moment after the text stops changing.
+function IE.QueuePeek()
+    if IE.peekQueued then return end
+    IE.peekQueued = true
+    C_Timer.After(0.2, function()
+        IE.peekQueued = nil
+        IE.ShowPeek()
+    end)
+end
+
+function IE.ShowPeek()
+    local text = ieBox and ieBox:GetText() or ""
+    if text == IE.peekText then return end
+    IE.peekText = text
+    local payload = (text ~= "") and Store.Peek(text) or nil
+    IE.peekData = payload and { info = Store.CleanPackInfo(payload.info), missing = Store.MissingMedia(payload) } or nil
+    IE.LayPane()
+end
+
+-- Right after an update its undo waits at the end of the Import line (nil
+-- hides it); the layout's own page offers it until the next update.
+function IE.ShowUndo(key)
+    IE.undoKey = key
+    if not (IE.undoBtn and ieStatus) then return end
+    IE.undoBtn:SetShown(key ~= nil)
+    ieStatus:SetPoint("RIGHT", iePane, "RIGHT", key and -(4 + 112 + 8) or -4, 0)
+end
+
+function IE.UndoReport(res)
+    local n = res.restored
+    local parts = { "Update undone: " .. n .. (n == 1 and " item" or " items") .. " back as before" }
+    if res.removed > 0 then parts[#parts + 1] = res.removed .. (res.removed == 1 and " new item" or " new items") .. " removed" end
+    if res.kept > 0 then
+        parts[#parts + 1] = res.kept .. (res.kept == 1 and " new group kept, it holds" or " new groups kept, they hold")
+            .. " your own items"
+    end
+    return table.concat(parts, ", ") .. "."
+end
+
+function IE.RunUndo()
+    local key = IE.undoKey
+    IE.ShowUndo(nil)
+    local res, err = Options.RunUndo(key)
+    if not res then
+        IE.SetStatus(err == "nothing to undo" and "Nothing to undo." or (err or "Nothing to undo."), false)
+        return
+    end
+    IE.SetStatus(IE.UndoReport(res), true)
+end
+
+-- A layout's undo: the line its page shows, the ask, the act.
+function Options.UndoNote(layoutId)
+    local u = Store.UndoInfo(layoutId)
+    if not u then return nil end
+    local when = IE.DateOf(u.when)
+    local s = u.version and ("Updated to version " .. IE.Safe(u.version)) or "Updated from a pack string"
+    return s .. (when and (" on " .. when) or "") .. "."
+end
+
+function Options.RunUndo(layoutId)
+    local res, err = Store.UndoUpdate(layoutId)
+    if res then RefreshAll() end
+    return res, err
+end
+
+function Options.ConfirmUndo(layoutId)
+    local lay = Store.Get(layoutId)
+    if not (lay and Store.UndoInfo(layoutId)) then return end
+    StaticPopupDialogs["ARCUIV2_UNDO_UPDATE"] = StaticPopupDialogs["ARCUIV2_UNDO_UPDATE"] or {
+        button1 = YES, button2 = NO, timeout = 0, whileDead = true, hideOnEscape = true,
+        preferredIndex = 3,
+    }
+    local d = StaticPopupDialogs["ARCUIV2_UNDO_UPDATE"]
+    d.text = "Undo the last update of '" .. (lay.name or "?") .. "'? What it changed, added or removed goes back as it was."
+    d.OnAccept = function() Options.RunUndo(layoutId) end
+    StaticPopup_Show("ARCUIV2_UNDO_UPDATE")
+end
+
 function IE.BuildUpdate()
     if IE.upd then return IE.upd end
     local f = CreateFrame("Frame", nil, iePane, "BackdropTemplate")
@@ -12369,6 +13275,9 @@ function IE.BuildUpdate()
     end
     f.title = Label(nil, 14, COL.arc)
     f.title:SetPoint("TOPLEFT", 12, -10)
+    -- the string's pack info and the media missing here, under the title
+    f.info = IE.InfoBlock(f)
+    f.info:SetPoint("TOPLEFT", f.title, "BOTTOMLEFT", 0, -6)
     f.sum = Label(nil, 11, COL.ink)
     f.sum:SetPoint("TOPLEFT", f.title, "BOTTOMLEFT", 0, -6)
     f.sum:SetPoint("RIGHT", f, "RIGHT", -12, 0)
@@ -12413,28 +13322,37 @@ function IE.BuildUpdate()
         { "Remove items the pack dropped", "Items that came from this pack but are no longer in the string go. Anything you added yourself always stays." })
     f.remove:SetPoint("TOPLEFT", f.add, "TOPLEFT", COLW * 2, 0)
     f.remove:SetWidth(COLW * 2 - 8)
-    -- the changes, item by item
+    -- the pack items the player deleted: one line, and a tick for this time
+    f.dead = CreateFrame("Frame", nil, f)
+    f.dead:SetSize(COLW * 4, 20)
+    f.dead:SetPoint("TOPLEFT", f.add, "BOTTOMLEFT", 0, -4)
+    f.dead.fs = f.dead:CreateFontString(nil, "OVERLAY")
+    f.dead.fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    f.dead.fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+    f.dead.fs:SetPoint("LEFT", f.dead, "LEFT", 0, 0)
+    f.dead.fs:SetJustifyH("LEFT")
+    f.dead.fs:SetWordWrap(false)
+    f.revive = IE.CheckRow(f.dead, function() return IE.revive == true end, function(v) IE.revive = v or nil end,
+        { "Bring them back this time", "The pack items you deleted come back with this update. Unticked, they stay deleted." })
+    f.revive:SetPoint("LEFT", f.dead.fs, "RIGHT", 12, 0)
+    f.dead:Hide()
+    -- the changes, item by item; a changed one can keep the player's version
     local well = CreateFrame("Frame", nil, f, "BackdropTemplate")
     well:SetPoint("TOPLEFT", f.add, "BOTTOMLEFT", 0, -10)
     well:SetPoint("RIGHT", f, "RIGHT", -12, 0)
     well:SetPoint("BOTTOM", f, "BOTTOM", 0, 40)
     AT.Skin(well, COL.well, COL.line)
+    f.well = well
     f.listScroll, f.listHost = AT.MakeScroll(well)
     f.listScroll:SetPoint("TOPLEFT", 6, -6)
     f.listScroll:SetPoint("BOTTOMRIGHT", -10, 6)
-    f.list = f.listHost:CreateFontString(nil, "OVERLAY")
-    f.list:SetFont(STANDARD_TEXT_FONT, 11, "")
-    f.list:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
-    f.list:SetPoint("TOPLEFT", 2, -2)
-    f.list:SetJustifyH("LEFT")
-    f.list:SetJustifyV("TOP")
-    f.list:SetWordWrap(true)
+    f.rows = {}
     f.listScroll:HookScript("OnSizeChanged", function(s, w)
         f.listHost:SetWidth(math.max(60, w or 300))
-        f.list:SetWidth(math.max(50, (w or 300) - 8))
-        f.listHost:SetHeight(math.max(10, (f.list:GetStringHeight() or 0) + 8))
         s:UpdateScroll()
     end)
+    -- the info lines wrap to the panel's width
+    f:HookScript("OnSizeChanged", function() IE.FillUpdInfo() end)
     f.go = AT.MakeSmallButton(f, "Update", 150)
     f.go:SetPoint("BOTTOMLEFT", 12, 10)
     f.go.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
@@ -12454,19 +13372,95 @@ function IE.DateOf(t)
     return date("%b %d, %Y", t)
 end
 
-function IE.ShowUpdate(plan, text)
-    local f = IE.BuildUpdate()
-    IE.plan, IE.planText = plan, text
-    -- nothing to change, or older than the copy here: a copy is the safer pick
-    IE.updMode = (plan.relation == "update") and "update" or "copy"
-    local mine, theirs = IE.DateOf(plan.localAt), IE.DateOf(plan.at)
-    if plan.relation == "same" then
-        f.title:SetText("You already have this")
-    elseif plan.relation == "older" then
-        f.title:SetText("This string is older than your copy")
-    else
-        f.title:SetText("This string updates items you have")
+-- one line of the change list: a heading, or an item; a changed item's line
+-- carries its Keep mine tick
+IE.LIST_H = 20
+function IE.ListRow(i)
+    local f = IE.upd
+    local r = f.rows[i]
+    if r then return r end
+    r = CreateFrame("Frame", nil, f.listHost)
+    r:SetHeight(IE.LIST_H)
+    r.fs = r:CreateFontString(nil, "OVERLAY")
+    r.fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    r.fs:SetJustifyH("LEFT")
+    r.fs:SetWordWrap(false)
+    r.keep = IE.CheckRow(r, function() return r.uid ~= nil and IE.keep[r.uid] == true end, function(v)
+        if r.uid then IE.keep[r.uid] = v or nil end
+    end, { "Keep mine", "Leaves this item as you have it. The rest of the update still comes in." })
+    r.keep.fs:SetText("Keep mine")
+    r.keep:SetWidth(20 + 6 + math.ceil(r.keep.fs:GetUnboundedStringWidth() or 60) + 4)
+    r.keep:SetPoint("RIGHT", r, "RIGHT", -4, 0)
+    f.rows[i] = r
+    return r
+end
+
+-- the list of changes, item by item
+function IE.FillList(plan)
+    local f = IE.upd
+    local n = 0
+    local function Row(text, kind, uid)
+        n = n + 1
+        local r = IE.ListRow(n)
+        local y = -(n - 1) * IE.LIST_H
+        r:ClearAllPoints()
+        r:SetPoint("TOPLEFT", f.listHost, "TOPLEFT", 0, y)
+        r:SetPoint("TOPRIGHT", f.listHost, "TOPRIGHT", 0, y)
+        r.kind, r.uid = kind, uid
+        r.keep:SetShown(kind == "changed")
+        r.fs:SetFont(STANDARD_TEXT_FONT, (kind == "head") and 9 or 11, "")
+        r.fs:ClearAllPoints()
+        r.fs:SetPoint("LEFT", r, "LEFT", (kind == "head") and 2 or 12, 0)
+        if kind == "changed" then
+            r.fs:SetPoint("RIGHT", r.keep, "LEFT", -8, 0)
+        else
+            r.fs:SetPoint("RIGHT", r, "RIGHT", -4, 0)
+        end
+        r.fs:SetText(text)
+        r:Show()
     end
+    local function Name(it) return IE.Safe(it.name or it.type or "?") end
+    local changed, new, dead = {}, {}, {}
+    for _, it in ipairs(plan.items) do
+        if it.status == "changed" then
+            changed[#changed + 1] = it
+        elseif it.status == "new" then
+            new[#new + 1] = it
+        elseif it.status == "deleted" then
+            dead[#dead + 1] = it
+        end
+    end
+    if #changed > 0 then
+        Row("CHANGED", "head")
+        for _, it in ipairs(changed) do
+            local ps = {}
+            for _, p in ipairs(Store.UPDATE_PARTS) do
+                if it.parts[p] then ps[#ps + 1] = Store.UPDATE_PART_LABELS[p] end
+            end
+            Row(Name(it) .. ": " .. table.concat(ps, ", "), "changed", it.inc.uid)
+        end
+    end
+    if #new > 0 then
+        Row("NEW", "head")
+        for _, it in ipairs(new) do Row(Name(it), "item") end
+    end
+    if #plan.gone > 0 then
+        Row("NO LONGER IN THE PACK", "head")
+        for _, m in ipairs(plan.gone) do Row(IE.Safe(m.name or m.type or "?"), "item") end
+    end
+    if #dead > 0 then
+        Row("YOU DELETED", "head")
+        for _, it in ipairs(dead) do Row(Name(it), "item") end
+    end
+    if n == 0 then Row("Nothing differs from what you have.", "item") end
+    for i = n + 1, #f.rows do f.rows[i]:Hide() end
+    f.listHost:SetHeight(math.max(10, n * IE.LIST_H + 4))
+    f.listScroll:UpdateScroll()
+end
+
+-- the summary line: dates, what the string does, counts, notes
+function IE.Summary(plan, kept)
+    local mine, theirs = IE.DateOf(plan.localAt), IE.DateOf(plan.at)
     local s = {}
     if theirs then s[#s + 1] = "Made " .. theirs .. (mine and (", yours is from " .. mine) or "") .. "." end
     if plan.relation == "older" then
@@ -12476,47 +13470,47 @@ function IE.ShowUpdate(plan, text)
     end
     local goneN = #plan.gone
     local counts = {}
-    if plan.changed > 0 then counts[#counts + 1] = plan.changed .. " changed" end
+    if plan.changed > 0 then
+        counts[#counts + 1] = plan.changed .. " changed" .. ((kept > 0) and (" (" .. kept .. " kept as yours)") or "")
+    end
     if plan.new > 0 then counts[#counts + 1] = plan.new .. " new" end
     if plan.same > 0 then counts[#counts + 1] = plan.same .. " unchanged" end
     if goneN > 0 then counts[#counts + 1] = goneN .. (goneN == 1 and " pack item is" or " pack items are") .. " no longer in it" end
     if #counts > 0 then s[#s + 1] = table.concat(counts, ", ") .. "." end
     if plan.otherGame then s[#s + 1] = IE.GameNote(plan) end
     if plan.newer then s[#s + 1] = IE.NewerNote(plan) end
-    f.sum:SetText(table.concat(s, " "))
-    -- how many items each part touches
-    local per = {}
-    for _, it in ipairs(plan.items) do
-        if it.status == "changed" then
-            for p in pairs(it.parts) do per[p] = (per[p] or 0) + 1 end
-        end
+    return table.concat(s, " ")
+end
+
+-- the info lines at the panel's width, the summary under them
+function IE.FillUpdInfo()
+    local f = IE.upd
+    if not (f and IE.plan) then return end
+    local w = (f:GetWidth() or 0) - 24
+    if w < 100 then w = (iePane:GetWidth() or 0) - 28 end
+    if w < 100 then w = 560 end
+    local h = IE.FillInfo(f.info, IE.plan.info, IE.updMissing, w)
+    f.sum:SetPoint("TOPLEFT", (h > 0) and f.info or f.title, "BOTTOMLEFT", 0, -6)
+end
+
+function IE.ShowUpdate(plan, text)
+    local f = IE.BuildUpdate()
+    IE.plan, IE.planText = plan, text
+    -- per string: nothing kept, nothing deleted brought back
+    IE.keep, IE.revive = {}, nil
+    IE.ShowUndo(nil)
+    -- nothing to change, or older than the copy here: a copy is the safer pick
+    IE.updMode = (plan.relation == "update") and "update" or "copy"
+    if plan.relation == "same" then
+        f.title:SetText("You already have this")
+    elseif plan.relation == "older" then
+        f.title:SetText("This string is older than your copy")
+    else
+        f.title:SetText("This string updates items you have")
     end
-    IE.partCount = per
-    -- the list: what changes, item by item
-    local L = {}
-    local function Name(it) return tostring(it.name or it.type or "?") end
-    local changed, new = {}, {}
-    for _, it in ipairs(plan.items) do
-        if it.status == "changed" then
-            local ps = {}
-            for _, p in ipairs(Store.UPDATE_PARTS) do
-                if it.parts[p] then ps[#ps + 1] = Store.UPDATE_PART_LABELS[p] end
-            end
-            changed[#changed + 1] = "  " .. Name(it) .. ": " .. table.concat(ps, ", ")
-        elseif it.status == "new" then
-            new[#new + 1] = "  " .. Name(it)
-        end
-    end
-    if #changed > 0 then L[#L + 1] = "Changed" for _, l in ipairs(changed) do L[#L + 1] = l end end
-    if #new > 0 then L[#L + 1] = "New" for _, l in ipairs(new) do L[#L + 1] = l end end
-    if goneN > 0 then
-        L[#L + 1] = "No longer in the pack"
-        for _, m in ipairs(plan.gone) do L[#L + 1] = "  " .. tostring(m.name or m.type or "?") end
-    end
-    if #L == 0 then L[1] = "Nothing differs from what you have." end
-    f.list:SetText(table.concat(L, "\n"))
-    f.listHost:SetHeight(math.max(10, (f.list:GetStringHeight() or 0) + 8))
-    f.listScroll:UpdateScroll()
+    IE.updMissing = Store.MissingMedia(plan.payload)
+    IE.FillUpdInfo()
+    IE.FillList(plan)
     IE.PaintUpdate()
     f:Show()
     IE.SetStatus("", true)
@@ -12525,8 +13519,21 @@ end
 function IE.PaintUpdate()
     local f = IE.upd
     if not f then return end
+    local plan = IE.plan
     local update = (IE.updMode or "update") == "update"
-    local per = IE.partCount or {}
+    -- how many items each part touches; a kept one counts for none
+    local per, kept = {}, 0
+    for _, it in ipairs(plan and plan.items or {}) do
+        if it.status == "changed" then
+            if IE.keep and IE.keep[it.inc.uid] then
+                kept = kept + 1
+            else
+                for p in pairs(it.parts) do per[p] = (per[p] or 0) + 1 end
+            end
+        end
+    end
+    IE.partCount = per
+    if plan then f.sum:SetText(IE.Summary(plan, kept)) end
     for _, b in ipairs(f.parts) do
         local n = per[b.part] or 0
         b.fs:SetText(Store.UPDATE_PART_LABELS[b.part] .. ((n > 0) and (" (" .. n .. ")") or ""))
@@ -12545,6 +13552,32 @@ function IE.PaintUpdate()
     f.remove:SetShown(update)
     f.partsLbl:SetShown(update)
     f.itemsLbl:SetShown(update)
+    -- the items the player deleted stay out unless ticked back this time
+    local dn = plan and plan.deleted or 0
+    local dead = update and dn > 0
+    f.dead:SetShown(dead)
+    if dead then
+        f.dead.fs:SetText((dn == 1) and "1 item you deleted stays deleted." or (dn .. " items you deleted stay deleted."))
+        f.dead.fs:SetWidth(math.ceil(f.dead.fs:GetUnboundedStringWidth() or 200) + 2)
+        f.revive.fs:SetText((dn == 1) and "Bring it back this time" or "Bring them back this time")
+        f.revive:SetWidth(20 + 6 + math.ceil(f.revive.fs:GetUnboundedStringWidth() or 140) + 4)
+        f.revive.Sync()
+    end
+    f.well:SetPoint("TOPLEFT", dead and f.dead or f.add, "BOTTOMLEFT", 0, -10)
+    -- the list's ticks; a kept item reads quieter
+    for _, r in ipairs(f.rows) do
+        if r:IsShown() then
+            local c = COL.dim
+            if r.kind == "head" then
+                c = COL.faint
+            elseif r.kind == "changed" then
+                r.keep:SetShown(update)
+                r.keep.Sync()
+                c = (update and IE.keep and IE.keep[r.uid]) and COL.faint or COL.ink
+            end
+            r.fs:SetTextColor(c[1], c[2], c[3])
+        end
+    end
     f.go.fs:SetText(update and "Update" or "Import as a copy")
 end
 
@@ -12557,19 +13590,25 @@ function IE.RunUpdate()
         IE.DoImport(text, true, plan)
         return
     end
+    local kept = 0
+    for _, it in ipairs(plan.items) do
+        if it.status == "changed" and IE.keep and IE.keep[it.inc.uid] then kept = kept + 1 end
+    end
     local res = Store.ApplyUpdate(plan, {
         parts = IE.UpdateParts(), add = IE.UpdFlag("ieAdd"), remove = IE.UpdFlag("ieRemove"),
-        targetLayoutId = IE.TargetId(),
+        skip = IE.keep, revive = IE.revive == true, targetLayoutId = IE.TargetId(),
     })
     if f then f:Hide() end
     local parts = {}
     parts[#parts + 1] = "Updated " .. res.updated .. (res.updated == 1 and " item" or " items")
     if res.added > 0 then parts[#parts + 1] = "added " .. res.added end
     if res.removed > 0 then parts[#parts + 1] = "removed " .. res.removed end
+    if kept > 0 then parts[#parts + 1] = "kept " .. kept .. " as yours" end
     local msg = table.concat(parts, ", ") .. "."
     if plan.newer then msg = msg .. " " .. IE.NewerNote(plan) end
     IE.SetStatus(msg, true)
     IE.plan, IE.planText = nil, nil
+    IE.ShowUndo(res.undo)
 end
 
 function IE.Refresh()
@@ -12703,6 +13742,8 @@ function IE.Refresh()
     IE.expStatus:SetText(text)
     IE.target.Refresh()
     IE.remTarget.Refresh()
+    -- the pack info fields follow the ticks
+    IE.SyncPackInfo()
 end
 
 -- ticks that "Only what loads here" leaves out of the string
@@ -12906,7 +13947,7 @@ Options.Search = {
     KIND_WORD = {
         icon = { spell = "spell icons", aura = "aura icons", trinket = "trinket icons",
             item = "item icons", timer = "custom icons", totem = "totem icons",
-            ammo = "ammo icons", enchant = "enchant icons" },
+            ammo = "ammo icons", enchant = "enchant icons", stance = "stance icons" },
         bar = { cooldown = "cooldown bars", aura = "aura bars", timer = "custom bars",
             stack = "stack bars", swing = "swing bars", resource = "resource bars",
             health = "health bars", enchant = "enchant bars", range = "range bars",
@@ -13033,10 +14074,12 @@ function Options.Search.KindOf(r)
 end
 
 -- Records sharing a key draw the same rows: an icon's kind and its home (free,
--- group member or aura-group member), a bar's kind and mode.
+-- group member, aura-group member, or one its aura group packs), a bar's kind
+-- and mode.
 function Options.Search.KeyOf(r)
     if r.type == "icon" then
-        local home = r.groupId and (InAuraGroup(r) and ":ag" or ":g") or ":f"
+        local ag, packed = InAuraGroup(r)
+        local home = r.groupId and (ag and (packed and ":agp" or ":ag") or ":g") or ":f"
         return (r.kind or "spell") .. home
     end
     if r.type == "bar" then return (r.barKind or "cooldown") .. ":" .. (r.barMode or "") end
@@ -13274,6 +14317,7 @@ function Options.Search.DepNote(row)
     if d.nonempty then return "shows when " .. name .. " is set" end
     if d.notValue ~= nil then return "shows when " .. name .. " is not " .. word(d.notValue) end
     if d.min ~= nil then return "shows when " .. name .. " is " .. d.min .. " or more" end
+    if d.listMin ~= nil then return "shows when " .. name .. " holds " .. d.listMin .. " numbers or more" end
     if d.anyOf ~= nil then
         -- the set in the field's own value order (stable), words joined
         local ws = {}
@@ -13999,6 +15043,19 @@ local function Build()
     cat:SetPoint("TOPLEFT", 10, -70)
     cat:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     cat:SetText("LAYOUTS")
+    -- the View, on the caption's line: how the list below shows (RailView)
+    local viewDD = AT.MakeDropdown(win, rail, nil, Options.RailViewItems,
+        function() return RailView() or "all" end,
+        function(v) Store.SetSetting("railView", (v ~= "all") and v or nil) end,
+        function() RefreshAll() end)
+    viewDD:SetPoint("TOPRIGHT", -6, -65)
+    AT.Tooltip(viewDD, "View", "Everything, only what loads on this character, a section per class, or one class's items with what every class shares.")
+    local viewWord = rail:CreateFontString(nil, "OVERLAY")
+    viewWord:SetFont(STANDARD_TEXT_FONT, 9, "")
+    viewWord:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
+    viewWord:SetPoint("RIGHT", viewDD, "LEFT", -5, 0)
+    viewWord:SetText("View")
+    Options.railView = viewDD
 
     -- The layouts tree scrolls from under the caption down to the ADDON foot's
     -- hairline (the foot is 104 tall); RefreshRail fills it, Options.RailFit sizes it.

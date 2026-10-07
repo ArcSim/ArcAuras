@@ -236,6 +236,32 @@ function Store.ClearEditHidden()
     Store.Dirty("style")
 end
 
+-- A layout's or group's lock (beside its eye): nothing in it moves or reshapes
+-- from the screen while the window is open; the panel still edits it. Saved
+-- for the account, never part of a share string.
+function Store.LockedSelf(rec)
+    local L = DB and DB.settings and DB.settings.locked
+    return rec ~= nil and L ~= nil and L[rec.id] == true
+end
+
+-- the record, its group or its layout carries a lock
+function Store.Locked(rec)
+    if not rec then return false end
+    if Store.LockedSelf(rec) then return true end
+    local g = rec.groupId and Store.Get(rec.groupId)
+    if g and Store.LockedSelf(g) then return true end
+    local lid = (g and g.layoutId) or rec.layoutId
+    return lid ~= nil and Store.LockedSelf(Store.Get(lid))
+end
+
+function Store.SetLocked(rec, on)
+    if not (rec and DB and DB.settings) then return end
+    local L = DB.settings.locked or {}
+    L[rec.id] = on and true or nil
+    DB.settings.locked = next(L) and L or nil
+    Store.Dirty("style", rec.id)
+end
+
 -- Folds dynamicCooldowns into dynamicCollapse on a group arrangement table (a
 -- record's overrides or a saved default bucket): true ("show only icons on
 -- cooldown") becomes "ready". An explicit dynamicCollapse wins.
@@ -515,7 +541,8 @@ function Store.CleanLooks(rec, fam)
                         else
                             for field, v in pairs(values) do
                                 local def = sec.fields and sec.fields[field]
-                                values[field] = def and CleanValue(def, v) or nil
+                                -- a switch the look turns off stays false, not dropped
+                                if def then values[field] = CleanValue(def, v) else values[field] = nil end
                             end
                             if next(values) == nil then set[section] = nil end
                         end
@@ -531,6 +558,39 @@ function Store.CleanLooks(rec, fam)
         if lk[mode] then keep = true end
     end
     if not keep then rec.looks = nil end
+end
+
+-- An aura group's full look per type (rec.fullLooks[type][section][field],
+-- Store.TypeLookProxy) cleaned like overrides: known types, the fields a
+-- type's look may carry (Schema.TYPE_FULL_FIELDS); empty ones go.
+function Store.CleanTypeLooks(rec)
+    local fl = rec.fullLooks
+    if fl == nil then return end
+    if type(fl) ~= "table" or rec.type ~= "group" or rec.groupKind ~= "aura" then
+        rec.fullLooks = nil
+        return
+    end
+    for key, set in pairs(fl) do
+        if not Schema.TYPE_KEYS[key] or type(set) ~= "table" then
+            fl[key] = nil
+        else
+            for section, values in pairs(set) do
+                local allow, sec = Schema.TYPE_FULL_FIELDS[section], Schema.icon[section]
+                if not (allow and sec) or type(values) ~= "table" then
+                    set[section] = nil
+                else
+                    for field, v in pairs(values) do
+                        local def = allow[field] and sec.fields[field]
+                        -- a switch kept off stays false, not dropped
+                        if def then values[field] = CleanValue(def, v) else values[field] = nil end
+                    end
+                    if next(values) == nil then set[section] = nil end
+                end
+            end
+            if next(set) == nil then fl[key] = nil end
+        end
+    end
+    if next(fl) == nil then rec.fullLooks = nil end
 end
 
 -- A who-set kept usable: keys of one type (a whole positive number, or a
@@ -831,6 +891,13 @@ function Store.Normalize()
             rec.driver = rec.driver or {}
             Store.CleanCustom(rec.driver, false)
         end
+        -- a stance icon's pick is a whole positive spell ID or none
+        if rec.type == "icon" and rec.kind == "stance" then
+            local d = type(rec.driver) == "table" and rec.driver or {}
+            local sid = tonumber(d.spellID)
+            d.spellID = (sid and sid > 0) and math.floor(sid) or nil
+            rec.driver = d
+        end
         -- gpos is an icon's persistent (row, col) in its group's static
         -- grid; anything malformed auto-places on the next render.
         if rec.gpos then
@@ -857,7 +924,7 @@ function Store.Normalize()
             end
             rec.o.arrangement.slotSize = nil
         end
-        -- Folds "Only show icons on cooldown" into "Icons drop out when",
+        -- Folds "Only show icons on cooldown" into "Also count as empty",
         -- before the unknown-field strip below drops the retired key.
         if rec.type == "group" and rec.o.arrangement then
             FoldDynamicCooldowns(rec.o.arrangement)
@@ -929,6 +996,7 @@ function Store.Normalize()
             end
         end
         Store.CleanLooks(rec, family and Schema[family])
+        Store.CleanTypeLooks(rec)
     end
     -- a custom item's saved runtime state goes with its record
     if type(DB.runtime) == "table" then
@@ -943,6 +1011,7 @@ function Store.Normalize()
     DB.offsetsZero = true
     DB.bandCounts = true
     EnsureUids()
+    Store.CleanPackExtras()
 end
 
 -- Identity
@@ -1216,6 +1285,11 @@ function Store.SetOverride(rec, section, field, value)
     -- the value lands in the layout, for everything inside it
     if rec._adLayoutTier then
         Store.SetLayoutValue(rec._adLayout, rec._adFamily, section, field, value)
+        return
+    end
+    -- a type's full look on a show-all group (Store.TypeLookProxy)
+    if rec._adTypeLook then
+        Store.SetTypeLookValue(rec._adGroup, rec._adType, section, field, value)
         return
     end
     -- a multi proxy (Store.MultiProxy): the write lands on every record of
@@ -1544,6 +1618,66 @@ function Store.MultiTakes(px, r, section, field)
     if not def then return false end
     if px._adApplies then return px._adApplies(r, section, field, def) == true end
     return Schema.Applies(def, sec, Store.KindOf(r), r.barMode)
+end
+
+-- Editor proxy for one type's full look on a group showing every aura: an
+-- aura icon of the group whose overrides are that type's (g.fullLooks[key]),
+-- so the icon rows edit it and every value it leaves alone reads the
+-- group's layout, then the defaults, as the group's own buttons do.
+-- SetOverride routes its writes to SetTypeLookValue. Like the runtime's look
+-- record it has no holder and no lane (_adNoHolder: DriverAura's gates).
+local typeProxies = setmetatable({}, { __mode = "k" })
+local NO_LOOK = setmetatable({}, { __newindex = function() end })
+function Store.TypeLookProxy(g, key)
+    if not (g and g.type == "group" and g.id and DB.records[g.id] == g and Schema.TYPE_KEYS[key]) then
+        return nil
+    end
+    local byKey = typeProxies[g]
+    if not byKey then
+        byKey = {}
+        typeProxies[g] = byKey
+    end
+    local px = byKey[key]
+    if not px then
+        px = { type = "icon", kind = "aura", _adTypeLook = true, _adNoHolder = true, _adGroup = g, _adType = key,
+            c = {}, driver = {} }
+        byKey[key] = px
+    end
+    px.groupId = g.id
+    px.o = (g.fullLooks and g.fullLooks[key]) or NO_LOOK
+    local unit, harmful = Schema.UnitAuraShape(g)
+    px.driver.unit, px.driver.auraType = unit, harmful and "debuff" or "buff"
+    return px
+end
+
+-- A write to a type's full look, kept only where it differs from what the
+-- type reads without it; a field the look may not carry is refused.
+function Store.SetTypeLookValue(g, key, section, field, value)
+    local allow = Schema.TYPE_FULL_FIELDS[section]
+    local px = Store.TypeLookProxy(g, key)
+    if not (px and allow and allow[field]) then return false end
+    px.o = NO_LOOK
+    local base = Store.Resolve(px, section, field)
+    local fl = g.fullLooks or {}
+    local set = fl[key] or {}
+    local s = set[section] or {}
+    local old = s[field]
+    if value == nil or value == base then s[field] = nil else s[field] = value end
+    set[section] = (next(s) ~= nil) and s or nil
+    fl[key] = (next(set) ~= nil) and set or nil
+    g.fullLooks = (next(fl) ~= nil) and fl or nil
+    px.o = (g.fullLooks and g.fullLooks[key]) or NO_LOOK
+    if old ~= s[field] then Store.Dirty("style", g.id) end
+    return true
+end
+
+-- Drops one type's full look (its Reset).
+function Store.ClearTypeLook(g, key)
+    local fl = g and g.fullLooks
+    if not (fl and fl[key]) then return end
+    fl[key] = nil
+    if next(fl) == nil then g.fullLooks = nil end
+    Store.Dirty("style", g.id)
 end
 
 -- the rows of `fields` (nil = the whole section) the layout sets
@@ -2057,6 +2191,46 @@ function Store.ClassSpecMatrix()
         end
     end
     return classMatrix
+end
+
+-- The classes a record's own load conditions hold it to, sorted, and whether
+-- they hold it at all (false = every class). A spec set counts as its specs'
+-- classes where specs gate (retail); with both, the classes both allow.
+local specClass
+function Store.ClassesOf(rec)
+    local c = rec and rec.c
+    if not c then return {}, false end
+    local set, limited = {}, false
+    if c.classes then
+        limited = true
+        for tag, on in pairs(c.classes) do
+            if on then set[tag] = true end
+        end
+    end
+    if c.specs and not Specless() then
+        if not specClass then
+            specClass = {}
+            for _, cls in ipairs(Store.ClassSpecMatrix()) do
+                for _, s in ipairs(cls.specs) do specClass[s.id] = cls.tag end
+            end
+        end
+        local from = {}
+        for sid, on in pairs(c.specs) do
+            local tag = on and specClass[sid]
+            if tag then from[tag] = true end
+        end
+        if limited then
+            for tag in pairs(set) do
+                if not from[tag] then set[tag] = nil end
+            end
+        else
+            set, limited = from, true
+        end
+    end
+    local out = {}
+    for tag in pairs(set) do out[#out + 1] = tag end
+    table.sort(out)
+    return out, limited
 end
 
 -- effective state = what the player experiences. No conditions = on
@@ -3305,10 +3479,34 @@ local function removeFrom(list, id)
     end
 end
 
-function Store.Delete(id)
+-- A pack item the player deletes stays deleted when the pack updates: its uid
+-- goes on its layout's packGone, with the uid of the container it sat in (a
+-- string that still carries that container but not the item has dropped it,
+-- so the entry can go). A group takes its pack items with it.
+function Store.RememberDeleted(rec)
+    local lay = rec and Store.LayoutOf(rec)
+    if not lay then return end
+    local function Keep(r, box)
+        if r and r.imported ~= nil and ValidUid(r.uid) then
+            lay.packGone = type(lay.packGone) == "table" and lay.packGone or {}
+            lay.packGone[r.uid] = (box and ValidUid(box.uid)) and box.uid or true
+        end
+    end
+    Keep(rec, (rec.groupId ~= nil) and DB.records[rec.groupId] or lay)
+    if rec.type == "group" then
+        for _, mid in ipairs(type(rec.members) == "table" and rec.members or {}) do Keep(DB.records[mid], rec) end
+    end
+end
+
+-- packDrop: the pack removed it (an update), so nothing is remembered
+function Store.Delete(id, packDrop)
     local rec = Store.Get(id)
     if not rec then return end
+    if not packDrop then Store.RememberDeleted(rec) end
     if rec.type == "layout" then
+        -- its pack info and its undo go with it
+        if type(DB.packInfo) == "table" then DB.packInfo[id] = nil end
+        if type(DB.undo) == "table" then DB.undo[id] = nil end
         for _, mid in ipairs(rec.members or {}) do
             local child = DB.records[mid]
             if child then
@@ -3495,6 +3693,7 @@ local function CloneRecord(rec, map, made)
     -- a copy is the player's own new item: its own ID, from no pack
     c.uid = NewUid()
     c.imported = nil
+    c.packGone = nil
     map[rec.id] = c.id
     made[#made + 1] = c
     return c
@@ -4028,6 +4227,8 @@ local function DropPersonal(rec)
     if type(rec.c) == "table" then rec.c.chars = nil end
     -- a wheel's key is its maker's own binding
     rec.wheelKey = nil
+    -- the pack items its player deleted are theirs to keep out
+    rec.packGone = nil
 end
 
 -- The maker's Save as Default looks (newDefaults) sit under every record's own
@@ -4127,9 +4328,14 @@ function Store.Export(ids, keep)
     end
     -- at: when it was made, so a later string can tell newer from older;
     -- made / need: the version that made it and the format it needs;
-    -- game: the game it was made on
+    -- game: the game it was made on; info: the maker's pack name, version,
+    -- notes and link (older versions skip it)
+    local exIds = {}
+    for i, rec in ipairs(recs) do exIds[i] = rec.id end
+    local infoLay = Store.PackInfoLayout(exIds)
     local payload = { v = 1, kind = "adlayout", records = recs, at = time and time() or 0,
-        made = Store.AddonVersion(), need = Store.FORMAT, game = Store.Game() }
+        made = Store.AddonVersion(), need = Store.FORMAT, game = Store.Game(),
+        info = infoLay and Store.CleanPackInfo(Store.PackInfo(infoLay.id)) or nil }
     local out = {}
     SerVal(payload, out)
     local comp = LD:CompressDeflate(table.concat(out))
@@ -4369,8 +4575,8 @@ local PART_OF_SECTION = {
     icon = { alerts = "sounds", anchor = "position", appearance = "appearance", auraActive = "showhide",
         auraMissing = "showhide", auraSwipe = "appearance", groupBuff = "tracking", keybind = "text",
         label = "text", mouse = "position", outOfStock = "showhide", position = "position",
-        pulse = "appearance", special = "appearance", states = "showhide", swipe = "appearance",
-        text = "text", trinket = "tracking" },
+        pulse = "appearance", special = "appearance", stance = "tracking", states = "showhide",
+        swipe = "appearance", text = "text", trinket = "tracking" },
     bar = { abilcolors = "appearance", anchor = "position", behavior = "showhide", cast = "appearance",
         deck = "appearance",
         fill = "appearance", frame = "position", healpred = "appearance", healththresholds = "appearance",
@@ -4500,10 +4706,11 @@ end
 local SHARE_TYPES = { layout = true, group = true, icon = true, bar = true, reminder = true }
 
 -- What a string would do here, without doing it: nil and a reason for a bad
--- string, else { items = { { inc, loc, status = new / changed / same, parts }
--- }, gone = records, counts, relation = new / same / older / update, at,
--- localAt, made, newer }. relation "new": nothing of it is here (a plain
--- import); "older": made before the copy here was.
+-- string, else { items = { { inc, loc, status, parts } }, gone, counts,
+-- relation, at, localAt, made, newer, info (the maker's pack info), uids }.
+-- relation new: nothing of it is here (a plain import); older: made before
+-- the copy here was. Status deleted: a new item the player deleted from the
+-- pack, left out unless ApplyUpdate's opts.revive.
 function Store.PlanUpdate(text)
     local payload, err = DecodeString(text)
     if not payload then return nil, err end
@@ -4530,7 +4737,8 @@ function Store.PlanUpdate(text)
     local plan = { payload = payload, items = {}, gone = {}, map = map,
         at = (at and at >= 0) and math.floor(at) or 0, made = payload.made,
         newer = Store.NewerMaker(payload.made), otherGame = Store.OtherGame(payload),
-        matched = 0, changed = 0, new = 0, same = 0 }
+        info = Store.CleanPackInfo(payload.info), uids = inUids,
+        matched = 0, changed = 0, new = 0, same = 0, deleted = 0 }
     local localAt
     -- the layouts here that the string carries: an item under one of them was
     -- exported with its looks inherited, any other with them baked in
@@ -4590,6 +4798,27 @@ function Store.PlanUpdate(text)
             plan.new = plan.new + 1
         end
         plan.items[#plan.items + 1] = item
+    end
+    -- a pack item this player deleted stays out (Store.Delete keeps its uid on
+    -- its layout), and so does a new item inside one
+    local dead = Store.DeletedUids()
+    if next(dead) then
+        local byInc = {}
+        for _, item in ipairs(plan.items) do byInc[item.inc.id] = item end
+        local moved = true
+        while moved do
+            moved = false
+            for _, item in ipairs(plan.items) do
+                local inc = item.inc
+                local box = byInc[inc.groupId] or byInc[inc.layoutId]
+                if item.status == "new" and (dead[inc.uid] or (box and box.status == "deleted")) then
+                    item.status = "deleted"
+                    plan.new = plan.new - 1
+                    plan.deleted = plan.deleted + 1
+                    moved = true
+                end
+            end
+        end
     end
     -- the pack's own items the string no longer has, inside what it matched
     local seen = {}
@@ -4726,14 +4955,16 @@ local function ApplyPart(loc, view, part, map)
     end
 end
 
--- Applies a plan. opts: parts = { [part] = true } (default: every part but
--- Size & Position), add (new items, default on), remove (the pack items the
--- string dropped, default on), skip = { [uid] = true } (items left alone),
--- targetLayoutId (where new loose items land). A group that holds the
--- player's own items is never removed. Returns { updated, added, removed,
--- target }.
+-- Applies a plan. opts: parts = { [part] = true } (default: all but Size &
+-- Position), add (new items, on), remove (pack items the string dropped, on),
+-- skip = { [uid] = true } (items left alone), revive (items the player deleted
+-- from the pack come back, off), targetLayoutId (where new loose items land).
+-- A group holding the player's own items is never removed. Returns { updated,
+-- added, removed, target, undo = the layout its undo is kept under }.
 function Store.ApplyUpdate(plan, opts)
     opts = opts or {}
+    -- every record as it was, for the undo (only what changes is kept)
+    local before = CopyDeep(DB.records)
     local parts = opts.parts
     if not parts then
         parts = {}
@@ -4746,12 +4977,10 @@ function Store.ApplyUpdate(plan, opts)
         if item.loc then map[item.inc.id] = item.loc.id end
     end
     local adds = {}
-    if opts.add ~= false then
-        for i, item in ipairs(plan.items) do
-            if item.status == "new" then
-                map[item.inc.id] = NewId()
-                adds[#adds + 1] = { item = item, i = i }
-            end
+    for i, item in ipairs(plan.items) do
+        if (item.status == "new" and opts.add ~= false) or (item.status == "deleted" and opts.revive) then
+            map[item.inc.id] = NewId()
+            adds[#adds + 1] = { item = item, i = i }
         end
     end
     local RANK = { layout = 1, group = 2 }
@@ -4824,7 +5053,8 @@ function Store.ApplyUpdate(plan, opts)
                 end
             end
             if not keep and m.type ~= "layout" and DB.records[m.id] == m then
-                Store.Delete(m.id)
+                -- the pack dropped it, the player did not: nothing to keep out
+                Store.Delete(m.id, true)
                 res.removed = res.removed + 1
             elseif keep then
                 -- the pack let it go and the player's own items live in it:
@@ -4833,8 +5063,411 @@ function Store.ApplyUpdate(plan, opts)
             end
         end
     end
+    Store.PruneDeleted(plan.uids)
     res.target = target
+    Store.Normalize()
+    res.undo = Store.KeepUndo(plan, res, before)
+    Store.Dirty("tree")
+    return res
+end
+
+-- The maker's pack info: a name, a version, notes and a link, typed on the
+-- export side, kept per layout (DB.packInfo[layoutId], never in a record) and
+-- carried in the string's payload as `info`. Plain text, capped; nil when
+-- nothing is set.
+Store.PACK_INFO_CAPS = { name = 60, version = 20, notes = 300, link = 200 }
+
+function Store.CleanPackInfo(t)
+    if type(t) ~= "table" then return nil end
+    local out, any = {}, false
+    for k, cap in pairs(Store.PACK_INFO_CAPS) do
+        local v = t[k]
+        if type(v) == "number" then v = tostring(v) end
+        if type(v) == "string" then
+            v = v:gsub("%c", " "):gsub("^%s+", ""):gsub("%s+$", "")
+            -- a cut never leaves half a character behind
+            if #v > cap then v = v:sub(1, cap):gsub("[\192-\255][\128-\191]*$", "") end
+            if v ~= "" then
+                out[k] = v
+                any = true
+            end
+        end
+    end
+    return any and out or nil
+end
+
+function Store.PackInfo(layoutId)
+    local t = type(DB.packInfo) == "table" and DB.packInfo[layoutId] or nil
+    return type(t) == "table" and t or nil
+end
+
+function Store.SetPackInfo(layoutId, key, value)
+    local lay = DB.records[layoutId]
+    if not (lay and lay.type == "layout" and Store.PACK_INFO_CAPS[key]) then return false end
+    if type(DB.packInfo) ~= "table" then DB.packInfo = {} end
+    local cur = DB.packInfo[layoutId] or {}
+    cur[key] = value
+    DB.packInfo[layoutId] = Store.CleanPackInfo(cur)
+    if next(DB.packInfo) == nil then DB.packInfo = nil end
+    return true
+end
+
+-- The layout whose pack info a set of records carries: the first layout in
+-- it, else the layout of its first record that has one.
+function Store.PackInfoLayout(ids)
+    if type(ids) ~= "table" then ids = { ids } end
+    for _, id in ipairs(ids) do
+        local r = DB.records[id]
+        if r and r.type == "layout" then return r end
+    end
+    for _, id in ipairs(ids) do
+        local lay = DB.records[id] and Store.LayoutOf(DB.records[id])
+        if lay then return lay end
+    end
+end
+
+-- Every uid the player deleted from a pack, over all layouts.
+function Store.DeletedUids()
+    local out = {}
+    for _, r in pairs(DB.records) do
+        if r.type == "layout" and type(r.packGone) == "table" then
+            for u in pairs(r.packGone) do out[u] = true end
+        end
+    end
+    return out
+end
+
+-- After a string is applied: a deleted item it no longer has, from a container
+-- it still carries, is gone from the pack too, so it needs keeping out no more.
+function Store.PruneDeleted(uids)
+    if type(uids) ~= "table" then return end
+    for _, r in pairs(DB.records) do
+        if r.type == "layout" and type(r.packGone) == "table" then
+            for u, box in pairs(r.packGone) do
+                if box ~= true and uids[box] and not uids[u] then r.packGone[u] = nil end
+            end
+            if next(r.packGone) == nil then r.packGone = nil end
+        end
+    end
+end
+
+-- The layout an update's undo is kept under: the first layout it matched,
+-- else the layout of the first item it matched, else where it put new items.
+local function UndoKey(plan, res)
+    for _, item in ipairs(plan.items) do
+        local loc = item.loc
+        if loc and loc.type == "layout" and DB.records[loc.id] == loc then return loc.id end
+    end
+    for _, item in ipairs(plan.items) do
+        local loc = item.loc
+        local lay = loc and DB.records[loc.id] == loc and Store.LayoutOf(loc)
+        if lay then return lay.id end
+    end
+    local t = res and res.target
+    return (t and DB.records[t.id] == t) and t.id or nil
+end
+
+-- One undo per layout (DB.undo[layoutId]): every record the update changed or
+-- removed, as it was, and the ids it added. The next update of that layout
+-- replaces it, and so does a later update touching the same records (the
+-- older undo would put back what that one changed). Returns its layout id.
+function Store.KeepUndo(plan, res, before)
+    local recs, added, removed, touched, n = {}, {}, {}, {}, 0
+    for id, old in pairs(before) do
+        local now = DB.records[id]
+        if now == nil or not SameData(old, now) then
+            recs[id] = old
+            touched[id] = true
+            n = n + 1
+            if now == nil then removed[#removed + 1] = id end
+        end
+    end
+    for id in pairs(DB.records) do
+        if before[id] == nil then
+            added[#added + 1] = id
+            touched[id] = true
+        end
+    end
+    if n == 0 and #added == 0 then return nil end
+    local key = UndoKey(plan, res)
+    if not key then return nil end
+    table.sort(added, function(a, b) return (tonumber(a) or 0) < (tonumber(b) or 0) end)
+    if type(DB.undo) ~= "table" then DB.undo = {} end
+    for k, u in pairs(DB.undo) do
+        local hit = k == key or type(u) ~= "table"
+        if not hit then
+            for id in pairs(type(u.recs) == "table" and u.recs or {}) do
+                if touched[id] then
+                    hit = true
+                    break
+                end
+            end
+            for _, id in ipairs(type(u.added) == "table" and u.added or {}) do
+                if touched[id] then
+                    hit = true
+                    break
+                end
+            end
+        end
+        if hit then DB.undo[k] = nil end
+    end
+    table.sort(removed, function(a, b) return (tonumber(a) or 0) < (tonumber(b) or 0) end)
+    local info = plan.info
+    DB.undo[key] = { when = time and time() or 0, made = plan.at, version = info and info.version,
+        pack = info and info.name, recs = recs, added = added, removed = removed }
+    return key
+end
+
+-- What a layout's undo would put back, or nil: { when, made, version, pack,
+-- count = the records it touches }.
+function Store.UndoInfo(layoutId)
+    local u = type(DB.undo) == "table" and DB.undo[layoutId] or nil
+    if type(u) ~= "table" then return nil end
+    local n = #(type(u.added) == "table" and u.added or {})
+    for _ in pairs(type(u.recs) == "table" and u.recs or {}) do n = n + 1 end
+    return { when = u.when, made = u.made, version = u.version, pack = u.pack, count = n }
+end
+
+-- Undoes a layout's last update: the records it changed or removed come back
+-- as they were (ids and uids too) and what it added goes. What the player
+-- deleted since stays deleted (and remembered), and an added container holding
+-- something the player made since stays, as theirs. Returns { restored,
+-- removed, kept }, or nil and a reason.
+function Store.UndoUpdate(layoutId)
+    local u = type(DB.undo) == "table" and DB.undo[layoutId] or nil
+    if type(u) ~= "table" then return nil, "nothing to undo" end
+    DB.undo[layoutId] = nil
+    if next(DB.undo) == nil then DB.undo = nil end
+    local recs = {}
+    local byUpdate = {}
+    for _, id in ipairs(type(u.removed) == "table" and u.removed or {}) do byUpdate[id] = true end
+    for id, old in pairs(type(u.recs) == "table" and u.recs or {}) do
+        -- one the update changed and the player deleted since stays deleted
+        if DB.records[id] ~= nil or byUpdate[id] then recs[id] = old end
+    end
+    local addedSet = {}
+    for _, id in ipairs(type(u.added) == "table" and u.added or {}) do addedSet[id] = true end
+    -- an added container stays while it holds something the player made since
+    local stays = {}
+    for _ = 1, 3 do
+        for id in pairs(addedSet) do
+            local r = DB.records[id]
+            if r and not stays[id] then
+                for _, mid in ipairs(type(r.members) == "table" and r.members or {}) do
+                    if DB.records[mid] and ((not addedSet[mid] and recs[mid] == nil) or stays[mid]) then
+                        stays[id] = true
+                    end
+                end
+            end
+        end
+    end
+    local res = { restored = 0, removed = 0, kept = 0 }
+    for id in pairs(addedSet) do
+        local r = DB.records[id]
+        if r and stays[id] then
+            r.imported = nil
+            res.kept = res.kept + 1
+        elseif r then
+            DB.records[id] = nil
+            res.removed = res.removed + 1
+        end
+    end
+    local since = {}
+    for id, old in pairs(recs) do
+        local now = DB.records[id]
+        if now and now.type == "layout" and type(now.packGone) == "table" then since[id] = now.packGone end
+        DB.records[id] = CopyDeep(old)
+        res.restored = res.restored + 1
+    end
+    for id, gone in pairs(since) do
+        local r = DB.records[id]
+        r.packGone = type(r.packGone) == "table" and r.packGone or {}
+        for uid, box in pairs(gone) do
+            if r.packGone[uid] == nil then r.packGone[uid] = box end
+        end
+    end
+    for _ = 1, 3 do
+        for id in pairs(recs) do
+            local r = DB.records[id]
+            if r and r.type ~= "layout" then
+                local p = r.groupId or r.layoutId
+                if p == nil or not DB.records[p] then
+                    DB.records[id] = nil
+                    res.restored = res.restored - 1
+                end
+            end
+        end
+    end
+    -- a container touched here lists exactly the records that point at it:
+    -- its own order first, then the rest by id
+    local kids = {}
+    for id, r in pairs(DB.records) do
+        local p = (r.type ~= "layout") and (r.groupId or r.layoutId) or nil
+        if p ~= nil then
+            kids[p] = kids[p] or {}
+            kids[p][#kids[p] + 1] = id
+        end
+    end
+    local fix = {}
+    for id, r in pairs(DB.records) do
+        if r.type == "layout" or r.type == "group" then
+            if recs[id] ~= nil or stays[id] then
+                fix[id] = true
+            else
+                for _, mid in ipairs(type(r.members) == "table" and r.members or {}) do
+                    if recs[mid] ~= nil or addedSet[mid] then
+                        fix[id] = true
+                        break
+                    end
+                end
+            end
+        end
+    end
+    for id in pairs(recs) do
+        local r = DB.records[id]
+        local p = r and r.type ~= "layout" and (r.groupId or r.layoutId)
+        if p and DB.records[p] then fix[p] = true end
+    end
+    for cid in pairs(fix) do
+        local c = DB.records[cid]
+        local want, list, rest = {}, {}, {}
+        for _, kid in ipairs(kids[cid] or {}) do want[kid] = true end
+        for _, mid in ipairs(type(c.members) == "table" and c.members or {}) do
+            if want[mid] then
+                list[#list + 1] = mid
+                want[mid] = nil
+            end
+        end
+        for kid in pairs(want) do rest[#rest + 1] = kid end
+        table.sort(rest, function(a, b) return (tonumber(a) or 0) < (tonumber(b) or 0) end)
+        for _, kid in ipairs(rest) do list[#list + 1] = kid end
+        c.members = list
+    end
     Store.Normalize()
     Store.Dirty("tree")
     return res
+end
+
+-- Media a string names that this client lacks: shared-media names no loaded
+-- addon provides (sounds, fonts, bar textures and borders) and pictures in the
+-- folder of an addon that is not installed. Each draws or plays the default
+-- here until the player adds it.
+function Store.MediaKnown(kind, v)
+    if type(v) ~= "string" or v == "" then return true end
+    if kind == "sound" then
+        if v:find("^kit:%d+$") then return true end
+        local S = NS.Sounds
+        return not S or S.PathFor(v) ~= nil
+    end
+    if kind == "picture" then
+        if tonumber(v) then return true end
+        local _, e = v:lower():find("^interface[\\/]addons[\\/]")
+        local folder = e and v:sub(e + 1):match("^([^\\/]+)")
+        if not folder or folder:lower() == tostring(ADDON):lower() then return true end
+        local C = C_AddOns
+        if C and C.DoesAddOnExist then return C.DoesAddOnExist(folder) == true end
+        return true
+    end
+    local B = NS.Bars
+    if not B then return true end
+    local own = (kind == "font" and B.BUILTIN_FONTS) or (kind == "border" and B.BUILTIN_BORDERS)
+        or (kind == "statusbar" and B.BUILTIN_TEXTURES) or nil
+    if own and own[v] then return true end
+    local lsm = B.GetLSM and B.GetLSM()
+    return lsm ~= nil and lsm:Fetch(kind, v, true) ~= nil
+end
+
+-- A sorted list of names (a picture by its file name), empty when none.
+function Store.MissingMedia(payload)
+    local out, seen = {}, {}
+    local function Check(kind, v)
+        if Store.MediaKnown(kind, v) then return end
+        local n = (kind == "picture") and (v:match("([^\\/]+)$") or v) or v
+        if not seen[n] then
+            seen[n] = true
+            out[#out + 1] = n
+        end
+    end
+    local function Values(family, secs)
+        local fam = Schema[family]
+        if type(fam) ~= "table" or type(secs) ~= "table" then return end
+        for s, vals in pairs(secs) do
+            local sec = fam[s]
+            if type(sec) == "table" and type(sec.fields) == "table" and type(vals) == "table" then
+                for f, v in pairs(vals) do
+                    local def = sec.fields[f]
+                    if def and type(v) == "string" then
+                        local kind = (def.t == "sound" and "sound") or (def.font and "font") or def.media
+                            or (def.picture and "picture") or nil
+                        if kind then Check(kind, v) end
+                    end
+                end
+            end
+        end
+    end
+    local list = type(payload) == "table" and payload.records
+    for _, r in ipairs(type(list) == "table" and list or {}) do
+        if type(r) == "table" and SHARE_TYPES[r.type] then
+            local family = Store.FamilyOf(r)
+            Values(family, r.o)
+            if r.type == "layout" and type(r.inh) == "table" then
+                for fk, secs in pairs(r.inh) do Values(fk, secs) end
+            end
+            if type(r.looks) == "table" then
+                for _, by in ipairs({ "power", "spec", "talent" }) do
+                    for _, look in pairs(type(r.looks[by]) == "table" and r.looks[by] or {}) do Values(family, look) end
+                end
+            end
+            if type(r.fullLooks) == "table" then
+                for _, look in pairs(r.fullLooks) do Values("icon", look) end
+            end
+            local d = type(r.driver) == "table" and r.driver or {}
+            for _, rules in ipairs({ d.rules or false, r.triggers or false }) do
+                for _, x in ipairs(type(rules) == "table" and rules or {}) do
+                    if type(x) == "table" and type(x.sound) == "string" then Check("sound", x.sound) end
+                end
+            end
+        end
+    end
+    table.sort(out)
+    return out
+end
+
+-- Normalize's pass over the pack extras: pack info and undos only for layouts
+-- that exist, deleted-item entries only on layouts and never for an item that
+-- is back.
+function Store.CleanPackExtras()
+    if type(DB.packInfo) == "table" then
+        for id, t in pairs(DB.packInfo) do
+            local lay = DB.records[id]
+            DB.packInfo[id] = (lay and lay.type == "layout") and Store.CleanPackInfo(t) or nil
+        end
+    end
+    if type(DB.packInfo) ~= "table" or next(DB.packInfo) == nil then DB.packInfo = nil end
+    if type(DB.undo) == "table" then
+        for id, u in pairs(DB.undo) do
+            local lay = DB.records[id]
+            if not (lay and lay.type == "layout" and type(u) == "table" and type(u.recs) == "table"
+                and type(u.added) == "table" and type(u.removed) == "table") then
+                DB.undo[id] = nil
+            end
+        end
+    end
+    if type(DB.undo) ~= "table" or next(DB.undo) == nil then DB.undo = nil end
+    local live = {}
+    for _, r in pairs(DB.records) do
+        if ValidUid(r.uid) then live[r.uid] = true end
+    end
+    for _, r in pairs(DB.records) do
+        if r.packGone ~= nil then
+            if r.type ~= "layout" or type(r.packGone) ~= "table" then
+                r.packGone = nil
+            else
+                for u, box in pairs(r.packGone) do
+                    if not ValidUid(u) or live[u] or not (box == true or ValidUid(box)) then r.packGone[u] = nil end
+                end
+                if next(r.packGone) == nil then r.packGone = nil end
+            end
+        end
+    end
 end

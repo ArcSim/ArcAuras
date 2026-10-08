@@ -50,18 +50,17 @@ function DS.Name(sid)
     if type(sid) ~= "number" then return nil end
     local n = DS.names[sid]
     if n then return n end
-    n = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(sid)
+    n = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(sid) -- raw-id: a bar entry or a typed pick, for its label
     if Secret(n) or type(n) ~= "string" or n == "" then return nil end
     DS.names[sid] = n
     return n
 end
 
--- One stance: the same spell ID, or another rank of it (the same name).
-function DS.Same(a, b)
-    if type(a) ~= "number" or type(b) ~= "number" then return false end
-    if a == b then return true end
-    local na = DS.Name(a)
-    return na ~= nil and na == DS.Name(b)
+-- One stance: the picked one (`want`) and the bar's (`got`) through the one
+-- matcher, any rank by name on either client.
+function DS.Same(want, got)
+    if type(want) ~= "number" or type(got) ~= "number" then return false end
+    return Store.SpellMatch(want, got, nil, true)
 end
 
 -- Reads the bar: true with a plain answer, false with a secret one, which
@@ -112,7 +111,7 @@ function DS.Entry(sid)
         if e.sid == sid then return e end
     end
     for _, e in ipairs(DS.bar) do
-        if DS.Same(e.sid, sid) then return e end
+        if DS.Same(sid, e.sid) then return e end
     end
     return nil
 end
@@ -140,7 +139,7 @@ end
 -- look while you are in it), else the spell's; nil is the question mark.
 function DS.Texture(rec)
     DS.Fresh()
-    local sid = DS.Shown(rec)
+    local sid = Store.RecordSpellID(rec.driver, DS.Shown(rec))
     if not sid then return nil end
     local e = DS.Entry(sid)
     if e and e.icon ~= nil then return e.icon end
@@ -169,7 +168,7 @@ function DS.Tooltip(rec)
         GameTooltip:AddLine("Not in a stance.", 0.7, 0.7, 0.7)
         return
     end
-    local sid = DS.Shown(rec)
+    local sid = Store.RecordSpellID(rec.driver, DS.Shown(rec))
     if sid and C_Spell and C_Spell.DoesSpellExist and C_Spell.DoesSpellExist(sid) then
         GameTooltip:SetSpellByID(sid)
     else

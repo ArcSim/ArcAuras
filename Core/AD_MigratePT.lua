@@ -479,7 +479,7 @@ function MP.MakeNG(layoutId, raw, uw, uh)
     Place(O, rec, t, uw, uh)
     if not tonumber(t.customIcon) and def.icon then
         -- tried as a spell first, then as a file, as ProcTracker drew it
-        local fromSpell = C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(def.icon) ~= nil
+        local fromSpell = C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(def.icon) ~= nil -- raw-id: v1 data being imported
         O("appearance", "customIcon", def.icon)
         O("appearance", "customIconFrom", fromSpell and "spell" or "icon")
     end

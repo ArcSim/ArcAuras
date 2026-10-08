@@ -149,6 +149,12 @@ local function Key(v)
     return (v == true and 1) or (v == false and 2) or 0
 end
 
+-- The spell an icon reads: the one its last feed resolved, or before that
+-- feed, the record's own resolve.
+local function EffOf(a)
+    return a.effSid or Store.RecordSpellID(a.rec.driver)
+end
+
 local function UsableKeys(sid)
     if inPass and passU[sid] then return passU[sid], passM[sid] end
     local u, m = C_Spell.IsSpellUsable(sid)
@@ -160,7 +166,7 @@ end
 -- Can it be pressed now: usable (IsSpellUsable is plain on Forever) and off
 -- its real cooldown (the GCD is ignored). nil when the read is secret.
 local function UsableNow(a)
-    local sid = a.effSid or (a.rec.driver and a.rec.driver.spellID)
+    local sid = EffOf(a)
     if not (sid and C_Spell.IsSpellUsable) then return nil end
     local u = UsableKeys(sid)
     if u == 3 then return nil end
@@ -262,18 +268,9 @@ local function KBRememberSlot(slot, txt)
     end
     if atype == "spell" and id
         and not (issecretvalue and issecretvalue(id)) then
-        KBRemember(id, txt)
-        -- The bar may hold an override form: index the base too.
-        if C_Spell and C_Spell.GetBaseSpell then
-            local base = C_Spell.GetBaseSpell(id)
-            if base and base ~= id then KBRemember(base, txt) end
-        end
-        -- Ranked realms: other ranks are unrelated IDs that share a name
-        -- (GetBaseSpell links override forms only), so index the name too.
-        if NS.IsForever and C_Spell and C_Spell.GetSpellName then
-            local nm = C_Spell.GetSpellName(id)
-            if nm and nm ~= "" then KBRemember("n:" .. nm, txt) end
-        end
+        -- filed under the forms the one matcher compares: the ID, its base
+        -- form, and on ranked realms its name (ranks share only a name)
+        for _, k in ipairs(Store.SeenKeys(id, NS.IsForever == true)) do KBRemember(k, txt) end
     end
 end
 
@@ -379,27 +376,18 @@ local function KBRebuild()
     KBWalk(false)
 end
 
--- Lookup order: the id, its base, its override, then (byName, ranked realms)
--- the spell's name, which matches whichever rank the bar holds.
-local function KeybindFor(sid, byName)
+-- The key of a tracked spell, looked up by the one matcher's keys: `eff`
+-- (the rank / override its feed resolved, what the bar most likely holds),
+-- the spell, its override and base forms, then (byName, ranked realms) its
+-- name, which matches whichever rank the bar holds.
+local function KeybindFor(sid, eff, byName)
     if not sid then return nil end
     if kbDirty then KBRebuild() end
-    local txt = kbCache[sid]
-    if txt then return txt end
-    if C_Spell then
-        if C_Spell.GetBaseSpell then
-            local base = C_Spell.GetBaseSpell(sid)
-            if base and base ~= sid and kbCache[base] then return kbCache[base] end
-        end
-        if C_Spell.GetOverrideSpell then
-            local ov = C_Spell.GetOverrideSpell(sid)
-            if ov and ov ~= sid and kbCache[ov] then return kbCache[ov] end
-        end
-        if byName and NS.IsForever and C_Spell.GetSpellName then
-            local nm = C_Spell.GetSpellName(sid)
-            if nm and nm ~= "" then return kbCache["n:" .. nm] end
-        end
+    for _, k in ipairs(Store.WantKeys(sid, eff, (byName and NS.IsForever == true) or false)) do
+        local txt = kbCache[k]
+        if txt then return txt end
     end
+    return nil
 end
 
 local function ApplyKeybind(a)
@@ -408,12 +396,8 @@ local function ApplyKeybind(a)
     UsabCfg(a)
     local txt
     if a.kbOn then
-        local byName = a.kbByName
-        -- the rank / override the feed resolved first (that is what the bar
-        -- most likely holds), then the stored id
         local sid = rec.driver and rec.driver.spellID
-        if a.effSid and a.effSid ~= sid then txt = KeybindFor(a.effSid, byName) end
-        if not txt and sid then txt = KeybindFor(sid, byName) end
+        if sid then txt = KeybindFor(sid, EffOf(a), a.kbByName) end
     end
     Factory.SetKeybindText(a.frame, txt)
 end
@@ -426,11 +410,8 @@ function Driver.KeybindTextFor(rec)
     if not sid then return nil end
     local byName = Store.Resolve(rec, "keybind", "keybindByName") == true
     local live = attached[rec.id]
-    local eff = live and live.effSid
-    local txt
-    if eff and eff ~= sid then txt = KeybindFor(eff, byName) end
-    if not txt then txt = KeybindFor(sid, byName) end
-    return txt
+    local eff = (live and live.effSid) or Store.RecordSpellID(rec.driver)
+    return KeybindFor(sid, eff, byName)
 end
 
 -- /adkeys <spell id or name>: every bar button that holds the spell (any
@@ -445,7 +426,7 @@ SlashCmdList.ADKEYS = function(msg)
     local wantID = tonumber(msg)
     local wantName = (not wantID) and msg:lower() or nil
     if wantID and C_Spell.GetSpellName then
-        local nm = C_Spell.GetSpellName(wantID)
+        local nm = C_Spell.GetSpellName(wantID) -- raw-id: the ID typed after /adkeys
         if nm and nm ~= "" then wantName = nm:lower() end
     end
     print(("|cff3fc9f2Arc Auras keys|r for %s (cache %s, by-name index %s)"):format(
@@ -460,7 +441,7 @@ SlashCmdList.ADKEYS = function(msg)
                 elseif GetMacroSpell then id, atype = GetMacroSpell(id), "spell" end
             end
             if atype == "spell" and id and not (issecretvalue and issecretvalue(id)) then
-                local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+                local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: a bar slot's own spell
                 if id == wantID or (wantName and nm and nm:lower() == wantName) then
                     n = n + 1
                     print(("  %s%d (slot %d): %s [%d], key %s, %s"):format(
@@ -482,7 +463,7 @@ SlashCmdList.ADKEYS = function(msg)
                     elseif GetMacroSpell then id, atype = GetMacroSpell(id), "spell" end
                 end
                 if atype == "spell" and id and not (issecretvalue and issecretvalue(id)) then
-                    local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+                    local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: a bar slot's own spell
                     if id == wantID or (wantName and nm and nm:lower() == wantName) then
                         n = n + 1
                         print(("  %s (addon, slot %d): %s [%d], key %s, %s"):format(
@@ -572,9 +553,7 @@ end
 
 -- One re-feed at the GCD's end. 61304 is the GCD; its numbers read plain in
 -- normal play but are guarded, with a 0.3s fallback. Chained GCDs re-arm.
-local function SchedulePostGCDRepush(a)
-    if a.postGCDQueued then return end
-    a.postGCDQueued = true
+local function PostGCDDelay()
     local delay = 0.3
     local cd = C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(61304)
     if cd then
@@ -585,6 +564,13 @@ local function SchedulePostGCDRepush(a)
             if rem > 0 and rem < 2 then delay = rem + 0.05 end
         end
     end
+    return delay
+end
+
+local function SchedulePostGCDRepush(a)
+    if a.postGCDQueued then return end
+    a.postGCDQueued = true
+    local delay = PostGCDDelay()
     C_Timer.After(delay, function()
         a.postGCDQueued = nil
         local live = attached[a.rec.id]
@@ -593,27 +579,12 @@ local function SchedulePostGCDRepush(a)
 end
 
 Feed = function(a)
-    local sid = a.rec.driver and a.rec.driver.spellID
+    local d = a.rec.driver
+    local sid = d and d.spellID
     if not sid or not C_Spell.GetSpellCooldownDuration then return end
-    -- Auto rank (ranked realms): GetSpellIDForSpellIdentifier(name) gives the
-    -- rank the player knows, and SPELLS_CHANGED re-feeds when one is learned.
-    -- The spell's own name is used (cached per id), not the record's.
-    if Store.AutoRankOn(a.rec.driver) and C_Spell.GetSpellIDForSpellIdentifier then
-        if a.nameForSid ~= sid and C_Spell.GetSpellName then
-            local nm = C_Spell.GetSpellName(sid)
-            if nm and nm ~= "" then a.nameForSid, a.spellName = sid, nm end
-        end
-        if a.nameForSid == sid then
-            local rid = C_Spell.GetSpellIDForSpellIdentifier(a.spellName)
-            if rid then sid = rid end
-        end
-    end
-    -- A replaced spell's cooldown (Stormstrike to Windstrike) lives on the
-    -- override id; GetOverrideSpell is plain. ignoreSpellOverride opts out.
-    if not a.rec.driver.ignoreSpellOverride and C_Spell.GetOverrideSpell then
-        local ov = C_Spell.GetOverrideSpell(sid)
-        if ov and ov ~= 0 and ov ~= sid then sid = ov end
-    end
+    -- Auto rank's known rank, then the override (Stormstrike to Windstrike);
+    -- ignoreSpellOverride opts out. SPELLS_CHANGED and talent edits re-feed.
+    sid = Store.RecordSpellID(d) or sid
     -- a new rank / override takes over the range check at the end of this feed
     local rangeMoved = a.rangeSid ~= nil and a.rangeSid ~= sid
     a.effSid = sid
@@ -941,7 +912,7 @@ local CODE_N = { range = 1, nomana = 2, unusable = 3 }
 
 FeedUsability = function(a)
     -- the tracked rank / override: mana cost and range belong to it
-    local sid = a.effSid or (a.rec.driver and a.rec.driver.spellID)
+    local sid = EffOf(a)
     if not sid then return end
     UsabCfg(a)
     local f = a.frame
@@ -995,7 +966,7 @@ local function FeedUsabilityAll()
     inPass, passTarget = true, (not byEvent) and MaybeTarget()
     for _, a in pairs(attached) do
         local f = a.frame
-        local sid = a.effSid or (a.rec.driver and a.rec.driver.spellID)
+        local sid = EffOf(a)
         local gate
         if byEvent and sid and C_Spell.IsSpellUsable then
             local u, m = UsableKeys(sid)
@@ -1090,6 +1061,12 @@ local function FeedAmmoAll()
 end
 
 local USAB_GAP = 0.25   -- out of combat, seconds between usability passes at most
+-- A talent that replaces a spell moves what Store.TrackedSpellID answers;
+-- SPELLS_CHANGED should follow, these catch a client that sends only them.
+Driver.TALENT_EVENTS = { "TRAIT_CONFIG_UPDATED", "PLAYER_TALENT_UPDATE" }
+local function EventValid(e)
+    return (not (C_EventUtils and C_EventUtils.IsEventValid)) or C_EventUtils.IsEventValid(e) == true
+end
 local registered = false
 local function EnsureEvents()
     if registered then return end
@@ -1110,8 +1087,7 @@ local function EnsureEvents()
         Driver.NoteCast(spellID)
         for _, a in pairs(attached) do
             -- the cast carries the rank / override id (Auto rank)
-            if a.rec.driver and (a.rec.driver.spellID == spellID
-                or a.effSid == spellID) then
+            if a.rec.driver and Store.SpellMatch(a.rec.driver.spellID, spellID, a.effSid) then
                 -- Before the feed, the shadows still hold the state the cast
                 -- came from: a cast while a charge was coming back spent the
                 -- last of two (the cooldown events only queue their feeds).
@@ -1179,18 +1155,23 @@ local function EnsureEvents()
         Events.Coalesce("adcd_feedall", FeedAll)
         Events.Coalesce("adcd_feedammo", FeedAmmoAll)
     end)
-    Events.On("SPELLS_CHANGED", "adcd", function()
+    local function Relearn()
         -- Charges can change with talents or spec. A charge spell has
         -- maxCharges > 1: single-charge spells return a charges table too.
         for _, a in pairs(attached) do
-            local sid = a.effSid or (a.rec.driver and a.rec.driver.spellID)
+            local sid = EffOf(a)
             local info = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
             a.isCharge = (info and (info.maxCharges or 0) > 1) == true
             a.maxCharges = info and info.maxCharges or nil
             a.chargeSid = sid
         end
+        -- the feed re-resolves each spell and moves its range check with it
         Events.Coalesce("adcd_feedall", FeedAll)
-    end)
+    end
+    Events.On("SPELLS_CHANGED", "adcd", Relearn)
+    for _, e in ipairs(Driver.TALENT_EVENTS) do
+        if EventValid(e) then Events.On(e, "adcd", Relearn) end
+    end
     -- The cache must be stale before icons re-resolve; KeybindFor rebuilds it.
     Events.On("UPDATE_BINDINGS", "adcd_kb", function()
         kbDirty = true
@@ -1217,20 +1198,18 @@ local function EnsureEvents()
             Events.On(e, "adcd_kb", KBRefresh)
         end
     end
-    -- Proc overlays. The payload can be the override id, so match the stored id
-    -- and the last effective id.
+    -- Proc overlays. The payload can be the override or another rank, so it
+    -- goes through the one matcher with the last effective id.
     Events.On("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", "adcd", function(_, spellID)
         for _, a in pairs(attached) do
-            if a.rec.driver and (a.rec.driver.spellID == spellID
-                or a.effSid == spellID) then
+            if a.rec.driver and Store.SpellMatch(a.rec.driver.spellID, spellID, a.effSid) then
                 Factory.SetProcGlow(a.frame, a.rec, true)
             end
         end
     end)
     Events.On("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE", "adcd", function(_, spellID)
         for _, a in pairs(attached) do
-            if a.rec.driver and (a.rec.driver.spellID == spellID
-                or a.effSid == spellID) then
+            if a.rec.driver and Store.SpellMatch(a.rec.driver.spellID, spellID, a.effSid) then
                 Factory.SetProcGlow(a.frame, a.rec, false)
             end
         end
@@ -1261,6 +1240,7 @@ local function MaybeReleaseEvents()
     Events.Off("GET_ITEM_INFO_RECEIVED", "adcd_items")
     Events.Off("PLAYER_ENTERING_WORLD", "adcd")
     Events.Off("SPELLS_CHANGED", "adcd")
+    for _, e in ipairs(Driver.TALENT_EVENTS) do Events.Off(e, "adcd") end
     Events.Off("UPDATE_BINDINGS", "adcd_kb")
     Events.Off("ACTIONBAR_SLOT_CHANGED", "adcd_kb")
     for _, e in ipairs(kbExtraEvents) do Events.Off(e, "adcd_kb") end
@@ -1349,7 +1329,7 @@ function Driver.Attach(rec, f)
     -- the feed re-reads the charges from the current rank or override
     a.cfgGen = nil
     a.chargeSid = nil
-    local sid = a.effSid or (rec.driver and rec.driver.spellID)
+    local sid = EffOf(a)
     local info = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
     a.isCharge = (info and (info.maxCharges or 0) > 1) == true
     a.maxCharges = info and info.maxCharges or nil
@@ -1422,7 +1402,284 @@ function Driver.IsCharge(rec)
     if not (rec and rec.kind == "spell") then return false end
     local a = attached[rec.id]
     if a and a.chargeSid then return a.isCharge == true end
-    local sid = rec.driver and tonumber(rec.driver.spellID)
+    local sid = Store.RecordSpellID(rec.driver)
     local info = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
     return (info and (info.maxCharges or 0) > 1) == true
+end
+
+-- Spell watches: Ready / Recharging / On cooldown of any spell, for things
+-- that are not icons (a bar glow naming a spell). One watch per spell and rank
+-- mode, shared by every owner naming it: two shadows fed by the icon feed's
+-- rules (ignoreGCD plus isOnGCD, isEnabled false is ready, the wand's lock, one
+-- re-feed at the GCD's end). Events only while a watch exists; nothing runs
+-- between them. A spell the player does not know has no state.
+local watches = {}        -- [key] = w
+local watchOf = {}        -- [owner] = key
+local watchShadows = {}   -- [key] = { sCD, sCharge }: frames outlive a dropped watch
+local watchArmed = false
+local watchCast
+Driver.spellWatches = watches
+
+local WatchFeed   -- forward: the GCD-end timer and the charge expiry call it
+
+local function WatchKey(sid, follow, noOv) return sid .. (follow and "r" or "x") .. (noOv and "o" or "") end
+
+-- Follow my rank exists only where ranks do.
+local function WatchFollow(follow) return follow ~= false and NS.IsForever == true end
+
+-- Owners hear only a real change of what SpellState answers.
+local function WatchPush(w)
+    local m = w.sCD:IsShown() == true
+    local c = (w.isCharge == true and w.sCharge:IsShown() == true) or false
+    local kn = w.known ~= false
+    if w.m == m and w.c == c and w.kn == kn then return end
+    w.m, w.c, w.kn = m, c, kn
+    for _, fn in pairs(w.subs) do fn() end
+end
+
+-- the rank you know (Follow my rank), then its override: the icons' resolve
+local function WatchResolve(w)
+    return Store.TrackedSpellID(w.sid, w.follow, w.noOv == true) or w.sid
+end
+
+-- maxCharges is never secret on either client
+local function ChargesOf(sid)
+    local info = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
+    local mx = info and info.maxCharges
+    if issecretvalue and issecretvalue(mx) then return false end
+    return type(mx) == "number" and mx > 1
+end
+
+-- any rank counts on ranked realms unless pinned to this one; a replacement
+-- form counts through its base; an unreadable answer never hides a state
+local function WatchKnown(w)
+    w.known = Store.KnowsSpell(w.sid, NS.IsForever == true and not w.follow) ~= false
+end
+
+local function WatchPostGCD(w)
+    if w.postGCD then return end
+    w.postGCD = true
+    C_Timer.After(PostGCDDelay(), function()
+        w.postGCD = nil
+        if watches[w.key] == w then WatchFeed(w) end
+    end)
+end
+
+WatchFeed = function(w)
+    if not C_Spell.GetSpellCooldownDuration then return end
+    if not w.known then
+        w.sCD:Clear()
+        w.sCharge:Clear()
+        WatchPush(w)
+        return
+    end
+    local sid = WatchResolve(w)
+    w.eff = sid
+    if w.chargeSid ~= sid then
+        w.chargeSid = sid
+        w.isCharge = ChargesOf(sid)
+    end
+    local info = C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(sid)
+    local onGcd = info and info.isOnGCD
+    if issecretvalue and issecretvalue(onGcd) then onGcd = nil end
+    onGcd = onGcd == true
+    local en = info and info.isEnabled
+    if issecretvalue and issecretvalue(en) then en = nil end
+    -- the wand's lock is the GCD; a cooldown already running keeps its snapshot
+    local wandLock = Driver.WandLocked() and not Driver.IsWandShot(sid)
+    local hold = wandLock and w.m == true and w.sCD:IsShown() == true
+    local wandGCD = wandLock and not hold
+    if wandGCD then onGcd = true end
+    if not hold then
+        local main = C_Spell.GetSpellCooldownDuration(sid, true)
+        if main and not onGcd and en ~= false then
+            w.sCD:SetCooldownFromDurationObject(main, true)
+        else
+            w.sCD:Clear()
+        end
+    end
+    local chDur = w.isCharge and C_Spell.GetSpellChargeDuration and C_Spell.GetSpellChargeDuration(sid, true)
+    if chDur then
+        w.sCharge:SetCooldownFromDurationObject(chDur, true)
+    else
+        w.sCharge:Clear()
+    end
+    -- the filtered read stands; the GCD's end re-reads what started under it
+    if onGcd and not wandGCD then WatchPostGCD(w) end
+    WatchPush(w)
+end
+
+local function WatchFeedAll()
+    for _, w in pairs(watches) do WatchFeed(w) end
+end
+
+local function WatchFeedCharges()
+    for _, w in pairs(watches) do
+        if w.isCharge then WatchFeed(w) end
+    end
+end
+
+-- a wand shot's own update carries only its lock
+local function WatchFeedWand()
+    for _, w in pairs(watches) do
+        if Driver.IsWandShot(w.eff or w.sid) then WatchFeed(w) end
+    end
+end
+
+-- talents and ranks: charges, the rank known and the override read again
+local function WatchRelearn()
+    for _, w in pairs(watches) do
+        w.chargeSid = nil
+        WatchKnown(w)
+    end
+    WatchFeedAll()
+end
+
+-- a cast lands its cooldown before SPELL_UPDATE_COOLDOWN inside a charge's
+-- GCD: the watches on that spell read now
+local function WatchOnCast(spellID)
+    Driver.NoteCast(spellID)
+    if issecretvalue and issecretvalue(spellID) then return end
+    for _, w in pairs(watches) do
+        if Store.SpellMatch(w.sid, spellID, w.eff) then WatchFeed(w) end
+    end
+end
+
+local function ArmWatches(on)
+    if on == watchArmed then return end
+    watchArmed = on
+    if not on then
+        Events.Off("SPELL_UPDATE_COOLDOWN", "adcd_watch")
+        Events.Off("SPELL_UPDATE_CHARGES", "adcd_watch")
+        Events.Off("SPELLS_CHANGED", "adcd_watch")
+        for _, e in ipairs(Driver.TALENT_EVENTS) do Events.Off(e, "adcd_watch") end
+        Events.Off("PLAYER_ENTERING_WORLD", "adcd_watch")
+        if watchCast then watchCast:UnregisterAllEvents() end
+        return
+    end
+    Events.On("SPELL_UPDATE_COOLDOWN", "adcd_watch", function(_, spellID, baseSpellID)
+        if Driver.IsWandShot(spellID) or Driver.IsWandShot(baseSpellID) then
+            Events.Coalesce("adcd_watch_wand", WatchFeedWand)
+            return
+        end
+        Events.Coalesce("adcd_watch_feed", WatchFeedAll)
+    end)
+    Events.On("SPELL_UPDATE_CHARGES", "adcd_watch", function()
+        Events.Coalesce("adcd_watch_charges", WatchFeedCharges)
+    end)
+    local function Learn() Events.Coalesce("adcd_watch_learn", WatchRelearn) end
+    Events.On("SPELLS_CHANGED", "adcd_watch", Learn)
+    for _, e in ipairs(Driver.TALENT_EVENTS) do
+        if EventValid(e) then Events.On(e, "adcd_watch", Learn) end
+    end
+    Events.On("PLAYER_ENTERING_WORLD", "adcd_watch", function()
+        Events.Coalesce("adcd_watch_feed", WatchFeedAll)
+    end)
+    -- its own frame, the player's casts only
+    if not watchCast then
+        watchCast = CreateFrame("Frame")
+        watchCast:SetScript("OnEvent", function(_, _, _, _, spellID) WatchOnCast(spellID) end)
+    end
+    watchCast:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+end
+
+local function NewWatch(key, sid, follow, noOv)
+    local sh = watchShadows[key]
+    if not sh then
+        sh = { sCD = MakeShadow(), sCharge = MakeShadow() }
+        watchShadows[key] = sh
+    end
+    local w = { key = key, sid = sid, follow = follow, noOv = noOv, sCD = sh.sCD, sCharge = sh.sCharge, subs = {}, n = 0,
+        pushKey = "adcd_wpush_" .. key, feedKey = "adcd_wfeed_" .. key }
+    w.pushFn = function() if watches[key] == w then WatchPush(w) end end
+    w.feedFn = function() if watches[key] == w then WatchFeed(w) end end
+    -- shown under UIParent, so OnShow / OnHide fire; OnCooldownDone backs up the expiry
+    local function bump() Events.Coalesce(w.pushKey, w.pushFn) end
+    w.sCD:SetScript("OnShow", bump)
+    w.sCD:SetScript("OnHide", bump)
+    w.sCD:SetScript("OnCooldownDone", bump)
+    -- the next charge re-reads, or the spell lands full
+    w.sCharge:SetScript("OnCooldownDone", function() Events.Coalesce(w.feedKey, w.feedFn) end)
+    watches[key] = w
+    WatchKnown(w)
+    WatchFeed(w)
+    return w
+end
+
+local function DropWatch(w)
+    watches[w.key] = nil
+    w.sCD:SetScript("OnShow", nil)
+    w.sCD:SetScript("OnHide", nil)
+    w.sCD:SetScript("OnCooldownDone", nil)
+    w.sCharge:SetScript("OnCooldownDone", nil)
+    w.sCD:Clear()
+    w.sCharge:Clear()
+end
+
+-- owner: the caller's own key; fn() runs on every change of its state.
+-- follow: Follow my rank (ranked realms; nil = on); noOverride: the owner's
+-- Ignore override. A new spell moves the owner.
+function Driver.WatchSpell(owner, sid, follow, fn, noOverride)
+    sid = tonumber(sid)
+    if not sid or sid <= 0 then
+        Driver.UnwatchSpell(owner)
+        return nil
+    end
+    sid = math.floor(sid)
+    follow = WatchFollow(follow)
+    noOverride = noOverride == true
+    local key = WatchKey(sid, follow, noOverride)
+    local old = watchOf[owner]
+    local w = watches[key]
+    if old ~= key then
+        if not w then w = NewWatch(key, sid, follow, noOverride) end
+        w.n = w.n + 1
+        watchOf[owner] = key
+        -- the new one first, so the events never drop in between
+        local ow = old and watches[old]
+        if ow then
+            ow.subs[owner] = nil
+            ow.n = ow.n - 1
+            if ow.n <= 0 then DropWatch(ow) end
+        end
+    end
+    w.subs[owner] = fn
+    ArmWatches(true)
+    return w
+end
+
+function Driver.UnwatchSpell(owner)
+    local key = watchOf[owner]
+    if not key then return end
+    watchOf[owner] = nil
+    local w = watches[key]
+    if w then
+        w.subs[owner] = nil
+        w.n = w.n - 1
+        if w.n <= 0 then DropWatch(w) end
+    end
+    if next(watches) == nil then ArmWatches(false) end
+end
+
+-- ready, recharging, on cooldown: ready = every charge back (a plain spell
+-- off cooldown); recharging = a charge used, not all; on cooldown = none
+-- left. All false while unknown, unwatched or not yet read.
+function Driver.SpellState(owner)
+    local key = watchOf[owner]
+    local w = key and watches[key]
+    if not (w and w.kn and w.m ~= nil) then return false, false, false end
+    local m, c = w.m, w.c
+    return not m and not c, c and not m, m
+end
+
+-- Whether a spell (its rank and override as a watch would read it) has charges.
+function Driver.SpellCharges(sid, follow, noOverride)
+    sid = tonumber(sid)
+    if not sid or sid <= 0 then return false end
+    sid = math.floor(sid)
+    follow = WatchFollow(follow)
+    noOverride = noOverride == true
+    local w = watches[WatchKey(sid, follow, noOverride)]
+    if w and w.chargeSid then return w.isCharge == true end
+    return ChargesOf(WatchResolve({ sid = sid, follow = follow, noOv = noOverride }))
 end

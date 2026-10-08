@@ -35,7 +35,7 @@ function SI.ArtOf(def)
     if type(icon) == "string" then return icon end
     if type(icon) ~= "number" then return nil end
     if C_Spell and C_Spell.GetSpellTexture then
-        return C_Spell.GetSpellTexture(icon) or icon
+        return C_Spell.GetSpellTexture(icon) or icon -- raw-id: a fixed tracker's art
     end
     return icon
 end

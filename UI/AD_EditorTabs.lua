@@ -69,7 +69,7 @@ function ET.NewFold(pg, key, word, ctx)
     local chev = AT.MakeChevron(row)
     chev:SetPoint("LEFT", 8, 0)
     local fs = row:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 12, "")
+    fs:SetFont(AT.FONT, 12, "")
     fs:SetPoint("LEFT", chev, "RIGHT", 4, 0)
     fs:SetWordWrap(false)
     fs:SetText(title)
@@ -78,7 +78,7 @@ function ET.NewFold(pg, key, word, ctx)
     nb:SetPoint("LEFT", fs, "RIGHT", 8, 0)
     AT.Skin(nb, COL.panel, COL.line2)
     local nfs = nb:CreateFontString(nil, "OVERLAY")
-    nfs:SetFont(STANDARD_TEXT_FONT, 10, "")
+    nfs:SetFont(AT.FONT, 10, "")
     nfs:SetPoint("CENTER", 0, 0)
     nfs:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     row._adFoldText, row._adFoldCount = fs, nfs
@@ -261,7 +261,7 @@ ET.GLOW_WHEN = {
     recharge = "a charge is coming back",
     toggle = function(rec)
         local id = rec.driver and tonumber(rec.driver.spellID)
-        local name = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+        local name = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: the typed spell, for the editor's words
         return (name or "it") .. " is on"
     end,
     warn = function(rec) return WARN_WORDS[Store.Resolve(rec, "states", "warnGlowWhen")] or "" end,
@@ -884,6 +884,7 @@ local function CompactSlider(parent, w, lo, hi, step, pct, fmtStr, get, set)
     local th = s:GetThumbTexture()
     th:SetSize(8, 10)
     th:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
+    AT.SliderFill(s)
     s:SetMinMaxValues(Lo(), Hi())
     s:SetValueStep(step)
     s:SetObeyStepOnDrag(true)
@@ -895,7 +896,7 @@ local function CompactSlider(parent, w, lo, hi, step, pct, fmtStr, get, set)
     end)
     box:SetSize(VALUE_W, 16)
     AT.Skin(box, COL.well)
-    box:SetFont(STANDARD_TEXT_FONT, 11, "")
+    box:SetFont(AT.FONT, 11, "")
     box:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     box:SetJustifyH("CENTER")
     box:SetAutoFocus(false)
@@ -926,7 +927,7 @@ local function NumberBox(parent, w, get, set, lo, hi, int, isId)
     local box = CreateFrame("EditBox", nil, parent, "BackdropTemplate")
     box:SetSize(w, 18)
     AT.Skin(box, COL.well)
-    box:SetFont(STANDARD_TEXT_FONT, 11, "")
+    box:SetFont(AT.FONT, 11, "")
     box:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     box:SetJustifyH("CENTER")
     box:SetAutoFocus(false)
@@ -1027,7 +1028,7 @@ local function MakePair(ed, blk, field, ctx, owner, relay)
     local P = { field = field, fdef = fdef, adv = fdef.adv ~= nil }
     local words = (blk.labels and blk.labels[field]) or fdef.label or field
     local lbl = ed:CreateFontString(nil, "OVERLAY")
-    lbl:SetFont(STANDARD_TEXT_FONT, 12, "")
+    lbl:SetFont(AT.FONT, 12, "")
     lbl:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     lbl:SetWordWrap(false)
     lbl:SetText(words)
@@ -1224,7 +1225,7 @@ local function BlockLine(ed, blk, ctx, owner, relay)
     end
     if blk.lineName ~= false then
         local nm = ed:CreateFontString(nil, "OVERLAY")
-        nm:SetFont(STANDARD_TEXT_FONT, 12, "")
+        nm:SetFont(AT.FONT, 12, "")
         nm:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
         nm:SetWordWrap(false)
         nm:SetText(blk.lineName or blk.title or "")
@@ -1244,7 +1245,7 @@ local function BlockLine(ed, blk, ctx, owner, relay)
         local chev = AT.MakeChevron(mb)
         chev:SetPoint("LEFT", 0, 0)
         local fs = mb:CreateFontString(nil, "OVERLAY")
-        fs:SetFont(STANDARD_TEXT_FONT, 12, "")
+        fs:SetFont(AT.FONT, 12, "")
         fs:SetPoint("LEFT", chev, "RIGHT", 4, 0)
         fs:SetText("More")
         mb:SetWidth(16 + Measure(fs) + 2)
@@ -1369,8 +1370,8 @@ local function EditorRow(pg, T, ctx, vis, kind, st, owner, stateRow)
         glyphs[k] = g
     end
     local word = ed:CreateFontString(nil, "OVERLAY")
-    word:SetFont(STANDARD_TEXT_FONT, 11, "")
-    word:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    word:SetFont(AT.FONT, 11, "")
+    word:SetTextColor(COL.title[1], COL.title[2], COL.title[3])
     word:SetPoint("TOPLEFT", 32, -11)
     local function Close()
         AT.CloseDropdown()
@@ -1394,7 +1395,7 @@ local function EditorRow(pg, T, ctx, vis, kind, st, owner, stateRow)
     rule:SetTexture(AT.WHITE)
     rule:SetVertexColor(COL.line[1], COL.line[2], COL.line[3], 1)
     local note = ed:CreateFontString(nil, "OVERLAY")
-    note:SetFont(STANDARD_TEXT_FONT, 11, "")
+    note:SetFont(AT.FONT, 11, "")
     note:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     note:SetWordWrap(false)
     row._adNote = note
@@ -1649,7 +1650,7 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
     openFill:Hide()
     row._adPickFill = openFill
     lbl = row:CreateFontString(nil, "OVERLAY")
-    lbl:SetFont(STANDARD_TEXT_FONT, 13, "")
+    lbl:SetFont(AT.FONT, 13, "")
     if tall then lbl:SetPoint("TOPLEFT", 14, -11) else lbl:SetPoint("LEFT", 14, 0) end
     lbl:SetJustifyH("LEFT")
     lbl:SetWordWrap(false)
@@ -1695,7 +1696,7 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
         local C = { frame = cell, col = c, spec = spec, parts = {} }
         row._adCells[c] = C
         local dash = cell:CreateFontString(nil, "OVERLAY")
-        dash:SetFont(STANDARD_TEXT_FONT, 12, "")
+        dash:SetFont(AT.FONT, 12, "")
         dash:SetPoint("LEFT", 0, 0)
         dash:SetTextColor(COL.line2[1], COL.line2[2], COL.line2[3])
         dash:SetText((c == "alpha" and st.never) or "-")
@@ -1944,7 +1945,7 @@ function ET.StateTable(pg, ctx, vis, owner)
     local heads = {}
     for i, text in ipairs({ "STATE", "OPACITY", "GREY OUT", "TINT" }) do
         local fs = head:CreateFontString(nil, "OVERLAY")
-        fs:SetFont(STANDARD_TEXT_FONT, 10, "")
+        fs:SetFont(AT.FONT, 10, "")
         fs:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
         fs:SetJustifyH("LEFT")
         fs:SetWordWrap(false)
@@ -1957,7 +1958,7 @@ function ET.StateTable(pg, ctx, vis, owner)
         local g = ET.Glyph(head, fk)
         g:SetColor(COL.faint)
         local fs = head:CreateFontString(nil, "OVERLAY")
-        fs:SetFont(STANDARD_TEXT_FONT, 10, "")
+        fs:SetFont(AT.FONT, 10, "")
         fs:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
         fs:SetWordWrap(false)
         fs:SetText(string.upper(ET.FX_WORD[fk]))
@@ -2056,15 +2057,15 @@ local ICON_SUB = {
         ["Label 3"] = { "Text", "Custom Text & Keybind" },
         ["Labels & Keybind"] = { "Text", "Custom Text & Keybind" } },
 }
--- a bar tab that went away: its rows' new tab and sub-tab
+-- a bar tab that went away: its rows' new tab and sub-tab (true: the same sub-tab)
 ET.BAR_TAB_HOME = { Thresholds = { "Appearance", "Fill & Colors" }, ["Color Changes"] = { "Appearance", "Fill & Colors" },
-    Behavior = { "Show & Hide", "By State" } }
+    Behavior = { "Conditions", "By State" }, ["Show & Hide"] = { "Conditions", true } }
 local BAR_SUB = {
     Appearance = { Style = "Size & Frame", ["Bar Size"] = "Size & Frame", Scale = "Size & Frame",
         Background = "Size & Frame", Border = "Size & Frame", Fill = "Fill & Colors",
         Direction = "Fill & Colors", ["Point Colors"] = "Fill & Colors", Segments = "Fill & Colors",
         ["Cost Preview"] = "Fill & Colors", ["Off-hand"] = "Swing",
-        Spark = true, Visibility = { "Show & Hide", "Fade When" } },
+        Spark = true, Visibility = { "Conditions", "Fade When" } },
 }
 -- tabs that stack their blocks: no sub-tab pick
 local BAR_STACKED = { ["Heals & Shields"] = true, Castbar = true }
@@ -2087,7 +2088,10 @@ function ET.Home(fam, tab, sub, rec)
     end
     if fam == "bar" then
         local moved = ET.BAR_TAB_HOME[tab]
-        if moved then return moved[1], moved[2] end
+        if moved then
+            if moved[2] == true then return moved[1], sub end
+            return moved[1], moved[2]
+        end
         if BAR_STACKED[tab] then return tab, nil end
         local h = BAR_SUB[tab] and BAR_SUB[tab][sub]
         if h == true then
@@ -2162,8 +2166,9 @@ for k, v in pairs(ET.BAR_TAB_HOME) do Options.RENAMED_BAR_TABS[k] = v[1] end
 ET.BADGES = {
     icon = { Conditions = "tab:conditions" },
     iconSub = { ["Custom Text & Keybind"] = "sub:labelskeybind" },
-    bar = { ["Show & Hide"] = "bar:showhide" },
-    barSub = { ["Size & Frame"] = "sub:sizeframe", ["Fill & Colors"] = "sub:fillcolors" },
+    -- the bars' Conditions tab was Show & Hide: a rename keeps its mark's id
+    bar = { Conditions = "bar:showhide" },
+    barSub = { ["Size & Frame"] = "sub:sizeframe", ["Fill & Colors"] = "sub:fillcolors", Glows = "sub:barglows" },
     group = { Appearance = "grp:appearance", Tracking = "grp:tracking" },
     reminder = { Appearance = "rem:appearance", Sounds = "rem:sounds" },
 }

@@ -126,6 +126,12 @@ function RC.StyleText(entry, cd)
         K.R(rec, "text", "rcOffsetX"), K.R(rec, "text", "rcOffsetY"))
 end
 
+-- A recharge countdown sits on the marks rung: over the bar glows, under the
+-- bar's ticks and texts, still the top of its point.
+function RC.TextLevel(entry)
+    return entry.shell.fill:GetFrameLevel() + Bars.LADDER.marks
+end
+
 function RC.EnsureText(entry, c, parent, region, level)
     local cd = c.rc
     if not cd then
@@ -240,7 +246,7 @@ function RC.PipsLaid(entry)
             p.rbar = p.litBar
             if rech and entry.powerType == RC.RUNES then RC.ApplyDir(entry, p.litBar) end
             if rech then
-                RC.EnsureText(entry, p, p.f, p.f, p.f:GetFrameLevel() + 4)
+                RC.EnsureText(entry, p, p.f, p.f, RC.TextLevel(entry))
             else
                 DropText(p)
             end
@@ -389,7 +395,7 @@ function RC.BarLaid(entry)
             RC.ApplyDir(entry, s.bar)
             s.bar:Show()
             s.rbar = s.bar
-            RC.EnsureText(entry, s, host, s.bar, host:GetFrameLevel() + 3)
+            RC.EnsureText(entry, s, host, s.bar, RC.TextLevel(entry))
         else
             s.bar:Hide()
             DropText(s)

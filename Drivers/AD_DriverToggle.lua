@@ -41,7 +41,9 @@ function DT.Kind(rec)
     if not sid then return nil end
     if sid == DT.ATTACK then return "attack" end
     if DT.REPEAT[sid] then return "repeat" end
-    if C_Spell and C_Spell.IsAutoRepeatSpell and DT.Yes(C_Spell.IsAutoRepeatSpell(sid)) then return "repeat" end
+    -- the game is asked about the spell the icon reads (rank, override)
+    local eff = Store.RecordSpellID(rec.driver)
+    if eff and C_Spell and C_Spell.IsAutoRepeatSpell and DT.Yes(C_Spell.IsAutoRepeatSpell(eff)) then return "repeat" end
     return nil
 end
 

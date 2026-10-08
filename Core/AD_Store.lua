@@ -180,6 +180,28 @@ function Store.UnloadedShown(rec)
     return DB.settings.showUnloaded == true
 end
 
+-- Whether an unloaded element is drawn while editing: its eye, but only while
+-- the sidebar's View lists it. "This character" lists only what loads here; a
+-- one-class view folds the other classes' items into a count, where their eyes
+-- cannot be reached. The screen draws what the menu lists.
+function Store.UnloadedDrawn(rec)
+    local RV = NS.Options and NS.Options.RailView
+    local view = RV and RV() or Store.GetSetting("railView")
+    if view == "char" then return false end
+    local only = type(view) == "string" and view:match("^only:(.+)$")
+    if only then
+        local cls, limited = Store.ClassesOf(rec)
+        if limited then
+            local listed = false
+            for _, tag in ipairs(cls) do
+                if tag == only then listed = true break end
+            end
+            if not listed then return false end
+        end
+    end
+    return Store.UnloadedShown(rec)
+end
+
 function Store.SetUnloadedShown(rec, on)
     if not (rec and DB and DB.settings) then return end
     DB.settings.unloadedShow = DB.settings.unloadedShow or {}
@@ -213,17 +235,20 @@ end
 -- the same answer, drawn or not while the window is open (an unloaded one
 -- through its own eye, a loaded one through edit-hidden). A shared layout
 -- whose items each carry their own class checks then shows whole. One item
--- can still be flipped on its own afterwards.
+-- can still be flipped on its own afterwards. A loaded parent's eye only hides
+-- or shows what loads here: turning it back on must not draw items the menu
+-- marks as not loaded on this character.
 function Store.SetEyeTree(rec, on)
     if not (rec and DB and DB.settings) then return end
     local list = (rec.type == "layout") and Store.LayoutDescendants(rec)
         or (rec.type == "group") and Store.GroupMembers(rec) or {}
     if #list == 0 then return end
-    DB.settings.unloadedShow = DB.settings.unloadedShow or {}
+    local reachUnloaded = not Store.IsLoaded(rec)
     for _, d in ipairs(list) do
         if Store.IsLoaded(d) then
             editHidden[d.id] = (not on) and true or nil
-        else
+        elseif reachUnloaded then
+            DB.settings.unloadedShow = DB.settings.unloadedShow or {}
             DB.settings.unloadedShow[d.id] = on and true or false
         end
     end
@@ -606,6 +631,25 @@ local function CleanSet(t, keyType)
     return t
 end
 
+-- A per-node talent table (a choice's option, a pick's class or spec) keeps
+-- only nodes in one of the two sets, with a value `ok` accepts.
+local function CleanTalentTags(c, key, ok)
+    local t = c[key]
+    if t == nil then return end
+    if type(t) ~= "table" then
+        c[key] = nil
+        return
+    end
+    for k, v in pairs(t) do
+        local listed = (c.talents and c.talents[k]) or (c.talentsNot and c.talentsNot[k])
+        if not listed or not ok(v) then t[k] = nil end
+    end
+    if next(t) == nil then c[key] = nil end
+end
+
+local function WholeID(v) return type(v) == "number" and v > 0 and v % 1 == 0 end
+local function ClassTagOK(v) return type(v) == "string" and v:match("^%u+$") ~= nil end
+
 -- The who keys, shape-checked on both flavors and never dropped by flavor: a
 -- retail record's spec, role and hero sets ride through a Forever save, and
 -- a Forever record's talent nodes through a retail one.
@@ -620,20 +664,10 @@ local function CleanWho(rec)
     -- talent sets never gate while empty, so an empty one is nothing
     if c.talents and next(c.talents) == nil then c.talents = nil end
     if c.talentsNot and next(c.talentsNot) == nil then c.talentsNot = nil end
-    -- a named choice belongs to a node in one of the two sets
-    if c.talentEntry ~= nil then
-        if type(c.talentEntry) ~= "table" then
-            c.talentEntry = nil
-        else
-            for k, v in pairs(c.talentEntry) do
-                local listed = (c.talents and c.talents[k]) or (c.talentsNot and c.talentsNot[k])
-                if not listed or type(v) ~= "number" or v <= 0 or v % 1 ~= 0 then
-                    c.talentEntry[k] = nil
-                end
-            end
-            if next(c.talentEntry) == nil then c.talentEntry = nil end
-        end
-    end
+    -- a named choice and a pick's class / spec tags belong to a listed node
+    CleanTalentTags(c, "talentEntry", WholeID)
+    CleanTalentTags(c, "talentClass", ClassTagOK)
+    CleanTalentTags(c, "talentSpec", WholeID)
     if c.talentMode ~= nil and c.talentMode ~= "any" then c.talentMode = nil end
     -- the Known Spell rule: a mode, a whole positive spell ID, the rank switch
     if c.knownMode ~= "known" and c.knownMode ~= "unknown" then c.knownMode = nil end
@@ -1834,6 +1868,17 @@ local function TalentMet(c, cat, nodeID)
     return true
 end
 
+-- A pick made in a talent picker carries the class it was made for
+-- (c.talentClass) and, on retail, the spec of a spec or hero tree node
+-- (c.talentSpec): it counts only there. An untagged pick counts everywhere.
+local function TalentCounts(c, nodeID)
+    local tc = c.talentClass and c.talentClass[nodeID]
+    if tc ~= nil and tc ~= ClassTag() then return false end
+    local ts = c.talentSpec and c.talentSpec[nodeID]
+    if ts ~= nil and not Specless() and ts ~= Store.CurSpecID() then return false end
+    return true
+end
+
 -- Known-spell gates: "Only load once learned" (driver.onlyKnown, a Tracking
 -- toggle) and the Known Spell rule (c.knownMode / knownSpell / knownRank, Load
 -- Conditions). One spellbook read: true / false, or nil when the answer is
@@ -1865,6 +1910,76 @@ local function PlainNum(v)
     return type(v) == "number" and v or nil
 end
 
+-- ONE RESOLVE PER QUESTION. Every ID handed to the game goes through the
+-- entry point for its question, so no reader can drift onto an ID the others
+-- left (skill arcdisplay-drivers; tools\spell_resolve_audit.lua checks it):
+-- a spell's live state or face: Store.TrackedSpellID / Store.RecordSpellID;
+-- an aura's IDs: DriverAura.TrackedIDs / IncludeMap; a spell the game reports
+-- against a tracked one: Store.SpellMatch (SeenKeys / WantKeys for lookups);
+-- the spellbook: Store.KnowsSpell.
+
+-- a spell's override now, else the spell itself
+local function OverrideOf(id)
+    local CS = C_Spell
+    local ov = CS and CS.GetOverrideSpell and PlainNum(CS.GetOverrideSpell(id))
+    if ov and ov > 0 then return ov end
+    return id
+end
+
+-- Names are spell data: kept once read plain.
+Store.spellNameOf = {}
+local function NameOf(id)
+    local nm = Store.spellNameOf[id]
+    if nm == nil then
+        local CS = C_Spell
+        nm = CS and CS.GetSpellName and CS.GetSpellName(id)
+        if (issecretvalue and issecretvalue(nm)) or type(nm) ~= "string" or nm == "" then return nil end
+        Store.spellNameOf[id] = nm
+    end
+    return nm
+end
+
+-- the base form of an override form now, nil for none
+local function BaseOf(id)
+    local CS = C_Spell
+    local b = CS and CS.GetBaseSpell and PlainNum(CS.GetBaseSpell(id))
+    if b and b > 0 and b ~= id then return b end
+    return nil
+end
+
+-- The matcher's copy: a base form moves only with the spec or talents, so it
+-- is kept until SPELLS_CHANGED or a talent event (a cast loop reads none).
+Store.baseOf = {}
+local function MatchBase(id)
+    local b = Store.baseOf[id]
+    if b == nil then
+        local CS = C_Spell
+        local v = CS and CS.GetBaseSpell and CS.GetBaseSpell(id)
+        if issecretvalue and issecretvalue(v) then return nil end
+        b = (type(v) == "number" and v > 0 and v ~= id) and v or false
+        Store.baseOf[id] = b
+    end
+    return b or nil
+end
+do
+    local function Forget() Store.baseOf = {} end
+    local EU = C_EventUtils
+    for _, e in ipairs({ "SPELLS_CHANGED", "TRAIT_CONFIG_UPDATED", "PLAYER_TALENT_UPDATE" }) do
+        if not (EU and EU.IsEventValid) or EU.IsEventValid(e) == true then Events.On(e, "adstore_base", Forget) end
+    end
+end
+
+-- the rank the spell's own name finds (on ranked realms, the one you know)
+local function RankByName(sid)
+    local CS = C_Spell
+    if not (CS and CS.GetSpellIDForSpellIdentifier) then return nil end
+    local nm = NameOf(sid)
+    if not nm then return nil end
+    local rid = PlainNum(CS.GetSpellIDForSpellIdentifier(nm))
+    if rid and rid > 0 then return rid end
+    return nil
+end
+
 -- Whether the player knows a spell: true / false, or nil when it cannot be
 -- told (a secret or malformed ID, a secret read never answered before), which
 -- never gates. On ranked realms any rank counts, found by its name, unless
@@ -1876,18 +1991,19 @@ function Store.KnowsSpell(sid, exact)
     sid = PlainNum(sid)
     if not sid then return nil end
     local known = BookHas(sid)
-    local CS = C_Spell
     if known == false and not exact then
-        if NS.IsForever == true and CS and CS.GetSpellName and CS.GetSpellIDForSpellIdentifier then
-            local nm = CS.GetSpellName(sid)
-            if not (issecretvalue and issecretvalue(nm)) and type(nm) == "string" and nm ~= "" then
-                local rid = PlainNum(CS.GetSpellIDForSpellIdentifier(nm))
-                if rid and rid ~= sid then known = BookHas(rid) end
-            end
+        if NS.IsForever == true then
+            local rid = RankByName(sid)
+            if rid and rid ~= sid then known = BookHas(rid) end
         end
-        if known == false and CS and CS.GetBaseSpell then
-            local base = PlainNum(CS.GetBaseSpell(sid))
-            if base and base ~= sid then known = BookHas(base) end
+        if known == false then
+            local base = BaseOf(sid)
+            if base then known = BookHas(base) end
+        end
+        -- a spell a talent replaced counts through its replacement
+        if known == false then
+            local ov = OverrideOf(sid)
+            if ov ~= sid then known = BookHas(ov) end
         end
     end
     local seen = exact and Store.knownExactSeen or Store.knownSeen
@@ -1915,6 +2031,219 @@ end
 function Store.AutoRankOn(d)
     if type(d) ~= "table" or d.autoRank == false then return false end
     return d.autoRank == true or NS.IsForever == true
+end
+
+-- Whether the book shows a spell; a replaced spell's slot is hidden. nil
+-- when it cannot be asked.
+local function OnBookPage(id)
+    local SB = C_SpellBook
+    if not (SB and SB.FindSpellBookSlotForSpell) then return nil end
+    local slot = SB.FindSpellBookSlotForSpell(id)
+    if issecretvalue and issecretvalue(slot) then return nil end
+    return slot ~= nil
+end
+
+-- On ranked realms a talent can replace a spell under a new ID (Vanguard's
+-- Charge) while the name still finds an old rank. The client answers nothing
+-- for a spell you do not know (range reads nil), so the rank by name yields
+-- to the typed spell's own resolve when that rank is unknown, or when the
+-- typed spell is known and replaced right now: overridden, itself a
+-- replacement form, or on the book's page where that rank is not.
+local function RankReplaced(sid, own, rid)
+    if BookHas(rid) == false then return true end
+    if BookHas(own) ~= true then return false end
+    if own ~= sid then return true end
+    if BaseOf(sid) then return true end
+    return OnBookPage(rid) == false and OnBookPage(own) == true
+end
+
+-- The one spell ID every reader of a tracked spell hands the game (cooldown,
+-- charges, range, usability, art, tooltip, keybind, label): `follow` (Auto
+-- rank) = the rank you know, found by the spell's own name; then its override
+-- unless `noOverride`. nil for no spell. Nothing is cached: an override can
+-- move without SPELLS_CHANGED.
+function Store.TrackedSpellID(sid, follow, noOverride)
+    sid = PlainNum(sid)
+    if not sid or sid <= 0 then return nil end
+    local own = noOverride and sid or OverrideOf(sid)
+    local rid = follow and RankByName(sid) or nil
+    if not rid or rid == sid then return own end
+    local rank = noOverride and rid or OverrideOf(rid)
+    -- retail has no ranks: the name's answer stands as it always did
+    if NS.IsForever ~= true or rank == own or rank ~= rid then return rank end
+    if RankReplaced(sid, own, rid) then return own end
+    return rank
+end
+
+-- A record's spell as the game is asked about it now, with the record's own
+-- Auto rank and Ignore override switches (`d` = its driver; `sid` another
+-- spell of the same record, default its own). No record: a typed spell
+-- follows the rank you know on ranked realms, as a record does by default.
+function Store.RecordSpellID(d, sid)
+    if type(d) ~= "table" then d = nil end
+    sid = sid or (d and d.spellID)
+    -- a typed box can leave the number as text
+    if type(sid) == "string" then sid = tonumber(sid) end
+    if d then return Store.TrackedSpellID(sid, Store.AutoRankOn(d), d.ignoreSpellOverride == true) end
+    return Store.TrackedSpellID(sid, NS.IsForever == true, false)
+end
+
+-- The one matcher: does a spell the game reports (`got`: a cast, a press, a
+-- bar slot, a proc) stand for a tracked one (`want`, and `eff`, the ID it
+-- resolved to when the caller holds it)? Either may be the other's override
+-- or base form; with `byName` (ranked realms when nil) any spell of the same
+-- name counts, as ranks share only a name. Names and base forms come from
+-- their caches and `eff` already holds the override, so a cast loop over fed
+-- icons reads nothing and builds no table; without `eff` one override read.
+function Store.SpellMatch(want, got, eff, byName)
+    want, got, eff = PlainNum(want), PlainNum(got), PlainNum(eff)
+    if not (want and got) then return false end
+    if got == want or got == eff then return true end
+    local ov = (not eff) and OverrideOf(want) or nil
+    if got == ov then return true end
+    local bw, bg, be = MatchBase(want), MatchBase(got), eff and MatchBase(eff)
+    if got == bw or got == be then return true end
+    if bg and (bg == want or bg == eff or bg == ov or bg == bw or bg == be) then return true end
+    if byName == nil then byName = NS.IsForever == true end
+    if byName then
+        local nm = NameOf(want)
+        if nm and (nm == NameOf(got) or (bg and nm == NameOf(bg))) then return true end
+    end
+    return false
+end
+
+-- Keys for a lookup table of seen spells (a bar slot's spell, filed for its
+-- keybind or art), the forms Store.SpellMatch compares: the ID, its base form
+-- and, with byName, "n:" .. their names.
+function Store.SeenKeys(got, byName, out)
+    out = out or {}
+    got = PlainNum(got)
+    if not got then return out end
+    local bg = MatchBase(got)
+    out[#out + 1] = got
+    if bg then out[#out + 1] = bg end
+    if byName == nil then byName = NS.IsForever == true end
+    if byName then
+        local nm = NameOf(got)
+        if nm then out[#out + 1] = "n:" .. nm end
+        nm = bg and NameOf(bg)
+        if nm then out[#out + 1] = "n:" .. nm end
+    end
+    return out
+end
+
+-- The keys to look a tracked spell up by, best first: the resolved ID (else
+-- the override now), the spell, the base forms, then its name.
+function Store.WantKeys(want, eff, byName, out)
+    out = out or {}
+    want, eff = PlainNum(want), PlainNum(eff)
+    if not want then return out end
+    if eff then out[#out + 1] = eff end
+    out[#out + 1] = want
+    local ov = (not eff) and OverrideOf(want) or want
+    if ov ~= want then out[#out + 1] = ov end
+    local bw, be = MatchBase(want), eff and MatchBase(eff)
+    if bw then out[#out + 1] = bw end
+    if be and be ~= bw then out[#out + 1] = be end
+    if byName == nil then byName = NS.IsForever == true end
+    if byName then
+        local nm = NameOf(want)
+        if nm then out[#out + 1] = "n:" .. nm end
+    end
+    return out
+end
+
+-- An aura's typed IDs in order, primary first, deduped, plain positive
+-- numbers: what the record says, before any rank follow.
+function Store.AuraIDList(d)
+    local out, seen = {}, {}
+    local function add(v)
+        v = tonumber(v)
+        if v and v > 0 and not seen[v] then
+            seen[v] = true
+            out[#out + 1] = v
+        end
+    end
+    d = type(d) == "table" and d or {}
+    add(d.spellID)
+    if type(d.spellIDs) == "table" then
+        for _, v in ipairs(d.spellIDs) do add(v) end
+    end
+    return out
+end
+
+-- Follow my rank for auras (ranked realms; on unless driver.followRank is
+-- false): a buff's ranks are unrelated IDs that share only a name, so the
+-- rank you know of each typed aura is watched too. Aura IDs are not cast IDs:
+-- no override ever applies. The answer only adds to the typed IDs, so an
+-- unknown or stale rank can never take a typed one's place, and nothing is
+-- added for a rank you do not know or a secret read. Kept until
+-- SPELLS_CHANGED (a rank learned), which the aura driver handles: it wipes
+-- this, then resends the filters whose followed IDs moved.
+Store.auraRankOf = {}   -- [id] = your rank of that spell, false for none
+function Store.AuraRank(id)
+    local v = Store.auraRankOf[id]
+    if v ~= nil then return v or nil end
+    local CS = C_Spell
+    if not (CS and CS.GetSpellIDForSpellIdentifier) then return nil end
+    local nm = NameOf(id)
+    if not nm then
+        local raw = CS.GetSpellName and CS.GetSpellName(id)
+        if issecretvalue and issecretvalue(raw) then return nil end
+    end
+    local top = nm and CS.GetSpellIDForSpellIdentifier(nm) or nil
+    if issecretvalue and issecretvalue(top) then return nil end
+    if type(top) ~= "number" or top <= 0 then
+        top = false
+    elseif top ~= id then
+        local known = Store.KnowsSpell(top, true)
+        if known == nil then return nil end
+        if not known then top = false end
+    end
+    Store.auraRankOf[id] = top
+    return top or nil
+end
+
+-- THE aura entry point: the IDs the game is asked to watch for an aura
+-- record (`d` its driver, or any { spellID, spellIDs, followRank } shape):
+-- the typed ones, then your rank of each while it follows your rank.
+function Store.TrackedAuraIDs(d)
+    local ids = Store.AuraIDList(d)
+    if not (NS.IsForever == true and type(d) == "table" and d.followRank ~= false) then return ids end
+    local out, seen = {}, {}
+    for _, id in ipairs(ids) do
+        seen[id] = true
+        out[#out + 1] = id
+    end
+    for _, id in ipairs(ids) do
+        local v = Store.AuraRank(id)
+        if v and not seen[v] then
+            seen[v] = true
+            out[#out + 1] = v
+        end
+    end
+    return out
+end
+
+-- Two aura IDs name the same aura: the same ID, or (a buff's ranks share
+-- only a name) the same name. Never an override or base form: aura IDs are
+-- not cast IDs.
+function Store.SameAura(a, b)
+    a, b = PlainNum(a), PlainNum(b)
+    if not (a and b) then return false end
+    if a == b then return true end
+    local na = NameOf(a)
+    return na ~= nil and na == NameOf(b)
+end
+
+-- The same IDs as an aura filter's include map. No IDs gets the never-
+-- matching ID 0, never an empty set: a HELPFUL slot with no ID filter shows
+-- an arbitrary buff.
+function Store.AuraIncludeMap(d)
+    local m = {}
+    for _, id in ipairs(Store.TrackedAuraIDs(d)) do m[id] = true end
+    if next(m) == nil then m[0] = true end
+    return m
 end
 
 -- The Known Spell rule's setters: "known" / "unknown" / nil, the spell, the
@@ -1971,19 +2300,26 @@ function Store.IsLoaded(rec)
     end
     -- Talents: the build-level gate, and the only one that means anything on
     -- a spec-less client. "all" needs every required node taken and every
-    -- excluded one absent; "any" needs one of either. Empty sets never gate.
+    -- excluded one absent; "any" needs one of either. Only the picks that
+    -- count on this character take part; with none, talents do not gate.
     if (c.talents and next(c.talents)) or (c.talentsNot and next(c.talentsNot)) then
         local cat = NS.TalentCatalog
         if cat then
-            local anyHit, allOK = false, true
+            local anyHit, allOK, counted = false, true, false
             for nodeID in pairs(c.talents or {}) do
-                if TalentMet(c, cat, nodeID) then anyHit = true else allOK = false end
+                if TalentCounts(c, nodeID) then
+                    counted = true
+                    if TalentMet(c, cat, nodeID) then anyHit = true else allOK = false end
+                end
             end
             for nodeID in pairs(c.talentsNot or {}) do
-                if not TalentMet(c, cat, nodeID) then anyHit = true else allOK = false end
+                if TalentCounts(c, nodeID) then
+                    counted = true
+                    if not TalentMet(c, cat, nodeID) then anyHit = true else allOK = false end
+                end
             end
-            if (c.talentMode == "any" and not anyHit)
-                or (c.talentMode ~= "any" and not allOK) then
+            if counted and ((c.talentMode == "any" and not anyHit)
+                or (c.talentMode ~= "any" and not allOK)) then
                 return false
             end
         end
@@ -2006,13 +2342,30 @@ end
 -- Talent conditions
 
 -- A node's state on a record: "req" (must have), "not" (must not have) or nil,
--- plus the choice entry the record names for it, if any.
+-- plus the choice entry the record names for it, and the class and spec the
+-- pick was made for (nil when untagged).
 function Store.TalentState(rec, nodeID)
     local c = rec.c
     local entry = c.talentEntry and c.talentEntry[nodeID]
-    if c.talents and c.talents[nodeID] then return "req", entry end
-    if c.talentsNot and c.talentsNot[nodeID] then return "not", entry end
+    local tc = c.talentClass and c.talentClass[nodeID]
+    local ts = c.talentSpec and c.talentSpec[nodeID]
+    if c.talents and c.talents[nodeID] then return "req", entry, tc, ts end
+    if c.talentsNot and c.talentsNot[nodeID] then return "not", entry, tc, ts end
     return nil, entry
+end
+
+-- One node's value in a per-node talent table; nil drops it, and an empty
+-- table goes.
+local function SetTalentTag(c, key, nodeID, v)
+    local t = c[key]
+    if v ~= nil then
+        t = t or {}
+        t[nodeID] = v
+    elseif t then
+        t[nodeID] = nil
+    end
+    if t and next(t) == nil then t = nil end
+    c[key] = t
 end
 
 local function SetWhoKey(c, list, nodeID, on)
@@ -2028,18 +2381,19 @@ local function SetWhoKey(c, list, nodeID, on)
 end
 
 -- Writes a node's state; a node is never in both sets. entryID (a choice
--- node's option) rides along with a state and goes with it.
-function Store.SetTalentState(rec, nodeID, state, entryID)
-    local c = rec.c
+-- node's option) and the pick's tags (classTag; specID for a retail spec or
+-- hero tree node) ride along with a state and go with it. A write without
+-- tags leaves the node untagged.
+local function WriteTalent(c, nodeID, state, entryID, classTag, specID)
     SetWhoKey(c, "talents", nodeID, state == "req")
     SetWhoKey(c, "talentsNot", nodeID, state == "not")
-    if state and entryID then
-        c.talentEntry = c.talentEntry or {}
-        c.talentEntry[nodeID] = entryID
-    elseif c.talentEntry then
-        c.talentEntry[nodeID] = nil
-        if next(c.talentEntry) == nil then c.talentEntry = nil end
-    end
+    SetTalentTag(c, "talentEntry", nodeID, state and entryID or nil)
+    SetTalentTag(c, "talentClass", nodeID, state and classTag or nil)
+    SetTalentTag(c, "talentSpec", nodeID, state and specID or nil)
+end
+
+function Store.SetTalentState(rec, nodeID, state, entryID, classTag, specID)
+    WriteTalent(rec.c, nodeID, state, entryID, classTag, specID)
     Store.Dirty("load")
 end
 
@@ -2048,14 +2402,14 @@ function Store.RemoveTalent(rec, nodeID)
 end
 
 function Store.ToggleTalent(rec, nodeID)
-    local state = Store.TalentState(rec, nodeID)
-    Store.SetTalentState(rec, nodeID, (state ~= "req") and "req" or nil)
+    local state, _, tc, ts = Store.TalentState(rec, nodeID)
+    Store.SetTalentState(rec, nodeID, (state ~= "req") and "req" or nil, nil, tc, ts)
 end
 
 function Store.ClearTalents(rec)
     local c = rec.c
-    if not (c.talents or c.talentsNot or c.talentEntry) then return end
-    c.talents, c.talentsNot, c.talentEntry = nil, nil, nil
+    if not (c.talents or c.talentsNot or c.talentEntry or c.talentClass or c.talentSpec) then return end
+    c.talents, c.talentsNot, c.talentEntry, c.talentClass, c.talentSpec = nil, nil, nil, nil, nil
     Store.Dirty("load")
 end
 
@@ -2064,8 +2418,11 @@ function Store.SetTalentMode(rec, mode)
     Store.Dirty("load")
 end
 
--- The chosen nodes, sorted by name, each with taken and known flags; an
--- excluded node carries excluded = true, a named choice its entry and name.
+-- The chosen nodes, untagged first, then by class tag, spec and name, each
+-- with taken and known flags; an excluded node carries excluded = true, a
+-- named choice its entry and name. class / spec: the pick's tags; owner: its
+-- tag, else the class whose tree holds it (nil while unknown); here: it
+-- counts on this character; named: some tree read this session has it.
 function Store.TalentList(rec)
     local out = {}
     local cat = NS.TalentCatalog
@@ -2073,6 +2430,7 @@ function Store.TalentList(rec)
     local function add(nodeID, excluded)
         local known = cat and cat.Known(nodeID)
         local entry = c.talentEntry and c.talentEntry[nodeID]
+        local tc = c.talentClass and c.talentClass[nodeID]
         local name = known and known.name or ("Talent " .. nodeID)
         local icon = known and known.icon or 134400
         local ei = entry and cat and cat.EntryInfo and cat.EntryInfo(nodeID, entry)
@@ -2082,17 +2440,49 @@ function Store.TalentList(rec)
         end
         local taken = cat and cat.IsTaken(nodeID) or false
         if taken and entry and cat.ActiveEntry then taken = cat.ActiveEntry(nodeID) == entry end
+        -- known = in your own tree; another class's node the picker read
+        -- lends its name only
         out[#out + 1] = {
             nodeID = nodeID, name = name, icon = icon, taken = taken,
-            known = known ~= nil, excluded = excluded or nil, entryID = entry,
+            known = known ~= nil and known.viewClass == nil, excluded = excluded or nil, entryID = entry,
+            class = tc, spec = c.talentSpec and c.talentSpec[nodeID],
+            owner = tc or (known and (known.viewClass or ClassTag())) or nil,
+            here = TalentCounts(c, nodeID), named = known ~= nil,
         }
     end
     for nodeID in pairs(c.talents or {}) do add(nodeID, false) end
     for nodeID in pairs(c.talentsNot or {}) do
         if not (c.talents and c.talents[nodeID]) then add(nodeID, true) end
     end
-    table.sort(out, function(a, b) return a.name < b.name end)
+    table.sort(out, function(a, b)
+        if (a.class or "") ~= (b.class or "") then return (a.class or "") < (b.class or "") end
+        if (a.spec or 0) ~= (b.spec or 0) then return (a.spec or 0) < (b.spec or 0) end
+        if a.name ~= b.name then return a.name < b.name end
+        return a.nodeID < b.nodeID
+    end)
     return out
+end
+
+-- The picks one picker's tree shows: made for its class (or, untagged, found
+-- in its tree) and, given a spec, not made for another spec.
+function Store.TalentPicksOf(rec, classTag, specID)
+    local out = {}
+    if not classTag then return out end
+    for _, e in ipairs(Store.TalentList(rec)) do
+        if e.owner == classTag and (specID == nil or e.spec == nil or e.spec == specID) then
+            out[#out + 1] = e
+        end
+    end
+    return out
+end
+
+-- A picker's Clear all: only the picks its tree shows, so another class's
+-- picks stay.
+function Store.ClearTalentsOf(rec, classTag, specID)
+    local list = Store.TalentPicksOf(rec, classTag, specID)
+    if #list == 0 then return end
+    for _, e in ipairs(list) do WriteTalent(rec.c, e.nodeID, nil) end
+    Store.Dirty("load")
 end
 
 -- Role and hero talent conditions (retail). Both follow the matrix's rule:
@@ -2425,16 +2815,26 @@ do
     local function HasCls(w) return w.classes ~= nil or w.specs ~= nil end
     local function HasTal(w) return NonEmpty(w.talents) ~= nil or NonEmpty(w.talentsNot) ~= nil end
     local function ClsSame(a, b) return SameSet(a.classes, b.classes) and SameSet(a.specs, b.specs) end
+    -- the talent sets plus the per-node tables that ride with them; a choice's
+    -- option is copied but not compared, as items followed before carry none
+    local TAL_KEYS = { "talents", "talentsNot", "talentEntry", "talentClass", "talentSpec" }
     local function TalSame(a, b)
-        return SameSet(NonEmpty(a.talents), NonEmpty(b.talents))
-            and SameSet(NonEmpty(a.talentsNot), NonEmpty(b.talentsNot)) and Mode(a) == Mode(b)
+        for _, k in ipairs(TAL_KEYS) do
+            if k ~= "talentEntry" and not SameSet(NonEmpty(a[k]), NonEmpty(b[k])) then return false end
+        end
+        return Mode(a) == Mode(b)
+    end
+    local function CopyTal(to, from)
+        for _, k in ipairs(TAL_KEYS) do to[k] = CopySet(from[k]) end
+        to.talentMode = from.talentMode
     end
 
     -- the checks themselves, copied
     function Store.WhoOf(rec)
         local c = rec and rec.c or {}
-        return { classes = CopySet(c.classes), specs = CopySet(c.specs), talents = CopySet(c.talents),
-            talentsNot = CopySet(c.talentsNot), talentMode = c.talentMode }
+        local w = { classes = CopySet(c.classes), specs = CopySet(c.specs) }
+        CopyTal(w, c)
+        return w
     end
 
     -- The items that carried the layout's old checks (old = Store.WhoOf before
@@ -2461,10 +2861,7 @@ do
             local dc = e.rec.c
             if dc then
                 if e.cls then dc.classes, dc.specs = CopySet(c.classes), CopySet(c.specs) end
-                if e.tal then
-                    dc.talents, dc.talentsNot = CopySet(c.talents), CopySet(c.talentsNot)
-                    dc.talentMode = c.talentMode
-                end
+                if e.tal then CopyTal(dc, c) end
             end
         end
         Store.Dirty("load")
@@ -2499,10 +2896,7 @@ do
         for _, rec in ipairs(recs or {}) do
             if rec.c then
                 rec.c.classes, rec.c.specs = CopySet(c.classes), CopySet(c.specs)
-                if tal then
-                    rec.c.talents, rec.c.talentsNot = CopySet(c.talents), CopySet(c.talentsNot)
-                    rec.c.talentMode = c.talentMode
-                end
+                if tal then CopyTal(rec.c, c) end
             end
         end
         Store.Dirty("load")
@@ -3958,7 +4352,7 @@ local function GridSize(g)
         for _, rec in ipairs(Store.IconsOf(g)) do
             local gp = rec.gpos
             local drawn
-            if Store.IsLoaded(rec) then drawn = not Store.EditHidden(rec) else drawn = Store.UnloadedShown(rec) end
+            if Store.IsLoaded(rec) then drawn = not Store.EditHidden(rec) else drawn = Store.UnloadedDrawn(rec) end
             if drawn and gp and gp.row and gp.col and gp.col < cols and gp.row >= rows then rows = gp.row + 1 end
         end
     end
@@ -4564,7 +4958,7 @@ end
 -- sizes, strata, mouse) starts off, so the player's own placement stays.
 Store.UPDATE_PARTS = { "tracking", "appearance", "showhide", "glows", "sounds", "text", "load", "names",
     "arrange", "position" }
-Store.UPDATE_PART_LABELS = { tracking = "Tracking", appearance = "Appearance", showhide = "Show & Hide",
+Store.UPDATE_PART_LABELS = { tracking = "Tracking", appearance = "Appearance", showhide = "Conditions",
     glows = "Glows", sounds = "Sounds", text = "Text", load = "Load Conditions", names = "Names",
     arrange = "Group layout", position = "Size & Position" }
 Store.UPDATE_PART_OFF = { position = true }
@@ -4579,7 +4973,8 @@ local PART_OF_SECTION = {
         swipe = "appearance", text = "text", trinket = "tracking" },
     bar = { abilcolors = "appearance", anchor = "position", behavior = "showhide", cast = "appearance",
         deck = "appearance",
-        fill = "appearance", frame = "position", healpred = "appearance", healththresholds = "appearance",
+        fill = "appearance", frame = "position", glows = "glows", healpred = "appearance",
+        healththresholds = "appearance",
         icon = "appearance", look = "appearance", powerthresholds = "appearance", predict = "appearance",
         range = "appearance", regen = "appearance", resource = "appearance", segments = "appearance",
         size = "position",
@@ -4621,7 +5016,7 @@ end
 local PART_OF_KEY = { name = "names", driver = "tracking", triggers = "tracking", kind = "tracking",
     barKind = "tracking", barMode = "tracking", groupKind = "tracking" }
 
--- conditions: the fade and show rules are Show & Hide, the rest is Load;
+-- conditions: the fade and show rules are Conditions, the rest is Load;
 -- a character list is the player's own (nil: never updated)
 local function CondPart(key)
     if key == "chars" then return nil end

@@ -4,6 +4,13 @@
 local ADDON, NS = ...
 local Events = NS.Events
 
+-- The options panel's theme when the player never picked one (Settings >
+-- Theme); the saved pick replaces it once the saved variables load, before
+-- any window is built.
+NS.THEME_DEFAULT = "dusk"
+NS.AT.UsePalette(NS.THEME_DEFAULT)
+local Theme = NS.Options and NS.Options.Theme
+
 local loader = CreateFrame("Frame")
 loader:RegisterEvent("ADDON_LOADED")
 loader:RegisterEvent("PLAYER_LOGIN")
@@ -11,6 +18,7 @@ loader:RegisterEvent("PLAYER_ENTERING_WORLD")
 loader:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" and arg1 == ADDON then
         NS.Store.Init()
+        if Theme then Theme.ApplySaved() end
         -- Aura slots are created parked here: the load window is the one
         -- time engine slot creation is legal, even in combat or an instance.
         if NS.DriverAura and NS.DriverAura.PreBuild then
@@ -26,7 +34,7 @@ loader:SetScript("OnEvent", function(self, event, arg1)
     elseif event == "PLAYER_LOGIN" then
         -- On Forever the client can assign the saved variables global after
         -- ADDON_LOADED; point the store at the live table.
-        NS.Store.AdoptLiveSV()
+        if NS.Store.AdoptLiveSV() and Theme then Theme.ApplySaved() end
         NS.LayoutEngine.Init()
         -- Aura bars build here, inside the login window, as the aura slots
         -- did at ADDON_LOADED: the queued draw runs a frame later, outside it.
@@ -39,10 +47,12 @@ loader:SetScript("OnEvent", function(self, event, arg1)
         -- after PLAYER_LOGIN, follow it and draw the real layout.
         self:UnregisterEvent("PLAYER_ENTERING_WORLD")
         if NS.Store.AdoptLiveSV() then
+            if Theme then Theme.ApplySaved() end
             NS.LayoutEngine.QueueRebuild()
         end
         -- Entering the world closes every Escape-closable window, so open it after.
         if NS.Migrate and NS.Migrate.OldEngineLoaded() then C_Timer.After(1, NS.Migrate.ShowNotice) end
+        if Theme then Theme.ReopenAfterReload() end
     end
 end)
 

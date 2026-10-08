@@ -76,7 +76,9 @@ function Options.WheelThumb(rec)
             if s.t == "item" then
                 return (C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(id)) or 134400
             end
-            return (C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(id)) or 134400
+            -- the spot's own face, as the wheel draws it (the one resolve)
+            local e = WH and WH.Entry(s)
+            return (e and e.icon) or 134400
         end
     end
     return 134400
@@ -126,7 +128,7 @@ function WO.ParseSpell(v)
     if id and id > 0 then return id end
     local CS = C_Spell
     if CS and CS.GetSpellIDForSpellIdentifier then
-        local found = CS.GetSpellIDForSpellIdentifier(v)
+        local found = CS.GetSpellIDForSpellIdentifier(v) -- raw-id: a name typed in a box
         if not (issecretvalue and issecretvalue(found)) and type(found) == "number" and found > 0 then
             return found
         end
@@ -207,7 +209,7 @@ function WO.TemplateGrid(pg, vis, get, set, caption, toggle)
     local row = AT.AddRow(pg, top + cell + gap, vis)
     row._tplGrid = true
     local cap = row:CreateFontString(nil, "OVERLAY")
-    cap:SetFont(STANDARD_TEXT_FONT, 9, "")
+    cap:SetFont(NS.AT.FONT, 9, "")
     cap:SetPoint("TOPLEFT", 10, -2)
     cap:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     cap:SetText(caption)
@@ -223,7 +225,7 @@ function WO.TemplateGrid(pg, vis, get, set, caption, toggle)
         b.tex:SetPoint("BOTTOMRIGHT", -2, 2)
         b.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         function b.Edge(hot)
-            local c = (b._picked and COL.arc) or (hot and COL.arcDeep) or COL.line
+            local c = (b._picked and COL.arc) or (hot and COL.focus) or COL.line
             b:SetBackdropBorderColor(c[1], c[2], c[3], 1)
         end
         b:SetScript("OnEnter", function()
@@ -248,7 +250,7 @@ function WO.TemplateGrid(pg, vis, get, set, caption, toggle)
         local list, cur = WO.Templates(), get() or ""
         for i, t in ipairs(list) do
             local b = Cell(i)
-            b.tex:SetTexture((C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(t.art)) or 134400)
+            b.tex:SetTexture((C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(t.art)) or 134400) -- raw-id: a template's fixed art
             b._key, b._picked = t.key, t.key == cur
             b._title, b._body = t.name, t.desc .. " One you have not learned yet stays grey until you do."
             b:ClearAllPoints()
@@ -345,7 +347,7 @@ function Editor:Tip(owner, spot)
     if e.t == "item" and GameTooltip.SetItemByID then
         GameTooltip:SetItemByID(e.id)
     elseif GameTooltip.SetSpellByID then
-        GameTooltip:SetSpellByID(e.id)
+        GameTooltip:SetSpellByID(e.eff)
     end
     if not e.act then GameTooltip:AddLine("Not learned yet: it casts once you learn it.", 1, 0.5, 0.3, true) end
     GameTooltip:AddLine("Drag it to move it. Right-click to take it off.", 0.55, 0.65, 0.78, true)
@@ -487,12 +489,12 @@ function WO.EditorRow(pg, Rec, vis)
     search:SetSize(gridW, 20)
     search:SetPoint("TOPLEFT", 10, -4)
     AT.Skin(search, COL.well)
-    search:SetFont(STANDARD_TEXT_FONT, 11, "")
+    search:SetFont(NS.AT.FONT, 11, "")
     search:SetTextInsets(6, 6, 0, 0)
     search:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     search:SetAutoFocus(false)
     local hint = search:CreateFontString(nil, "OVERLAY")
-    hint:SetFont(STANDARD_TEXT_FONT, 11, "")
+    hint:SetFont(NS.AT.FONT, 11, "")
     hint:SetPoint("LEFT", 6, 0)
     hint:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     hint:SetText("Search your spells")
@@ -502,7 +504,7 @@ function WO.EditorRow(pg, Rec, vis)
     scroll:SetPoint("TOPLEFT", search, "BOTTOMLEFT", 0, -6)
     scroll:SetSize(gridW + 8, WO.EDIT_H - 34)
     local empty = row:CreateFontString(nil, "OVERLAY")
-    empty:SetFont(STANDARD_TEXT_FONT, 11, "")
+    empty:SetFont(NS.AT.FONT, 11, "")
     empty:SetPoint("TOPLEFT", scroll, "TOPLEFT", 2, -4)
     empty:SetWidth(gridW)
     empty:SetJustifyH("LEFT")
@@ -547,7 +549,7 @@ function WO.EditorRow(pg, Rec, vis)
             local e = self._e
             if e and GameTooltip.SetSpellByID then
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:SetSpellByID(e.spellID)
+                GameTooltip:SetSpellByID(e.spellID) -- raw-id: a catalog entry
                 GameTooltip:AddLine("Drag it onto a spot, or click to add it.", 0.55, 0.65, 0.78, true)
                 GameTooltip:Show()
             end
@@ -696,7 +698,7 @@ function Options.WheelRows(pg, ctx, vis, owner)
     local clashVis = function() return rvis() and Clash(Rec()) ~= nil end
     local clashRow = AT.AddRow(pg, 20, clashVis)
     local clashFS = clashRow:CreateFontString(nil, "OVERLAY")
-    clashFS:SetFont(STANDARD_TEXT_FONT, 11, "")
+    clashFS:SetFont(NS.AT.FONT, 11, "")
     clashFS:SetPoint("LEFT", 10, 0)
     clashFS:SetPoint("RIGHT", -10, 0)
     clashFS:SetJustifyH("LEFT")
@@ -729,7 +731,7 @@ function Options.WheelRows(pg, ctx, vis, owner)
     -- one line under the editor: how to use it, or why a click added nothing
     local noteRow = AT.AddRow(pg, 20, rvis)
     local noteFS = noteRow:CreateFontString(nil, "OVERLAY")
-    noteFS:SetFont(STANDARD_TEXT_FONT, 11, "")
+    noteFS:SetFont(NS.AT.FONT, 11, "")
     noteFS:SetPoint("TOPLEFT", 10, -3)
     noteFS:SetJustifyH("LEFT")
     noteFS:SetJustifyV("TOP")

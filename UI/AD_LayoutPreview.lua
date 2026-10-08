@@ -81,10 +81,19 @@ function LP.IconArt(rec)
     if d.itemID and C_Item and C_Item.GetItemIconByID then
         return C_Item.GetItemIconByID(d.itemID)
     end
-    if rec.kind == "trinket" and d.slot and GetInventoryItemTexture then
-        return GetInventoryItemTexture("player", d.slot)
+    if rec.kind == "trinket" and d.slotID and GetInventoryItemTexture then
+        return GetInventoryItemTexture("player", d.slotID)
     end
-    local sid = d.spellID or (type(d.spellIDs) == "table" and d.spellIDs[1])
+    -- what the icon wears: an aura's first typed aura, a custom icon's art
+    -- pick, else the spell it reads (the one resolve)
+    local St, sid = NS.Store
+    if rec.kind == "aura" or rec.kind == "groupbuff" then
+        sid = St.TrackedAuraIDs(d)[1]
+    elseif rec.kind == "timer" then
+        sid = d.spellID -- raw-id: the custom icon's art pick
+    else
+        sid = St.RecordSpellID(d)
+    end
     if sid and C_Spell and C_Spell.GetSpellTexture then
         return C_Spell.GetSpellTexture(sid)
     end
@@ -372,7 +381,7 @@ function LP.DrawParts(stage, parts, w, h)
                     tex:SetTexture(art)
                     tex:SetTexCoord(LP.CROP, 1 - LP.CROP, LP.CROP, 1 - LP.CROP)
                 else
-                    local c = GC[p.rec.groupKind] or COL.arc
+                    local c = NS.AT.Mute(GC[p.rec.groupKind] or COL.arc)
                     tex:SetColorTexture(c[1], c[2], c[3], 0.9)
                 end
             end

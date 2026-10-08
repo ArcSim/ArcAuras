@@ -1,5 +1,30 @@
 # Arc Auras
 
+## 2.4.0
+
+Themes, glows on every bar, talents for any class and Emity's refreshed layouts.
+
+### New Features
+
+- **Themes** - Settings > Theme: Classic, Midnight Ink, Dusk or Graphite, with an optional Soft light. Dusk is the new default.
+- **Bar glows** - Every bar can glow while any aura is up or missing, or by any spell's cooldown. Find them under the bar's Conditions tab (was Show & Hide).
+- **Talents for any class** - Each class under Classes has a Talents button that opens its trees, whatever class you play. Picks count only on their own class.
+- **Never load with a talent** - Click a talent twice to exclude it: the item stays off while you have it.
+
+### Improvements
+
+- **Options look** - Folder tabs, boxed sections and a cleaner font.
+- **Emity's layouts** - All nine refreshed with Missing Buffs, items and defensive groups, gradient bars and new pictures.
+- **Ranks and talents** - Icons, bars, glows and wheels follow a new rank or a spell a talent replaces.
+- **Talent window** - Matches your panel scale.
+- **Combat** - The options window waits until combat ends to open, and closes when a fight starts.
+
+### Bug Fixes
+
+- **Charge range** - Out of range shows again with Auto Rank after Vanguard.
+- **Unloaded items** - No longer show on screen while editing after a group's eye is clicked twice; class Views show only what they list.
+- **Own settings** - Text, picture and reminder items and range bars now follow their Auto Rank and Ignore Override.
+
 ## 2.3.0
 
 Stance icons, a lock for layouts and groups, a sidebar View and pack updates you can undo.

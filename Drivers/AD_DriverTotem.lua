@@ -181,7 +181,7 @@ end
 -- Only casts of known totems pair, so an unrelated spell landing in the same
 -- half second can never name a slot.
 function DT.OnCast(spellID)
-    local name = DT.SpellName(spellID)
+    local name = DT.SpellName(spellID) -- raw-id: the cast the game reports
     if not DT.IsTotemName(name) then return end
     local now = GetTime()
     for slot, t in pairs(DT.pending) do
@@ -201,7 +201,8 @@ end
 -- whichever slot holds it (nil while it is not down), else its own slot.
 function DT.SlotFor(rec)
     local d = (rec and rec.driver) or {}
-    local want = d.spellID and DT.SpellName(d.spellID)
+    -- the totem the icon's spell drops now (an override drops its own)
+    local want = d.spellID and DT.SpellName(Store.RecordSpellID(d))
     if not want then return d.slot or 1, false end
     for slot = 1, DT.SLOTS do
         local s = DT.slot[slot]
@@ -212,7 +213,7 @@ end
 
 function DT.Track(rec)
     local d = rec.driver or {}
-    local nm = d.spellID and DT.SpellName(d.spellID)
+    local nm = d.spellID and DT.SpellName(Store.RecordSpellID(d))
     if nm then DT.tracked[nm] = true end
 end
 
@@ -335,7 +336,7 @@ function DT.PulseEvery(rec, slot)
     local manual = tonumber(Store.Resolve(rec, "pulse", "pulseInterval"))
     if manual and manual > 0 then return manual end
     local d = rec.driver or {}
-    local name = (d.spellID and DT.SpellName(d.spellID))
+    local name = (d.spellID and DT.SpellName(Store.RecordSpellID(d)))
         or (slot and DT.slot[slot] and DT.slot[slot].name)
     return name and DT.PulseByName()[name]
 end

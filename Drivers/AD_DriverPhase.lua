@@ -39,29 +39,24 @@ function PH.SpellOf(rec, ov)
     return Num(list and list[1]) or Num(rec.driver and rec.driver.spellID)
 end
 
--- Every spell (by name, so any rank) that starts the set duration.
-function PH.StartNames(rec, ov)
-    local out = {}
-    local list = (type(ov.spells) == "table" and #ov.spells > 0) and ov.spells
-        or { rec.driver and rec.driver.spellID }
-    for _, id in ipairs(list) do
-        id = Num(id)
-        local nm = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
-        if id then out[id] = true end
-        if type(nm) == "string" and nm ~= "" then out[nm] = true end
-    end
-    return out
+-- The spells that start the set duration: its own list, else the icon's.
+function PH.StartSpells(rec, ov)
+    if type(ov.spells) == "table" and #ov.spells > 0 then return ov.spells end
+    return { rec.driver and rec.driver.spellID }
 end
 
-function PH.EndNames(ov)
-    local out = {}
-    for _, id in ipairs(type(ov.endSpells) == "table" and ov.endSpells or {}) do
+function PH.EndSpells(ov)
+    return type(ov.endSpells) == "table" and ov.endSpells or {}
+end
+
+-- A cast is one of a list's spells by the one matcher: its forms, and any
+-- rank by name on either client, as the lists have always matched.
+function PH.InList(list, spellID)
+    for _, id in ipairs(list) do
         id = Num(id)
-        local nm = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
-        if id then out[id] = true end
-        if type(nm) == "string" and nm ~= "" then out[nm] = true end
+        if id and Store.SpellMatch(id, spellID, nil, true) then return true end
     end
-    return out
+    return false
 end
 
 -- The button: built and styled like the editor's stand-in, the live recipe
@@ -88,7 +83,7 @@ function PH.Style(e)
     local _, ov = PH.Source(e.rec)
     if not ov then return end
     NS.DriverAura.AnchorButton(b, e.holder, 1)
-    local id = PH.SpellOf(e.rec, ov)
+    local id = Store.RecordSpellID(e.rec.driver, PH.SpellOf(e.rec, ov))
     local tex = id and C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(id)
     if tex then b._adIcon:SetTexture(tex) end
     local w, h = e.holder:GetSize()
@@ -169,16 +164,12 @@ end
 -- so a spell in both lists restarts its own.
 function PH.OnCast(spellID)
     if issecretvalue and issecretvalue(spellID) then return end
-    local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
-    if issecretvalue and issecretvalue(nm) then nm = nil end
     for id, e in pairs(PH.entries) do
         if e.src == "cast" then
             local _, ov = PH.Source(e.rec)
             if ov then
-                local ends = PH.EndNames(ov)
-                if PH.timers[id] and (ends[spellID] or (nm and ends[nm])) then PH.Stop(id) end
-                local starts = PH.StartNames(e.rec, ov)
-                if starts[spellID] or (nm and starts[nm]) then PH.Start(id) end
+                if PH.timers[id] and PH.InList(PH.EndSpells(ov), spellID) then PH.Stop(id) end
+                if PH.InList(PH.StartSpells(e.rec, ov), spellID) then PH.Start(id) end
             end
         end
     end
@@ -194,7 +185,7 @@ function PH.TrackTotem(e)
     local DT = NS.DriverTotem
     if not (sid and DT) then return end
     local key = "adphase" .. tostring(e.rec.id)
-    if e.pseudo and e.pseudo.driver.spellID == sid then return end
+    if e.pseudo and e.pseudo.driver.spellID == sid then return end -- raw-id: the same pick, not a match
     -- re-pointed under the same key: no detach, so the slots are not re-read
     e.pseudo = { id = key, driver = { spellID = sid } }
     DT.Attach(e.pseudo)

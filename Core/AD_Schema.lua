@@ -2214,6 +2214,38 @@ local function EachTickDep(n)
         { field = "tickValues", listMin = n } }
 end
 
+-- Bar glows (Bars\AD_BarGlow.lua, UI\AD_BarGlowOptions.lua) are one module
+-- for every kind that draws a bar: a kind gets them with one entry here, and
+-- where kinds differ it is this data, never a branch in a bar file.
+--   own   = the thing of its own Track offers first: "aura" (the bar's aura)
+--           or "spell" (the bar's spell); none = An aura / A spell's cooldown
+--   ownOff = a behavior switch that takes the own spell away (GCD tracker mode)
+--   marks = the lowest Bars.LADDER rung of the kind's own markers and texts;
+--           the glow's rung sits under every one of them
+Schema.BAR_GLOW_KINDS = {
+    cooldown = { own = "spell", ownOff = "gcdMode", marks = "overlay" },
+    aura = { own = "aura", marks = "overlay" },
+    -- recharge countdowns on runes and essence
+    resource = { marks = "marks" },
+    health = { marks = "overlay" },
+    -- the off-hand's mark and label
+    swing = { marks = "marks" },
+    cast = { marks = "overlay" },
+    enchant = { marks = "overlay" },
+    range = { marks = "overlay" },
+    special = { marks = "overlay" },
+    timer = { marks = "overlay" },
+    stack = { marks = "overlay" },
+}
+-- the glows section's kinds, read off the table above (a function, so its
+-- loop's locals stay out of this file's main chunk)
+function Schema.BarGlowKindSet()
+    local set = {}
+    for kind in pairs(Schema.BAR_GLOW_KINDS) do set[kind] = true end
+    return set
+end
+Schema.BAR_GLOW_KIND_SET = Schema.BarGlowKindSet()
+
 Schema.bar = {
     size = { push = true, fields = {
         -- Both run to 600 because a standing bar is thin and tall, and down to
@@ -3205,6 +3237,52 @@ Schema.bar = {
         counts = { d = true, t = "bool", label = "Show item counts",
             desc = "How many you carry, on items that stack, such as potions." },
     } },
+    -- Bar glows (Bars\AD_BarGlow.lua): up to three, drawn around the bar. The
+    -- aura or spell each one watches is the bar's own record
+    -- (rec.driver.glows[k]), like Tracking; these are the look and the state.
+    -- What it tracks is read off Glow when (an aura state or a spell state).
+    -- Glows 2 and 3 are copies (Schema.BAR_GLOW_FIELDS). The kinds are
+    -- Schema.BAR_GLOW_KINDS', every kind that draws a bar.
+    glows = { push = true, inherit = false, kinds = Schema.BAR_GLOW_KIND_SET, fields = {
+        barGlow = { d = false, t = "bool", label = "Glow",
+            desc = "A glow around the bar, with a trigger of its own. Works in combat." },
+        -- valueIf: Schema.BarGlowWhenIf, per glow (below)
+        barGlowWhen = { d = "up", dk = { cooldown = "ready" }, t = "enum",
+            values = { "up", "missing", "ready", "recharging", "cooldown" },
+            labels = { up = "While the aura is up", missing = "While the aura is missing",
+                ready = "Ready", recharging = "Recharging", cooldown = "On cooldown" },
+            desc = "The state that lights it: an aura up or missing, or a spell Ready, Recharging (a charge used) or On cooldown (none left).",
+            label = "Glow when", dep = { field = "barGlow" } },
+        barGlowType = { d = "pixel", t = "enum", values = { "pixel", "autocast" }, labels = GLOW_STYLE_LABELS,
+            label = "Glow style", dep = { field = "barGlow" } },
+        barGlowColor = { d = { 0.95, 0.95, 0.32, 1 }, t = "color", alpha = true, label = "Glow color",
+            dep = { field = "barGlow" } },
+        barGlowCombatOnly = { d = false, t = "bool", label = "Glow only in combat",
+            desc = "The glow waits for combat; out of combat the bar shows without it.",
+            dep = { field = "barGlow" } },
+        barGlowSpeed = { adv = "glow", d = 0.25, t = "num", min = 0.05, max = 1, label = "Glow speed",
+            dep = { field = "barGlow" } },
+        barGlowLines = { adv = "glow", d = 12, t = "int", min = 1, max = 40, label = "Glow lines",
+            dep = { { field = "barGlow" }, { field = "barGlowType", value = "pixel" } } },
+        barGlowThickness = { adv = "glow", d = 2, t = "int", min = 1, max = 20, label = "Glow thickness",
+            desc = "In whole screen pixels.",
+            dep = { { field = "barGlow" }, { field = "barGlowType", value = "pixel" } } },
+        barGlowLength = { adv = "glow", d = 0, t = "int", min = 0, max = 40, label = "Glow line length (0 = auto)",
+            dep = { { field = "barGlow" }, { field = "barGlowType", value = "pixel" } } },
+        barGlowParticles = { adv = "glow", d = 8, t = "int", min = 1, max = 40, label = "Glow particles",
+            dep = { { field = "barGlow" }, { field = "barGlowType", value = "autocast" } } },
+        barGlowScale = { adv = "glow", d = 1, t = "num", min = 0.5, max = 2, label = "Glow size",
+            dep = { { field = "barGlow" }, { field = "barGlowType", value = "autocast" } } },
+        barGlowIntensity = { adv = "glow", d = 1, t = "num", min = 0.1, max = 1, label = "Glow intensity",
+            dep = { field = "barGlow" } },
+        barGlowXOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, label = "Glow X offset",
+            desc = "Grows the glow past the bar's sides (below 0: inside), in screen pixels.",
+            dep = { field = "barGlow" } },
+        barGlowYOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, label = "Glow Y offset",
+            desc = "Grows the glow past the bar's top and bottom (below 0: inside), in screen pixels.",
+            dep = { field = "barGlow" } },
+        barGlowCount = { d = 1, t = "int", min = 1, max = 3, adds = "glow", label = "Number of glows" },
+    } },
     -- Not pushable, like conditions. hiddenAlpha is the opacity for the state
     -- hides below; every kind it lists must honor it.
     behavior = { fields = {
@@ -3278,6 +3356,99 @@ Schema.bar = {
                 { field = "anchorTargetKind", notValue = "mouse" }, { field = "anchorMatchHeight" } } },
     } },
 }
+
+-- Glow when's choices for glow k: the states of what it tracks (the kind of
+-- thing its Glow when holds; Track switches it). Aura states need the aura
+-- engine (missing: also the one that shows a look only while an aura is gone);
+-- Recharging needs a spell with charges, or is the saved pick (the card notes it).
+function Schema.BarGlowWhenIf(k)
+    local suf = (k > 1) and tostring(k) or ""
+    local function Spell(r)
+        local Store = NS.Store
+        local w = Store and Store.Resolve(r, "glows", "barGlowWhen" .. suf) or "up"
+        return w == "ready" or w == "recharging" or w == "cooldown", w
+    end
+    return {
+        up = function(r) return not Spell(r) and Schema.BarGlowAuraOK(false) end,
+        missing = function(r) return not Spell(r) and Schema.BarGlowAuraOK(true) end,
+        ready = function(r) return Spell(r) and Schema.BarGlowCdOK(r, false, k) end,
+        recharging = function(r)
+            local spell, w = Spell(r)
+            return spell and (w == "recharging" or Schema.BarGlowCdOK(r, true, k))
+        end,
+        cooldown = function(r) return Spell(r) and Schema.BarGlowCdOK(r, false, k) end,
+    }
+end
+Schema.bar.glows.fields.barGlowWhen.valueIf = Schema.BarGlowWhenIf(1)
+
+-- Bar glows 2 and 3: glow 1's fields again, numbered, shown once the bar has
+-- that many (barGlowCount, the "+ Add glow" row).
+Schema.BAR_GLOW_SLOTS = 3
+Schema.BAR_GLOW_FIELDS = {
+    "barGlow", "barGlowWhen", "barGlowType", "barGlowColor", "barGlowCombatOnly",
+    "barGlowSpeed", "barGlowLines", "barGlowThickness", "barGlowLength", "barGlowParticles",
+    "barGlowScale", "barGlowIntensity", "barGlowXOffset", "barGlowYOffset",
+}
+-- a function, so its working locals stay out of this file's main chunk
+function Schema.NumberBarGlows()
+    local fields = Schema.bar.glows.fields
+    local isGlow = {}
+    for _, name in ipairs(Schema.BAR_GLOW_FIELDS) do isGlow[name] = true end
+    local function copy(v)
+        if type(v) ~= "table" then return v end
+        local t = {}
+        for k, x in pairs(v) do t[k] = copy(x) end
+        return t
+    end
+    for k = 2, Schema.BAR_GLOW_SLOTS do
+        local suf = tostring(k)
+        local function own(d)
+            local t = copy(d)
+            if isGlow[t.field] then t.field = t.field .. suf end
+            return t
+        end
+        local function shown(rec)
+            local Store = NS.Store
+            return Store ~= nil and (Store.Resolve(rec, "glows", "barGlowCount") or 1) >= k
+        end
+        for _, name in ipairs(Schema.BAR_GLOW_FIELDS) do
+            local src = fields[name]
+            local def = {}
+            for key, v in pairs(src) do def[key] = v end
+            def.d = copy(src.d)
+            def.dk = copy(src.dk)
+            local lbl = src.label or name
+            def.label = (lbl == "Glow") and ("Glow " .. suf) or lbl:gsub("^Glow ", "Glow " .. suf .. " ", 1)
+            if src.dep and src.dep.field then
+                def.dep = own(src.dep)
+            elseif src.dep then
+                def.dep = {}
+                for i, d in ipairs(src.dep) do def.dep[i] = own(d) end
+            end
+            def.showIf = shown
+            if name == "barGlowWhen" then def.valueIf = Schema.BarGlowWhenIf(k) end
+            fields[name .. suf] = def
+        end
+    end
+end
+Schema.NumberBarGlows()
+
+-- The gates behind Glow when's choices. Aura states need the aura engine
+-- (missing: also the one that can show a look only while an aura is gone).
+-- Spell states run on every glow bar for any spell (a cooldown bar's own, or
+-- one picked); Recharging needs glow k's spell to have charges.
+function Schema.BarGlowAuraOK(missing)
+    local DA = NS.DriverAura
+    if not (DA and DA.IsAvailable and DA.IsAvailable() == true) then return false end
+    if missing then return DA.EraserAvailable ~= nil and DA.EraserAvailable() == true end
+    return true
+end
+function Schema.BarGlowCdOK(rec, charges, k)
+    if not (rec and Schema.bar.glows.kinds[rec.barKind]) then return false end
+    if not charges then return true end
+    local G = NS.Bars and NS.Bars.Glow
+    return G ~= nil and G.SpellHasCharges ~= nil and G.SpellHasCharges(rec, k or 1) == true
+end
 
 Schema.layout = {
     -- Conditions live on rec.c; pos and members are store-level identity. Mouse

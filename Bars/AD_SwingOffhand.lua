@@ -38,7 +38,6 @@ local function Ensure(shell)
     o.bar:EnableMouse(false)
     o.bar:SetAllPoints(o.track)
     o.bar:SetMinMaxValues(0, 1)
-    o.mark = o.bar:CreateTexture(nil, "OVERLAY")
     -- An invisible copy of the off-hand fill across the whole bar: the label
     -- rides its moving edge at the bar's own height, whatever the style.
     o.follow = CreateFrame("StatusBar", nil, o.track)
@@ -46,6 +45,11 @@ local function Ensure(shell)
     o.follow:SetMinMaxValues(0, 1)
     o.follow:SetStatusBarTexture(K.WHITE)
     o.follow:SetStatusBarColor(1, 1, 1, 0)
+    -- the mark and the label ride the follower, on the marks rung: over the
+    -- bar glows, under the bar's ticks and texts; the mark still sits on the
+    -- off-hand fill's edge (PlaceMark), under the label and the follower's
+    -- clear fill as before
+    o.mark = o.follow:CreateTexture(nil, "BACKGROUND")
     o.label = o.follow:CreateFontString(nil, "OVERLAY")
     o.label:Hide()
     shell._adOH = o
@@ -128,7 +132,7 @@ local function Paint(e, o)
         o.fillTex = t
     end
     o.bar:SetRotatesTexture(K.R(rec, "fill", "rotateTexture") == true)
-    o.follow:SetFrameLevel(lvl + 3)
+    o.follow:SetFrameLevel(lvl + Bars.LADDER.marks)
     o.follow:SetOrientation(o.vertical and "VERTICAL" or "HORIZONTAL")
     o.follow:SetReverseFill(o.reverse)
     o.labelOn = K.R(rec, "fill", "swingOffhandLabel") == true

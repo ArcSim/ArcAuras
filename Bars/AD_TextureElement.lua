@@ -38,19 +38,10 @@ function TP.FillMode(rec)
     return R(rec, "texlook", "mode") == "fill"
 end
 
--- The spell a cooldown picture follows: the rank you know, then its override.
+-- The spell a cooldown picture follows: the rank you know, then its override,
+-- with the record's own Auto rank and Ignore override.
 function TP.EffSpell(rec)
-    local d = rec.driver
-    local sid = tonumber(d.spellID)
-    if not (sid and sid > 0) then return nil end
-    if NS.Store.AutoRankOn(d) and NS.DriverRange and NS.DriverRange.Resolve then
-        sid = NS.DriverRange.Resolve(sid) or sid
-    end
-    if C_Spell and C_Spell.GetOverrideSpell then
-        local ov = C_Spell.GetOverrideSpell(sid)
-        if not IsSecret(ov) and type(ov) == "number" and ov ~= 0 and ov ~= sid then sid = ov end
-    end
-    return sid
+    return NS.Store.RecordSpellID(rec.driver)
 end
 
 -- What SetTexture takes: the picture's FileDataID or path, else the tracked
@@ -63,7 +54,13 @@ function TP.PictureOf(rec)
         if n then return math.floor(n) end
         return v
     end
-    local sid = rec.driver and tonumber(rec.driver.spellID)
+    -- a cooldown picture wears the spell it reads; an aura picture its aura
+    local sid
+    if TP.Source(rec) == "spellCd" then
+        sid = TP.EffSpell(rec)
+    else
+        sid = NS.Store.TrackedAuraIDs(rec.driver)[1]
+    end
     local icon = sid and C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(sid)
     if icon ~= nil and not IsSecret(icon) then return icon end
     return TP.QUESTION
@@ -544,7 +541,7 @@ TP.HANDLERS = {
     UNIT_SPELLCAST_SUCCEEDED = function(_, unit, _, spellID)
         if unit ~= "player" or IsSecret(spellID) then return end
         K.ForEach("texture", function(e)
-            if IsCd(e) and (e.rec.driver.spellID == spellID or TP.EffSpell(e.rec) == spellID) then TP.Refresh(e) end
+            if IsCd(e) and NS.Store.SpellMatch(e.rec.driver.spellID, spellID, TP.EffSpell(e.rec)) then TP.Refresh(e) end
         end)
     end,
     PLAYER_TARGET_CHANGED = function() TP.OnUnitSwap("target") end,
@@ -743,7 +740,7 @@ function TP.Describe(rec)
     if s == "aura" then
         base = base .. ": " .. (d.spellID and tostring(d.spellID) or "no aura")
     elseif s == "spellCd" then
-        local nm = d.spellID and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(d.spellID)
+        local nm = d.spellID and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(d.spellID) -- raw-id: the typed spell, as the editor shows it
         if IsSecret(nm) then nm = nil end
         base = "Cooldown: " .. (nm or (d.spellID and ("spell " .. d.spellID)) or "no spell")
     else

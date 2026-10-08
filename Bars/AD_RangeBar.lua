@@ -225,9 +225,13 @@ end
 
 -- What the checks need from the range engine: spells, items and interact indexes,
 -- plus the target gate (a dead target is in no band). Item and interact checks
--- are what switch the engine's pulse on.
-function RB.Need(bands)
+-- are what switch the engine's pulse on. `d` (the record's driver) brings its
+-- Auto rank and Ignore override to the spells' resolve.
+function RB.Need(bands, d)
     local out, seen = { spells = {}, items = {}, interact = {}, gate = true }, {}
+    if type(d) == "table" then
+        out.follow, out.noOverride = NS.Store.AutoRankOn(d), d.ignoreSpellOverride == true
+    end
     local list = { spell = out.spells, item = out.items, interact = out.interact }
     for _, b in ipairs(bands) do
         for _, c in ipairs(b.checks) do
@@ -249,7 +253,7 @@ end
 -- Words
 
 local function SpellName(sid)
-    local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(sid)
+    local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(sid) -- raw-id: a typed check's spell, for the editor's words
     if issecretvalue and issecretvalue(nm) then nm = nil end
     if type(nm) == "string" and nm ~= "" then return nm end
     return "spell " .. sid
@@ -646,7 +650,7 @@ function RB.Watch(e)
     local DR = NS.DriverRange
     if not DR then return end
     local id = e.rec.id
-    DR.Use(RB.OWNER .. id, RB.Need(e.rbBands), function()
+    DR.Use(RB.OWNER .. id, RB.Need(e.rbBands, e.rec.driver), function()
         local cur = K.live[id]
         if cur then RB.Refresh(cur) end
     end)
@@ -659,7 +663,7 @@ function RB.Refresh(e)
     if e.isPreview then return end
     local DR = NS.DriverRange
     local list = RB.BandsOf(e.rec)
-    local i = DR and DR.Band(e.rbBands or RB.EngineBands(list))
+    local i = DR and DR.Band(e.rbBands or RB.EngineBands(list), e.rec.driver)
     if i and (not list[i] or list[i].off) then i = nil end
     RB.Paint(e, i)
     e.stateHidden = false

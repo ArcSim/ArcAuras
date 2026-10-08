@@ -43,9 +43,9 @@ local function AurasSecret()
     return v == true
 end
 
+-- the buff's IDs as its containers watch them: your rank of each too
 function GB.IDs(rec)
-    local DA = NS.DriverAura
-    return (DA and DA.SpellIDList) and DA.SpellIDList(rec.driver or {}) or {}
+    return Store.TrackedAuraIDs(rec.driver or {})
 end
 
 -- Remind while nobody has it (a buff kept on one member), else while anyone lacks it.

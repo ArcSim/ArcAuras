@@ -43,12 +43,10 @@ function SW.RulesOf(rec)
     return list
 end
 
--- The rank the player knows, found by the spell's name: the next-swing
--- markers' resolver, so both read ranks the same way.
+-- The rank the player knows, found by the spell's name, then its override:
+-- the one resolve, as the next-swing markers read it.
 local function Resolve(id)
-    local SA = Bars.SwingAbil
-    if SA and SA.Resolve then return (SA.Resolve(id)) or id end
-    return id
+    return NS.Store.TrackedSpellID(id, true, false) or id
 end
 
 local function ColorOf(c)
@@ -68,11 +66,11 @@ local function Build(h, list)
             local id = tonumber(r.id)
             if id and id > 0 then
                 typed = true
-                rr.sid = Resolve(id)
+                rr.id, rr.eff = id, Resolve(id)
                 -- queued at any rank the player knows (a down-ranked cast too)
                 local SA = Bars.SwingAbil
-                rr.qids = (SA and SA.QueueIDs) and SA.QueueIDs(id, 0) or { rr.sid }
-                local nm = CS and CS.GetSpellName and CS.GetSpellName(id)
+                rr.qids = (SA and SA.QueueIDs) and SA.QueueIDs(id, 0) or { rr.eff }
+                local nm = CS and CS.GetSpellName and CS.GetSpellName(id) -- raw-id: the typed spell's name keys its rule
                 if not IsSecret(nm) and type(nm) == "string" and nm ~= "" then rr.name = nm end
                 if rr.when == "cast" then
                     anyCast = true
@@ -89,7 +87,7 @@ end
 local function Queued(h, sid)
     local CS = C_Spell
     if not (sid and CS and CS.IsCurrentSpell) then return false end
-    local v = CS.IsCurrentSpell(sid)
+    local v = CS.IsCurrentSpell(sid) -- raw-id: the spellbook's ranks of a typed ability
     if IsSecret(v) then return h.queued[sid] == true end
     v = (v == true)
     h.queued[sid] = v
@@ -98,7 +96,7 @@ end
 
 -- Queued at any of a rule's ranks.
 local function AnyQueued(h, r)
-    for _, q in ipairs(r.qids or { r.sid }) do
+    for _, q in ipairs(r.qids or { r.eff }) do
         if Queued(h, q) then return true end
     end
     return false
@@ -218,17 +216,22 @@ local function OnSwing(_, duration, swingType)
     end)
 end
 
--- Matched by name, so a cast of any rank counts.
+-- A cast counts for every cast rule the one matcher pairs it with (any rank
+-- by name, an override form too); a rule is keyed by its spell's name.
 local function OnCast(_, _, unit, _, spellID)
     if IsSecret(unit) or IsSecret(spellID) or unit ~= "player" or type(spellID) ~= "number" then return end
-    local CS = C_Spell
-    local nm = CS and CS.GetSpellName and CS.GetSpellName(spellID)
-    if IsSecret(nm) or type(nm) ~= "string" or nm == "" then nm = nil end
+    local St = NS.Store
     local now = GetTime()
     K.ForEach("swing", function(e)
         local h = e.acol
         if not (h and h.on) then return end
-        if nm and h.names[nm] then Cast(e, h, nm, now) end
+        local hit = false
+        for _, r in ipairs(h.rules) do
+            if r.when == "cast" and r.name and St.SpellMatch(r.id, spellID, r.eff, true) then
+                if hit then h.cast[r.name] = true else Cast(e, h, r.name, now) end
+                hit = true
+            end
+        end
         -- a queued ability that went off is no longer current
         Apply(e, h)
     end)

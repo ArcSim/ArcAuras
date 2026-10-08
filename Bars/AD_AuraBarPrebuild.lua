@@ -31,11 +31,13 @@ function Bars.PreBuildAura()
     Bars.loadWindow = true
     Store.EachRecord(function(id, rec)
         -- a text element reading an aura's time or stacks draws through a slot
-        -- too, and so does a texture driven by an aura
-        local T, TP = NS.TextElements, NS.TextureElements
+        -- too, and so does a texture driven by an aura, and a bar glow set to
+        -- an aura (Bars\AD_BarGlow.lua)
+        local T, TP, BG = NS.TextElements, NS.TextureElements, Bars.Glow
         if rec.type == "bar" and (rec.barKind == "aura"
             or (rec.barKind == "text" and T and (T.SlotSource or T.AuraSource)(rec))
-            or (rec.barKind == "texture" and TP and TP.Source(rec) == "aura")) and Loads(rec) then
+            or (rec.barKind == "texture" and TP and TP.Source(rec) == "aura")
+            or (BG and BG.WantsLanes(rec))) and Loads(rec) then
             local h = holders[id]
             if not h then
                 h = CreateFrame("Frame", nil, UIParent)
@@ -47,6 +49,9 @@ function Bars.PreBuildAura()
             local ht = Store.Resolve(rec, "size", "height") or 16
             local sc = Store.Resolve(rec, "size", "scale") or 1
             h:SetSize(math.max(1, math.floor(w * sc + 0.5)), math.max(1, math.floor(ht * sc + 0.5)))
+            -- and its strata and level: buttons born now keep the rungs they get
+            h:SetFrameStrata(Store.Resolve(rec, "frame", "strata") or "MEDIUM")
+            h:SetFrameLevel(Store.Resolve(rec, "frame", "level") or 10)
             Bars.EnsureBar(rec, h)
         end
     end)

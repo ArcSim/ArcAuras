@@ -11,13 +11,10 @@ local function Secret(v) return issecretvalue ~= nil and issecretvalue(v) == tru
 -- A row's label: the spell's icon, then its name (the rank the player knows),
 -- marked while no rank of it is known.
 function Options.SwingAbilLabel(id)
-    local CS = C_Spell
-    local S = SA()
-    local sid, known = id, true
-    if S and S.Resolve then
-        local s, k = S.Resolve(id)
-        sid, known = s or id, k
-    end
+    local CS, St = C_Spell, NS.Store
+    -- the one resolve, as the markers read it
+    local sid = St.TrackedSpellID(tonumber(id), true, false) or id
+    local known = St.KnowsSpell(tonumber(id)) ~= false
     local tex = (CS and CS.GetSpellTexture and CS.GetSpellTexture(sid)) or 134400
     local nm = CS and CS.GetSpellName and CS.GetSpellName(sid)
     if Secret(nm) or type(nm) ~= "string" or nm == "" then nm = "Spell " .. tostring(id) end

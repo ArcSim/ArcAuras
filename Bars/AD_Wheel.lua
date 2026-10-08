@@ -108,16 +108,16 @@ function WH.Entry(spot)
         return { t = "item", id = id, icon = icon or 134400, name = name or ("Item " .. id),
             act = "item", value = "item:" .. id }
     end
-    local CS = C_Spell
-    local name = CS and CS.GetSpellName and Plain(CS.GetSpellName(id))
-    local icon = CS and CS.GetSpellTexture and CS.GetSpellTexture(id)
-    local known = NS.Store.KnowsSpell(id) ~= false
-    local cast = id
-    if type(name) == "string" and name ~= "" and CS.GetSpellIDForSpellIdentifier then
-        local top = Plain(CS.GetSpellIDForSpellIdentifier(name))
-        if type(top) == "number" and top > 0 then cast = top end
-    end
-    return { t = "spell", id = id, cast = cast, icon = icon or 134400,
+    -- What it shows (art, name, cooldown): the one resolve, the rank you know
+    -- by name and its override, as an icon reads it. What it casts: that rank
+    -- itself (the game applies the override), never one the book dropped.
+    local St, CS = NS.Store, C_Spell
+    local eff = St.TrackedSpellID(id, true, false) or id
+    local cast = St.TrackedSpellID(id, true, true) or id
+    local name = CS and CS.GetSpellName and Plain(CS.GetSpellName(eff))
+    local icon = CS and CS.GetSpellTexture and CS.GetSpellTexture(eff)
+    local known = St.KnowsSpell(id) ~= false
+    return { t = "spell", id = id, eff = eff, cast = cast, icon = icon or 134400,
         name = (type(name) == "string" and name ~= "") and name or ("Spell " .. id),
         act = known and "spell" or nil, value = cast }
 end
@@ -201,8 +201,9 @@ function WH.DialSlot(d, spot)
     s.sel = s.top:CreateTexture(nil, "OVERLAY")
     s.sel:SetAtlas("Radial_Wheel_Select_Close")
     s.sel:SetPoint("CENTER", s, "CENTER")
-    -- the tracking you are on now: a small cyan check
-    local COL = NS.AT.COL
+    -- the tracking you are on now: a small cyan check. The wheel is on
+    -- screen, so it keeps the classic colours whatever the panel's palette.
+    local COL = NS.AT.PALETTES.classic.col
     s.check = s.top:CreateTexture(nil, "OVERLAY", nil, 2)
     s.check:SetAtlas("checkmark-minimal")
     s.check:SetDesaturated(true)
@@ -226,7 +227,7 @@ function WH.DialLine(d, i)
 end
 
 function WH.PlaceSlot(d, spot, on)
-    local COL = NS.AT.COL
+    local COL = NS.AT.PALETTES.classic.col
     local g, s, e = d.geo, d.slots[spot], d.shown[spot]
     local a = WH.Angle(spot, d.n)
     local x, y = g.S(g.r * math.cos(a)), g.S(g.r * math.sin(a))
@@ -318,7 +319,7 @@ function WH.FillDial(d, shown, n, look, names)
     end
     for i = n + 1, #d.lines do d.lines[i]:Hide() end
 
-    local COL = NS.AT.COL
+    local COL = NS.AT.PALETTES.classic.col
     d.emptyText:SetFont(STANDARD_TEXT_FONT, g.font, "")
     d.emptyText:SetText("Nothing on this wheel yet")
     d.emptyText:ClearAllPoints()
@@ -338,7 +339,7 @@ function WH.Feed(d, spot)
     if not look.cooldowns then
         s.cd:Clear()
     elseif e.t == "spell" then
-        local dur = C_Spell and C_Spell.GetSpellCooldownDuration and C_Spell.GetSpellCooldownDuration(e.cast, true)
+        local dur = C_Spell and C_Spell.GetSpellCooldownDuration and C_Spell.GetSpellCooldownDuration(e.eff, true)
         if dur then s.cd:SetCooldownFromDurationObject(dur, true) else s.cd:Clear() end
     else
         local CC, DU = C_Container, C_DurationUtil
@@ -359,7 +360,7 @@ function WH.Feed(d, spot)
     end
     -- a tracking spell checked while it is the one you are on
     local tr = d.tracking
-    s.check:SetShown(e.t == "spell" and tr ~= nil and (tr[e.cast] or tr[e.id] or tr[e.name]) == true)
+    s.check:SetShown(e.t == "spell" and tr ~= nil and (tr[e.eff] or tr[e.cast] or tr[e.id] or tr[e.name]) == true)
     if e.t == "item" then
         local CI = C_Item
         local stacks = CI and CI.GetItemMaxStackSizeByID and Plain(CI.GetItemMaxStackSizeByID(e.id))

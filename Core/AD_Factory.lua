@@ -35,23 +35,14 @@ Factory.frames = frames
 -- form count and IDs are checked before any loop or compare.
 -- FindSpellActionButtons returns every filled slot on Forever, so the bars
 -- (slots 1-180; gamepad storage lies above) are walked main bar first, keying
--- each spell slot by ID, base spell and name, as Forever ranks are separate
--- IDs sharing a name. The swap is rank-specific, so the rank the name resolves
--- to is tried first. A secret read keeps the old map and retries after combat.
+-- each spell slot by the one matcher's keys (ID, base spell and name, as
+-- Forever ranks are separate IDs sharing a name). The swap is rank-specific,
+-- so the rank the icon reads is tried first. A secret read keeps the old map
+-- and retries after combat.
 local ART_BARS = { 1, 61, 49, 25, 37, 145, 157, 169, 13, 73, 85, 97, 109, 121, 133 }
 local artSlots, artDirty, artRetry = {}, true, false
--- [sid] = its slot, or false for none; kept until the map is rebuilt, and
--- only answers read with no secret in them are kept
+-- [sid] = its slot, or false for none; kept until the map is rebuilt
 local slotOf = {}
-local sawSecretRead = false
-
-local function Plain(v)
-    if issecretvalue and issecretvalue(v) then
-        sawSecretRead = true
-        return nil
-    end
-    return v
-end
 
 local function ArtRebuild()
     artDirty = false
@@ -66,12 +57,8 @@ local function ArtRebuild()
             if issecretvalue and (issecretvalue(atype) or issecretvalue(id)) then
                 sawSecret = true
             elseif atype == "spell" and type(id) == "number" then
-                remember(id, slot)
-                if C_Spell.GetBaseSpell then remember(Plain(C_Spell.GetBaseSpell(id)), slot) end
-                if NS.IsForever == true and C_Spell.GetSpellName then
-                    local nm = Plain(C_Spell.GetSpellName(id))
-                    if type(nm) == "string" and nm ~= "" then remember("n:" .. nm, slot) end
-                end
+                -- filed under the forms the one matcher compares (Store.SeenKeys)
+                for _, k in ipairs(Store.SeenKeys(id, NS.IsForever == true)) do remember(k, slot) end
             end
         end
     end
@@ -84,25 +71,23 @@ local function ArtRebuild()
     artSlots = fresh
 end
 
+-- `sid` is already the spell the icon reads (Store.RecordSpellID); its slot
+-- is found by the one matcher's keys, the ID first, then its base form, then
+-- on ranked realms its name. Hits and misses are kept until the map is
+-- rebuilt; misses also go at combat's end, as a read in combat may have been
+-- secret. The art pass runs every frame of combat, so the keys reuse a table.
+local artKeys = {}
 local function ArtSlotFor(sid)
     if artDirty then ArtRebuild() end
     local hit = slotOf[sid]
     if hit ~= nil then return hit or nil end
-    sawSecretRead = false
+    wipe(artKeys)
     local slot
-    local nm = NS.IsForever == true and C_Spell.GetSpellName and Plain(C_Spell.GetSpellName(sid)) or nil
-    if type(nm) ~= "string" or nm == "" then nm = nil end
-    if nm and C_Spell.GetSpellIDForSpellIdentifier then
-        local cur = Plain(C_Spell.GetSpellIDForSpellIdentifier(nm))
-        if cur ~= nil then slot = artSlots[cur] end
+    for _, k in ipairs(Store.WantKeys(sid, sid, NS.IsForever == true, artKeys)) do
+        slot = artSlots[k]
+        if slot ~= nil then break end
     end
-    if slot == nil then slot = artSlots[sid] end
-    if slot == nil and C_Spell.GetBaseSpell then
-        local base = Plain(C_Spell.GetBaseSpell(sid))
-        if base ~= nil then slot = artSlots[base] end
-    end
-    if slot == nil and nm then slot = artSlots["n:" .. nm] end
-    if not sawSecretRead then slotOf[sid] = slot or false end
+    slotOf[sid] = slot or false
     return slot
 end
 
@@ -117,6 +102,9 @@ do
     if valid("PLAYER_REGEN_ENABLED") then
         NS.Events.On("PLAYER_REGEN_ENABLED", "adart_slots", function()
             if artRetry then artRetry = false; artDirty = true end
+            for k, v in pairs(slotOf) do
+                if v == false then slotOf[k] = nil end
+            end
         end)
     end
 end
@@ -161,7 +149,7 @@ end
 local function OverrideTexture(ov, from)
     if type(ov) ~= "number" or ov <= 0 then return nil end
     if from == "spell" then
-        local tex = C_Spell.GetSpellTexture(ov)
+        local tex = C_Spell.GetSpellTexture(ov) -- raw-id: an art pick, not a tracked spell
         return tex
     elseif from == "item" then
         if not (C_Item and C_Item.GetItemIconByID) then return nil end
@@ -189,15 +177,12 @@ function Factory.AuraActiveTexture(rec)
     return OverrideFor(rec, "appearance", "customIcon")
 end
 
--- A spell icon's own art. It follows the override spell unless the icon pins
--- the base spell. GetSpellTexture gives (icon, originalIcon); on Forever
--- neither moves for a toggle, so active art comes from the action bar.
+-- A spell icon's own art: the spell its driver reads (Auto rank's rank, then
+-- the override unless the icon pins the base spell). GetSpellTexture gives
+-- (icon, originalIcon); on Forever neither moves for a toggle, so active art
+-- comes from the action bar.
 local function SpellArt(d, activeArt)
-    local sid = d.spellID
-    if sid and not d.ignoreSpellOverride and C_Spell.GetOverrideSpell then
-        local ov = C_Spell.GetOverrideSpell(sid)
-        if ov and ov ~= 0 then sid = ov end
-    end
+    local sid = Store.RecordSpellID(d)
     if not sid then return QUESTION_MARK end
     if activeArt then
         local live = LiveSpellArt(sid)
@@ -214,8 +199,13 @@ local function KindTexture(rec)
     local kind = rec.kind
     if kind == "spell" then
         return SpellArt(d, Store.Resolve(rec, "appearance", "activeArt") ~= false)
-    elseif kind == "aura" or kind == "timer" or kind == "groupbuff" then
-        local tex = d.spellID and C_Spell.GetSpellTexture(d.spellID)
+    elseif kind == "aura" or kind == "groupbuff" then
+        -- the first typed aura's art (the aura entry keeps it first)
+        local id = Store.TrackedAuraIDs(d)[1]
+        local tex = id and C_Spell.GetSpellTexture(id)
+        return tex or QUESTION_MARK
+    elseif kind == "timer" then
+        local tex = d.spellID and C_Spell.GetSpellTexture(d.spellID) -- raw-id: the custom icon's art pick
         return tex or QUESTION_MARK
     elseif kind == "trinket" then
         local tex = d.slotID and GetInventoryItemTexture("player", d.slotID)
@@ -251,7 +241,8 @@ local function KindTexture(rec)
             local _, _, _, _, icon = GetTotemInfo(slot)
             if icon then return icon end
         end
-        local tex = d.spellID and C_Spell.GetSpellTexture(d.spellID)
+        local sid = Store.RecordSpellID(d)
+        local tex = sid and C_Spell.GetSpellTexture(sid)
         return tex or ((NS.IsForever ~= true) and Factory.TOTEM_GLYPH or QUESTION_MARK)
     elseif kind == "enchant" then
         -- the enchant's own art while it is on, else the weapon's
@@ -2259,6 +2250,10 @@ local function GlowSparkle(host, W, H, n, scale, period, r, g, bl, a)
     end
 end
 
+-- The two perimeter styles, for the bar glows (Bars\AD_BarGlow.lua): the same
+-- builders on another host, so both draw alike.
+Factory.GlowArt = { pixel = GlowPixel, autocast = GlowSparkle, hide = HideGlowParts }
+
 -- Button: the button glow at rest, its outer ring and ants on a
 -- (1.4 w + 2 xo) x (1.4 h + 2 yo) frame, as the cooldown lanes lay it.
 -- Desaturated so the colour tints the gold art.
@@ -3710,10 +3705,14 @@ function Factory.ShowTooltip(f, rec)
     local kind = rec.kind
     GameTooltip:SetOwner(f, "ANCHOR_RIGHT")
     if (kind == "spell" or kind == "aura" or kind == "timer") and d.spellID then
-        -- The rank or override the driver is tracking (Auto rank on ranked
-        -- realms), stamped on the frame each feed; else the stored ID.
-        local sid = f._adEffSid or d.spellID
-        if C_Spell.DoesSpellExist and C_Spell.DoesSpellExist(sid) then
+        -- A spell: the rank or override the driver tracks (stamped on the frame
+        -- each feed, else its own resolve). An aura or a custom icon: the
+        -- typed spell, whose art it wears.
+        local sid
+        if kind == "spell" then sid = f._adEffSid or Store.RecordSpellID(d)
+        elseif kind == "aura" then sid = Store.TrackedAuraIDs(d)[1]
+        else sid = d.spellID end -- raw-id: a custom icon's art pick
+        if sid and C_Spell.DoesSpellExist and C_Spell.DoesSpellExist(sid) then
             GameTooltip:SetSpellByID(sid)
         else
             GameTooltip:SetText(rec.name or "Unknown spell")
@@ -3731,11 +3730,11 @@ function Factory.ShowTooltip(f, rec)
         -- an empty slot on an icon following the totem bar: the totem it would drop
         local barSid = NS.DriverTotem and NS.DriverTotem.BarShows and NS.DriverTotem.BarShows(rec)
         if barSid then
-            GameTooltip:SetSpellByID(barSid)
+            GameTooltip:SetSpellByID(barSid) -- raw-id: the totem bar slot's own spell
         elseif slot and GameTooltip.SetTotem then
             GameTooltip:SetTotem(slot)
         elseif d.spellID then
-            GameTooltip:SetSpellByID(d.spellID)
+            GameTooltip:SetSpellByID(Store.RecordSpellID(d) or d.spellID)
         else
             GameTooltip:SetText(rec.name or "Arc Auras")
         end

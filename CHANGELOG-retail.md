@@ -1,5 +1,27 @@
 # Arc Auras
 
+## 2.4.0
+
+Themes, glows on every bar and talents for any class and spec.
+
+### New Features
+
+- **Themes** - Settings > Theme: Classic, Midnight Ink, Dusk or Graphite, with an optional Soft light. Dusk is the new default.
+- **Bar glows** - Every bar can glow while any aura is up or missing, or by any spell's cooldown. Find them under the bar's Conditions tab (was Show & Hide).
+- **Talents for any class** - Each class under Class and Spec has a Talents button that opens its trees, with a tab per spec, whatever you play. Picks count only on their own class and spec.
+
+### Improvements
+
+- **Options look** - Folder tabs, boxed sections and a cleaner font.
+- **Talent swaps** - Icons, bars and glows follow a spell a talent replaces, with its art, tooltip and keybind.
+- **Talent window** - Matches your panel scale.
+- **Combat** - The options window waits until combat ends to open, and closes when a fight starts.
+
+### Bug Fixes
+
+- **Unloaded items** - No longer show on screen while editing after a group's eye is clicked twice; class Views show only what they list.
+- **Own settings** - Text, picture and reminder items and range bars now follow their Ignore Override.
+
 ## 2.3.0
 
 Stance icons, a lock for layouts and groups, a sidebar View and pack updates you can undo.

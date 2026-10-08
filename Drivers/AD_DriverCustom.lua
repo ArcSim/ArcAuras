@@ -239,32 +239,17 @@ local nameCache = {}
 local function SpellName(sid)
     local nm = nameCache[sid]
     if nm ~= nil then return nm or nil end
-    nm = sid and C_Spell and C_Spell.GetSpellName and Plain(C_Spell.GetSpellName(sid))
+    nm = sid and C_Spell and C_Spell.GetSpellName and Plain(C_Spell.GetSpellName(sid)) -- raw-id: a rule's typed spell, for its words
     if type(nm) ~= "string" or nm == "" then nm = false end
     nameCache[sid] = nm
     return nm or nil
 end
 
--- A rule's spell against an event's: the id, its override or base form, and on
--- ranked realms any rank by name.
+-- A rule's spell against an event's: the one matcher (its override or base
+-- form, and on ranked realms any rank by name).
 function CU.SpellMatch(want, got)
     if type(want) ~= "number" or type(got) ~= "number" then return false end
-    if want == got then return true end
-    if C_Spell then
-        if C_Spell.GetOverrideSpell then
-            local ov = Plain(C_Spell.GetOverrideSpell(want))
-            if ov == got then return true end
-        end
-        if C_Spell.GetBaseSpell then
-            local base = Plain(C_Spell.GetBaseSpell(got))
-            if base == want then return true end
-        end
-    end
-    if NS.IsForever == true then
-        local a = SpellName(want)
-        return a ~= nil and a == SpellName(got)
-    end
-    return false
+    return Store.SpellMatch(want, got)
 end
 
 function CU.Matches(r, ctx)

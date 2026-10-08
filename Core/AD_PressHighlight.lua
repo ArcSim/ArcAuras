@@ -101,27 +101,20 @@ local function Plain(v)
     return v
 end
 
-local function SpellName(id)
-    if not (C_Spell and C_Spell.GetSpellName) then return nil end
-    return Plain(C_Spell.GetSpellName(id))
-end
 
--- A spell icon lights for its own ID, its override, the base of what was
--- pressed and, on ranked realms, any rank with the same name.
-local function SpellMatches(d, sid, pressedName)
+-- A spell icon lights for what the one matcher calls its spell: its own ID,
+-- its override, the base of what was pressed and, on ranked realms, any rank
+-- with the same name.
+local function SpellMatches(d, sid)
     local mine = d.spellID
     if type(mine) ~= "number" then return false end
-    if mine == sid then return true end
-    if C_Spell and C_Spell.GetOverrideSpell and Plain(C_Spell.GetOverrideSpell(mine)) == sid then return true end
-    if C_Spell and C_Spell.GetBaseSpell and Plain(C_Spell.GetBaseSpell(sid)) == mine then return true end
-    if NS.IsForever == true and pressedName and SpellName(mine) == pressedName then return true end
-    return false
+    return Store.SpellMatch(mine, sid)
 end
 
-local function Matches(rec, kind, id, pressedName)
+local function Matches(rec, kind, id)
     local d = rec.driver or {}
     if rec.kind == "spell" then
-        return kind == "spell" and SpellMatches(d, id, pressedName)
+        return kind == "spell" and SpellMatches(d, id)
     elseif rec.kind == "item" then
         return kind == "item" and d.itemID == id
     elseif rec.kind == "trinket" then
@@ -274,12 +267,11 @@ local function Press(kind, id)
     if id == nil or Secret(id) then return end
     local frames = NS.Factory and NS.Factory.frames
     if not frames then return end
-    local pressedName = (kind == "spell") and SpellName(id) or nil
     for recId, f in pairs(frames) do
         -- only an icon you can see: a hidden frame, or art its state hides
         if f.IsVisible and f:IsVisible() and (f._adShownAlpha or 1) > 0 then
             local rec = Store.Get(recId)
-            if rec and Matches(rec, kind, id, pressedName) then Light(f) end
+            if rec and Matches(rec, kind, id) then Light(f) end
         end
     end
 end
@@ -300,7 +292,7 @@ end
 
 local function OnCastByName(name)
     if not PH.Enabled() or Secret(name) or type(name) ~= "string" then return end
-    local sid = C_Spell and C_Spell.GetSpellIDForSpellIdentifier and C_Spell.GetSpellIDForSpellIdentifier(name)
+    local sid = C_Spell and C_Spell.GetSpellIDForSpellIdentifier and C_Spell.GetSpellIDForSpellIdentifier(name) -- raw-id: the name a cast hook reports
     if sid and not Secret(sid) then Press("spell", sid) end
 end
 

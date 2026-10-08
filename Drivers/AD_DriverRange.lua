@@ -10,7 +10,8 @@ NS.DriverRange = DR
 
 DR.KEY = "adrange"
 DR.PULSE = 0.2
-DR.EVENTS = { "SPELL_RANGE_CHECK_UPDATE", "PLAYER_TARGET_CHANGED", "SPELLS_CHANGED", "PLAYER_ENTERING_WORLD" }
+DR.EVENTS = { "SPELL_RANGE_CHECK_UPDATE", "PLAYER_TARGET_CHANGED", "SPELLS_CHANGED", "PLAYER_ENTERING_WORLD",
+    "TRAIT_CONFIG_UPDATED", "PLAYER_TALENT_UPDATE" }
 -- The target's own changes: hostility and death.
 DR.UNIT_EVENTS = { "UNIT_FACTION", "UNIT_FLAGS", "UNIT_HEALTH" }
 
@@ -82,36 +83,27 @@ DR.Notify = Notify
 
 -- Spells and ranks
 
-local function Known(sid)
-    local SB = C_SpellBook
-    if SB and SB.IsSpellKnown then return Yes(SB.IsSpellKnown(sid)) end
-    if IsPlayerSpell then return Yes(IsPlayerSpell(sid)) end
-    return true
-end
-
--- Ranks are separate spell IDs on ranked realms: the spell's name finds the rank the player knows.
--- Retail has no ranks; there a spec's replacement (Mutilate for Sinister Strike) is the spell
--- whose range answers, and GetOverrideSpell names it, or the spell itself with none.
-function DR.Resolve(id)
+-- The icons' resolve (Store.TrackedSpellID): on ranked realms the rank the player knows by name,
+-- then on either client the replacement whose range answers (Mutilate for Sinister Strike, a
+-- talent's new Charge). `follow` / `noOverride` are the owning record's Auto rank and Ignore
+-- override (nil: a typed spell's default, follow on ranked realms). Cached per typed ID and
+-- switches until SPELLS_CHANGED or a talent event.
+function DR.Resolve(id, follow, noOverride)
     if IsSecret(id) then return nil end
     local sid = tonumber(id)
     if not sid or sid <= 0 then return nil end
     sid = math.floor(sid)
-    local r = DR.resolved[sid]
-    if r then return r end
-    r = sid
-    local CS = C_Spell
-    if NS.IsForever == true then
-        local nm = CS and CS.GetSpellName and CS.GetSpellName(sid)
-        if not IsSecret(nm) and type(nm) == "string" and nm ~= "" and CS.GetSpellIDForSpellIdentifier then
-            local rid = CS.GetSpellIDForSpellIdentifier(nm)
-            if not IsSecret(rid) and type(rid) == "number" and rid > 0 and Known(rid) then r = rid end
-        end
-    elseif CS and CS.GetOverrideSpell then
-        local ov = CS.GetOverrideSpell(sid)
-        if not IsSecret(ov) and type(ov) == "number" and ov > 0 then r = ov end
+    if follow == nil then follow = NS.IsForever == true end
+    local mode = (follow and 1 or 0) + (noOverride and 2 or 0)
+    local per = DR.resolved[mode]
+    if not per then
+        per = {}
+        DR.resolved[mode] = per
     end
-    DR.resolved[sid] = r
+    local r = per[sid]
+    if r then return r end
+    r = NS.Store.TrackedSpellID(sid, follow, noOverride == true) or sid
+    per[sid] = r
     return r
 end
 
@@ -125,7 +117,7 @@ function DR.ParseSpell(text)
     local n = tonumber(text)
     if n then return (n > 0) and math.floor(n) or nil end
     local CS = C_Spell
-    local id = CS and CS.GetSpellIDForSpellIdentifier and CS.GetSpellIDForSpellIdentifier(text)
+    local id = CS and CS.GetSpellIDForSpellIdentifier and CS.GetSpellIDForSpellIdentifier(text) -- raw-id: a name typed in a box
     if not IsSecret(id) and type(id) == "number" and id > 0 then return id end
     return nil
 end
@@ -287,7 +279,7 @@ local function OnRange(_, ident, inRange, checksRange)
     Notify()
 end
 
--- A learned rank is a new spell ID.
+-- A learned rank, or a talent that replaces a spell, is a new spell ID.
 local function OnSpells()
     DR.resolved = {}
     DR.harmful = {}
@@ -304,6 +296,7 @@ end
 local HANDLERS = {
     SPELL_RANGE_CHECK_UPDATE = OnRange, PLAYER_TARGET_CHANGED = OnTarget,
     SPELLS_CHANGED = OnSpells, PLAYER_ENTERING_WORLD = OnTarget,
+    TRAIT_CONFIG_UPDATED = OnSpells, PLAYER_TALENT_UPDATE = OnSpells,
 }
 
 local function Valid(ev)
@@ -350,7 +343,7 @@ function DR.Sync()
     for _, o in pairs(DR.owners) do
         o.sids = {}
         for _, id in ipairs(o.spells) do
-            local sid = DR.Resolve(id)
+            local sid = DR.Resolve(id, o.follow, o.noOverride)
             if sid and not o.sids[sid] then
                 o.sids[sid] = true
                 want.spell[sid] = (want.spell[sid] or 0) + 1
@@ -409,12 +402,14 @@ local function Sig(need)
         parts[#parts + 1] = table.concat(l, ",")
     end
     parts[#parts + 1] = need.gate and "g" or ""
+    parts[#parts + 1] = (need.follow == nil and "" or (need.follow and "r" or "x")) .. (need.noOverride and "o" or "")
     return table.concat(parts, "|")
 end
 
 -- need = { spells = IDs, items = IDs, interact = indexes 1-4, gate = true for the target's
--- attackable and dead state }. fn(owner) runs when an answer it reads changes. Calling
--- again with the same need only swaps fn.
+-- attackable and dead state, follow / noOverride = the owning record's Auto rank and Ignore
+-- override }. fn(owner) runs when an answer it reads changes. Calling again with the same
+-- need only swaps fn.
 function DR.Use(owner, need, fn)
     need = need or {}
     local sig = Sig(need)
@@ -426,7 +421,8 @@ function DR.Use(owner, need, fn)
     local spells = {}
     for _, v in ipairs(need.spells or {}) do spells[#spells + 1] = v end
     DR.owners[owner] = { sig = sig, fn = fn, gate = need.gate == true, spells = spells, sids = {},
-        items = SetOf(need.items), interact = SetOf(need.interact) }
+        items = SetOf(need.items), interact = SetOf(need.interact),
+        follow = need.follow, noOverride = need.noOverride == true }
     DR.Sync()
     Notify()
 end
@@ -439,8 +435,9 @@ function DR.Drop(owner)
 end
 
 -- A typed spell against the target: true, false, or nil (no target, or no check applies).
-function DR.Spell(id)
-    local sid = DR.Resolve(id)
+-- follow / noOverride as its owner asked (DR.Resolve).
+function DR.Spell(id, follow, noOverride)
+    local sid = DR.Resolve(id, follow, noOverride)
     if not sid then return nil end
     if DR.want.spell[sid] then return DR.state.spell[sid] end
     return (ReadSpell(sid))
@@ -471,15 +468,18 @@ function DR.Item(id) return DR.state.item[id] end
 function DR.Interact(i) return DR.state.interact[i] end
 
 -- The first band whose checks all hold, or nil. A check is { kind, id, inRange }: a
--- check with no answer holds neither way, and a dead target is in no band.
-function DR.Band(bands)
+-- check with no answer holds neither way, and a dead target is in no band. `d` is the
+-- owning record's driver, whose switches its spells resolve with (as its owner asked).
+function DR.Band(bands, d)
     if DR.target.dead then return nil end
+    local follow, noOv
+    if type(d) == "table" then follow, noOv = NS.Store.AutoRankOn(d), d.ignoreSpellOverride == true end
     for i, b in ipairs(bands or {}) do
         local ok = #b.checks > 0
         for _, c in ipairs(b.checks) do
             local v
             if c[1] == "spell" then
-                v = DR.Spell(c[2])
+                v = DR.Spell(c[2], follow, noOv)
             elseif c[1] == "item" then
                 v = DR.Item(c[2])
             else

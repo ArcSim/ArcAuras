@@ -460,18 +460,26 @@ end
 
 -- Match width / height take the target's size in this frame's own units, as
 -- the two may sit in layouts of different scales. A standing bar swaps them:
--- its width runs along its long side.
+-- its width runs along its long side. Returns the size given to the frame's
+-- own width and height (nil = none given: not matched, or no target size yet).
 local function MatchSize(rec, frame, target)
     local ts, fs = target:GetEffectiveScale(), frame:GetEffectiveScale()
     local k = (type(ts) == "number" and type(fs) == "number" and fs > 0) and ts / fs or 1
     local standing = rec.type == "bar" and Store.BarStanding ~= nil and Store.BarStanding(rec)
     local pad2 = 2 * GroupPadding(rec)
+    local mw, mh
     if R(rec, "anchorMatchWidth") == true then
         local adj = R(rec, "anchorMatchWidthAdjust") or 0
         local v = standing and target:GetHeight() or target:GetWidth()
         if v and v > 0 then
             v = SnapSize(frame, math.max(1, (v - pad2) * k + adj))
-            if standing then frame:SetHeight(v) else frame:SetWidth(v) end
+            if standing then
+                frame:SetHeight(v)
+                mh = v
+            else
+                frame:SetWidth(v)
+                mw = v
+            end
         end
     end
     if R(rec, "anchorMatchHeight") == true then
@@ -479,9 +487,26 @@ local function MatchSize(rec, frame, target)
         local v = standing and target:GetWidth() or target:GetHeight()
         if v and v > 0 then
             v = SnapSize(frame, math.max(1, (v - pad2) * k + adj))
-            if standing then frame:SetWidth(v) else frame:SetHeight(v) end
+            if standing then
+                frame:SetWidth(v)
+                mw = v
+            else
+                frame:SetHeight(v)
+                mh = v
+            end
         end
     end
+    return mw, mh
+end
+
+-- The size a match gave, kept on the frame per axis of its own (nil = its own
+-- size), refreshed by every anchor pass: what is drawn from numbers (a bar's
+-- glows) takes it from here, never from a rect read. A change tells the
+-- frame's owner (`_adOnMatch`), which gives it that size and redraws.
+local function Matched(frame, w, h)
+    if frame._adMatchW == w and frame._adMatchH == h then return end
+    frame._adMatchW, frame._adMatchH = w, h
+    if frame._adOnMatch then frame._adOnMatch(frame) end
 end
 
 -- Every edge on a physical pixel, as the engine's SnapPlacement does for a free
@@ -521,7 +546,7 @@ local function FollowSize(rec, target)
                 local r, f = Store.Get(id), sources[id]
                 -- a source that moved to another target left a stale entry
                 if r and f and f:IsShown() and Anchor.ResolveTarget(r) == t then
-                    MatchSize(r, f, t)
+                    Matched(f, MatchSize(r, f, t))
                     SnapAnchored(r, f, t)
                 end
             end
@@ -556,8 +581,10 @@ Anchor.RaiseOver = RaiseOver
 -- should fall back to its own free placement.
 function Anchor.Apply(rec, frame)
     if not (rec and frame) then return false end
+    -- a nameplate or the cursor never matches a size
     if Anchor.IsEnabled(rec) and IsPlateKind(rec) then
         UnpinMouse(frame)
+        Matched(frame, nil, nil)
         return ApplyPlate(rec, frame)
     end
     if Anchor.IsEnabled(rec) and IsMouseKind(rec) then
@@ -566,6 +593,7 @@ function Anchor.Apply(rec, frame)
             frame._adPlateHid = nil
             frame:Show()
         end
+        Matched(frame, nil, nil)
         return ApplyMouse(rec, frame)
     end
     -- anything else: this frame is on neither the cursor nor a nameplate
@@ -576,7 +604,11 @@ function Anchor.Apply(rec, frame)
         frame:Show()
     end
     local target = Anchor.ResolveTarget(rec)
-    if not target then return false end
+    -- free again: its owner gives it its own size
+    if not target then
+        Matched(frame, nil, nil)
+        return false
+    end
     frame:ClearAllPoints()
     frame:SetPoint(
         R(rec, "anchorSrcPoint") or DEFAULT_SRC,
@@ -586,10 +618,13 @@ function Anchor.Apply(rec, frame)
         R(rec, "anchorOffsetY") or 0)
     local kind = R(rec, "anchorTargetKind") or "group"
     if SPELL_KIND[kind] then RaiseOver(frame, target) end
+    local mw, mh
     if R(rec, "anchorMatchWidth") == true or R(rec, "anchorMatchHeight") == true then
-        MatchSize(rec, frame, target)
+        mw, mh = MatchSize(rec, frame, target)
         if not GAME_TARGET[kind] then FollowSize(rec, target) end
     end
+    -- the final size before the snap, which measures the corner
+    Matched(frame, mw, mh)
     SnapAnchored(rec, frame, target)
     return true
 end

@@ -29,7 +29,7 @@ local function Line(pg, key, visibleFn)
     local AT, COL = NS.AT, NS.AT.COL
     local row = AT.AddRow(pg, 18, visibleFn)
     local fs = row:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    fs:SetFont(NS.AT.FONT, 11, "")
     fs:SetPoint("TOPLEFT", 10, -2)
     fs:SetJustifyH("LEFT")
     fs:SetJustifyV("TOP")
@@ -134,7 +134,7 @@ local function TreeRow(i)
     row.arrow = AT.MakeChevron(row)
     row.box = AT.MakeCheckbox(row)
     row.fs = row:CreateFontString(nil, "OVERLAY")
-    row.fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    row.fs:SetFont(NS.AT.FONT, 11, "")
     row.fs:SetJustifyH("LEFT")
     row.fs:SetWordWrap(false)
     row.fs:SetPoint("RIGHT", row, "RIGHT", -8, 0)
@@ -199,7 +199,7 @@ function IW.Build()
     local AT, COL = NS.AT, NS.AT.COL
     win = AT.CreateWindow("ArcAurasImportArcUI", {
         w = 560, h = 640, minW = 440, minH = 420, maxW = 960, maxH = 1100,
-        title = "|cff3fc9f2Arc|r|cffd5e2f2 Auras|r",
+        title = NS.AT.Brand("Arc", " Auras"),
         onResize = function() if page then AT.LayoutPage(page) end end,
     })
     page = AT.NewPage(win)

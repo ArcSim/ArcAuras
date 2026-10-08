@@ -27,7 +27,7 @@ function CO.ParseSpell(text)
 end
 
 function CO.SpellName(id)
-    local nm = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+    local nm = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: the typed spell, for the editor's words
     if (issecretvalue and issecretvalue(nm)) or type(nm) ~= "string" then return "" end
     return nm
 end
@@ -137,7 +137,7 @@ function CO.TrackRows(pg, Rec, vis, owner, isBar)
         vis, "The spell whose icon it wears; Appearance > Icon > Art > Custom icon wins over it. A spell ID, a link, or the name of a spell you know.",
         "Question mark until set")
     local nameFS = artRow:CreateFontString(nil, "OVERLAY")
-    nameFS:SetFont(STANDARD_TEXT_FONT, 11, "")
+    nameFS:SetFont(NS.AT.FONT, 11, "")
     nameFS:SetPoint("LEFT", artRow._colCtrl, "RIGHT", 8, 0)
     nameFS:SetPoint("RIGHT", artRow, "RIGHT", -10, 0)
     nameFS:SetJustifyH("LEFT")
@@ -432,7 +432,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
             spellVis, "The spell this trigger watches: a spell ID, a link, or the name of a spell you know. Any rank matches.",
             "e.g. 6572")
         local nameFS = idRow:CreateFontString(nil, "OVERLAY")
-        nameFS:SetFont(STANDARD_TEXT_FONT, 11, "")
+        nameFS:SetFont(NS.AT.FONT, 11, "")
         nameFS:SetPoint("LEFT", idRow._colCtrl, "RIGHT", 8, 0)
         nameFS:SetPoint("RIGHT", idRow, "RIGHT", -10, 0)
         nameFS:SetJustifyH("LEFT")

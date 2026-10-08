@@ -47,7 +47,7 @@ end
 -- The buff is named after its totem ("Stoneskin Totem" gives "Stoneskin").
 function TR.AutoName(rec)
     local DT = NS.DriverTotem
-    local nm = DT and rec and type(rec.driver) == "table" and DT.SpellName(rec.driver.spellID)
+    local nm = DT and rec and type(rec.driver) == "table" and DT.SpellName(Store.RecordSpellID(rec.driver))
     if type(nm) ~= "string" or not Plain(nm) then return nil end
     nm = nm:gsub("%s+[Tt]otem$", "")
     return nm ~= "" and nm or nil
@@ -72,13 +72,7 @@ end
 -- Every ID a slot shows, as the engine's filter map; none gets the
 -- never-matching id 0 (an empty set shows any buff).
 local function IDMap(ids)
-    local m = {}
-    for _, id in ipairs(ids or {}) do
-        id = tonumber(id)
-        if id and id > 0 then m[id] = true end
-    end
-    if next(m) == nil then m[0] = true end
-    return m
+    return Store.AuraIncludeMap({ spellIDs = ids })
 end
 
 -- Every ID named exactly the buff, any rank, kept on the icon.

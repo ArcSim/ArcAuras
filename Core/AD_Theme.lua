@@ -8,7 +8,10 @@ local AT = {}
 -- Other addons carry copies of this file, generated from it by the
 -- arc-theme-sync tool, which compares this number to find stale copies.
 -- Bump it on every change and never edit a copy.
-AT.VERSION = 21
+AT.VERSION = 23
+
+-- The addon this copy loads in: a palette's font file sits in its folder.
+local THEME_ADDON = ...
 
 AT.WHITE = "Interface\\Buttons\\WHITE8X8"
 AT.DISCORD = "https://discord.gg/yMZmnFjUTd"
@@ -29,6 +32,20 @@ AT.COL = {
     btnHover = { 0.150, 0.205, 0.295 },  -- button fill on hover
     steel    = { 0.298, 0.400, 0.549 },  -- button border, cyan on hover
     blurple  = { 0.345, 0.396, 0.949 },  -- Discord #5865F2
+    -- Roles the accent and a few fixed colours play. Each holds the colour
+    -- that role always drew, so a palette can move one without the others.
+    title    = { 0.247, 0.788, 0.949 },  -- section titles and headings
+    chev     = { 0.247, 0.788, 0.949 },  -- chevrons and carets at rest
+    rule     = { 0.247, 0.788, 0.949 },  -- the line under a tab strip or header bar
+    hair     = { 0.165, 0.231, 0.341 },  -- the hairline under a section title
+    lead     = { 0.247, 0.788, 0.949 },  -- pane header names, accent-worded buttons
+    leadEdge = { 0.247, 0.788, 0.949 },  -- the edge of an accent-bordered button
+    focus    = { 0.078, 0.353, 0.451 },  -- hover and focus borders
+    fill     = { 0.247, 0.788, 0.949 },  -- slider, progress and scroll fills
+    sel      = { 0.055, 0.165, 0.227 },  -- a selected list row's fill
+    head     = { 0.063, 0.094, 0.153 },  -- a fold header bar, a step off the page
+    word     = { 0.835, 0.886, 0.949 },  -- a window title's plain words
+    discord  = { 0.447, 0.537, 0.855 },  -- the Discord button's word
 }
 
 -- Layout constants, in pixels. Spacing comes from the row height, not padding.
@@ -47,6 +64,204 @@ AT.LAY = {
 }
 
 local COL, WHITE, LAY = AT.COL, AT.WHITE, AT.LAY
+
+-- Drawing rules a palette can switch. A palette may also set mute: category
+-- colours lose that share of their saturation (see Mute below).
+AT.LOOK = {
+    tabs = "chip",       -- or "underline": words, a 2px accent bar under the open tab;
+                         -- or "folder": words, the open tab a block joined to its page
+    sections = "plain",  -- or "boxed": every titled section a header band over a box
+    selBar = false,      -- a selected row is its fill and the left bar alone
+    pill = "outline",    -- or "soft": a wash of the pill's colour, no edge
+    sliderFill = false,  -- a slider's track fills up to its thumb
+}
+-- Every panel text's font; a palette can name a file of its own.
+AT.FONT = STANDARD_TEXT_FONT
+AT.PALETTE = "classic"
+AT._muted = {}
+
+-- Palettes. classic is the table above as it loaded. A palette's col names
+-- colours as hex digits or { r, g, b }; a key it leaves out keeps classic.
+-- font: a file in the addon's folder, used where the client loads it.
+-- muted: the exact colour Mute gives for a classic colour, by its hex.
+AT.PALETTES = { classic = { col = {}, look = {} } }
+for k, c in pairs(COL) do AT.PALETTES.classic.col[k] = { c[1], c[2], c[3] } end
+for k, v in pairs(AT.LOOK) do AT.PALETTES.classic.look[k] = v end
+AT.PALETTES.ink = {
+    col = {
+        bg = "0B111C", panel = "101826", well = "080D16", box = "0C121D",
+        line = "1A2537", line2 = "243250",
+        ink = "E4ECF7", dim = "A3B3C9", faint = "74859D",
+        arc = "5B9DF0", arcDeep = "16294A",
+        btn = "141E2F", btnHover = "1A273B", steel = "273752",
+        title = "A3B6D1", chev = "A3B6D1", rule = "1A2537", hair = "1A2537",
+        lead = "E4ECF7", leadEdge = "273752", focus = "5B9DF0", fill = "2E66B0",
+        sel = "142540", word = "E4ECF7", discord = "E4ECF7", head = "18233A",
+    },
+    look = { tabs = "folder", sections = "boxed", selBar = true, pill = "soft", sliderFill = true, mute = 0.62 },
+    font = "Fonts\\Expressway.ttf",
+    muted = { F2C14E = "D2B46C", B58CF2 = "A897DE" },
+}
+-- Lighter palettes that draw by ink's rules; each keeps well < bg < box <
+-- panel and the line steps, so every surface reads as it does in ink.
+for key, col in pairs({
+    dusk = {
+        bg = "101826", panel = "172133", well = "0C1320", box = "121A28",
+        line = "223049", line2 = "2D3D5C",
+        ink = "E6EDF8", dim = "A9B8CD", faint = "7B8CA5",
+        arc = "5B9DF0", arcDeep = "1B3256",
+        btn = "1A2539", btnHover = "213049", steel = "32456A",
+        title = "AFC0D8", chev = "AFC0D8", rule = "223049", hair = "223049",
+        lead = "E6EDF8", leadEdge = "32456A", focus = "5B9DF0", fill = "2E6AB8",
+        sel = "1A3253", word = "E6EDF8", discord = "E6EDF8", head = "1E2A40",
+    },
+    graphite = {
+        bg = "1A1D24", panel = "22262F", well = "15181E", box = "1C1F26",
+        line = "2F343F", line2 = "3A404C",
+        ink = "E9ECF1", dim = "B2B9C4", faint = "848C99",
+        arc = "5B9DF0", arcDeep = "233A58",
+        btn = "262B34", btnHover = "2E333E", steel = "464D5B",
+        title = "B6BFCC", chev = "B6BFCC", rule = "2F343F", hair = "2F343F",
+        lead = "E9ECF1", leadEdge = "464D5B", focus = "5B9DF0", fill = "2E66B0",
+        sel = "233651", word = "E9ECF1", discord = "E9ECF1", head = "2A2F3A",
+    },
+}) do
+    local ink = AT.PALETTES.ink
+    AT.PALETTES[key] = { col = col, look = ink.look, font = ink.font, muted = ink.muted }
+end
+
+-- A colour as { r, g, b } from six hex digits or a table.
+function AT.RGB(v)
+    if type(v) == "string" then
+        return { tonumber(v:sub(1, 2), 16) / 255, tonumber(v:sub(3, 4), 16) / 255,
+            tonumber(v:sub(5, 6), 16) / 255 }
+    end
+    return v
+end
+
+-- A colour as the six hex digits a |c code takes.
+function AT.Hex(c)
+    return ("%02x%02x%02x"):format(math.floor(c[1] * 255 + 0.5),
+        math.floor(c[2] * 255 + 0.5), math.floor(c[3] * 255 + 0.5))
+end
+
+-- A window title: the first word in the accent, the rest in the title's ink.
+function AT.Brand(first, rest)
+    return "|cff" .. AT.Hex(COL.arc) .. first .. "|r|cff" .. AT.Hex(COL.word) .. rest .. "|r"
+end
+
+-- A font file the client will not load fails SetFont, and a font string
+-- without a font cannot take text, so a palette's font is tried first.
+local function FontLoads(path)
+    local fs = AT._fontProbe
+    if not fs then
+        fs = UIParent:CreateFontString(nil, "ARTWORK")
+        fs:Hide()
+        AT._fontProbe = fs
+    end
+    return fs:SetFont(path, 12, "") and true or false
+end
+
+-- Fills the colour and look tables in place, never new ones (files hold them
+-- and their colours in locals), and sets the font. Call it before any window
+-- is built: nothing already drawn repaints. Korean and Chinese clients keep
+-- the game's font, whose glyphs a Latin font lacks.
+function AT.UsePalette(name)
+    local p = AT.PALETTES[name] or AT.PALETTES.classic
+    local base = AT.PALETTES.classic
+    for k, c in pairs(base.col) do
+        local v, t = AT.RGB(p.col[k] or c), COL[k]
+        t[1], t[2], t[3] = v[1], v[2], v[3]
+    end
+    for k in pairs(AT.LOOK) do AT.LOOK[k] = nil end
+    for k, v in pairs(base.look) do AT.LOOK[k] = v end
+    for k, v in pairs(p.look or {}) do AT.LOOK[k] = v end
+    AT.FONT = STANDARD_TEXT_FONT
+    local cjk = { koKR = true, zhCN = true, zhTW = true }
+    if p.font and THEME_ADDON and not cjk[GetLocale()] then
+        local path = "Interface\\AddOns\\" .. THEME_ADDON .. "\\" .. p.font
+        if FontLoads(path) then AT.FONT = path end
+    end
+    AT._muted = {}
+    AT.PALETTE = AT.PALETTES[name] and name or "classic"
+end
+
+-- The font a palette would use here, for drawing a sample of it.
+function AT.PaletteFont(name)
+    local p = AT.PALETTES[name]
+    local cjk = { koKR = true, zhCN = true, zhTW = true }
+    if p and p.font and THEME_ADDON and not cjk[GetLocale()] then
+        local path = "Interface\\AddOns\\" .. THEME_ADDON .. "\\" .. p.font
+        if FontLoads(path) then return path end
+    end
+    return STANDARD_TEXT_FONT
+end
+
+-- A window's finish: "flat", or "soft" (a light top and a shaded foot)
+-- drawn over the whole window. Like the palette, set before a window is
+-- built.
+AT.FINISH = "flat"
+function AT.UseFinish(finish)
+    AT.FINISH = (finish == "soft") and finish or "flat"
+end
+
+-- The finish sits over everything in the window and takes no mouse, so it
+-- shades every surface the same way and never catches a click.
+function AT.DressWindow(p)
+    if AT.FINISH ~= "soft" then return end
+    local o = CreateFrame("Frame", nil, p)
+    o:SetPoint("TOPLEFT", 1, -1)
+    o:SetPoint("BOTTOMRIGHT", -1, 1)
+    o:SetFrameLevel(p:GetFrameLevel() + 500)
+    o:EnableMouse(false)
+    p._atFinish = o
+    local top = o:CreateTexture(nil, "OVERLAY")
+    top:SetTexture(WHITE)
+    top:SetPoint("TOPLEFT"); top:SetPoint("TOPRIGHT")
+    top:SetHeight(220)
+    top:SetGradient("VERTICAL", CreateColor(1, 1, 1, 0), CreateColor(1, 1, 1, 0.05))
+    local foot = o:CreateTexture(nil, "OVERLAY")
+    foot:SetTexture(WHITE)
+    foot:SetPoint("BOTTOMLEFT"); foot:SetPoint("BOTTOMRIGHT")
+    foot:SetHeight(180)
+    foot:SetGradient("VERTICAL", CreateColor(0, 0, 0, 0.10), CreateColor(0, 0, 0, 0))
+    o.top, o.foot = top, foot
+end
+
+-- A category colour (a kind pill, a kind's thumbnail) as the palette shows
+-- it: unchanged in classic; in a muting palette its saturation drops by
+-- the look's mute share with hue and lightness kept, or to the palette's
+-- named value.
+function AT.Mute(c)
+    local k = AT.LOOK.mute
+    if not (k and c) then return c end
+    local key = AT.Hex(c):upper()
+    local m = AT._muted[key]
+    if m then return m end
+    local named = (AT.PALETTES[AT.PALETTE] or {}).muted
+    if named and named[key] then
+        m = AT.RGB(named[key])
+    else
+        local hi = math.max(c[1], c[2], c[3])
+        local lo = math.min(c[1], c[2], c[3])
+        local mid = (hi + lo) / 2
+        m = { mid + (c[1] - mid) * k, mid + (c[2] - mid) * k, mid + (c[3] - mid) * k }
+    end
+    AT._muted[key] = m
+    return m
+end
+
+-- A word in a skinned box painted in its colour by the pill style: an edge
+-- over the box's own fill (edgeA, default 1), or a soft wash with no edge.
+function AT.PaintPill(f, fs, c, edgeA)
+    if AT.LOOK.pill == "soft" then
+        f:SetBackdropColor(c[1], c[2], c[3], 0.14)
+        f:SetBackdropBorderColor(c[1], c[2], c[3], 0)
+    else
+        f:SetBackdropBorderColor(c[1], c[2], c[3], edgeA or 1)
+    end
+    fs:SetTextColor(c[1], c[2], c[3])
+end
 
 -- One physical pixel in a frame's effective UI units. A literal edgeSize = 1
 -- rounds to zero on one side at fractional effective scales, so edges are
@@ -112,10 +327,14 @@ function AT.FitScale(designW, designH)
     return s
 end
 
--- The scale a window gets from the size it was designed at.
+-- The scale a window gets from the size it was designed at. A window made
+-- with scaleH is fitted as if it were at least that tall, so a smaller window
+-- (a picker) draws at the scale of the bigger one it opens from.
 function AT.ScaleFor(w)
     if not w then return AT.Px(UIParent) * (AT.uiScale or 1) end
-    return AT.FitScale(w._designW, w._designH)
+    local h = w._designH
+    if w._scaleH and w._scaleH > h then h = w._scaleH end
+    return AT.FitScale(w._designW, h)
 end
 
 -- Device pixels per UI unit of a frame, a window or any child. Read this, not
@@ -274,7 +493,7 @@ function AT.MakeSmallButton(parent, label, w)
     bevel:SetTexture(WHITE); bevel:SetVertexColor(1, 1, 1, 0.06)
     bevel:SetPoint("TOPLEFT", 1, -1); bevel:SetPoint("TOPRIGHT", -1, -1); bevel:SetHeight(1)
     b.fs = b:CreateFontString(nil, "OVERLAY")
-    b.fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    b.fs:SetFont(AT.FONT, 11, "")
     b.fs:SetPoint("CENTER")
     b.fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     b.fs:SetText(label or "")
@@ -345,7 +564,7 @@ function AT.MakeSwatch(parent, w, h)
         end
         self.tex:SetVertexColor(c[1], c[2], c[3], a or 1)
     end
-    b:SetScript("OnEnter", function() b:SetBackdropBorderColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 1) end)
+    b:SetScript("OnEnter", function() b:SetBackdropBorderColor(COL.focus[1], COL.focus[2], COL.focus[3], 1) end)
     b:SetScript("OnLeave", function() b:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1) end)
     return b
 end
@@ -391,7 +610,7 @@ function AT.MakeChevron(parent)
         a1:SetVertexColor(c[1], c[2], c[3], 1)
         a2:SetVertexColor(c[1], c[2], c[3], 1)
     end
-    arrow:SetDown(true); arrow:SetColor(COL.arc)
+    arrow:SetDown(true); arrow:SetColor(COL.chev)
     return arrow
 end
 
@@ -461,7 +680,7 @@ function AT.MakeDropdown(owner, parent, w, itemsFn, get, set, onSelect)
     local b = CreateFrame("Button", nil, parent, "BackdropTemplate")
     b:SetSize(w or LAY.fieldW, 20); Skin(b, COL.well)
     local vf = b:CreateFontString(nil, "OVERLAY")
-    vf:SetFont(STANDARD_TEXT_FONT, 11, "")
+    vf:SetFont(AT.FONT, 11, "")
     vf:SetPoint("LEFT", 8, 0); vf:SetPoint("RIGHT", -18, 0); vf:SetJustifyH("LEFT")
     -- itemsFn() -> { {value=,text=}, ... }, re-read on every open. The field
     -- is one line: bounded text wraps by default and would spill over the box.
@@ -469,7 +688,7 @@ function AT.MakeDropdown(owner, parent, w, itemsFn, get, set, onSelect)
     vf:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     local arrow = AT.MakeChevron(b)
     arrow:SetPoint("RIGHT", -5, 0)
-    b:SetScript("OnEnter", function() b:SetBackdropBorderColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 1) end)
+    b:SetScript("OnEnter", function() b:SetBackdropBorderColor(COL.focus[1], COL.focus[2], COL.focus[3], 1) end)
     b:SetScript("OnLeave", function() b:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1) end)
 
     -- With no w, the field fits the longest option name plus insets, clamped
@@ -480,7 +699,7 @@ function AT.MakeDropdown(owner, parent, w, itemsFn, get, set, onSelect)
         local fs = AT._measureFS
         if not fs then
             fs = UIParent:CreateFontString(nil, "ARTWORK")
-            fs:SetFont(STANDARD_TEXT_FONT, 11, ""); fs:Hide()
+            fs:SetFont(AT.FONT, 11, ""); fs:Hide()
             AT._measureFS = fs
         end
         local widest = 0
@@ -521,7 +740,7 @@ function AT.MakeDropdown(owner, parent, w, itemsFn, get, set, onSelect)
         local list = CreateFrame("Frame", nil, owner, "BackdropTemplate")
         list:SetFrameLevel(owner:GetFrameLevel() + 30)
         list:SetWidth(b:GetWidth()); list:SetHeight(vis * 20 + 2)
-        Skin(list, COL.panel, COL.arcDeep)
+        Skin(list, COL.panel, COL.focus)
         list:SetPoint("TOPRIGHT", b, "BOTTOMRIGHT", 0, -1)
         list._owner = b
         list:EnableMouse(true); list:EnableMouseWheel(true)
@@ -538,7 +757,7 @@ function AT.MakeDropdown(owner, parent, w, itemsFn, get, set, onSelect)
             ib:SetHighlightTexture(WHITE)
             ib:GetHighlightTexture():SetVertexColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 0.5)
             ib.t = ib:CreateFontString(nil, "OVERLAY")
-            ib.t:SetFont(STANDARD_TEXT_FONT, 11, "")
+            ib.t:SetFont(AT.FONT, 11, "")
             ib.t:SetPoint("LEFT", 8, 0); ib.t:SetPoint("RIGHT", -6, 0); ib.t:SetJustifyH("LEFT")
             ib.t:SetWordWrap(false)
             rows[i] = ib
@@ -585,7 +804,7 @@ function AT.MakeScroll(parent, child)
     Skin(track, COL.well, COL.well)
     local thumb = track:CreateTexture(nil, "OVERLAY")
     thumb:SetTexture(WHITE)
-    thumb:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 0.8)
+    thumb:SetVertexColor(COL.fill[1], COL.fill[2], COL.fill[3], 0.8)
     thumb:SetPoint("TOPLEFT", 0, 0)
     thumb:SetPoint("TOPRIGHT", 0, 0)
     track:Hide()
@@ -633,6 +852,9 @@ function AT.CreateWindow(globalName, opts)
     -- drives this window's own fit and clamp (AT.FitScale).
     p._designW = math.max(minW, opts.w or 460)
     p._designH = math.max(minH, opts.h or 540)
+    -- opts.scaleH: the height the scale is fitted for; the size and resize
+    -- bounds stay as given
+    p._scaleH = opts.scaleH
     p:SetScale(AT.ScaleFor(p))
     AT.windows[#AT.windows + 1] = p
     p:RegisterEvent("UI_SCALE_CHANGED")
@@ -659,11 +881,11 @@ function AT.CreateWindow(globalName, opts)
     bar:SetPoint("TOPLEFT", 1, -1); bar:SetPoint("TOPRIGHT", -1, -1); bar:SetHeight(30)
     Skin(bar, COL.panel)
     local t1 = bar:CreateFontString(nil, "OVERLAY")
-    t1:SetFont(STANDARD_TEXT_FONT, 14, ""); t1:SetPoint("LEFT", 12, 0)
-    t1:SetText(opts.title or "|cff3fc9f2Arc|r|cffd5e2f2 Addon|r")
+    t1:SetFont(AT.FONT, 14, ""); t1:SetPoint("LEFT", 12, 0)
+    t1:SetText(opts.title or AT.Brand("Arc", " Addon"))
     if opts.version then
         local ver = bar:CreateFontString(nil, "OVERLAY")
-        ver:SetFont(STANDARD_TEXT_FONT, 10, "")
+        ver:SetFont(AT.FONT, 10, "")
         ver:SetPoint("LEFT", t1, "RIGHT", 8, -1)
         ver:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
         ver:SetText(opts.version)
@@ -671,7 +893,7 @@ function AT.CreateWindow(globalName, opts)
     local close = CreateFrame("Button", nil, bar, "BackdropTemplate")
     close:SetSize(18, 18); close:SetPoint("RIGHT", -6, 0); Skin(close, COL.well, COL.line2)
     local cx = close:CreateFontString(nil, "OVERLAY")
-    cx:SetFont(STANDARD_TEXT_FONT, 12, ""); cx:SetPoint("CENTER", 0, 0); cx:SetText("x")
+    cx:SetFont(AT.FONT, 12, ""); cx:SetPoint("CENTER", 0, 0); cx:SetText("x")
     cx:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     close:SetScript("OnEnter", function()
         cx:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
@@ -730,6 +952,7 @@ function AT.CreateWindow(globalName, opts)
             if p.RefreshActive then p:RefreshActive() end
         end)
     end
+    AT.DressWindow(p)
     -- Frames are created shown, so a toggle-style opener would close the new
     -- window at once. It starts hidden; the caller shows it.
     p:Hide()
@@ -742,11 +965,35 @@ function AT.AddTabs(p, tabs, pages, y)
     y = y or -34
     p._tabs = {}
     local x = 10
+    local under = AT.LOOK.tabs == "underline"
+    local folder = AT.LOOK.tabs == "folder"
     local function repaint(active)
         for name, d in pairs(p._tabs) do
             local sel = (name == active)
             pages[name]:SetShown(sel)
-            if sel then
+            if under then
+                -- the words on the window, the open one underlined
+                local c = sel and COL.ink or COL.dim
+                d.fs:SetTextColor(c[1], c[2], c[3])
+                d.ul:SetShown(sel)
+                if sel and pages[name].Refresh then pages[name]:Refresh() end
+            elseif folder then
+                -- the open tab joined to its page over the line, the rest words
+                local c = sel and COL.ink or COL.dim
+                d.fs:SetTextColor(c[1], c[2], c[3])
+                if sel then
+                    Skin(d.chip, COL.panel, COL.line2)
+                    local e = d.chip._atEdges
+                    for _, t in pairs(e) do t:Show() end
+                    e.bottom:Hide()
+                    e.top:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
+                    e.top:SetHeight(2)
+                    if pages[name].Refresh then pages[name]:Refresh() end
+                else
+                    Skin(d.chip, { 0, 0, 0, 0 }, COL.line2)
+                    for _, t in pairs(d.chip._atEdges) do t:Hide() end
+                end
+            elseif sel then
                 Skin(d.chip, COL.panel, COL.arc)
                 d.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
                 if pages[name].Refresh then pages[name]:Refresh() end
@@ -762,28 +1009,45 @@ function AT.AddTabs(p, tabs, pages, y)
         local tb = CreateFrame("Button", nil, p, "BackdropTemplate")
         tb:SetHeight(24)
         local fs = tb:CreateFontString(nil, "OVERLAY")
-        fs:SetFont(STANDARD_TEXT_FONT, 12, ""); fs:SetPoint("CENTER"); fs:SetText(name)
+        fs:SetFont(AT.FONT, 12, ""); fs:SetPoint("CENTER"); fs:SetText(name)
         tb:SetWidth(math.max(70, (fs:GetStringWidth() or 40) + 22))
         tb:SetPoint("TOPLEFT", x, y); x = x + tb:GetWidth() + 3
         tb:SetScript("OnClick", function() AT.CloseDropdown(); select(name) end)
         tb:SetScript("OnEnter", function()
             if p._activeTab ~= name then
-                tb:SetBackdropBorderColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 1)
+                if not under then
+                    tb:SetBackdropBorderColor(COL.focus[1], COL.focus[2], COL.focus[3], 1)
+                end
                 fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
             end
         end)
         tb:SetScript("OnLeave", function()
             if p._activeTab ~= name then
-                tb:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1)
+                if not under then
+                    tb:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1)
+                end
                 fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
             end
         end)
         p._tabs[name] = { chip = tb, fs = fs }
+        if under then
+            local ul = tb:CreateTexture(nil, "OVERLAY")
+            ul:SetTexture(WHITE)
+            ul:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
+            ul:SetPoint("BOTTOMLEFT", 0, 0); ul:SetPoint("BOTTOMRIGHT", 0, 0)
+            ul:SetHeight(2)
+            ul:Hide()
+            p._tabs[name].ul = ul
+        end
     end
     local line = p:CreateTexture(nil, "ARTWORK")
     line:SetTexture(WHITE)
-    line:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
-    line:SetPoint("TOPLEFT", 10, y - 25); line:SetPoint("TOPRIGHT", -10, y - 25)
+    -- folder tabs: the line runs under the tabs' last row, so the open one
+    -- (a child, drawn over it) breaks it where it joins its page
+    local lc = folder and COL.line2 or COL.rule
+    line:SetVertexColor(lc[1], lc[2], lc[3], 1)
+    local ly = folder and (y - 23) or (y - 25)
+    line:SetPoint("TOPLEFT", 10, ly); line:SetPoint("TOPRIGHT", -10, ly)
     line:SetHeight(1)
     p.SelectTab = select
     function p:RefreshActive()
@@ -825,7 +1089,7 @@ end
 
 function AT.RowLabel(row, text)
     local fs = row:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 12, ""); fs:SetPoint("LEFT", 10, 0)
+    fs:SetFont(AT.FONT, 12, ""); fs:SetPoint("LEFT", 10, 0)
     fs:SetWordWrap(false); fs:SetJustifyH("LEFT")
     fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3]); fs:SetText(text)
     return fs
@@ -839,9 +1103,9 @@ function AT.NewChip(parent, text)
     c:SetHeight(14)
     Skin(c, { 0, 0, 0, 0 }, COL.arc)
     c.fs = c:CreateFontString(nil, "OVERLAY")
-    c.fs:SetFont(STANDARD_TEXT_FONT, 8, "")
+    c.fs:SetFont(AT.FONT, 8, "")
     c.fs:SetPoint("CENTER", 0, 0)
-    c.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    AT.PaintPill(c, c.fs, COL.arc)
     function c:SetText(t)
         t = t or "NEW"
         local fs = self.fs
@@ -877,14 +1141,36 @@ function AT.TabRow(parent)
     strip._line = strip._lineF:CreateTexture(nil, "OVERLAY")
     strip._line:SetTexture(WHITE)
     strip._line:SetAllPoints()
-    strip._line:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 0.9)
+    -- folder tabs sit on the brighter line their open tab's sides share
+    local lc = (AT.LOOK.tabs == "folder") and COL.line2 or COL.rule
+    strip._line:SetVertexColor(lc[1], lc[2], lc[3], (AT.LOOK.tabs == "chip") and 0.9 or 1)
     local function Edge(t)
         local e = t:CreateTexture(nil, "OVERLAY")
         e:SetTexture(WHITE)
         return e
     end
+    -- Underline tabs keep every chip's size, place and level but draw no fill
+    -- or edges: the words sit on the page, the open one over a 2px accent bar.
+    local function Bare(tb, on)
+        tb.bg:Hide()
+        for _, e in ipairs({ tb.eL, tb.eT, tb.eR, tb.eB }) do e:Hide() end
+        if not tb.ul then
+            tb.ul = tb:CreateTexture(nil, "OVERLAY")
+            tb.ul:SetTexture(WHITE)
+            tb.ul:SetPoint("BOTTOMLEFT", 0, 0)
+            tb.ul:SetPoint("BOTTOMRIGHT", 0, 0)
+            tb.ul:SetHeight(2)
+        end
+        tb.ul:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
+        tb.ul:SetShown(on)
+    end
     local function PaintIdle(tb)
         if tb._active then return end
+        if AT.LOOK.tabs == "underline" or AT.LOOK.tabs == "folder" then
+            Bare(tb, false)
+            tb.fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+            return
+        end
         tb.bg:SetVertexColor(COL.well[1], COL.well[2], COL.well[3], 1)
         tb.fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
         for _, e in ipairs({ tb.eL, tb.eT, tb.eR, tb.eB }) do
@@ -935,7 +1221,7 @@ function AT.TabRow(parent)
             if tb then
                 if name then
                     tb:SetHeight(chipH)
-                    tb.fs:SetFont(STANDARD_TEXT_FONT, fontSize or 12, "")
+                    tb.fs:SetFont(AT.FONT, fontSize or 12, "")
                     tb.fs:SetText(name)
                     -- A FontString can measure 0 right after SetFont:
                     -- estimate, and count it as a guess.
@@ -976,7 +1262,23 @@ function AT.TabRow(parent)
                     tb:SetFrameLevel(self:GetFrameLevel() + (on and 3 or 1))
                     -- over the chip's own fill whatever level the chip took
                     if tb._badged then tb.badge:SetFrameLevel(tb:GetFrameLevel() + 1) end
-                    if on then
+                    if on and AT.LOOK.tabs == "underline" then
+                        Bare(tb, true)
+                        tb.fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+                    elseif on and AT.LOOK.tabs == "folder" then
+                        -- a tab joined to its page: the page's fill under it,
+                        -- line2 sides, a 2px accent top and no bottom edge
+                        if tb.ul then tb.ul:Hide() end
+                        tb.bg:SetVertexColor(open[1], open[2], open[3], 1)
+                        tb.bg:Show()
+                        tb.fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+                        local hw = AT.Hairline(tb)
+                        tb.eL:SetWidth(hw); tb.eR:SetWidth(hw); tb.eT:SetHeight(2)
+                        tb.eL:SetVertexColor(COL.line2[1], COL.line2[2], COL.line2[3], 1); tb.eL:Show()
+                        tb.eR:SetVertexColor(COL.line2[1], COL.line2[2], COL.line2[3], 1); tb.eR:Show()
+                        tb.eT:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 1); tb.eT:Show()
+                        tb.eB:Hide()
+                    elseif on then
                         -- open bottom: fill continuous with whatever sits
                         -- under the line, arc side/top edges
                         tb.bg:SetVertexColor(open[1], open[2], open[3], 1)
@@ -994,8 +1296,10 @@ function AT.TabRow(parent)
                     end)
                     tb:SetScript("OnEnter", function(s)
                         if not s._active then
-                            for _, e in ipairs({ s.eL, s.eT, s.eR, s.eB }) do
-                                e:SetVertexColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 1)
+                            if AT.LOOK.tabs == "chip" then
+                                for _, e in ipairs({ s.eL, s.eT, s.eR, s.eB }) do
+                                    e:SetVertexColor(COL.focus[1], COL.focus[2], COL.focus[3], 1)
+                                end
                             end
                             s.fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
                         end
@@ -1065,16 +1369,16 @@ function AT.Section(pg, text, opts)
         -- A collapsible section is a real box: something you open and shut
         -- has to show what it contains.
         local bar = CreateFrame("Button", nil, pg, "BackdropTemplate")
-        bar:SetHeight(LAY.hdr); Skin(bar, COL.panel, COL.line)
+        bar:SetHeight(LAY.hdr); Skin(bar, COL.head, COL.line)
         local arrow = AT.MakeChevron(bar)
         arrow:SetPoint("LEFT", 7, 0)
         local title = bar:CreateFontString(nil, "OVERLAY")
-        title:SetFont(STANDARD_TEXT_FONT, 11, "")
+        title:SetFont(AT.FONT, 11, "")
         title:SetPoint("LEFT", arrow, "RIGHT", 6, 0)
-        title:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3]); title:SetText(text)
+        title:SetTextColor(COL.title[1], COL.title[2], COL.title[3]); title:SetText(text)
         local rule = bar:CreateTexture(nil, "OVERLAY")
         rule:SetTexture(WHITE)
-        rule:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
+        rule:SetVertexColor(COL.rule[1], COL.rule[2], COL.rule[3], 1)
         rule:SetPoint("BOTTOMLEFT", 1, 1); rule:SetPoint("BOTTOMRIGHT", -1, 1)
         rule:SetHeight(1); rule:Hide()
         -- the body is a real container while it is open
@@ -1082,10 +1386,10 @@ function AT.Section(pg, text, opts)
         sec.hit, sec.title, sec.arrow, sec.rule = bar, title, arrow, rule
         sec.boxed = true
         local function paint(hot)
-            local c = hot and COL.ink or COL.arc
+            local c = hot and COL.ink or COL.title
             title:SetTextColor(c[1], c[2], c[3])
-            arrow:SetColor(c)
-            local f = hot and COL.btnHover or COL.panel
+            arrow:SetColor(hot and COL.ink or COL.chev)
+            local f = hot and COL.btnHover or COL.head
             bar:SetBackdropColor(f[1], f[2], f[3], 1)
         end
         bar:SetScript("OnEnter", function() paint(true) end)
@@ -1124,17 +1428,30 @@ function AT.Section(pg, text, opts)
         if sec.store and (sec.store.secCollapsed or {})[text] then
             sec.collapsed, sec.f = true, 0
         end
+    elseif titled and AT.LOOK.sections == "boxed" then
+        -- Every titled section a box: a header band over a bordered body,
+        -- the collapsible section's look without its fold. Same geometry as
+        -- the plain title and hairline, so nothing on the page moves.
+        local band = CreateFrame("Frame", nil, pg, "BackdropTemplate")
+        band:SetHeight(LAY.hdr); Skin(band, COL.head, COL.line)
+        local title = band:CreateFontString(nil, "OVERLAY")
+        title:SetFont(AT.FONT, 11, "")
+        title:SetPoint("LEFT", 10, 0)
+        title:SetTextColor(COL.title[1], COL.title[2], COL.title[3]); title:SetText(text)
+        Skin(box, COL.box, COL.line)
+        sec.band, sec.title = band, title
+        sec.boxed = true
     elseif titled then
         local t = pg:CreateFontString(nil, "OVERLAY")
-        t:SetFont(STANDARD_TEXT_FONT, 10, "")
-        t:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+        t:SetFont(AT.FONT, 10, "")
+        t:SetTextColor(COL.title[1], COL.title[2], COL.title[3])
         t:SetText(string.upper(text))
         sec.title = t
         -- A 10px title alone doesn't read as a boundary, so a hairline under
         -- it spans the section and gives the block a visible top edge.
         local hr = pg:CreateTexture(nil, "ARTWORK")
         hr:SetTexture(WHITE)
-        hr:SetVertexColor(COL.line2[1], COL.line2[2], COL.line2[3], 1)
+        hr:SetVertexColor(COL.hair[1], COL.hair[2], COL.hair[3], 1)
         sec.hr = hr
         -- No buttons on a section title: a header sits right under the
         -- previous section's content, so a button there has no clear owner.
@@ -1161,7 +1478,7 @@ function AT.MakeScrollable(pg)
     Skin(track, COL.well, COL.well)
     local thumb = track:CreateTexture(nil, "OVERLAY")
     thumb:SetTexture(WHITE)
-    thumb:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 0.8)
+    thumb:SetVertexColor(COL.fill[1], COL.fill[2], COL.fill[3], 0.8)
     thumb:SetPoint("TOPLEFT", 0, 0)
     thumb:SetPoint("TOPRIGHT", 0, 0)
     track:Hide()
@@ -1417,6 +1734,7 @@ function AT.LayoutPage(pg)
             pairTopY, pairBottomY = nil, nil
         elseif sec.visibleFn and not sec.visibleFn() then
             if sec.hit then sec.hit:Hide() end
+            if sec.band then sec.band:Hide() end
             if sec.title then sec.title:Hide() end
             if sec.hr then sec.hr:Hide() end
             sec.box:Hide()
@@ -1431,6 +1749,7 @@ function AT.LayoutPage(pg)
             end
             if not anyVis then
                 if sec.hit then sec.hit:Hide() end
+                if sec.band then sec.band:Hide() end
                 if sec.title then sec.title:Hide() end
                 if sec.hr then sec.hr:Hide() end
                 sec.box:Hide()
@@ -1456,6 +1775,9 @@ function AT.LayoutPage(pg)
                 if sec.title then sec.title:Show() end
                 sec.arrow:SetDown(not sec.collapsed)
                 sec.rule:SetShown(sec.collapsed)
+            elseif sec.band then
+                span(sec.band, topY); sec.band:Show(); hdrH = LAY.hdr
+                sec.title:Show()
             elseif sec.title then
                 sec.title:ClearAllPoints()
                 if side == "R" then sec.title:SetPoint("TOPLEFT", pg, "TOP", 12, topY - 2)
@@ -1539,14 +1861,14 @@ function AT.Card(pg, spec)
     local cb = AT.MakeCheckbox(head)
     cb:SetPoint("LEFT", 8, 0)
     local title = head:CreateFontString(nil, "OVERLAY")
-    title:SetFont(STANDARD_TEXT_FONT, 14, "")
+    title:SetFont(AT.FONT, 14, "")
     title:SetPoint("LEFT", cb, "RIGHT", 8, 0)
     title:SetJustifyH("LEFT")
     title:SetWordWrap(false)
     title:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     title:SetText(spec.title or "")
     local note = head:CreateFontString(nil, "OVERLAY")
-    note:SetFont(STANDARD_TEXT_FONT, 11, "")
+    note:SetFont(AT.FONT, 11, "")
     note:SetPoint("RIGHT", -8, 0)
     note:SetJustifyH("RIGHT")
     note:SetWordWrap(false)
@@ -1659,13 +1981,13 @@ function AT.RowInput(pg, label, get, set, visibleFn, desc, hint, live)
     -- edge where the field drifts away from its label.
     local box = CreateFrame("EditBox", nil, row, "BackdropTemplate")
     box:SetSize(160, 18); box:SetPoint("LEFT", row._ctrlX, 0); Skin(box, COL.well)
-    box:SetFont(STANDARD_TEXT_FONT, 11, ""); box:SetTextInsets(6, 6, 0, 0)
+    box:SetFont(AT.FONT, 11, ""); box:SetTextInsets(6, 6, 0, 0)
     box:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3]); box:SetAutoFocus(false)
     box:SetText(get() or "")
     local hintFS
     if hint then
         hintFS = box:CreateFontString(nil, "OVERLAY")
-        hintFS:SetFont(STANDARD_TEXT_FONT, 11, "")
+        hintFS:SetFont(AT.FONT, 11, "")
         hintFS:SetPoint("LEFT", 6, 0); hintFS:SetPoint("RIGHT", -6, 0)
         hintFS:SetJustifyH("LEFT")
         hintFS:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
@@ -1685,7 +2007,7 @@ function AT.RowInput(pg, label, get, set, visibleFn, desc, hint, live)
     local function commit() set(box:GetText() or ""); box:SetText(get() or ""); syncHint() end
     box:SetScript("OnEnterPressed", function() box:ClearFocus() end)
     box:SetScript("OnEscapePressed", function() box:SetText(get() or ""); box:ClearFocus() end)
-    box:SetScript("OnEditFocusGained", function() box:SetBackdropBorderColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 1) end)
+    box:SetScript("OnEditFocusGained", function() box:SetBackdropBorderColor(COL.focus[1], COL.focus[2], COL.focus[3], 1) end)
     box:SetScript("OnEditFocusLost", function() commit(); box:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1) end)
     row._colLabel, row._colCtrl = lbl, box
     row._sync = function()
@@ -1753,6 +2075,19 @@ function AT.RowColor(pg, label, get, set, visibleFn, opts)
     return row
 end
 
+-- A palette whose look has sliderFill fills a skinned slider's track from its left
+-- edge to the thumb's middle, under the thumb. Call it after the thumb is set.
+function AT.SliderFill(s)
+    if s.fill or not AT.LOOK.sliderFill then return s.fill end
+    local fill = s:CreateTexture(nil, "BORDER", nil, 1)
+    fill:SetTexture(WHITE)
+    fill:SetVertexColor(COL.fill[1], COL.fill[2], COL.fill[3], 1)
+    fill:SetPoint("TOPLEFT", s, "TOPLEFT", 1, -1)
+    fill:SetPoint("BOTTOMRIGHT", s:GetThumbTexture(), "BOTTOM", 0, 1)
+    s.fill = fill
+    return fill
+end
+
 -- A fixed, Blizzard-length slider with a [-][value][+] stepper after it.
 -- minV and maxV may be functions, re-read on every sync, so the range can
 -- follow the record.
@@ -1799,17 +2134,17 @@ function AT.RowSlider(pg, label, get, set, minV, maxV, step, isPct, visibleFn)
         local b = CreateFrame("Button", nil, row, "BackdropTemplate")
         b:SetSize(14, 14); Skin(b, COL.well)
         local g = b:CreateFontString(nil, "OVERLAY")
-        g:SetFont(STANDARD_TEXT_FONT, 11, ""); g:SetPoint("CENTER")
-        g:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3]); g:SetText(glyph)
+        g:SetFont(AT.FONT, 11, ""); g:SetPoint("CENTER")
+        g:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3]); g:SetText(glyph)
         b:SetScript("OnClick", function() AT.CloseDropdown(); setVal((get() or (bounds())) + delta) end)
-        b:SetScript("OnEnter", function() b:SetBackdropBorderColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 1) end)
+        b:SetScript("OnEnter", function() b:SetBackdropBorderColor(COL.focus[1], COL.focus[2], COL.focus[3], 1) end)
         b:SetScript("OnLeave", function() b:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1) end)
         return b
     end
     local plus = arrow("+", step)
     local minus = arrow("-", -step)
     box:SetSize(38, 16); Skin(box, COL.well)
-    box:SetFont(STANDARD_TEXT_FONT, 11, "")
+    box:SetFont(AT.FONT, 11, "")
     box:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     box:SetJustifyH("CENTER"); box:SetAutoFocus(false)
     local function commitTyped(self)
@@ -1829,6 +2164,7 @@ function AT.RowSlider(pg, label, get, set, minV, maxV, step, isPct, visibleFn)
     s:SetThumbTexture(WHITE)
     local th = s:GetThumbTexture()
     th:SetSize(8, 10); th:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
+    AT.SliderFill(s)
     s:SetMinMaxValues(bounds()); s:SetValueStep(step); s:SetObeyStepOnDrag(true)
     s:SetScript("OnValueChanged", function(_, v)
         if settingUp then return end
@@ -1900,7 +2236,7 @@ function AT.RowDivider(pg, visibleFn)
     local row = AT.AddRow(pg, 9, visibleFn)
     local line = row:CreateTexture(nil, "ARTWORK")
     line:SetTexture(WHITE)
-    line:SetVertexColor(COL.line2[1], COL.line2[2], COL.line2[3], 1)
+    line:SetVertexColor(COL.hair[1], COL.hair[2], COL.hair[3], 1)
     line:SetPoint("LEFT", 12, 0)
     line:SetPoint("RIGHT", -12, 0)
     line:SetHeight(1)
@@ -1911,7 +2247,7 @@ end
 function AT.RowDesc(pg, text, h, visibleFn)
     local row = AT.AddRow(pg, h or LAY.descH, visibleFn)
     local fs = row:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    fs:SetFont(AT.FONT, 11, "")
     fs:SetPoint("TOPLEFT", 10, -2)
     fs:SetJustifyH("LEFT"); fs:SetJustifyV("TOP")
     fs:SetWordWrap(true)
@@ -1943,10 +2279,10 @@ function AT.AddDiscordFooter(p, globalName)
     local b = CreateFrame("Button", nil, p, "BackdropTemplate")
     b:SetSize(84, 20); b:SetPoint("BOTTOMLEFT", 10, 9); Skin(b, COL.well)
     local fs = b:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 11, ""); fs:SetPoint("CENTER")
-    fs:SetText("|cff7289DADiscord|r")
+    fs:SetFont(AT.FONT, 11, ""); fs:SetPoint("CENTER")
+    fs:SetText("|cff" .. AT.Hex(COL.discord):upper() .. "Discord|r")
     local hint = p:CreateFontString(nil, "OVERLAY")
-    hint:SetFont(STANDARD_TEXT_FONT, 11, "")
+    hint:SetFont(AT.FONT, 11, "")
     hint:SetPoint("LEFT", b, "RIGHT", 10, 0)
     hint:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     hint:SetText("Questions or help? Join the Arc UI Discord")
@@ -1962,12 +2298,12 @@ function AT.AddDiscordFooter(p, globalName)
             d:SetSize(300, 70); d:SetFrameStrata("FULLSCREEN_DIALOG"); d:SetToplevel(true)
             Skin(d, COL.panel, COL.arc)
             local t = d:CreateFontString(nil, "OVERLAY")
-            t:SetFont(STANDARD_TEXT_FONT, 12, ""); t:SetPoint("TOP", 0, -10)
+            t:SetFont(AT.FONT, 12, ""); t:SetPoint("TOP", 0, -10)
             t:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
             t:SetText("Press Ctrl+C to copy, then open it in your browser")
             local eb = CreateFrame("EditBox", nil, d, "BackdropTemplate")
             eb:SetSize(272, 22); eb:SetPoint("TOP", 0, -32); Skin(eb, COL.well)
-            eb:SetFont(STANDARD_TEXT_FONT, 12, ""); eb:SetTextInsets(6, 6, 0, 0)
+            eb:SetFont(AT.FONT, 12, ""); eb:SetTextInsets(6, 6, 0, 0)
             eb:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3]); eb:SetAutoFocus(false)
             eb:SetScript("OnEscapePressed", function() d:Hide() end)
             eb:SetScript("OnEnterPressed", function() d:Hide() end)

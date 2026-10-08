@@ -64,7 +64,7 @@ function Options.SwingColorRows(pg, ctx, vis, owner)
             "e.g. 78")
         -- the spell the ID stands for, beside the box
         local nameFS = idRow:CreateFontString(nil, "OVERLAY")
-        nameFS:SetFont(STANDARD_TEXT_FONT, 11, "")
+        nameFS:SetFont(NS.AT.FONT, 11, "")
         nameFS:SetPoint("LEFT", idRow._colCtrl, "RIGHT", 8, 0)
         nameFS:SetPoint("RIGHT", idRow, "RIGHT", -10, 0)
         nameFS:SetJustifyH("LEFT")
@@ -74,7 +74,7 @@ function Options.SwingColorRows(pg, ctx, vis, owner)
         idRow._sync = function()
             boxSync()
             local r = Rule(i)
-            local nm = (r and r.id and C_Spell and C_Spell.GetSpellName) and C_Spell.GetSpellName(r.id)
+            local nm = (r and r.id and C_Spell and C_Spell.GetSpellName) and C_Spell.GetSpellName(r.id) -- raw-id: the typed spell, for the editor's words
             if (issecretvalue and issecretvalue(nm)) or type(nm) ~= "string" then nm = "" end
             nameFS:SetText(nm)
         end

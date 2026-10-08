@@ -82,7 +82,7 @@ function IS.AddRows(pg, owner, addState, vis, onPick)
         b.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         b.tex:SetTexture(C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(s.art) or 134400)
         function b.Edge(hot)
-            local c = (addState.itemSet == s.key and COL.arc) or (hot and COL.arcDeep) or COL.line
+            local c = (addState.itemSet == s.key and COL.arc) or (hot and COL.focus) or COL.line
             b:SetBackdropBorderColor(c[1], c[2], c[3], 1)
         end
         b:SetScript("OnEnter", function()

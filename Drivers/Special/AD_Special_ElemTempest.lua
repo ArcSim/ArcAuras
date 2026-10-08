@@ -71,7 +71,7 @@ local function CreditProc(snapDeck)
 end
 
 local function GetMaelstromCost(spellID)
-    local costs = C_Spell and C_Spell.GetSpellPowerCost and C_Spell.GetSpellPowerCost(spellID)
+    local costs = C_Spell and C_Spell.GetSpellPowerCost and C_Spell.GetSpellPowerCost(spellID) -- raw-id: the cast the game reports
     if type(costs) ~= "table" then return 0 end
     for _, c in ipairs(costs) do
         if c.type == MAELSTROM_POWER then return tonumber(SP.Plain(c.cost)) or 0 end

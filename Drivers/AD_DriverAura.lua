@@ -154,81 +154,18 @@ local function FilterForLane(d, lane)
 end
 Driver.FilterForLane = FilterForLane
 
--- the tracked ids in order, primary first, deduped, plain positive numbers
-local function SpellIDList(d)
-    local out, seen = {}, {}
-    local function add(v)
-        v = tonumber(v)
-        if v and v > 0 and not seen[v] then
-            seen[v] = true
-            out[#out + 1] = v
-        end
-    end
-    d = d or {}
-    add(d.spellID)
-    if type(d.spellIDs) == "table" then
-        for _, v in ipairs(d.spellIDs) do add(v) end
-    end
-    return out
-end
+-- The aura entry point lives in the Store (ONE RESOLVE PER QUESTION) so every
+-- aura reader shares it: the typed IDs (AuraIDList), and with Follow my rank
+-- your rank of each (AuraRank), never an override.
+local SpellIDList = Store.AuraIDList
 Driver.SpellIDList = SpellIDList
-
--- Follow my rank (Forever; on unless driver.followRank is false): ranks are
--- unrelated IDs that share only a name, so the rank you know of each tracked
--- spell is watched too. A spell you know no rank of, or a secret answer, adds
--- nothing. Answers are kept until SPELLS_CHANGED.
-local rankOf = {}   -- [id] = your rank of that spell, false for none
-local function KnownRank(id)
-    local v = rankOf[id]
-    if v ~= nil then return v or nil end
-    local CS = C_Spell
-    if not (CS and CS.GetSpellName and CS.GetSpellIDForSpellIdentifier) then return nil end
-    local nm = CS.GetSpellName(id)
-    if issecretvalue and issecretvalue(nm) then return nil end
-    local top = (type(nm) == "string" and nm ~= "") and CS.GetSpellIDForSpellIdentifier(nm) or nil
-    if issecretvalue and issecretvalue(top) then return nil end
-    if type(top) ~= "number" or top <= 0 then
-        top = false
-    elseif top ~= id then
-        local known = Store.KnowsSpell(top, true)
-        if known == nil then return nil end
-        if not known then top = false end
-    end
-    rankOf[id] = top
-    return top or nil
-end
-Driver.KnownRank = KnownRank
-
--- The ids the game is asked to watch: the tracked ones, then your rank of
--- each while the record follows your rank. It only ever adds, so an icon that
--- lists several ranks keeps them all.
-local function TrackedIDs(d)
-    local ids = SpellIDList(d)
-    if not (NS.IsForever == true and type(d) == "table" and d.followRank ~= false) then return ids end
-    local out, seen = {}, {}
-    for _, id in ipairs(ids) do
-        seen[id] = true
-        out[#out + 1] = id
-    end
-    for _, id in ipairs(ids) do
-        local v = KnownRank(id)
-        if v and not seen[v] then
-            seen[v] = true
-            out[#out + 1] = v
-        end
-    end
-    return out
-end
+Driver.KnownRank = Store.AuraRank
+local TrackedIDs = Store.TrackedAuraIDs
 Driver.TrackedIDs = TrackedIDs
 
 -- Every tracked id on the one button. No ids gets the never-matching id 0,
 -- never an empty set: a HELPFUL slot with no id filter shows an arbitrary buff.
-local function IncludeMap(d)
-    local m = {}
-    for _, id in ipairs(TrackedIDs(d)) do m[id] = true end
-    if next(m) == nil then m[0] = true end
-    return m
-end
+local IncludeMap = Store.AuraIncludeMap
 Driver.IncludeMap = IncludeMap
 
 -- An id map as a comparable string. A container rebuilds on every candidate
@@ -253,7 +190,7 @@ Driver.FilterSig = FilterSig
 local function GlowSpellGroups(d)
     local out, byName = {}, {}
     for _, id in ipairs(SpellIDList(d)) do
-        local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+        local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: the typed aura's own name, a pick's label
         local key = name or ("#" .. id)
         local g = byName[key]
         if g then
@@ -364,9 +301,8 @@ local function LaneIDs(rec, slot, row)
     local m, n = {}, 0
     local pick = tonumber(R("activeGlowFor")) or 0
     if pick > 0 then
-        local want = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(pick)
         for _, id in ipairs(ids) do
-            if id == pick or (want ~= nil and C_Spell.GetSpellName(id) == want) then
+            if Store.SameAura(pick, id) then
                 m[id] = true
                 n = n + 1
             end
@@ -490,6 +426,9 @@ local function ArmTargetSwapRefresh()
             end
         end
         Driver.SyncUnitAlpha(unit)
+        -- the bar glows' lanes on that unit (Bars\AD_BarGlow.lua)
+        local BG = NS.Bars and NS.Bars.Glow
+        if BG and BG.SyncUnit then BG.SyncUnit(unit) end
     end
     OnIfValid("PLAYER_TARGET_CHANGED", "adaura_swap", function() Refresh("target") end)
     OnIfValid("PLAYER_FOCUS_CHANGED", "adaura_swap", function() Refresh("focus") end)
@@ -886,7 +825,8 @@ Driver.IsAccessible = IsAccessible
 -- 12.1.0 skips the spell-ID filter on a debuff of a unit you can assist and on
 -- a buff of one you cannot, then shows whatever aura comes first (12.1.5 shows
 -- nothing there). Such a target or focus lane stays hidden until the unit turns.
-local function LaneBlind(unit, harmful, rec)
+-- d: the aura shape the lane tracks (a bar glow's own, Bars\AD_BarGlow.lua).
+function Driver.LaneBlindFor(unit, harmful, d)
     if not NS.OldAuraEngine or (unit ~= "target" and unit ~= "focus") then return false end
     if not (UnitExists and UnitCanAssist) then return false end
     local on = UnitExists(unit)
@@ -894,7 +834,10 @@ local function LaneBlind(unit, harmful, rec)
     local assist = UnitCanAssist("player", unit, true, true)
     if issecretvalue and issecretvalue(assist) then return false end
     if (assist == true) ~= (harmful == true) then return false end
-    return not Driver.IDsNeverSecret(ShapeFor(rec) or {})
+    return not Driver.IDsNeverSecret(d or {})
+end
+local function LaneBlind(unit, harmful, rec)
+    return Driver.LaneBlindFor(unit, harmful, ShapeFor(rec))
 end
 Driver.LaneBlind = LaneBlind
 
@@ -1245,7 +1188,7 @@ end)
 local followSig = {}   -- [record id] = the followed ids last seen
 local FOLLOW_BARS = { aura = true, text = true, texture = true }
 OnIfValid("SPELLS_CHANGED", "adaura_rank", function()
-    wipe(rankOf)
+    wipe(Store.auraRankOf)
     if NS.IsForever ~= true then return end
     Store.EachRecord(function(id, rec)
         local d

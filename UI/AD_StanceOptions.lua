@@ -60,7 +60,7 @@ local function SetPick(r, v, refresh)
     local sid = tonumber(v)
     if sid and sid > 0 then
         sid = math.floor(sid)
-        if d.spellID == sid then return end
+        if d.spellID == sid then return end -- raw-id: an unchanged pick, not a match
         d.spellID = sid
         local D = Driver()
         local nm = D and D.Name(sid)

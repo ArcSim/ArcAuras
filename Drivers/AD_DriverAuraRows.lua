@@ -263,10 +263,9 @@ function AR.LaneIDs(rec, slot, pieceIDs)
     local suf = (slot > 1) and tostring(slot) or ""
     local pick = tonumber(Store.Resolve(rec, "auraActive", "activeGlowFor" .. suf)) or 0
     if pick <= 0 then return pieceIDs end
-    local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(pick)
     local m, n = {}, 0
     for id in pairs(pieceIDs) do
-        if id == pick or (name ~= nil and C_Spell.GetSpellName(id) == name) then
+        if Store.SameAura(pick, id) then
             m[id] = true
             n = n + 1
         end

@@ -21,7 +21,7 @@ local function IconName(e)
     if e.kind == "item" then
         return (C_Item.GetItemNameByID and C_Item.GetItemNameByID(e.id)) or ("Item " .. e.id)
     end
-    return (C_Spell.GetSpellName and C_Spell.GetSpellName(e.id)) or ("Spell " .. e.id)
+    return (C_Spell.GetSpellName and C_Spell.GetSpellName(e.id)) or ("Spell " .. e.id) -- raw-id: a bar being imported
 end
 
 -- Every spell/item icon already in a layout, free or in a group: what the
@@ -138,7 +138,7 @@ local function MakeCell(parent, row, onToggle)
     if e.kind == "item" then
         b.tex:SetTexture((C_Item.GetItemIconByID and C_Item.GetItemIconByID(e.id)) or 134400)
     else
-        b.tex:SetTexture((C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(e.id)) or 134400)
+        b.tex:SetTexture((C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(e.id)) or 134400) -- raw-id: a bar being imported
     end
     b.cb = AT.MakeCheckbox(b)
     b.cb:SetPoint("BOTTOMRIGHT", 2, -2)
@@ -159,7 +159,7 @@ local function MakeCell(parent, row, onToggle)
         if e.kind == "item" and GameTooltip.SetItemByID then
             GameTooltip:SetItemByID(e.id)
         elseif GameTooltip.SetSpellByID then
-            GameTooltip:SetSpellByID(e.id)
+            GameTooltip:SetSpellByID(e.id) -- raw-id: a bar being imported
         end
         if row.tracked then
             GameTooltip:AddLine("Already in this layout", COL.dim[1], COL.dim[2], COL.dim[3])
@@ -201,7 +201,7 @@ local function OpenPicker(rows, onCreate)
     if BI._win then BI._win:Hide() end
     local win = AT.CreateWindow(nil, {
         w = 460, h = 520, minW = 420, minH = 320, resizable = false,
-        title = "|cff3fc9f2From|r|cffd5e2f2 Your Action Bars|r",
+        title = AT.Brand("From", " Your Action Bars"),
     })
     BI._win = win
     local pg = AT.NewPage(win)
@@ -241,7 +241,7 @@ local function OpenPicker(rows, onCreate)
     end)
     createBtn = AT.MakeSmallButton(btnRow, "Create", 120)
     createBtn:SetPoint("RIGHT", -10, 0)
-    createBtn.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    createBtn.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     createBtn:SetScript("OnClick", function()
         AT.CloseDropdown()
         onCreate(rows)

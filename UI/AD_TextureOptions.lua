@@ -39,7 +39,7 @@ local function ParseSpell(text)
 end
 
 local function SpellName(id)
-    local nm = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+    local nm = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: the typed spell, for the editor's words
     if (issecretvalue and issecretvalue(nm)) or type(nm) ~= "string" then return "" end
     return nm
 end
@@ -64,7 +64,7 @@ end
 function TPO.ArtOf(v, spellID)
     v = tostring(v or "")
     if v ~= "" then return tonumber(v) or v end
-    local icon = spellID and C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(spellID)
+    local icon = spellID and C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(spellID) -- raw-id: the picker's preview of a typed spell
     if icon ~= nil and not (issecretvalue and issecretvalue(icon)) then return icon end
     return 134400
 end
@@ -86,7 +86,7 @@ end
 function Options.TextureTabs(rec)
     local tabs = { "Tracking" }
     if rec.driver and rec.driver.source == "rules" then tabs[#tabs + 1] = "Triggers" end
-    for _, t in ipairs({ "Appearance", "Show & Hide", "Position", "Load Conditions" }) do tabs[#tabs + 1] = t end
+    for _, t in ipairs({ "Appearance", "Conditions", "Position", "Load Conditions" }) do tabs[#tabs + 1] = t end
     return tabs
 end
 
@@ -101,7 +101,7 @@ function TPO.BuildPicker()
     local AT, COL = NS.AT, NS.AT.COL
     local win = AT.CreateWindow("ArcAurasPicturePicker", {
         w = 600, h = 560, minW = 420, minH = 360, maxW = 1400, maxH = 1200,
-        title = "|cff3fc9f2Choose|r|cffd5e2f2 a Picture|r",
+        title = NS.AT.Brand("Choose", " a Picture"),
     })
     local body = CreateFrame("Frame", nil, win)
     body:SetPoint("TOPLEFT", 8, -38)
@@ -110,12 +110,12 @@ function TPO.BuildPicker()
     search:SetSize(220, 20)
     search:SetPoint("TOPLEFT", 0, 0)
     AT.Skin(search, COL.well)
-    search:SetFont(STANDARD_TEXT_FONT, 11, "")
+    search:SetFont(NS.AT.FONT, 11, "")
     search:SetTextInsets(6, 6, 0, 0)
     search:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     search:SetAutoFocus(false)
     local hint = search:CreateFontString(nil, "OVERLAY")
-    hint:SetFont(STANDARD_TEXT_FONT, 11, "")
+    hint:SetFont(NS.AT.FONT, 11, "")
     hint:SetPoint("LEFT", 6, 0)
     hint:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     hint:SetText("Search by name or ID")
@@ -131,10 +131,10 @@ function TPO.BuildPicker()
     local done = AT.MakeSmallButton(body, "Done", 70)
     done:SetPoint("TOPRIGHT", 0, 0)
     done:SetHeight(20)
-    done.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    done.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     done:SetScript("OnClick", function() win:Hide() end)
     local count = body:CreateFontString(nil, "OVERLAY")
-    count:SetFont(STANDARD_TEXT_FONT, 11, "")
+    count:SetFont(NS.AT.FONT, 11, "")
     count:SetPoint("LEFT", search, "RIGHT", 12, 0)
     count:SetPoint("RIGHT", done, "LEFT", -12, 0)
     count:SetJustifyH("LEFT")
@@ -146,7 +146,7 @@ function TPO.BuildPicker()
     -- the width decides how many fit a line: lay out again whenever it moves
     host:HookScript("OnSizeChanged", function() TPO.LayoutPicker() end)
     local empty = body:CreateFontString(nil, "OVERLAY")
-    empty:SetFont(STANDARD_TEXT_FONT, 12, "")
+    empty:SetFont(NS.AT.FONT, 12, "")
     empty:SetPoint("CENTER", host, "CENTER", 0, 0)
     empty:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     empty:SetText("No picture matches.")
@@ -169,7 +169,7 @@ function TPO.Tile(i)
     t.art:SetPoint("TOPLEFT", 6, -6)
     t.art:SetPoint("BOTTOMRIGHT", -6, 6)
     t:SetScript("OnEnter", function(self)
-        if not self.sel then self:SetBackdropBorderColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 1) end
+        if not self.sel then self:SetBackdropBorderColor(COL.focus[1], COL.focus[2], COL.focus[3], 1) end
     end)
     t:SetScript("OnLeave", function(self) TPO.PaintTile(self) end)
     AT.Tooltip(t, function() return t.name end, function() return t.sub end)
@@ -196,9 +196,9 @@ function TPO.Head(i)
     h = CreateFrame("Frame", nil, TPO.content)
     h:SetHeight(TPO.HEAD)
     h.fs = h:CreateFontString(nil, "OVERLAY")
-    h.fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    h.fs:SetFont(NS.AT.FONT, 11, "")
     h.fs:SetPoint("BOTTOMLEFT", 2, 8)
-    h.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    h.fs:SetTextColor(COL.title[1], COL.title[2], COL.title[3])
     h.line = h:CreateTexture(nil, "ARTWORK")
     h.line:SetTexture(AT.WHITE)
     h.line:SetVertexColor(COL.line[1], COL.line[2], COL.line[3], 1)
@@ -342,7 +342,7 @@ function TPO.ChooserRow(pg, owner, label, c)
     art:SetPoint("TOPLEFT", 3, -3)
     art:SetPoint("BOTTOMRIGHT", -3, 3)
     local nameFS = row:CreateFontString(nil, "OVERLAY")
-    nameFS:SetFont(STANDARD_TEXT_FONT, 12, "")
+    nameFS:SetFont(NS.AT.FONT, 12, "")
     nameFS:SetPoint("TOPLEFT", box, "TOPRIGHT", 10, -2)
     nameFS:SetPoint("RIGHT", row, "RIGHT", -10, 0)
     nameFS:SetJustifyH("LEFT")
@@ -411,9 +411,14 @@ function Options.PictureRow(pg, owner, label, section, field, ctx, visible)
             local r = ctx()
             if r then Store.SetOverride(r, section, field, tostring(v or "")) end
         end,
+        -- the spell the live picture wears: a cooldown's rank and override,
+        -- an aura's first aura (each question's own entry)
         spellID = function()
             local r = ctx()
-            return r and r.driver and tonumber(r.driver.spellID) or nil
+            if not (r and r.driver) then return nil end
+            local TP = NS.TextureElements
+            if TP and TP.Source(r) == "spellCd" then return TP.EffSpell(r) end
+            return Store.TrackedAuraIDs(r.driver)[1]
         end,
         what = function()
             local r = ctx()
@@ -622,7 +627,7 @@ function Options.TextureTrackRows(pg, ctx, trackVis, owner)
         end,
         cdVis, "A spell ID, a link, or the name of a spell you know. Enter applies it.", "e.g. 17364")
     local nameFS = spellRow:CreateFontString(nil, "OVERLAY")
-    nameFS:SetFont(STANDARD_TEXT_FONT, 11, "")
+    nameFS:SetFont(NS.AT.FONT, 11, "")
     if spellRow._colCtrl then nameFS:SetPoint("LEFT", spellRow._colCtrl, "RIGHT", 8, 0) end
     nameFS:SetPoint("RIGHT", spellRow, "RIGHT", -10, 0)
     nameFS:SetJustifyH("LEFT")

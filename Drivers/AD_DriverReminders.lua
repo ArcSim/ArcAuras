@@ -72,27 +72,11 @@ function RM.Live(rec)
     return RM.Loaded(rec) and not (NS.Conditions and NS.Conditions.IsInert(rec))
 end
 
-local function SpellName(sid)
-    local nm = sid and C_Spell and C_Spell.GetSpellName and Plain(C_Spell.GetSpellName(sid))
-    if type(nm) ~= "string" or nm == "" then return nil end
-    return nm
-end
-
 -- The spell a reminder's cooldown is read from, as the cooldown driver reads
--- an icon's: on ranked realms the rank you know by name, then its override.
+-- an icon's: the record's own Auto rank and Ignore override.
 function RM.EffSpell(rec)
-    local sid = rec.driver and rec.driver.spellID
-    if not sid then return nil end
-    if NS.IsForever == true and C_Spell.GetSpellIDForSpellIdentifier then
-        local nm = SpellName(sid)
-        local known = nm and Plain(C_Spell.GetSpellIDForSpellIdentifier(nm))
-        if type(known) == "number" and known > 0 then sid = known end
-    end
-    if C_Spell.GetOverrideSpell then
-        local ov = Plain(C_Spell.GetOverrideSpell(sid))
-        if type(ov) == "number" and ov ~= 0 and ov ~= sid then sid = ov end
-    end
-    return sid
+    if not (rec.driver and rec.driver.spellID) then return nil end
+    return NS.Store.RecordSpellID(rec.driver)
 end
 
 function RM.UseSpell(itemID)
@@ -112,12 +96,7 @@ function RM.Matches(rec, w, sid)
         local use = (w and w.use) or RM.UseSpell(d.itemID)
         return use ~= nil and use == sid
     end
-    if sid == d.spellID or (w and w.eff ~= nil and sid == w.eff) then return true end
-    if NS.IsForever == true and d.spellID then
-        local a = SpellName(sid)
-        return a ~= nil and a == SpellName(d.spellID)
-    end
-    return false
+    return Store.SpellMatch(d.spellID, sid, w and w.eff)
 end
 
 function RM.ProcActive(rec, w)
@@ -306,7 +285,7 @@ function RM.UpdateAll()
                 local was = w.eff
                 RM.Resolve(w, rec)
                 -- another spell read: its usable state starts afresh
-                if w.eff ~= was then w.castable, w.canUse = nil, nil end
+                if w.eff ~= was then w.castable, w.canUse = nil, nil end -- raw-id: the resolve moved, not a match
             end
             RM.Feed(w, rec)
             RM.Evaluate(w, rec)
@@ -472,7 +451,7 @@ function RM.WatchSpell(key, spellID, cb)
     local w = RM.watch[key]
     if w and w.ext then
         w.cb = cb or w.cb
-        if w.rec.driver.spellID ~= spellID then
+        if w.rec.driver.spellID ~= spellID then -- raw-id: a new spell to watch, not a match
             w.rec.driver.spellID = spellID
             RM.Resolve(w, w.rec)
             RM.Feed(w, w.rec)

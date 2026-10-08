@@ -1592,10 +1592,13 @@ function IA.ExcludeSiblings(layouts)
                     for nodeID in pairs(other.c.talents) do
                         base.c.talentsNot = base.c.talentsNot or {}
                         base.c.talentsNot[nodeID] = true
-                        local e = other.c.talentEntry and other.c.talentEntry[nodeID]
-                        if e then
-                            base.c.talentEntry = base.c.talentEntry or {}
-                            base.c.talentEntry[nodeID] = e
+                        -- the node's option and class / spec tags go with it
+                        for _, k in ipairs({ "talentEntry", "talentClass", "talentSpec" }) do
+                            local v = other.c[k] and other.c[k][nodeID]
+                            if v then
+                                base.c[k] = base.c[k] or {}
+                                base.c[k][nodeID] = v
+                            end
                         end
                     end
                 end

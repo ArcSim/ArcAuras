@@ -13,6 +13,42 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "2.4.0",
+        intro = "Themes, glows on every bar, talents for any class and Emity's refreshed layouts.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Themes",
+                    desc = "Settings > Theme: Classic, Midnight Ink, Dusk or Graphite, with an optional Soft light. Dusk is the new default." },
+                { title = "Bar glows",
+                    desc = "Every bar can glow while any aura is up or missing, or by any spell's cooldown. Find them under the bar's Conditions tab (was Show & Hide)." },
+                { title = "Talents for any class",
+                    desc = "Each class under Classes has a Talents button that opens its trees, whatever class you play. Picks count only on their own class." },
+                { title = "Never load with a talent",
+                    desc = "Click a talent twice to exclude it: the item stays off while you have it." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Options look",
+                    desc = "Folder tabs, boxed sections and a cleaner font." },
+                { title = "Emity's layouts",
+                    desc = "All nine refreshed with Missing Buffs, items and defensive groups, gradient bars and new pictures." },
+                { title = "Ranks and talents",
+                    desc = "Icons, bars, glows and wheels follow a new rank or a spell a talent replaces." },
+                { title = "Talent window",
+                    desc = "Matches your panel scale." },
+                { title = "Combat",
+                    desc = "The options window waits until combat ends to open, and closes when a fight starts." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Charge range",
+                    desc = "Out of range shows again with Auto Rank after Vanguard." },
+                { title = "Unloaded items",
+                    desc = "No longer show on screen while editing after a group's eye is clicked twice; class Views show only what they list." },
+                { title = "Own settings",
+                    desc = "Text, picture and reminder items and range bars now follow their Auto Rank and Ignore Override." },
+            } },
+        },
+    },
+    {
         version = "2.3.0",
         intro = "Stance icons, a lock for layouts and groups, a sidebar View and pack updates you can undo.",
         sections = {
@@ -725,6 +761,36 @@ CL.versions = {
 }
 CL.retailVersions = {
     {
+        version = "2.4.0",
+        intro = "Themes, glows on every bar and talents for any class and spec.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Themes",
+                    desc = "Settings > Theme: Classic, Midnight Ink, Dusk or Graphite, with an optional Soft light. Dusk is the new default." },
+                { title = "Bar glows",
+                    desc = "Every bar can glow while any aura is up or missing, or by any spell's cooldown. Find them under the bar's Conditions tab (was Show & Hide)." },
+                { title = "Talents for any class",
+                    desc = "Each class under Class and Spec has a Talents button that opens its trees, with a tab per spec, whatever you play. Picks count only on their own class and spec." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Options look",
+                    desc = "Folder tabs, boxed sections and a cleaner font." },
+                { title = "Talent swaps",
+                    desc = "Icons, bars and glows follow a spell a talent replaces, with its art, tooltip and keybind." },
+                { title = "Talent window",
+                    desc = "Matches your panel scale." },
+                { title = "Combat",
+                    desc = "The options window waits until combat ends to open, and closes when a fight starts." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Unloaded items",
+                    desc = "No longer show on screen while editing after a group's eye is clicked twice; class Views show only what they list." },
+                { title = "Own settings",
+                    desc = "Text, picture and reminder items and range bars now follow their Ignore Override." },
+            } },
+        },
+    },
+    {
         version = "2.3.0",
         intro = "Stance icons, a lock for layouts and groups, a sidebar View and pack updates you can undo.",
         sections = {
@@ -839,16 +905,16 @@ local function Hex(c)
 end
 
 function CL.Body(ver)
-    local arc, ink, dim = Hex(COL.arc), Hex(COL.ink), Hex(COL.dim)
+    local head, ink, dim = Hex(COL.title), Hex(COL.ink), Hex(COL.dim)
     local lines = {}
     if ver.intro then
         lines[#lines + 1] = "|c" .. dim .. ver.intro .. "|r"
         lines[#lines + 1] = " "
     end
     for _, sec in ipairs(ver.sections or {}) do
-        lines[#lines + 1] = "|c" .. arc .. string.upper(sec.header or "") .. "|r"
+        lines[#lines + 1] = "|c" .. head .. string.upper(sec.header or "") .. "|r"
         for _, it in ipairs(sec.items or {}) do
-            lines[#lines + 1] = "|c" .. arc .. ">|r  |c" .. ink .. (it.title or "") .. "|r   |c"
+            lines[#lines + 1] = "|c" .. head .. ">|r  |c" .. ink .. (it.title or "") .. "|r   |c"
                 .. dim .. (it.desc or "") .. "|r"
         end
         lines[#lines + 1] = " "
@@ -899,7 +965,7 @@ local function Build()
     if win then return win end
     win = AT.CreateWindow("ArcUIv2WhatsNew", {
         w = 580, h = 620, minW = 460, minH = 420, maxW = 1000, maxH = 1200,
-        title = "|cff3fc9f2What's New|r|cffd5e2f2 in Arc Auras|r",
+        title = AT.Brand("What's New", " in Arc Auras"),
         version = CL.CurrentVersion(),
         onResize = function() CL.Layout() end,
     })
@@ -920,7 +986,7 @@ local function Build()
         b.chev = AT.MakeChevron(hdr)
         b.chev:SetPoint("LEFT", 8, 0)
         b.label = hdr:CreateFontString(nil, "OVERLAY")
-        b.label:SetFont(STANDARD_TEXT_FONT, 12, "")
+        b.label:SetFont(AT.FONT, 12, "")
         b.label:SetPoint("LEFT", b.chev, "RIGHT", 8, 0)
         hdr:SetScript("OnEnter", function(self)
             self:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
@@ -934,7 +1000,7 @@ local function Build()
         end)
         b.hdr = hdr
         local body = content:CreateFontString(nil, "OVERLAY")
-        body:SetFont(STANDARD_TEXT_FONT, 12, "")
+        body:SetFont(AT.FONT, 12, "")
         body:SetJustifyH("LEFT")
         body:SetJustifyV("TOP")
         body:SetSpacing(4)
@@ -958,7 +1024,7 @@ local function Build()
     check:SetPoint("LEFT", 0, 0)
     check:EnableMouse(false)
     local lbl = sw:CreateFontString(nil, "OVERLAY")
-    lbl:SetFont(STANDARD_TEXT_FONT, 12, "")
+    lbl:SetFont(AT.FONT, 12, "")
     lbl:SetPoint("LEFT", check, "RIGHT", 8, 0)
     lbl:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     lbl:SetText("Show after each update")

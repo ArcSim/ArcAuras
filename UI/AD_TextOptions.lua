@@ -128,7 +128,7 @@ function TO.AutoName(rec)
     local d = rec.driver or {}
     local w = TO.NAME_WORDS[d.source]
     if not w then return nil end
-    local nm = d.spellID and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(d.spellID)
+    local nm = d.spellID and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(d.spellID) -- raw-id: the typed spell names the element
     if (issecretvalue and issecretvalue(nm)) or type(nm) ~= "string" or nm == "" then return TO.NAMES[d.source] end
     return nm .. " " .. w
 end
@@ -396,7 +396,7 @@ function Options.TextTabs(rec)
     local tabs = { "Tracking" }
     local rules = TO.TriggerOf(rec.driver or {}) == "rules" or (T and T.HasRules and T.HasRules(rec))
     if rules then tabs[#tabs + 1] = "Triggers" end
-    for _, t in ipairs({ "Appearance", "Show & Hide", "Position", "Load Conditions" }) do tabs[#tabs + 1] = t end
+    for _, t in ipairs({ "Appearance", "Conditions", "Position", "Load Conditions" }) do tabs[#tabs + 1] = t end
     return tabs
 end
 
@@ -414,7 +414,7 @@ local function ParseSpell(text)
 end
 
 local function SpellName(id)
-    local nm = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+    local nm = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: the typed spell, for the editor's words
     if (issecretvalue and issecretvalue(nm)) or type(nm) ~= "string" then return "" end
     return nm
 end
@@ -428,7 +428,7 @@ end
 local function NameBeside(row, get)
     local COL = NS.AT.COL
     local fs = row:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    fs:SetFont(NS.AT.FONT, 11, "")
     fs:SetPoint("LEFT", row._colCtrl, "RIGHT", 8, 0)
     fs:SetPoint("RIGHT", row, "RIGHT", -10, 0)
     fs:SetJustifyH("LEFT")

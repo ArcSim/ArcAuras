@@ -115,7 +115,10 @@ function SN.AuraWanted(rec)
         if file ~= nil then
             local unit = r.unit or "player"
             local th = SN.Throttle(r)
-            for _, id in ipairs(type(r.auraIDs) == "table" and r.auraIDs or {}) do
+            -- the typed auras and, on ranked realms, your rank of each (the
+            -- aura icons' own rule)
+            local ids = NS.Store.TrackedAuraIDs({ spellIDs = type(r.auraIDs) == "table" and r.auraIDs or nil })
+            for _, id in ipairs(ids) do
                 local info = { unitToken = unit, spellID = id, outputChannel = ch, throttleSeconds = th }
                 if type(file) == "number" then info.soundFileID = file else info.soundFileName = file end
                 out[moment .. ":" .. id .. ":" .. unit .. ":" .. i] = { trig, info, tostring(file) .. "|" .. ch .. "|" .. tostring(th) }

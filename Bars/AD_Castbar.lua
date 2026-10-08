@@ -229,13 +229,14 @@ function CB.LockLook(e)
             sh:Hide()
         end
     end
-    -- Skipped in edit mode so a bar being placed stays visible.
+    -- Skipped in edit mode so a bar being placed stays visible. Through the
+    -- kit, which keeps the flag for what hangs off UIParent for this bar.
+    local gate
     if e.castOn and ni ~= nil and R(rec, "cast", "lockHide") == true
         and not (K.IsEditMode() and not e.isPreview) and shell.SetAlphaFromBoolean then
-        shell:SetAlphaFromBoolean(ni, 0, 1)
-    else
-        shell:SetAlpha(1)
+        gate = ni
     end
+    K.ShellAlpha(e, gate)
 end
 
 -- LayoutTicks honours e.ticksOff when it lays the marks out again.
@@ -269,7 +270,7 @@ function CB.TickEvery(spellID)
         end
         if all then CB.tickByName = byName end
     end
-    local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
+    local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID) -- raw-id: the cast the game reports
     return (name and byName[name]) or CB.TICK_SLOW[spellID] or 1
 end
 
@@ -548,7 +549,7 @@ function CB.Finish(e, how)
     if e.castLat then e.castLat:Hide() end
     if e.castQueue then e.castQueue:Hide() end
     if e.castShield then e.castShield:Hide() end
-    e.shell:SetAlpha(1)
+    K.ShellAlpha(e, nil)
     K.SetRunText(e.shell, "dur", "")
     -- a finished cast never holds: the hold is for casts cut short
     if how ~= "done" and R(e.rec, "cast", "holdOn") == true then
@@ -611,7 +612,7 @@ function CB.Rest(e)
     if e.castQueue then e.castQueue:Hide() end
     if e.castShield then e.castShield:Hide() end
     local shell = e.shell
-    shell:SetAlpha(1)
+    K.ShellAlpha(e, nil)
     K.SetRunText(shell, "dur", "")
     if K.IsEditMode() and not e.isPreview then
         CB.Sample(e)
@@ -1007,7 +1008,7 @@ function CB.PreviewApply(e, loop, t, fresh)
             e.pvCastPhase = "static"
             CB.StopTicker(e)
             CB.StopFade(e)
-            e.shell:SetAlpha(1)
+            K.ShellAlpha(e, nil)
             if e.castShield then e.castShield:Hide() end
             e.castOn = false
             CB.Sample(e)
@@ -1049,7 +1050,7 @@ function CB.PreviewApply(e, loop, t, fresh)
         if e.castLat then e.castLat:Hide() end
         if e.castQueue then e.castQueue:Hide() end
         if e.castShield then e.castShield:Hide() end
-        e.shell:SetAlpha(1)
+        K.ShellAlpha(e, nil)
         K.SetRunText(e.shell, "dur", "")
         if R(rec, "cast", "holdOn") == true then
             CB.HoldLook(e, p.how)
@@ -1063,7 +1064,7 @@ function CB.PreviewApply(e, loop, t, fresh)
         CB.SparkShown(e, false)
         if e.castQueue then e.castQueue:Hide() end
         if e.castShield then e.castShield:Hide() end
-        e.shell:SetAlpha(1)
+        K.ShellAlpha(e, nil)
         e.shell.fill:SetMinMaxValues(0, 1)
         e.shell.fill:SetValue(0)
         K.SetRunText(e.shell, "dur", "")

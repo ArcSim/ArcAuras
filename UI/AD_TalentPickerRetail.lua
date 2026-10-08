@@ -13,12 +13,15 @@ TR.PAD, TR.HDR, TR.ICON, TR.BAND = 12, 24, 40, 18
 TR.SHARE = { class = 0.36, hero = 0.26 }
 TR.RED = { 0.95, 0.38, 0.38 }
 
-local win, canvas, lineHost, search, count, empty
+local win, head, canvas, lineHost, search, count, empty, note
 local ctxFn
 local query = ""
-local panels, bands, nodes, hubs, lines = {}, {}, {}, {}, {}
+local panels, bands, nodes, hubs, lines, tabs = {}, {}, {}, {}, {}, {}
+-- the class and spec the picker shows for a record (nil for a talent target)
+local pickClass, pickSpec
 
 function TR.Record() return ctxFn and ctxFn() end
+function TR.Shown() return pickClass, pickSpec end
 
 -- What the picker edits: a record's load talents, or a talent target that
 -- holds one pick of its own (a rule's guard, a look's talent; see
@@ -27,20 +30,25 @@ function TR.Get(rec, nodeID)
     if rec.talentTarget then return rec.State(nodeID) end
     return NS.Store.TalentState(rec, nodeID)
 end
-function TR.Set(rec, nodeID, state, entryID)
+-- A record's pick is tagged with the class shown and, for a spec or hero
+-- tree node (home), the spec shown; a class tree node is class-wide.
+function TR.Set(rec, nodeID, state, entryID, home)
     if rec.talentTarget then rec.Set(nodeID, state, entryID) return end
-    NS.Store.SetTalentState(rec, nodeID, state, entryID)
+    local spec = (home == "spec" or home == "hero") and pickSpec or nil
+    NS.Store.SetTalentState(rec, nodeID, state, entryID, pickClass, spec)
 end
 function TR.List(rec)
     if rec.talentTarget then return rec.List() end
-    return NS.Store.TalentList(rec)
+    return NS.Store.TalentPicksOf(rec, pickClass, pickSpec)
 end
 
 -- The state a button shows: the node's, unless the record names another
--- option of the same choice node.
+-- option of the same choice node, or the pick was made for another spec (a
+-- hero tree two specs share): a click then picks it for this one.
 function TR.StateOf(rec, nodeID, entryID)
-    local state, named = TR.Get(rec, nodeID)
+    local state, named, _, spec = TR.Get(rec, nodeID)
     if entryID and named and named ~= entryID then return nil end
+    if spec and pickSpec and spec ~= pickSpec and not rec.talentTarget then return nil end
     return state
 end
 
@@ -64,20 +72,20 @@ function TR.Panel(i)
     bar:SetHeight(TR.HDR)
     AT.Skin(bar, COL.panel, COL.panel)
     local rule = bar:CreateTexture(nil, "OVERLAY")
-    rule:SetColorTexture(COL.arc[1], COL.arc[2], COL.arc[3], 0.9)
+    rule:SetColorTexture(COL.rule[1], COL.rule[2], COL.rule[3], 0.9)
     rule:SetPoint("BOTTOMLEFT", 0, 0)
     rule:SetPoint("BOTTOMRIGHT", 0, 0)
     rule:SetHeight(1)
     local name = bar:CreateFontString(nil, "OVERLAY")
-    name:SetFont(STANDARD_TEXT_FONT, 12, "")
+    name:SetFont(NS.AT.FONT, 12, "")
     name:SetPoint("LEFT", 8, 0)
-    name:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    name:SetTextColor(COL.title[1], COL.title[2], COL.title[3])
     local pts = bar:CreateFontString(nil, "OVERLAY")
-    pts:SetFont(STANDARD_TEXT_FONT, 11, "")
+    pts:SetFont(NS.AT.FONT, 11, "")
     pts:SetPoint("RIGHT", -8, 0)
     pts:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     local note = box:CreateFontString(nil, "OVERLAY")
-    note:SetFont(STANDARD_TEXT_FONT, 11, "")
+    note:SetFont(NS.AT.FONT, 11, "")
     note:SetPoint("CENTER", 0, -TR.HDR / 2)
     note:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     note:Hide()
@@ -92,11 +100,11 @@ function TR.Band(i)
     local b = bands[i]
     if b then return b end
     local fs = canvas:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    fs:SetFont(NS.AT.FONT, 11, "")
     fs:SetJustifyH("LEFT")
     fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     local state = canvas:CreateFontString(nil, "OVERLAY")
-    state:SetFont(STANDARD_TEXT_FONT, 10, "")
+    state:SetFont(NS.AT.FONT, 10, "")
     state:SetJustifyH("RIGHT")
     b = { fs = fs, state = state }
     bands[i] = b
@@ -133,7 +141,7 @@ function TR.Node(i)
     ic:SetPoint("BOTTOMRIGHT", -2, 2)
     ic:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     local rank = btn:CreateFontString(nil, "OVERLAY")
-    rank:SetFont(STANDARD_TEXT_FONT, 10, "OUTLINE")
+    rank:SetFont(NS.AT.FONT, 10, "OUTLINE")
     rank:SetPoint("BOTTOMRIGHT", -1, 1)
     rank:SetTextColor(0.95, 0.97, 1)
     node = { btn = btn, ring = ring, ic = ic, rank = rank }
@@ -143,8 +151,9 @@ function TR.Node(i)
             local ln = btn:CreateLine(nil, "OVERLAY")
             ln:SetColorTexture(TR.RED[1], TR.RED[2], TR.RED[3], 0.9)
             ln:SetThickness(2)
-            ln:SetStartPoint(corners[1], 4, k == 1 and -4 or -4)
-            ln:SetEndPoint(corners[2], -4, k == 1 and 4 or 4)
+            -- both ends 4 inside their corner: x points inward from either side
+            ln:SetStartPoint(corners[1], k == 1 and 4 or -4, -4)
+            ln:SetEndPoint(corners[2], k == 1 and -4 or 4, 4)
             ln:Hide()
             node["x" .. k] = ln
         end
@@ -183,7 +192,7 @@ function TR.Node(i)
                 GameTooltip:AppendInfo("GetTraitEntry", entryID, rk + 1)
             end
         elseif e.spellID and C_Spell.GetSpellDescription then
-            local d = C_Spell.GetSpellDescription(opt and opt.spellID or e.spellID)
+            local d = C_Spell.GetSpellDescription(opt and opt.spellID or e.spellID) -- raw-id: a talent entry
             if d ~= nil and not (issecretvalue and issecretvalue(d)) and d ~= "" then
                 GameTooltip:AddLine(" ")
                 GameTooltip:AddLine(d, 1, 0.82, 0, true)
@@ -193,6 +202,14 @@ function TR.Node(i)
         local rec = TR.Record()
         local state = rec and TR.StateOf(rec, e.nodeID, node.entryID) or nil
         local one = rec ~= nil and rec.talentTarget == true
+        -- picked under another spec of a shared hero tree
+        if rec and not one and not state then
+            local s2, _, tc, ts = TR.Get(rec, e.nodeID)
+            if s2 and ts and ts ~= pickSpec and Options.TalentClassLabel then
+                GameTooltip:AddLine("Picked for " .. Options.TalentClassLabel(tc or pickClass, ts)
+                    .. ": a click picks it for this spec instead.", 0.55, 0.65, 0.78, true)
+            end
+        end
         if state == "req" then
             GameTooltip:AddLine(not one and "Required: click to exclude it instead."
                 or (rec.noExclude and "Picked: click to drop it." or "Taken: click for Not taken instead."),
@@ -221,7 +238,7 @@ function TR.Node(i)
         if button ~= "RightButton" then
             if cur == nil then nxt = "req" elseif cur == "req" and not rec.noExclude then nxt = "not" end
         end
-        TR.Set(rec, e.nodeID, nxt, node.entryID)
+        TR.Set(rec, e.nodeID, nxt, node.entryID, e.home)
         TR.Paint()
         Options.RefreshAll()
     end)
@@ -344,11 +361,64 @@ function TR.Spent(list)
     return n
 end
 
+-- The spec switcher: one small tab per spec of the class shown, right-aligned
+-- on the note's line; the open spec in the accent colour. The note stops
+-- short of the tabs so the two never meet.
+function TR.Tabs(show)
+    local AT, COL = NS.AT, NS.AT.COL
+    local cls = show and pickClass and Options.TalentClassRow and Options.TalentClassRow(pickClass)
+    local specs = (cls and cls.specs) or {}
+    local x = 0
+    for i = #specs, 1, -1 do
+        local s = specs[i]
+        local b = tabs[i]
+        if not b then
+            b = AT.MakeSmallButton(head, "", 60)
+            b:SetHeight(18)
+            b.fs:SetFont(NS.AT.FONT, 10, "")
+            tabs[i] = b
+        end
+        b.fs:SetText(s.name)
+        local tw = (b.fs.GetUnboundedStringWidth and b.fs:GetUnboundedStringWidth()) or b.fs:GetStringWidth() or 0
+        local w = math.ceil(tw) + 16
+        b:SetWidth(w)
+        b:ClearAllPoints()
+        b:SetPoint("TOPRIGHT", head, "TOPRIGHT", -x, -24)
+        local c = (s.id == pickSpec) and COL.lead or COL.dim
+        b.fs:SetTextColor(c[1], c[2], c[3])
+        b._adSpec = s.id
+        b:SetScript("OnClick", function()
+            pickSpec = s.id
+            TR.Layout()
+        end)
+        b:Show()
+        x = x + w + 4
+    end
+    for i = #specs + 1, #tabs do tabs[i]:Hide() end
+    note:SetPoint("TOPRIGHT", head, "TOPRIGHT", x > 0 and -(x + 6) or -2, -26)
+end
+
 function TR.Layout()
     if not win then return end
     local COL = NS.AT.COL
     local cat = NS.TalentCatalog
-    local P = cat and cat.Panels and cat.Panels()
+    -- the class and spec the picker was opened on: your own current spec is
+    -- the live tree, any other the game's view; the note names it on a line
+    -- of its own beside the spec tabs, and the canvas moves down for both
+    local src = Options.TalentPickSource and Options.TalentPickSource(TR.Record(), pickClass, pickSpec) or {}
+    if src.specID then pickSpec = src.specID end
+    note:SetText(src.note or "")
+    note:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
+    note:SetShown(src.note ~= nil)
+    TR.Tabs(src.note ~= nil)
+    canvas:SetPoint("TOPLEFT", 0, src.note and -44 or -28)
+    empty:SetText(src.empty or "No talent tree on this character yet.")
+    local P
+    if src.view then
+        P = src.view.panels
+    elseif not src.empty then
+        P = cat and cat.Panels and cat.Panels()
+    end
     local have = P ~= nil and (#P.class.list + #P.spec.list + #P.hero) > 0
     empty:SetShown(not have)
     if not have then
@@ -387,7 +457,7 @@ function TR.Layout()
         if col.hero then
             local n = #col.hero
             p.note:SetShown(n == 0)
-            if n == 0 then p.note:SetText("No hero talents yet.") end
+            if n == 0 then p.note:SetText(src.view and "No hero talents to show." or "No hero talents yet.") end
             local spent = 0
             local gap = 8
             local bandH = n > 0 and math.floor((bodyH - gap * (n - 1)) / n) or 0
@@ -466,24 +536,26 @@ function TR.Build()
     local AT, COL = NS.AT, NS.AT.COL
     win = AT.CreateWindow("ArcAurasTalentPicker", {
         w = 1120, h = 640, minW = 700, minH = 440, maxW = 1800, maxH = 1300,
-        title = "|cff3fc9f2Arc|r|cffd5e2f2 Talents|r",
+        scaleH = Options.MAIN_H,
+        title = NS.AT.Brand("Arc", " Talents"),
         onResize = function() TR.Layout() end,
     })
 
     local body = CreateFrame("Frame", nil, win)
     body:SetPoint("TOPLEFT", 8, -38)
     body:SetPoint("BOTTOMRIGHT", -8, 8)
+    head = body
 
     search = CreateFrame("EditBox", nil, body, "BackdropTemplate")
     search:SetSize(220, 20)
     search:SetPoint("TOPLEFT", 0, 0)
     AT.Skin(search, COL.well)
-    search:SetFont(STANDARD_TEXT_FONT, 11, "")
+    search:SetFont(NS.AT.FONT, 11, "")
     search:SetTextInsets(6, 6, 0, 0)
     search:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     search:SetAutoFocus(false)
     local hint = search:CreateFontString(nil, "OVERLAY")
-    hint:SetFont(STANDARD_TEXT_FONT, 11, "")
+    hint:SetFont(NS.AT.FONT, 11, "")
     hint:SetPoint("LEFT", 6, 0)
     hint:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     hint:SetText("Search talents")
@@ -499,9 +571,18 @@ function TR.Build()
     end)
 
     count = body:CreateFontString(nil, "OVERLAY")
-    count:SetFont(STANDARD_TEXT_FONT, 11, "")
+    count:SetFont(NS.AT.FONT, 11, "")
     count:SetPoint("LEFT", search, "RIGHT", 12, 0)
     count:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+
+    -- whose talents show, on a line of its own so it never meets the row above
+    note = body:CreateFontString(nil, "OVERLAY")
+    note:SetFont(NS.AT.FONT, 11, "")
+    note:SetPoint("TOPLEFT", 2, -26)
+    note:SetPoint("TOPRIGHT", -2, -26)
+    note:SetJustifyH("LEFT")
+    note:SetWordWrap(false)
+    note:Hide()
 
     local clear = AT.MakeSmallButton(body, "Clear all", 80)
     clear:SetPoint("TOPRIGHT", 0, 0)
@@ -509,16 +590,16 @@ function TR.Build()
     clear:SetScript("OnClick", function()
         local rec = TR.Record()
         if not rec then return end
-        if rec.talentTarget then rec.Clear() else NS.Store.ClearTalents(rec) end
+        if rec.talentTarget then rec.Clear() else NS.Store.ClearTalentsOf(rec, pickClass, pickSpec) end
         TR.Paint()
         Options.RefreshAll()
     end)
-    AT.Tooltip(clear, "Clear all", "Drops every talent requirement and exclusion from this one.")
+    AT.Tooltip(clear, "Clear all", "Drops every talent picked in this tree. Other classes' and specs' picks stay.")
 
     local done = AT.MakeSmallButton(body, "Done", 70)
     done:SetPoint("RIGHT", clear, "LEFT", -6, 0)
     done:SetHeight(20)
-    done.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    done.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     done:SetScript("OnClick", function() win:Hide() end)
 
     -- no box of its own: the three panels are the boxes, edge to edge
@@ -532,7 +613,7 @@ function TR.Build()
     lineHost:SetFrameLevel(canvas:GetFrameLevel() + 4)
 
     empty = canvas:CreateFontString(nil, "OVERLAY")
-    empty:SetFont(STANDARD_TEXT_FONT, 12, "")
+    empty:SetFont(NS.AT.FONT, 12, "")
     empty:SetPoint("CENTER", 0, 0)
     empty:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     empty:SetText("No talent tree on this character yet.")
@@ -541,9 +622,18 @@ function TR.Build()
     win:HookScript("OnShow", function() TR.Layout() end)
 end
 
-function Options.OpenRetailTalentPicker(fn)
+-- classTag / specID: the tree to open on (a class row's button); nil class is
+-- your own, nil spec the class's default (Options.TalentDefaultSpec). A talent
+-- target always opens your live tree.
+function Options.OpenRetailTalentPicker(fn, classTag, specID)
     TR.Build()
     ctxFn = fn
+    local rec = fn and fn()
+    pickClass, pickSpec = nil, nil
+    if rec and not rec.talentTarget then
+        pickClass = classTag or NS.Store.ClassTag()
+        pickSpec = specID or (Options.TalentDefaultSpec and Options.TalentDefaultSpec(rec, pickClass))
+    end
     query = ""
     search:SetText("")
     if NS.TalentCatalog then NS.TalentCatalog.Rescan() end

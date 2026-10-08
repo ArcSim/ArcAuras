@@ -38,16 +38,16 @@ local function SlotSpell(slot)
 end
 
 local function Known(spellID)
-    if IsPlayerSpell and IsPlayerSpell(spellID) then return true end
-    if IsSpellKnown and IsSpellKnown(spellID) then return true end
+    if IsPlayerSpell and IsPlayerSpell(spellID) then return true end -- raw-id: a live bar slot's spell
+    if IsSpellKnown and IsSpellKnown(spellID) then return true end -- raw-id: a live bar slot's spell
     return false
 end
 
 -- A lookup by name returns the top known rank; nil means leave the slot alone.
 local function TopRankOf(spellID)
-    local name = C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
+    local name = C_Spell.GetSpellName and C_Spell.GetSpellName(spellID) -- raw-id: a live bar slot's spell
     if not name or name == "" then return nil end
-    local best = C_Spell.GetSpellIDForSpellIdentifier(name)
+    local best = C_Spell.GetSpellIDForSpellIdentifier(name) -- raw-id: a live bar slot's spell
     if type(best) ~= "number" or best <= 0 then return nil, name end
     return best, name
 end
@@ -61,7 +61,7 @@ end
 -- player's. True when the slot really holds the new rank afterwards.
 local function Place(slot, spellID)
     if Blocked() or not Known(spellID) then return false end
-    if C_Spell.PickupSpell then C_Spell.PickupSpell(spellID)
+    if C_Spell.PickupSpell then C_Spell.PickupSpell(spellID) -- raw-id: a live bar slot's spell
     elseif PickupSpell then PickupSpell(spellID) end
     local kind, _, _, cursorID = GetCursorInfo()
     if kind ~= "spell" or (cursorID and cursorID ~= spellID) then

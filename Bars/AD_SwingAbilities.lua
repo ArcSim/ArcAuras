@@ -65,26 +65,20 @@ local function Wanted(rec)
         and K.R(rec, "fill", "swingAbilities") == true
 end
 
--- The spellbook's answer; the older globals wrap it. A client with neither
--- counts every spell as known.
+-- This exact rank in the book (Store.KnowsSpell, the one known rule); an
+-- answer that cannot be told counts as not known here.
 local function Known(sid)
-    local SB = C_SpellBook
-    if SB and SB.IsSpellKnown then return Yes(SB.IsSpellKnown(sid)) end
-    if not (IsPlayerSpell or IsSpellKnown) then return true end
-    return Yes(IsPlayerSpell and IsPlayerSpell(sid)) or Yes(IsSpellKnown and IsSpellKnown(sid))
+    return NS.Store.KnowsSpell(sid, true) == true
 end
 
--- Ranks are separate spell IDs on ranked realms: the spell's name finds the
--- rank the player knows. Returns the ID to track and whether it is known.
+-- Ranks are separate spell IDs on ranked realms: the one resolve finds the
+-- rank the player knows by name (never a rank the book no longer has), then
+-- its override. Returns the ID to track and whether the spell is known.
 local function Resolve(id)
     local sid = tonumber(id)
     if not sid or sid <= 0 then return nil end
-    local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(sid)
-    if C_Spell.GetSpellIDForSpellIdentifier and not IsSecret(nm) and type(nm) == "string" and nm ~= "" then
-        local rid = C_Spell.GetSpellIDForSpellIdentifier(nm)
-        if not IsSecret(rid) and type(rid) == "number" and rid > 0 then return rid, Known(rid) end
-    end
-    return sid, Known(sid)
+    local St = NS.Store
+    return St.TrackedSpellID(sid, true, false) or sid, St.KnowsSpell(sid) ~= false
 end
 -- the swing colours find their ranks the same way
 SA.Resolve = Resolve
@@ -104,12 +98,12 @@ local function RankText(v)
 end
 
 local function RankOf(sid)
-    return RankText(C_Spell.GetSpellSubtext and C_Spell.GetSpellSubtext(sid))
+    return RankText(C_Spell.GetSpellSubtext and C_Spell.GetSpellSubtext(sid)) -- raw-id: a rank the spellbook lists
 end
 
 local function Ranks(id)
     local sid = tonumber(id)
-    local nm = sid and C_Spell.GetSpellName and C_Spell.GetSpellName(sid)
+    local nm = sid and C_Spell.GetSpellName and C_Spell.GetSpellName(sid) -- raw-id: the typed ability's name, to list its ranks
     if IsSecret(nm) or type(nm) ~= "string" or nm == "" then return {} end
     if rankCache[nm] then return rankCache[nm] end
     local out, seen = {}, {}
@@ -127,7 +121,7 @@ local function Ranks(id)
                 for i = line.itemIndexOffset + 1, line.itemIndexOffset + line.numSpellBookItems do
                     local item = SB.GetSpellBookItemInfo(i, bank)
                     local rid = item and (item.spellID or item.actionID)
-                    if type(rid) == "number" and not IsSecret(rid) and C_Spell.GetSpellName(rid) == nm then
+                    if type(rid) == "number" and not IsSecret(rid) and C_Spell.GetSpellName(rid) == nm then -- raw-id: a spellbook entry
                         Add(rid, RankText(item.subName) or RankOf(rid))
                     end
                 end
@@ -136,7 +130,7 @@ local function Ranks(id)
     end
     if C_Spell.GetSpellIDForSpellIdentifier then
         for n = 1, MAX_RANK do
-            local rid = C_Spell.GetSpellIDForSpellIdentifier(("%s(Rank %d)"):format(nm, n))
+            local rid = C_Spell.GetSpellIDForSpellIdentifier(("%s(Rank %d)"):format(nm, n)) -- raw-id: the rank list by name
             if not IsSecret(rid) and type(rid) == "number" and rid > 0 then
                 local own = RankOf(rid)
                 if own == nil or own == n then Add(rid, n) end
@@ -154,33 +148,37 @@ function SA.ForgetRanks()
 end
 
 -- The spell IDs whose queue counts for an ability. pick: 0 (or nil) any rank
--- the player knows, -1 the highest (the one its name resolves to), n that
--- rank, the highest while that rank is not known.
+-- the player knows, -1 the highest (the rank the one resolve finds, and its
+-- override), n that rank, the highest while that rank is not known.
 function SA.QueueIDs(id, pick)
-    local sid = Resolve(id)
-    if not sid then return {} end
+    local eff = Resolve(id)
+    if not eff then return {} end
+    local top = NS.Store.TrackedSpellID(tonumber(id), true, true) or eff
+    local mine = (top ~= eff) and { top, eff } or { eff }
     pick = tonumber(pick) or 0
     if pick == 0 then
-        local out, has = {}, false
+        local out, has = {}, {}
         for _, r in ipairs(Ranks(id)) do
             out[#out + 1] = r.id
-            if r.id == sid then has = true end
+            has[r.id] = true
         end
-        if not has then out[#out + 1] = sid end
+        for _, v in ipairs(mine) do
+            if not has[v] then out[#out + 1] = v end
+        end
         return out
     elseif pick > 0 then
         for _, r in ipairs(Ranks(id)) do
             if r.rank == pick then return { r.id } end
         end
     end
-    return { sid }
+    return mine
 end
 
 -- Queued on the next swing at any of these ranks.
 local function Queued(ids)
     if not (C_Spell.IsCurrentSpell and ids) then return false end
     for _, q in ipairs(ids) do
-        if Yes(C_Spell.IsCurrentSpell(q)) then return true end
+        if Yes(C_Spell.IsCurrentSpell(q)) then return true end -- raw-id: the spellbook's ranks of a typed ability
     end
     return false
 end
@@ -196,7 +194,7 @@ local function ResolveList(L, rec)
         for i, id in ipairs(ids) do
             local sid, known = Resolve(id)
             if sid then
-                local a = { sid = sid, icon = (C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(sid)) or 134400,
+                local a = { eff = sid, icon = (C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(sid)) or 134400,
                     qids = SA.QueueIDs(id, type(picks) == "table" and picks[i] or 0) }
                 list[#list + 1] = a
                 if known then tracked[#tracked + 1] = a end
@@ -403,20 +401,20 @@ end
 
 local function PaintSlot(L, i, a, sStart, sDur, now)
     local S = EnsureSlot(L, i)
-    if S.sid ~= a.sid then
-        S.sid, S.readyAt, S.lastCDSeen = a.sid, nil, nil
+    if S.eff ~= a.eff then -- raw-id: another ability in this slot, not a match
+        S.eff, S.readyAt, S.lastCDSeen = a.eff, nil, nil
     end
     local e = now - sStart
     -- The GCD-free duration, so another ability's GCD never reads as this
     -- one's cooldown; the shadow's IsShown answers plainly.
-    local dur = C_Spell.GetSpellCooldownDuration and C_Spell.GetSpellCooldownDuration(a.sid, true)
+    local dur = C_Spell.GetSpellCooldownDuration and C_Spell.GetSpellCooldownDuration(a.eff, true)
     local onCD
     if dur then
         S.fedAt = now
         S.shadow:SetCooldownFromDurationObject(dur, true)
         onCD = S.shadow:IsShown() == true
     else
-        local info = C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(a.sid)
+        local info = C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(a.eff)
         onCD = info ~= nil and Yes(info.isActive) and not Yes(info.isOnGCD)
     end
     -- The ready moment as a plain stamp: the shadow's own, else the first
@@ -430,7 +428,7 @@ local function PaintSlot(L, i, a, sStart, sDur, now)
     end
     -- Queued (its marker on) or ready: one marker. A queued one with its
     -- marker off shows as ready while it is off cooldown.
-    local queued = L.queuedOn and Queued(a.qids or { a.sid })
+    local queued = L.queuedOn and Queued(a.qids or { a.eff })
     if queued or not onCD then
         HideSlot(S)
         if not (queued or L.readyOn) then return end

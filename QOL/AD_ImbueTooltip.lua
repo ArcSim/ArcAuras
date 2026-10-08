@@ -122,7 +122,7 @@ function IT.Append(tooltip, data)
     local kind
     local D = Enum and Enum.TooltipDataType
     if D and data.type == D.Spell then
-        local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(data.id)
+        local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(data.id) -- raw-id: a tooltip's own data ID
         if Secret(name) then return end
         kind = name and IT.IMBUES[name]
     elseif D and data.type == D.Item then

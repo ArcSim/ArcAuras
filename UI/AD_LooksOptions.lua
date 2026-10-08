@@ -146,7 +146,7 @@ function Options.LooksRows(pg, ctx, vis, owner, withMode)
     -- what the rows below change, in words
     local line = AT.AddRow(pg, 30, looksOn)
     local fs = line:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    fs:SetFont(NS.AT.FONT, 11, "")
     fs:SetPoint("TOPLEFT", 10, -4)
     fs:SetPoint("TOPRIGHT", -10, -4)
     fs:SetJustifyH("LEFT")

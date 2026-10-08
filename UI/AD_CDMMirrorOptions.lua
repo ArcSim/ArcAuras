@@ -70,7 +70,7 @@ function MO.DrawGlyph(stage)
         end
     end
     Rows(MO.GLYPH_X.from, COL.dim, COL.dim)
-    Rows(MO.GLYPH_X.to, GC.cooldown or COL.arc, GC.aura or COL.arc)
+    Rows(MO.GLYPH_X.to, AT.Mute(GC.cooldown or COL.arc), AT.Mute(GC.aura or COL.arc))
     local head = AT.MakeChevron(stage)
     head:SetDir("right")
     head:SetColor(COL.arc)

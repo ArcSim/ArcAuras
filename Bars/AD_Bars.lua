@@ -145,10 +145,14 @@ local lsmOwner, lsmHooked = {}, false   -- the media library's callback owner
 -- handlers close over it
 local ForEach
 
--- the aura composition lives between the fill and the overlay host: one
--- engine button + its bar per slot, two levels each, base + up to 8 layers
--- (3 flip bands = 6, a max-colour layer, the shade) = levels fill+1..+18
-local AURA_LAYER_LEVELS = 20
+-- Levels over the fill (F), bottom to top. The aura composition: one engine
+-- button + its bar per slot, two levels each, base + up to 8 layers (3 flip
+-- bands = 6, a max-colour layer, the shade) = F+1..F+18. Then the border
+-- style's frame, the bar glows, a while-missing glow's button over its glow,
+-- a kind's own marks that ride a frame of their own (a swing bar's off-hand
+-- mark and label, a resource bar's recharge countdowns), and the overlay host
+-- (ticks, texts) over all of them.
+Bars.LADDER = { aura = 1, auraTop = 18, border = 19, glow = 20, missBtn = 21, marks = 22, overlay = 23 }
 
 local function R(rec, section, field)
     return Store.Resolve(rec, section, field)
@@ -225,8 +229,9 @@ local function BuildShell(holder)
 
     local overlay = CreateFrame("Frame", nil, f)
     overlay:SetAllPoints(fill)
-    -- Above the charge-slot stack and the aura colour layers.
-    overlay:SetFrameLevel(fill:GetFrameLevel() + AURA_LAYER_LEVELS)
+    -- Above the charge-slot stack, the aura colour layers, the border, the
+    -- glows and a kind's marks on frames of their own.
+    overlay:SetFrameLevel(fill:GetFrameLevel() + Bars.LADDER.overlay)
     f.overlay = overlay
 
     -- Sheen: a plain texture over the fill (statusbar fill textures drop a
@@ -919,7 +924,7 @@ local function ApplyBarIcon(entry)
     local tex
     local ov = R(rec, "icon", "iconOverride") or 0
     if ov and ov > 0 then
-        tex = (C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(ov)) or ov
+        tex = (C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(ov)) or ov -- raw-id: an art pick, not a tracked spell
     else
         local sid = SpellIDFor and SpellIDFor(rec)
         tex = sid and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(sid)
@@ -985,8 +990,8 @@ local function ApplyStyle(entry)
     local th = R(rec, "look", "borderThickness") or 1
     local px = Bars.StripPx(shell, th)
     -- Border style: Flat is the 1px strips (default); any other is an edge
-    -- file drawn as a backdrop at the thickness, one level under the overlay
-    -- so it clears every fill layer and stays under the texts.
+    -- file drawn as a backdrop at the thickness, on the border rung: over
+    -- every fill layer, under the glows and the texts.
     local edgeFile = ResolveBorder(R(rec, "look", "borderStyle"))
     local strips = borderOn and not edgeFile
     -- The resolved strip colour, kept for the button-owned copies: a colour set
@@ -1005,7 +1010,7 @@ local function ApplyStyle(entry)
             bf:EnableMouse(false)
             shell.borderF = bf
         end
-        bf:SetFrameLevel(shell.overlay:GetFrameLevel() - 1)
+        bf:SetFrameLevel(shell.fill:GetFrameLevel() + Bars.LADDER.border)
         if bf.SetBackdrop then
             if bf._adEdge ~= edgeFile or bf._adSize ~= px then
                 bf._adEdge, bf._adSize = edgeFile, px
@@ -1114,6 +1119,8 @@ local function ApplyVisibility(entry)
     -- sessions.
     if NS.Conditions then alpha = alpha * NS.Conditions.AlphaFor(rec) end
     entry.holder:SetAlpha(alpha)
+    -- the bar glows' lanes hang off UIParent and take this alpha (Bars\AD_BarGlow.lua)
+    if Bars.Glow then Bars.Glow.Visible(entry) end
 end
 
 -- The conditions module paints bars through this writer, since the holder
@@ -1150,23 +1157,10 @@ function SpellIDFor(rec)
     if R(rec, "behavior", "gcdMode") then return GCD_SPELL end
     local d = rec.driver
     if not d then return nil end
-    -- Ranked realms (Forever): resolve by name on each feed so the bar follows
-    -- the player's known rank; SPELLS_CHANGED re-feeds cover rank-ups.
-    local sid = d.spellID
-    if Store.AutoRankOn(d) and sid and C_Spell.GetSpellIDForSpellIdentifier then
-        local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(sid)
-        if nm then
-            local rid = C_Spell.GetSpellIDForSpellIdentifier(nm)
-            if rid then sid = rid end
-        end
-    end
-    -- Talent overrides: follow the active override on each feed (SPELLS_CHANGED
-    -- re-feeds cover flips); driver.ignoreSpellOverride pins the base spell.
-    if sid and not d.ignoreSpellOverride and C_Spell.GetOverrideSpell then
-        local ov = C_Spell.GetOverrideSpell(sid)
-        if ov and ov ~= 0 then sid = ov end
-    end
-    return sid
+    -- The icons' resolve on each feed: the known rank (ranked realms), then the
+    -- talent override unless ignoreSpellOverride pins the spell; SPELLS_CHANGED
+    -- re-feeds cover rank-ups and flips.
+    return Store.RecordSpellID(d)
 end
 
 -- The plain full cooldown length (seconds) that thresholds, text bands and the
@@ -1573,6 +1567,11 @@ local function CooldownPushState(entry)
     local readyFS = entry.shell.texts.ready
     if readyFS and readyFS:IsShown() then
         readyFS:SetText(ready and (R(rec, "text", "readyText") or "Ready") or "")
+    end
+    -- the bar glows' cooldown states (Bars\AD_BarGlow.lua): ready, recharging
+    -- (a charge used, not all), on cooldown; the GCD tracker has none
+    if Bars.Glow and not R(rec, "behavior", "gcdMode") then
+        Bars.Glow.CooldownState(entry, ready, c and not m, m)
     end
 end
 
@@ -2237,7 +2236,7 @@ local function LayoutCostIcons(entry)
         if n >= 20 then break end
         n = n + 1
         local ci = EnsureCostIcon(entry, n)
-        local tex = (C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(it.id)) or 134400
+        local tex = (C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(it.eff)) or 134400
         ci.dim:SetTexture(tex)
         ci.lit:SetTexture(tex)
         ci.f:SetSize(size, size)
@@ -2752,6 +2751,7 @@ local function LayoutPips(entry)
     if not on then
         for _, p in ipairs(entry.pips or {}) do p.f:Hide() end
         entry.pipCount = 0
+        entry.pipsW, entry.pipsH = nil, nil
         -- bar style: recharge slots, charged marks, the fold's second lap
         if Bars.ResCells then Bars.ResCells.BarLaid(entry) end
         return
@@ -2776,6 +2776,9 @@ local function LayoutPips(entry)
     local along = vertical and ph or pw
     local cross = vertical and pw or ph
     local envAlong = along * n + gap * (n - 1)
+    -- the size the row gives the bar, for whatever lays out around it (the glows)
+    entry.pipsW = vertical and cross or envAlong
+    entry.pipsH = vertical and envAlong or cross
     -- The pips size the bar (Bar Size is hidden in this style) to the row of
     -- cells plus gaps. A CENTER-anchored frame grows around its centre and can
     -- land its corner on a half pixel, so the corner is re-snapped the way the
@@ -3109,16 +3112,18 @@ local function SpellCostFor(spellID, pt)
 end
 
 -- the "cost ticks" spell list resolved against this bar's power: one
--- { id, cost, frac } per spell that costs it (re-laid on SPELLS_CHANGED)
+-- { eff, cost, frac } per spell that costs it, each typed spell read as the
+-- rank you know (a higher rank costs more) or its override, with the bar's
+-- own switches (re-laid on SPELLS_CHANGED)
 function ResourceCostList(entry, range)
     if not range or range <= 0 then return nil end
     local list = R(entry.rec, "ticks", "tickSpells") or ""
     if list == "" then return nil end
     local out = {}
     for id in tostring(list):gmatch("%d+") do
-        local sid = tonumber(id)
+        local sid = Store.RecordSpellID(entry.rec.driver, tonumber(id))
         local cost = SpellCostFor(sid, entry.powerType)
-        if cost then out[#out + 1] = { id = sid, cost = cost, frac = cost / range } end
+        if cost then out[#out + 1] = { eff = sid, cost = cost, frac = cost / range } end
     end
     if #out == 0 then return nil end
     return out
@@ -3184,7 +3189,7 @@ end
 local function PredictStart(spellID)
     ForEach("resource", function(e)
         if R(e.rec, "predict", "predictEnabled") == true then
-            e.predCost = SpellCostFor(spellID, e.powerType)
+            e.predCost = SpellCostFor(spellID, e.powerType) -- raw-id: the cast the game reports
             PredictLayout(e)
         end
     end)
@@ -4236,7 +4241,9 @@ end
 local function AuraFetchCount(...) return select("#", ...), (...) end
 local function AuraPresent(entry)
     local d = entry.rec.driver or {}
-    local sid = d.spellID
+    -- the bar's aura or, while it follows your rank, your rank of it
+    local ids = Store.TrackedAuraIDs(d)
+    local sid = ids[1]
     if not sid then return false end
     if AuraSecretNow() then return nil end
     local unit, harmful, caster = AuraShape(d)
@@ -4253,9 +4260,7 @@ local function AuraPresent(entry)
             unit, nm, AuraFilter(d)))
     else
         if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID) then return false end
-        -- the bar's aura or, while it follows your rank, your rank of it
-        local DA = NS.DriverAura
-        for _, id in ipairs((DA and DA.TrackedIDs) and DA.TrackedIDs(d) or { sid }) do
+        for _, id in ipairs(ids) do
             n, data = AuraFetchCount(C_UnitAuras.GetPlayerAuraBySpellID(id))
             if n == 0 or data ~= nil then break end
         end
@@ -4292,9 +4297,7 @@ end
 -- The bar's aura, and your rank of it while it follows your rank (Forever):
 -- the aura icons' own id map, and that map as a comparable string.
 function Bars.AuraIDs(d)
-    local DA = NS.DriverAura
-    if DA and DA.IncludeMap then return DA.IncludeMap(d) end
-    return { [d.spellID or 0] = true }
+    return Store.AuraIncludeMap(d)
 end
 function Bars.AuraIDSig(d)
     local DA = NS.DriverAura
@@ -4473,7 +4476,7 @@ Bars.ClientMaxStacks = ClientMaxStacks
 AuraMaxStacks = function(rec)   -- forward-declared above TickUnit (the seam reads it too)
     local d = rec.driver or {}
     local m = tonumber(d.maxStacks)
-    if not m or m < 1 then m = ClientMaxStacks(d.spellID) end
+    if not m or m < 1 then m = ClientMaxStacks(Store.TrackedAuraIDs(d)[1]) end
     if not m or m < 1 then m = 5 end
     return math.floor(m)
 end
@@ -4744,18 +4747,19 @@ local function AuraOwnChromeBuild(entry, b, s)
     s.own = oc
     local lvl = b:GetFrameLevel()
     local ovl = sh.overlay:GetFrameLevel()
+    local rung = sh.fill:GetFrameLevel() + Bars.LADDER.border
     -- background: the button's own level, under its bar (one level up)
     oc.bgHost = CreateFrame("Frame", nil, b)
     oc.bgHost:SetAllPoints(sh)
     oc.bgHost:SetFrameLevel(lvl)
     oc.bg = oc.bgHost:CreateTexture(nil, "BACKGROUND")
     oc.bg:SetAllPoints(sh)
-    -- border strips + the border-style backdrop, at the overlay's level;
-    -- the strips take the shell's own corner anchors (BuildShell's), their
-    -- thickness follows in the sync
+    -- border strips + the border-style backdrop, on the border rung (under
+    -- the glows); the strips take the shell's own corner anchors
+    -- (BuildShell's), their thickness follows in the sync
     oc.borderHost = CreateFrame("Frame", nil, b)
     oc.borderHost:SetAllPoints(sh)
-    oc.borderHost:SetFrameLevel(ovl)
+    oc.borderHost:SetFrameLevel(rung)
     oc.edges = {}
     for _, k in ipairs(EDGE_KEYS) do
         oc.edges[k] = oc.borderHost:CreateTexture(nil, "BORDER")
@@ -4770,7 +4774,7 @@ local function AuraOwnChromeBuild(entry, b, s)
     oc.edges.right:SetPoint("BOTTOMRIGHT", sh, "BOTTOMRIGHT")
     oc.borderF = CreateFrame("Frame", nil, b, BackdropTemplateMixin and "BackdropTemplate" or nil)
     oc.borderF:SetAllPoints(sh)
-    oc.borderF:SetFrameLevel(ovl - 1)
+    oc.borderF:SetFrameLevel(rung)
     oc.borderF:EnableMouse(false)
     oc.borderF:Hide()
     -- ticks: one copy per laid mark, anchored over it
@@ -5490,6 +5494,7 @@ function Bars.EnsureBar(rec, holder)
                 Bars.KINDS[cur.kind].Relayout(cur)
             end
             LayoutTicks(cur)
+            if Bars.Glow then Bars.Glow.Relayout(cur) end
         end
         EnsureSharedEvents()
     end
@@ -5569,6 +5574,8 @@ function Bars.EnsureBar(rec, holder)
 
     -- stays hidden while Play on screen draws the preview on this frame
     e.shell:SetShown(Bars.screenRecId ~= rec.id)
+    -- the glows last: every size (a pips row's too) and level is settled
+    if Bars.Glow then Bars.Glow.Styled(e) end
 end
 
 function Bars.Release(barId)
@@ -5623,6 +5630,7 @@ function Bars.Release(barId)
     if e.kind == "health" and Bars.ClickUnit then Bars.ClickUnit.Release(e) end
     if e.kind == "swing" and Bars.SwingAbil then Bars.SwingAbil.Release(e) end
     if e.kind == "swing" and Bars.SwingColor then Bars.SwingColor.Release(e) end
+    if Bars.Glow then Bars.Glow.Release(e) end
     ReleaseSharedEvents()
     ReleaseSwingEvents()
     ReleasePredictEvents()
@@ -6203,6 +6211,8 @@ function PV.Build(rec, holder, screen)
     PV.Relayout(e)
     e.shell:Show()
     PV.Apply(e, newRec)
+    -- the bar glows, while their sub-tab is open (Bars\AD_BarGlow.lua)
+    if Bars.Glow then Bars.Glow.Preview(e) end
     return e
 end
 
@@ -6253,6 +6263,7 @@ function PV.Park(e)
     -- UIParent children (slot and cost detectors) hide with the entry
     for _, s in pairs(e.slotList or {}) do if s.detector then s.detector:Hide() end end
     for _, ci in ipairs(e.costIcons or {}) do ci.det:Hide() ci.f:Hide() end
+    if Bars.Glow then Bars.Glow.PreviewPark(e) end
 end
 
 function Bars.PreviewRelease()
@@ -6271,7 +6282,10 @@ function Bars.PreviewScreenStart(rec)
     if Bars.screenRecId and Bars.screenRecId ~= rec.id then Bars.PreviewScreenStop() end
     Bars.screenRecId = rec.id
     local le = live[rec.id]
-    if le then le.shell:Hide() end
+    if le then
+        le.shell:Hide()
+        if Bars.Glow then Bars.Glow.Visible(le) end
+    end
     PV.Build(rec, f, true)
     return true
 end
@@ -6285,7 +6299,10 @@ function Bars.PreviewScreenStop()
         PV.Park(e)
     end
     local le = id and live[id]
-    if le then le.shell:Show() end
+    if le then
+        le.shell:Show()
+        if Bars.Glow then Bars.Glow.Visible(le) end
+    end
 end
 
 -- with an id: whether that bar is playing on screen
@@ -6406,6 +6423,22 @@ Bars.Kit = {
         local endT, dur = e.endTime, e.duration
         if not (e.running and endT and dur) or GetTime() >= endT then return nil end
         return endT - dur, dur, endT
+    end,
+    -- A kind that hides its shell by a flag that may be secret (a castbar's
+    -- casts that cannot be interrupted): the alpha is set C-side and the flag
+    -- kept on the entry, so whatever hangs off UIParent for this bar can copy
+    -- it. nil = shown. Only nil-checked: a secret boolean throws on a test.
+    ShellAlpha = function(e, flag)
+        local sh = e.shell
+        if flag ~= nil and sh.SetAlphaFromBoolean then
+            sh:SetAlphaFromBoolean(flag, 0, 1)
+        else
+            flag = nil
+            sh:SetAlpha(1)
+        end
+        local had = e.shellGate ~= nil
+        e.shellGate = flag
+        if (had or flag ~= nil) and Bars.Glow then Bars.Glow.Visible(e) end
     end,
 }
 -- the timer (custom) bar kind: its engine loads before this file, so the host

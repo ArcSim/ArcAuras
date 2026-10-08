@@ -277,6 +277,7 @@ function UO.Preview(b, g, key)
     pv.glow:SetShown(glow == true)
     local text = p and p.labels[key]
     if text then
+        -- the label as the icon draws it on screen: the game's font
         pv.label:SetFont(STANDARD_TEXT_FONT, 10, "OUTLINE")
         pv.label:ClearAllPoints()
         pv.label:SetPoint(p.labelAnchor, b, p.labelAnchor, 0, 0)
@@ -411,7 +412,7 @@ function UO.OrderRow(pg, vis)
     ctl:SetSize(200, 24)
     row._colCtrl, row._colFill = ctl, true
     local words = ctl:CreateFontString(nil, "OVERLAY")
-    words:SetFont(STANDARD_TEXT_FONT, 12, "")
+    words:SetFont(NS.AT.FONT, 12, "")
     words:SetPoint("LEFT", 0, 0)
     words:SetPoint("RIGHT", 0, 0)
     words:SetJustifyH("LEFT")

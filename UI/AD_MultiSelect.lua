@@ -801,7 +801,7 @@ end
 local function Line(pg, h, size, color, visibleFn)
     local row = AT.AddRow(pg, h, visibleFn)
     local fs = row:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, size, "")
+    fs:SetFont(AT.FONT, size, "")
     fs:SetPoint("LEFT", 10, 0)
     fs:SetPoint("RIGHT", -10, 0)
     fs:SetJustifyH("LEFT")

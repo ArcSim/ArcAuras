@@ -84,7 +84,7 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
             local sid = tonumber(v)
             if sid and sid > 0 then
                 r.driver.spellID = sid
-                local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(sid)
+                local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(sid) -- raw-id: the typed ID names the record
                 if nm then r.name = nm end
             else
                 r.driver.spellID = nil
@@ -125,7 +125,7 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
     -- what the icon shows, in words
     local barRow = AT.AddRow(pg, 22, barVis)
     local barFS = barRow:CreateFontString(nil, "OVERLAY")
-    barFS:SetFont(STANDARD_TEXT_FONT, 11, "")
+    barFS:SetFont(NS.AT.FONT, 11, "")
     barFS:SetPoint("TOPLEFT", 10, -4)
     barFS:SetJustifyH("LEFT")
     barFS:SetJustifyV("TOP")
@@ -143,7 +143,7 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
             local sid = DT.BarPick(slot)
             if sid then
                 text = ("Shows %s, your totem bar's %s pick, while no %s totem is down."):format(
-                    DT.SpellName(sid) or "that totem", el, el:lower())
+                    DT.SpellName(sid) or "that totem", el, el:lower()) -- raw-id: the totem bar slot's own spell
             else
                 text = ("Your totem bar has no %s totem picked yet: pick one in its flyout."):format(el)
             end
@@ -255,7 +255,7 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
     -- what the look waits on, and a new search when nothing was found
     local rangeRow = AT.AddRow(pg, 24, rangeVis)
     local rangeFS = rangeRow:CreateFontString(nil, "OVERLAY")
-    rangeFS:SetFont(STANDARD_TEXT_FONT, 11, "")
+    rangeFS:SetFont(NS.AT.FONT, 11, "")
     rangeFS:SetPoint("TOPLEFT", 10, -4)
     rangeFS:SetJustifyH("LEFT")
     rangeFS:SetJustifyV("TOP")
@@ -264,7 +264,7 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
     local rangeFind = AT.MakeSmallButton(rangeRow, "Look up", 64)
     rangeFind:SetPoint("TOPRIGHT", -8, -2)
     rangeFind:SetHeight(18)
-    rangeFind.fs:SetFont(STANDARD_TEXT_FONT, 10, "")
+    rangeFind.fs:SetFont(NS.AT.FONT, 10, "")
     AT.Tooltip(rangeFind, "Look up", "Searches the spell list for the buff by its name.")
     rangeFind:SetScript("OnClick", function()
         local r = Rec()

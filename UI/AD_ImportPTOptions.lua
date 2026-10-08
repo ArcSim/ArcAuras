@@ -23,7 +23,7 @@ local function Line(pg, h, textFn, visibleFn)
     local AT, COL = NS.AT, NS.AT.COL
     local row = AT.AddRow(pg, h, visibleFn)
     local fs = row:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    fs:SetFont(NS.AT.FONT, 11, "")
     fs:SetPoint("TOPLEFT", 10, -3)
     fs:SetPoint("TOPRIGHT", -10, -3)
     fs:SetJustifyH("LEFT")
@@ -63,7 +63,7 @@ local function PickRow(i)
     row.box = AT.MakeCheckbox(row)
     row.box:SetPoint("LEFT", row, "LEFT", 10, 0)
     row.fs = row:CreateFontString(nil, "OVERLAY")
-    row.fs:SetFont(STANDARD_TEXT_FONT, 12, "")
+    row.fs:SetFont(NS.AT.FONT, 12, "")
     row.fs:SetPoint("LEFT", row.box, "RIGHT", 8, 0)
     row.fs:SetPoint("RIGHT", row, "RIGHT", -10, 0)
     row.fs:SetJustifyH("LEFT")
@@ -94,7 +94,7 @@ function PW.Build()
     local AT, COL = NS.AT, NS.AT.COL
     win = AT.CreateWindow("ArcAurasImportPT", {
         w = 480, h = 560, minW = 400, minH = 360, maxW = 900, maxH = 1000,
-        title = "|cff3fc9f2Arc|r|cffd5e2f2 Auras|r",
+        title = NS.AT.Brand("Arc", " Auras"),
         onResize = function() if page then AT.LayoutPage(page) end end,
     })
     page = AT.NewPage(win)
@@ -216,7 +216,7 @@ function PW.BuildOffer()
     local AT = NS.AT
     offer = AT.CreateWindow("ArcAurasImportPTOffer", {
         w = 460, h = 190, minW = 460, minH = 190, maxW = 460, maxH = 190,
-        title = "|cff3fc9f2Arc|r|cffd5e2f2 Auras|r",
+        title = NS.AT.Brand("Arc", " Auras"),
     })
     local pg = AT.NewPage(offer)
     pg:SetPoint("TOPLEFT", 8, -38)

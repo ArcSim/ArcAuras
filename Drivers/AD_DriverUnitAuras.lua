@@ -79,15 +79,15 @@ function UA.Alignment(g)
 end
 
 -- "2825, 32182 80353" -> { [2825] = true, ... }, or nil when it names none
+-- A hide list as the engine's map, nil for none: the typed auras and, on
+-- ranked realms, your rank of each (the aura entry's rule).
 function UA.ParseIDs(text)
-    local m
-    for n in tostring(text or ""):gmatch("%d+") do
-        local v = tonumber(n)
-        if v and v > 0 then
-            m = m or {}
-            m[v] = true
-        end
-    end
+    local list = {}
+    for n in tostring(text or ""):gmatch("%d+") do list[#list + 1] = tonumber(n) end
+    local ids = Store.TrackedAuraIDs({ spellIDs = list })
+    if #ids == 0 then return nil end
+    local m = {}
+    for _, id in ipairs(ids) do m[id] = true end
     return m
 end
 

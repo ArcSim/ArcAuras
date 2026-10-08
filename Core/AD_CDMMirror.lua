@@ -243,7 +243,7 @@ function M.NameOf(id)
     local n = M.names[id]
     if n then return n end
     local f = C_Spell and C_Spell.GetSpellName
-    n = f and f(id)
+    n = f and f(id) -- raw-id: a Cooldown Manager entry
     if type(n) ~= "string" or not M.Plain(n) or n == "" then return nil end
     M.names[id] = n
     return n
@@ -285,7 +285,7 @@ end
 function M.Harmful(id)
     local f = C_Spell and C_Spell.IsSpellHarmful
     if not (f and type(id) == "number") then return false end
-    local v = f(id)
+    local v = f(id) -- raw-id: a Cooldown Manager entry
     return M.Plain(v) and v == true
 end
 

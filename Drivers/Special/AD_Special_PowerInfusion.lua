@@ -61,7 +61,7 @@ function PI.SyncSound()
     soundSig = nil
     pendingSound = false
     if d then
-        local info = { unitToken = "player", spellID = d.spellID, outputChannel = d.channel }
+        local info = { unitToken = "player", spellID = d.spellID, outputChannel = d.channel } -- raw-id: the special's own fixed aura
         if d.fileName then info.soundFileName = d.fileName else info.soundFileID = d.fileID end
         local id = C_UnitAuras.AddAuraSound(Enum.UnitAuraSoundTrigger.Added, info)
         if id then

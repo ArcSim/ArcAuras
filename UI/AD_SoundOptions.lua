@@ -83,7 +83,7 @@ function Options.SoundAddRows(pg, owner, addState)
     AT.RowInput(pg, "Spell",
         function()
             local id = D().spellID
-            local nm = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+            local nm = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: the typed spell, for the editor's words
             return (type(nm) == "string" and nm ~= "") and nm or (id and tostring(id) or "")
         end,
         function(v)

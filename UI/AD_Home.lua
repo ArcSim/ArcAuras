@@ -57,7 +57,7 @@ HM.TILES = { "loaded", "showing", "hidden", "updates" }
 
 function HM.Text(parent, size, col)
     local fs = parent:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, size, "")
+    fs:SetFont(AT.FONT, size, "")
     fs:SetJustifyH("LEFT")
     local c = col or COL.ink
     fs:SetTextColor(c[1], c[2], c[3])
@@ -76,7 +76,7 @@ end
 function HM.Big(b, w)
     b:SetHeight(26)
     if w then b:SetWidth(w) end
-    b.fs:SetFont(STANDARD_TEXT_FONT, 12, "")
+    b.fs:SetFont(AT.FONT, 12, "")
     return b
 end
 
@@ -98,12 +98,12 @@ function HM.Fit(b, minW)
     return w
 end
 
--- a button in the accent: its words and its border, the border kept when the
--- mouse leaves
+-- a lead button: its words and its border in the lead colours (the accent in
+-- the classic palette), the border kept when the mouse leaves
 function HM.Arc(b)
-    HM.Color(b.fs, COL.arc)
-    b:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
-    b:HookScript("OnLeave", function(s) s:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1) end)
+    HM.Color(b.fs, COL.lead)
+    b:SetBackdropBorderColor(COL.leadEdge[1], COL.leadEdge[2], COL.leadEdge[3], 1)
+    b:HookScript("OnLeave", function(s) s:SetBackdropBorderColor(COL.leadEdge[1], COL.leadEdge[2], COL.leadEdge[3], 1) end)
     return b
 end
 
@@ -169,7 +169,7 @@ function HM.MakeHead(parent, text, linkText, onLink, key)
     local top = math.floor((HM.HEAD_H - HM.CHEV) / 2)
     h.chev = AT.MakeChevron(h)
     h.chev:SetPoint("TOPLEFT", h, "TOPLEFT", 0, -top)
-    h.title = HM.Text(h, 11, COL.arc)
+    h.title = HM.Text(h, 11, COL.title)
     h.title:SetPoint("LEFT", h.chev, "RIGHT", HM.CHEV_GAP, 0)
     h.title:SetText(string.upper(text))
     if linkText then
@@ -177,7 +177,7 @@ function HM.MakeHead(parent, text, linkText, onLink, key)
         h.link:SetPoint("RIGHT", 0, 0)
     end
     h.rule = h:CreateTexture(nil, "ARTWORK")
-    h.rule:SetColorTexture(COL.line2[1], COL.line2[2], COL.line2[3], 1)
+    h.rule:SetColorTexture(COL.hair[1], COL.hair[2], COL.hair[3], 1)
     h.rule:SetHeight(AT.Hairline(h))
     h.rule:SetPoint("LEFT", h.title, "RIGHT", 10, 0)
     if h.link then
@@ -231,9 +231,8 @@ end
 -- Open, the chevron points down; folded, right. Under the mouse the title and
 -- the chevron brighten to the text colour, as the theme's folding sections do.
 function HM.PaintHead(h)
-    local c = h._hot and COL.ink or COL.arc
-    HM.Color(h.title, c)
-    h.chev:SetColor(c)
+    HM.Color(h.title, h._hot and COL.ink or COL.title)
+    h.chev:SetColor(h._hot and COL.ink or COL.chev)
     h.chev:SetDown(not HM.Shut(h._key))
 end
 
@@ -441,9 +440,9 @@ function HM.MakeCard(parent)
     c.what:SetWordWrap(true)
     c.what:SetHeight(30)
     c.edit = HM.Big(AT.MakeSmallButton(c, "Edit", HM.EDIT_W))
-    HM.Color(c.edit.fs, COL.arc)
-    c.edit:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
-    c.edit:HookScript("OnLeave", function(s) s:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1) end)
+    HM.Color(c.edit.fs, COL.lead)
+    c.edit:SetBackdropBorderColor(COL.leadEdge[1], COL.leadEdge[2], COL.leadEdge[3], 1)
+    c.edit:HookScript("OnLeave", function(s) s:SetBackdropBorderColor(COL.leadEdge[1], COL.leadEdge[2], COL.leadEdge[3], 1) end)
     c.export = HM.Big(AT.MakeSmallButton(c, "Export", HM.EXPORT_W))
     c.export:SetPoint("LEFT", c.edit, "RIGHT", 8, 0)
     c.edit:SetScript("OnClick", function() if c._lay then Options.OpenLayout(c._lay) end end)
@@ -832,7 +831,7 @@ function HM.MakeNotes(parent, ver)
     for _, sec in ipairs(ver.sections or {}) do
         for _, it in ipairs(sec.items or {}) do
             if #box._items < HM.NOTES_MAX then
-                local t = HM.Text(box, 12, COL.arc)
+                local t = HM.Text(box, 12, COL.title)
                 local d = HM.Text(box, 11, COL.dim)
                 for _, fs in ipairs({ t, d }) do
                     fs:SetJustifyV("TOP")
@@ -885,9 +884,9 @@ function HM.HeroRow(pg)
     ie:SetScript("OnClick", function() Options.Select("ie") end)
     local new = HM.Big(AT.MakeSmallButton(row, "+ New Layout", 120))
     new:SetPoint("RIGHT", ie, "LEFT", -10, 0)
-    HM.Color(new.fs, COL.arc)
-    new:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
-    new:HookScript("OnLeave", function(s) s:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1) end)
+    HM.Color(new.fs, COL.lead)
+    new:SetBackdropBorderColor(COL.leadEdge[1], COL.leadEdge[2], COL.leadEdge[3], 1)
+    new:HookScript("OnLeave", function(s) s:SetBackdropBorderColor(COL.leadEdge[1], COL.leadEdge[2], COL.leadEdge[3], 1) end)
     new:SetScript("OnClick", function() Options.Select("newlayout") end)
     row.hi = HM.Text(row, 22)
     row.hi:SetPoint("TOPLEFT", 12, -8)
@@ -970,7 +969,7 @@ function HM.TilesRow(pg)
             t.value:SetText(forms[#forms])
             t._need = math.ceil(math.max(HM.Width(t.label), HM.Width(t.value), HM.Width(t.sub))) + HM.TILE_PAD
             local hot = t._key == "updates" and #st.pending > 0
-            local edge = hot and COL.arcDeep or COL.line
+            local edge = hot and COL.focus or COL.line
             t:SetBackdropBorderColor(edge[1], edge[2], edge[3], 1)
             HM.Color(t.label, hot and COL.arc or COL.faint)
         end
@@ -1416,7 +1415,7 @@ function HM.MakeMaker(parent, packs)
     c.state = HM.Text(c, 11, COL.dim)
     c.state:SetJustifyV("TOP")
     c.rule = c:CreateTexture(nil, "ARTWORK")
-    c.rule:SetColorTexture(COL.line2[1], COL.line2[2], COL.line2[3], 1)
+    c.rule:SetColorTexture(COL.hair[1], COL.hair[2], COL.hair[3], 1)
     c.rule:SetHeight(AT.Hairline(c))
     c.crests = {}
     for i, t in ipairs(packs) do

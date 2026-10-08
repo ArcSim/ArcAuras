@@ -155,7 +155,7 @@ function RP.ParseSpell(text)
     end
     if not id or id <= 0 then return nil end
     id = math.floor(id)
-    if C_Spell.DoesSpellExist and not C_Spell.DoesSpellExist(id) then return nil end
+    if C_Spell.DoesSpellExist and not C_Spell.DoesSpellExist(id) then return nil end -- raw-id: the ID typed in the box
     return id
 end
 
@@ -197,7 +197,7 @@ function RP.Create(g, kind, id)
     if kind == "item" then
         name = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(id)
     elseif kind ~= "enchant" then
-        name = C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+        name = C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: the typed ID names the record
     end
     if issecretvalue and issecretvalue(name) then name = nil end
     local rec = NS.Store.NewReminder(g.id, kind, id, (type(name) == "string" and name ~= "") and name or nil)
@@ -255,7 +255,7 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
     AT.Tooltip(test, "Test Alert", "Plays the first reminder once, with this group's look and sound.")
     local add = AT.MakeSmallButton(act, "+ Add Reminder", 110)
     add:SetPoint("LEFT", test, "RIGHT", 8, 0)
-    add.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    add.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     add:SetScript("OnClick", function()
         AT.CloseDropdown()
         local g = G()
@@ -279,7 +279,7 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
     local grid = AT.AddRow(pg, TOP + PITCH, remVis)
     RP.grid = grid
     local cap = grid:CreateFontString(nil, "OVERLAY")
-    cap:SetFont(STANDARD_TEXT_FONT, 9, "")
+    cap:SetFont(NS.AT.FONT, 9, "")
     cap:SetPoint("TOPLEFT", 10, -2)
     cap:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     cap:SetText("FROM YOUR SPELLBOOK - click one, then Create Reminder")
@@ -287,7 +287,7 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
     scroll:SetPoint("TOPLEFT", 8, -TOP)
     scroll:SetPoint("BOTTOMRIGHT", -12, GAP)
     local empty = grid:CreateFontString(nil, "OVERLAY")
-    empty:SetFont(STANDARD_TEXT_FONT, 11, "")
+    empty:SetFont(NS.AT.FONT, 11, "")
     empty:SetPoint("LEFT", scroll, "TOPLEFT", 2, -CELL / 2)
     empty:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     local cells = {}
@@ -303,13 +303,13 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
         b.tex:SetPoint("BOTTOMRIGHT", -2, 2)
         b.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         -- a spell this group already reminds of wears the group colour's dot
-        local m = Options.GROUP_COLORS.reminder
+        local m = NS.AT.Mute(Options.GROUP_COLORS.reminder)
         b.dot = b:CreateTexture(nil, "OVERLAY")
         b.dot:SetSize(6, 6)
         b.dot:SetPoint("TOPRIGHT", -2, -2)
         b.dot:SetColorTexture(m[1], m[2], m[3], 1)
         function b.Edge(hot)
-            local c = (b._picked and COL.arc) or (hot and COL.arcDeep) or COL.line
+            local c = (b._picked and COL.arc) or (hot and COL.focus) or COL.line
             b:SetBackdropBorderColor(c[1], c[2], c[3], 1)
         end
         b:SetScript("OnEnter", function()
@@ -317,7 +317,7 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
             local e = b._e
             if not e then return end
             GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
-            GameTooltip:SetSpellByID(e.spellID)
+            GameTooltip:SetSpellByID(e.spellID) -- raw-id: a catalog entry
             GameTooltip:AddLine("Spell ID: " .. e.spellID, COL.arc[1], COL.arc[2], COL.arc[3])
             if b._have then GameTooltip:AddLine("This group reminds you of it already.", 1, 1, 1) end
             GameTooltip:Show()
@@ -330,7 +330,7 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
             local e = b._e
             if not e then return end
             AT.CloseDropdown()
-            RP.pick = (RP.pick ~= e.spellID) and e.spellID or nil
+            RP.pick = (RP.pick ~= e.spellID) and e.spellID or nil -- raw-id: a catalog pick, not a match
             AT.LayoutPage(pg)
         end)
         cells[i] = b
@@ -357,7 +357,7 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
         local results = NS.SpellCatalog.Search(RP.query, #all)
         for i, e in ipairs(results) do
             local b = Cell(i)
-            b._e, b._picked = e, e.spellID == RP.pick
+            b._e, b._picked = e, e.spellID == RP.pick -- raw-id: a catalog pick, not a match
             b._have = RP.Existing(g, "spell", e.spellID) ~= nil
             b.tex:SetTexture(e.texture)
             b.dot:SetShown(b._have)
@@ -386,9 +386,9 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
     ptex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     local make = AT.MakeSmallButton(pick, "Create Reminder", 124)
     make:SetPoint("RIGHT", -12, 0)
-    make.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    make.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     local pfs = pick:CreateFontString(nil, "OVERLAY")
-    pfs:SetFont(STANDARD_TEXT_FONT, 12, "")
+    pfs:SetFont(NS.AT.FONT, 12, "")
     pfs:SetPoint("LEFT", ptex, "RIGHT", 8, 0)
     pfs:SetPoint("RIGHT", make, "LEFT", -8, 0)
     pfs:SetJustifyH("LEFT")
@@ -413,7 +413,7 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
 
     local info = AT.AddRow(pg, 26, remVis)
     local ifs = info:CreateFontString(nil, "OVERLAY")
-    ifs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    ifs:SetFont(NS.AT.FONT, 11, "")
     ifs:SetPoint("LEFT", 10, 0)
     ifs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     local rescan = AT.MakeQuietButton(info, "Rescan", 70)
@@ -497,14 +497,14 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
         L.edit = AT.MakeSmallButton(L, "Edit", 56)
         L.edit:SetPoint("RIGHT", -6, 0)
         L.name = L:CreateFontString(nil, "OVERLAY")
-        L.name:SetFont(STANDARD_TEXT_FONT, 12, "")
+        L.name:SetFont(NS.AT.FONT, 12, "")
         L.name:SetPoint("TOPLEFT", L.tex, "TOPRIGHT", 8, 0)
         L.name:SetPoint("RIGHT", L.edit, "LEFT", -8, 0)
         L.name:SetJustifyH("LEFT")
         L.name:SetWordWrap(false)
         L.name:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
         L.sub = L:CreateFontString(nil, "OVERLAY")
-        L.sub:SetFont(STANDARD_TEXT_FONT, 10, "")
+        L.sub:SetFont(NS.AT.FONT, 10, "")
         L.sub:SetPoint("BOTTOMLEFT", L.tex, "BOTTOMRIGHT", 8, 0)
         L.sub:SetPoint("RIGHT", L.edit, "LEFT", -8, 0)
         L.sub:SetJustifyH("LEFT")
@@ -650,18 +650,18 @@ function RP.Build(kit)
     ren:SetPoint("RIGHT", dup, "LEFT", -5, 0)
     AT.Tooltip(ren, "Rename", "Edits the name in place. Enter saves, Escape cancels.")
     local name = head:CreateFontString(nil, "OVERLAY")
-    name:SetFont(STANDARD_TEXT_FONT, 13, "")
+    name:SetFont(NS.AT.FONT, 13, "")
     name:SetPoint("LEFT", head, "TOPLEFT", 42, -17)
     name:SetPoint("RIGHT", ren, "LEFT", -10, 0)
     name:SetJustifyH("LEFT")
     name:SetWordWrap(false)
-    name:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    name:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     local box = CreateFrame("EditBox", nil, head, "BackdropTemplate")
     box:SetHeight(20)
     box:SetPoint("LEFT", name, "LEFT", -6, 0)
     box:SetPoint("RIGHT", ren, "LEFT", -10, 0)
     AT.Skin(box, COL.well)
-    box:SetFont(STANDARD_TEXT_FONT, 12, "")
+    box:SetFont(NS.AT.FONT, 12, "")
     box:SetTextInsets(6, 6, 0, 0)
     box:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     box:SetAutoFocus(false)
@@ -722,7 +722,7 @@ function RP.Build(kit)
     -- what it watches, in words
     local what = AT.AddRow(pg, 22, trigVis)
     local wfs = what:CreateFontString(nil, "OVERLAY")
-    wfs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    wfs:SetFont(NS.AT.FONT, 11, "")
     wfs:SetPoint("LEFT", 10, 0)
     wfs:SetPoint("RIGHT", -10, 0)
     wfs:SetJustifyH("LEFT")
@@ -742,7 +742,7 @@ function RP.Build(kit)
         if item then
             nm = id and C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(id)
         else
-            nm = id and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+            nm = id and C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: the typed spell, for the editor's words
         end
         -- an item not cached yet has no name: the ID alone says which
         nm = (type(nm) == "string" and nm ~= "") and (nm .. "  ") or ""
@@ -1057,7 +1057,7 @@ function RP.Build(kit)
         AT.Section(pg, "Pulse", { visibleFn = apVis })
         local st = AT.AddRow(pg, 24, apVis)
         local sfs = st:CreateFontString(nil, "OVERLAY")
-        sfs:SetFont(STANDARD_TEXT_FONT, 11, "")
+        sfs:SetFont(NS.AT.FONT, 11, "")
         sfs:SetPoint("LEFT", 10, 0)
         sfs:SetJustifyH("LEFT")
         sfs:SetWordWrap(false)

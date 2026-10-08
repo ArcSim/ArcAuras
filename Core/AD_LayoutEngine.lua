@@ -98,14 +98,24 @@ local editMode = false   -- true while the options panel is open
 
 -- With the panel open, a record failing its load conditions is still drawn,
 -- tagged, when its eye in the panel is on or, for an eye never clicked, when
--- "Show unloaded items while editing" is on (Store.UnloadedShown). A loaded
+-- "Show unloaded items while editing" is on, and not while the sidebar lists
+-- only this character's items (Store.UnloadedDrawn). A loaded
 -- one whose eye hid it (Store.EditHidden) is not drawn while the panel is
 -- open. Every load check that decides what the engine draws goes through here.
 local function ShowsRec(rec)
     if Store.IsLoaded(rec) then
         return not (editMode and Store.EditHidden(rec))
     end
-    return editMode and Store.UnloadedShown(rec)
+    return editMode and Store.UnloadedDrawn(rec)
+end
+
+-- A record drawn here along with the group and layout it sits in.
+local function DrawnHere(rec)
+    if not ShowsRec(rec) then return false end
+    local g = rec.groupId and Store.Get(rec.groupId)
+    if g and not ShowsRec(g) then return false end
+    local lay = Store.Get((g and g.layoutId) or rec.layoutId)
+    return not (lay and not ShowsRec(lay))
 end
 
 -- The "unloaded" tag on a previewed record's frame, edit mode only. It sits
@@ -805,12 +815,38 @@ end
 
 local BAR_CYAN = { 0.247, 0.788, 0.949 }
 
+-- A bar holder's size, the one path for everything sized from it: scale
+-- multiplies width and height rather than calling SetScale, one unit is the
+-- floor (a one-pixel line is a legal bar). With the holder, each axis an
+-- anchor's Match width / height gave (Core\AD_Anchor.lua keeps it on the frame)
+-- replaces the setting, so the bar glows draw around the matched rect.
+function Engine.BarSize(rec, f)
+    local w = Store.Resolve(rec, "size", "width") or 220
+    local h = Store.Resolve(rec, "size", "height") or 16
+    local sc = Store.Resolve(rec, "size", "scale") or 1
+    w, h = Snap(math.max(1, w * sc)), Snap(math.max(1, h * sc))
+    if f then return f._adMatchW or w, f._adMatchH or h end
+    return w, h
+end
+
+-- A match on the holder changed (gained, followed a resized target, or lost):
+-- it takes that size, and the glows, drawn from numbers, follow now rather than
+-- on a size callback that may not come.
+local function BarMatched(f)
+    local rec = Store.Get(f._adRecId)
+    if not rec then return end
+    f:SetSize(Engine.BarSize(rec, f))
+    local G = NS.Bars and NS.Bars.Glow
+    if G and G.Sized then G.Sized(rec.id) end
+end
+
 local function EnsureBarFrame(rec)
     local f = barFrames[rec.id]
     if not f then
         f = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
         f:SetMovable(true)
         f:SetClampedToScreen(true)
+        f._adOnMatch = BarMatched
         barFrames[rec.id] = f
     end
     return f
@@ -889,12 +925,10 @@ local function PlaceBar(rec, container)
     f:SetParent(container)
     f:SetFrameStrata(EditStrata(Store.Resolve(rec, "frame", "strata")))
     f:SetFrameLevel(Store.Resolve(rec, "frame", "level") or 10)
-    -- Scale multiplies width and height rather than calling SetScale. One
-    -- unit is the floor: a one-pixel line is a legal bar.
-    local w = Store.Resolve(rec, "size", "width") or 220
-    local h = Store.Resolve(rec, "size", "height") or 16
-    local sc = Store.Resolve(rec, "size", "scale") or 1
-    f:SetSize(Snap(math.max(1, w * sc)), Snap(math.max(1, h * sc)))
+    -- Its own size, which the free spot below is snapped for; the anchor
+    -- post-pass gives a match back in this same rebuild. The glows draw at the
+    -- kept match meanwhile, so an unchanged match never redraws them.
+    f:SetSize(Engine.BarSize(rec))
     -- A kind with no place on screen (a wheel opens at the cursor): its
     -- runtime still gets the record, the holder stays hidden and anchors nothing.
     local KH = NS.Bars and NS.Bars.KINDS and NS.Bars.KINDS[rec.barKind]
@@ -1971,6 +2005,21 @@ function Engine.Rebuild()
             Factory.Release(iconId)
             NS.DriverCooldown.Detach(iconId)
         end
+    end
+    -- The last word: whichever path drew it, nothing that does not load here
+    -- (itself, its group or its layout) stays on screen. The release only
+    -- touches our frames and parks the aura slots, so it holds in combat too.
+    for iconId, f in pairs(Factory.frames) do
+        local rec = f:IsShown() and Store.Get(iconId)
+        if rec and not DrawnHere(rec) then
+            if NS.Anchor then NS.Anchor.Unregister(iconId) end
+            Factory.Release(iconId)
+            NS.DriverCooldown.Detach(iconId)
+        end
+    end
+    for bid, bf in pairs(barFrames) do
+        local rec = bf:IsShown() and Store.Get(bid)
+        if rec and not DrawnHere(rec) then ReleaseBar(bid) end
     end
     -- Post-passes: anchors need every live frame (cross-layout too); then the
     -- conditions pass paints alphas this same frame, so none render stale.

@@ -74,7 +74,7 @@ local function IconOf(dtype, id)
     local D = Enum.TooltipDataType
     if dtype == D.Spell or dtype == D.UnitAura then
         if C_Spell and C_Spell.GetSpellTexture then
-            local icon, original = C_Spell.GetSpellTexture(id)
+            local icon, original = C_Spell.GetSpellTexture(id) -- raw-id: a tooltip's own data ID
             return icon, original
         end
     elseif dtype == D.Item or dtype == D.Toy then

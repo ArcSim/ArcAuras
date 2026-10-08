@@ -20,7 +20,10 @@ local PURPLE = { 0.710, 0.549, 0.949 }   -- Aura Group
 -- the New Layout cards draw template groups in the sidebar's kind colours;
 -- reminder groups take a magenta nothing else uses
 Options.GROUP_COLORS = { cooldown = YELLOW, aura = PURPLE, reminder = { 0.98, 0.40, 0.98 } }
-local SHR = { 0.435, 0.659, 0.769 }
+-- The main window's design height: it sets the panel scale, and the talent
+-- pickers fit their own scale to it so they draw at the same size.
+Options.MAIN_H = 760
+local SHR ={ 0.435, 0.659, 0.769 }
 
 local win
 local ui = {
@@ -147,29 +150,29 @@ Options._iconTabsFor = IconTabsFor   -- test harness handle
 local GREENC = { 0.482, 0.847, 0.561 }
 
 -- The icons' order: Appearance holds every fill colour (the old Color Changes),
--- Show & Hide the state hides and the fade rules, and a kind's own tab
+-- Conditions the state hides, the glows and the fade rules, and a kind's own tab
 -- (Heals & Shields, Castbar) sits right after it. An old pick lands
 -- on its new home (Options.EditorTabs.Home, UI\AD_EditorTabs.lua).
 local BAR_TABS = {
-    cooldown = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
-    aura     = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
-    timer    = { "Tracking", "Triggers", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
-    stack    = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
-    swing    = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
-    resource = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
-    health   = { "Tracking", "Appearance", "Show & Hide", "Heals & Shields", "Text", "Position", "Load Conditions" },
-    cast     = { "Tracking", "Appearance", "Show & Hide", "Castbar", "Text", "Position", "Load Conditions" },
-    enchant  = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
-    range    = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
+    cooldown = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    aura     = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    timer    = { "Tracking", "Triggers", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    stack    = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    swing    = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    resource = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    health   = { "Tracking", "Appearance", "Conditions", "Heals & Shields", "Text", "Position", "Load Conditions" },
+    cast     = { "Tracking", "Appearance", "Conditions", "Castbar", "Text", "Position", "Load Conditions" },
+    enchant  = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    range    = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
     -- a Text element: one string, no text runs of its own (Bars\AD_TextElement.lua);
     -- Triggers only with rules of its own (Options.TextTabs); this is every tab it can have
-    text     = { "Tracking", "Triggers", "Appearance", "Show & Hide", "Position", "Load Conditions" },
+    text     = { "Tracking", "Triggers", "Appearance", "Conditions", "Position", "Load Conditions" },
     -- Triggers only with custom triggers (Options.TextureTabs); this is every tab it can have
-    texture  = { "Tracking", "Triggers", "Appearance", "Show & Hide", "Position", "Load Conditions" },
+    texture  = { "Tracking", "Triggers", "Appearance", "Conditions", "Position", "Load Conditions" },
     -- a wheel opens at the cursor: no place, chrome or show rules (Bars\AD_Wheel.lua)
     wheel    = { "Wheel", "Appearance", "Load Conditions" },
     -- a Special Aura's deck (Bars\AD_SpecialBar.lua, rows in UI\AD_SpecialOptions.lua)
-    special  = { "Tracking", "Appearance", "Show & Hide", "Text", "Position", "Load Conditions" },
+    special  = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
     -- a Sound item draws nothing: its rules, and when it loads (Bars\AD_SoundItem.lua)
     sound    = { "Tracking", "Load Conditions" },
 }
@@ -226,8 +229,8 @@ end
 function Options.DetectMaxStacks(spellID)
     local sid = tonumber(spellID)
     if not sid or sid <= 0 then return nil end
-    local f = NS.Bars and NS.Bars.ClientMaxStacks
-    return f and f(sid) or nil
+    if not (NS.Bars and NS.Bars.ClientMaxStacks) then return nil end
+    return NS.Bars.ClientMaxStacks(sid) -- raw-id: the aura ID typed in the box
 end
 
 -- Enum.PowerType values for the stack-bar driver
@@ -258,13 +261,12 @@ local function KindPill(parent)
     p:SetHeight(14)
     AT.Skin(p, COL.bg, COL.line2)
     p.fs = p:CreateFontString(nil, "OVERLAY")
-    p.fs:SetFont(STANDARD_TEXT_FONT, 8, "")
+    p.fs:SetFont(AT.FONT, 8, "")
     p.fs:SetPoint("CENTER", 0, 0)
     function p:Set(text, color)
         self.fs:SetText(text)
-        local c = color or COL.dim
-        self.fs:SetTextColor(c[1], c[2], c[3])
-        self:SetBackdropBorderColor(c[1], c[2], c[3], 0.7)
+        -- the palette's pill style, in the kind colour as the palette shows it
+        AT.PaintPill(self, self.fs, AT.Mute(color or COL.dim), 0.7)
         self:SetWidth((self.fs:GetStringWidth() or 20) + 12)
     end
     return p
@@ -472,7 +474,7 @@ function Options.EnchantTemplateGrid(pg, vis, get, set, withNone, hand)
     local row = AT.AddRow(pg, top + cell + gap, vis)
     row._tplGrid = true
     local cap = row:CreateFontString(nil, "OVERLAY")
-    cap:SetFont(STANDARD_TEXT_FONT, 9, "")
+    cap:SetFont(AT.FONT, 9, "")
     cap:SetPoint("TOPLEFT", 10, -2)
     cap:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     cap:SetText("TEMPLATE - click one to fill in every rank's enchant ID")
@@ -487,7 +489,7 @@ function Options.EnchantTemplateGrid(pg, vis, get, set, withNone, hand)
         b.tex:SetPoint("TOPLEFT", 2, -2)
         b.tex:SetPoint("BOTTOMRIGHT", -2, 2)
         function b.Edge(hot)
-            local c = (b._picked and COL.arc) or (hot and COL.arcDeep) or COL.line
+            local c = (b._picked and COL.arc) or (hot and COL.focus) or COL.line
             b:SetBackdropBorderColor(c[1], c[2], c[3], 1)
         end
         b:SetScript("OnEnter", function()
@@ -535,7 +537,7 @@ end
 
 -- What a totem icon tracks, in a few words: its totem, else its slot.
 function Options.TotemWhat(d)
-    local nm = d.spellID and C_Spell.GetSpellName and C_Spell.GetSpellName(d.spellID)
+    local nm = d.spellID and C_Spell.GetSpellName and C_Spell.GetSpellName(d.spellID) -- raw-id: the typed totem, for the editor's words
     if nm then return nm end
     return "totem slot " .. (d.slot or 1)
 end
@@ -751,17 +753,11 @@ function Options.SetOverlayOn(rec, on)
     if on then
         if type(ov) ~= "table" then
             local sid = tonumber(rec.driver.spellID)
-            local ids = {}
-            if sid then ids[1] = sid end
-            local nm = sid and C_Spell.GetSpellName and C_Spell.GetSpellName(sid)
-            if NS.IsForever == true and type(nm) == "string" and nm ~= ""
-                and not (issecretvalue and issecretvalue(nm)) and C_Spell.GetSpellIDForSpellIdentifier then
-                local cur = C_Spell.GetSpellIDForSpellIdentifier(nm)
-                if type(cur) == "number" and not (issecretvalue and issecretvalue(cur)) and cur ~= sid then
-                    ids[#ids + 1] = cur
-                end
-            end
-            local harmful = sid and C_Spell.IsSpellHarmful and C_Spell.IsSpellHarmful(sid)
+            -- the spell's aura and, on ranked realms, your rank of it (the
+            -- aura entry's rule); its type from the spell the icon reads
+            local ids = sid and Store.TrackedAuraIDs({ spellID = sid }) or {}
+            local eff = Store.RecordSpellID(rec.driver)
+            local harmful = eff and C_Spell.IsSpellHarmful and C_Spell.IsSpellHarmful(eff)
             if issecretvalue and issecretvalue(harmful) then harmful = false end
             ov = {
                 auraType = (harmful == true) and "debuff" or "buff",
@@ -848,9 +844,8 @@ function Options.AuraGlowForValue(rec, section, field)
     local v = rec and tonumber(Store.Resolve(rec, section, field)) or 0
     local DA = NS.DriverAura
     if v <= 0 or not (DA and DA.GlowSpellGroups) then return 0 end
-    local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(v)
     for _, g in ipairs(DA.GlowSpellGroups(rec.driver)) do
-        if g.id == v or (name ~= nil and g.name == name) then return g.id end
+        if Store.SameAura(g.id, v) then return g.id end
     end
     return 0
 end
@@ -934,13 +929,11 @@ local function HeaderChip(parent)
     c:SetHeight(16)
     AT.Skin(c, COL.bg, COL.line2)
     c.fs = c:CreateFontString(nil, "OVERLAY")
-    c.fs:SetFont(STANDARD_TEXT_FONT, 9, "")
+    c.fs:SetFont(AT.FONT, 9, "")
     c.fs:SetPoint("CENTER")
     function c:Set(text, color)
         self.fs:SetText(text)
-        local col = color or COL.dim
-        self.fs:SetTextColor(col[1], col[2], col[3])
-        self:SetBackdropBorderColor(col[1], col[2], col[3], 0.7)
+        AT.PaintPill(self, self.fs, AT.Mute(color or COL.dim), 0.7)
         self:SetWidth((self.fs:GetStringWidth() or 20) + 14)
         self:Show()
     end
@@ -1053,7 +1046,7 @@ function Options.LayoutStatusRow(pg, ctx, section, visibleFn, fieldsFn)
         return setN > 0
     end)
     local fs = row:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    fs:SetFont(AT.FONT, 11, "")
     fs:SetPoint("LEFT", 10, 0)
     fs:SetJustifyH("LEFT")
     fs:SetWordWrap(false)
@@ -1790,39 +1783,58 @@ local TPPaint, TPLayout
 
 local function TPRecord() return tpCtx and tpCtx() end
 
--- the nodes picked: a record's load talents, or a talent target's one pick
--- (Options.TalentPickRow)
-local function TPChosen(rec)
-    if not rec then return {} end
-    if not rec.talentTarget then return rec.c.talents or {} end
-    local out = {}
-    for _, p in ipairs(rec.List()) do out[p.nodeID] = true end
-    return out
+-- A node's state on what the picker edits, "req", "not" or nil: a record's
+-- load talents, or a talent target's one pick (Options.TalentPickRow).
+-- With a state, it writes one instead (nil drops the node); a record's pick
+-- is tagged with the class the picker shows.
+local function TPState(rec, nodeID, write, state)
+    if not rec then return nil end
+    if write then
+        if rec.talentTarget then rec.Set(nodeID, state)
+        else Store.SetTalentState(rec, nodeID, state, nil, tpWin and tpWin._adClass) end
+        return state
+    end
+    if rec.talentTarget then return (rec.State(nodeID)) end
+    return (Store.TalentState(rec, nodeID))
 end
 
 TPPaint = function()
     if not (tpWin and tpWin:IsShown()) then return end
     local rec = TPRecord()
-    local chosen = TPChosen(rec)
+    local red = { 0.95, 0.38, 0.38 }
     local q = tpQuery:lower():gsub("^%s+", ""):gsub("%s+$", "")
-    local n = 0
-    for _ in pairs(chosen) do n = n + 1 end
+    local req, exc = 0, 0
+    -- the count is this tree's: the class shown
+    local list = rec and (rec.talentTarget and rec.List() or Store.TalentPicksOf(rec, tpWin._adClass)) or {}
+    for _, p in ipairs(list) do
+        if p.excluded then exc = exc + 1 else req = req + 1 end
+    end
     if rec and rec.talentTarget then
-        local node = next(chosen)
-        tpCount:SetText(node and ("Picked: " .. (Options.TalentPickName(node) or ""))
-            or "Nothing picked yet - click a talent to pick it.")
+        local pick = list[1]
+        tpCount:SetText(pick and ((pick.excluded and "Not taken: " or "Picked: ")
+                .. (Options.TalentPickName(pick.nodeID) or ""))
+            or ("Nothing picked yet - click a talent to pick it"
+                .. (rec.noExclude and "." or ", again for Not taken.")))
+    elseif req + exc == 0 then
+        tpCount:SetText("Nothing required yet - click a talent to require it, again to exclude it.")
     else
-        tpCount:SetText(n == 0 and "Nothing required yet - click a talent to add it."
-            or (n == 1 and "1 talent required" or (n .. " talents required")))
+        local parts = {}
+        if req > 0 then parts[#parts + 1] = req .. " required" end
+        if exc > 0 then parts[#parts + 1] = exc .. " excluded" end
+        tpCount:SetText(table.concat(parts, ", "))
     end
     for _, node in ipairs(tpNodes) do
         local e = node.entry
         if e and node.btn:IsShown() then
-            local sel = chosen[e.nodeID] == true
+            local state = TPState(rec, e.nodeID)
             local taken = (e.rank or 0) > 0
             local hit = (q == "") or (e.nameLower:find(q, 1, true) ~= nil)
-            local bc = sel and COL.arc or (taken and COL.line2 or COL.line)
-            node.ring:SetShown(sel)
+            local rc = (state == "not") and red or COL.arc
+            node.ring:SetShown(state ~= nil)
+            node.ring:SetBackdropColor(rc[1], rc[2], rc[3], 1)
+            node.ring:SetBackdropBorderColor(rc[1], rc[2], rc[3], 1)
+            local bc = (state == "req" and COL.arc) or (state == "not" and red)
+                or (taken and COL.line2 or COL.line)
             node.ic:SetDesaturated(not taken)
             node.btn:SetBackdropBorderColor(bc[1], bc[2], bc[3], 1)
             -- Always opaque, so the tree art never shows through an icon: an
@@ -1831,6 +1843,10 @@ TPPaint = function()
             node.ic:SetVertexColor(v, v, v)
             node.btn:SetAlpha(1)
             node.ring:SetAlpha(1)
+            if node.x1 then
+                node.x1:SetShown(state == "not")
+                node.x2:SetShown(state == "not")
+            end
         end
     end
 end
@@ -1847,16 +1863,16 @@ local function TPPanel(i)
     bar:SetHeight(TP_HDR)
     AT.Skin(bar, COL.panel, COL.panel)
     local rule = bar:CreateTexture(nil, "OVERLAY")
-    rule:SetColorTexture(COL.arc[1], COL.arc[2], COL.arc[3], 0.9)
+    rule:SetColorTexture(COL.rule[1], COL.rule[2], COL.rule[3], 0.9)
     rule:SetPoint("BOTTOMLEFT", 0, 0)
     rule:SetPoint("BOTTOMRIGHT", 0, 0)
     rule:SetHeight(1)
     local name = bar:CreateFontString(nil, "OVERLAY")
-    name:SetFont(STANDARD_TEXT_FONT, 12, "")
+    name:SetFont(AT.FONT, 12, "")
     name:SetPoint("LEFT", 8, 0)
-    name:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    name:SetTextColor(COL.title[1], COL.title[2], COL.title[3])
     local pts = bar:CreateFontString(nil, "OVERLAY")
-    pts:SetFont(STANDARD_TEXT_FONT, 11, "")
+    pts:SetFont(AT.FONT, 11, "")
     pts:SetPoint("RIGHT", -8, 0)
     pts:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
 
@@ -1895,6 +1911,7 @@ local function TPNode(i)
     local btn = CreateFrame("Button", nil, tpCanvas, "BackdropTemplate")
     AT.Skin(btn, COL.well, COL.line)
     btn:SetFrameLevel(ring:GetFrameLevel() + 1)
+    btn:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     ring:SetPoint("TOPLEFT", btn, "TOPLEFT", -3, 3)
     ring:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", 3, -3)
     local ic = btn:CreateTexture(nil, "ARTWORK")
@@ -1902,10 +1919,23 @@ local function TPNode(i)
     ic:SetPoint("BOTTOMRIGHT", -2, 2)
     ic:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     local rank = btn:CreateFontString(nil, "OVERLAY")
-    rank:SetFont(STANDARD_TEXT_FONT, 10, "OUTLINE")
+    rank:SetFont(AT.FONT, 10, "OUTLINE")
     rank:SetPoint("BOTTOMRIGHT", -1, 1)
     rank:SetTextColor(0.95, 0.97, 1)
     node = { btn = btn, ring = ring, ic = ic, rank = rank }
+    -- the cross of an excluded node, as the retail picker draws it
+    if btn.CreateLine then
+        local red = { 0.95, 0.38, 0.38 }
+        for k, corners in ipairs({ { "TOPLEFT", "BOTTOMRIGHT" }, { "TOPRIGHT", "BOTTOMLEFT" } }) do
+            local ln = btn:CreateLine(nil, "OVERLAY")
+            ln:SetColorTexture(red[1], red[2], red[3], 0.9)
+            ln:SetThickness(2)
+            ln:SetStartPoint(corners[1], k == 1 and 4 or -4, -4)
+            ln:SetEndPoint(corners[2], k == 1 and -4 or 4, 4)
+            ln:Hide()
+            node["x" .. k] = ln
+        end
+    end
     btn:SetScript("OnEnter", function()
         local e = node.entry
         if not e then return end
@@ -1932,7 +1962,7 @@ local function TPNode(i)
                 GameTooltip:AppendInfo("GetTraitEntry", e.entryID, rk + 1)
             end
         elseif e.spellID and C_Spell.GetSpellDescription then
-            local d = C_Spell.GetSpellDescription(e.spellID)
+            local d = C_Spell.GetSpellDescription(e.spellID) -- raw-id: a talent entry
             if d ~= nil and not (issecretvalue and issecretvalue(d)) and d ~= "" then
                 GameTooltip:AddLine(" ")
                 GameTooltip:AddLine(d, 1, 0.82, 0, true)
@@ -1940,10 +1970,22 @@ local function TPNode(i)
         end
         GameTooltip:AddLine(" ")
         local rec = TPRecord()
-        local on = TPChosen(rec)[e.nodeID]
+        local state = TPState(rec, e.nodeID)
         local one = rec ~= nil and rec.talentTarget == true
-        GameTooltip:AddLine(on and (one and "Picked: click to drop it." or "Click to stop requiring this talent.")
-            or (one and "Click to pick this talent." or "Click to require this talent."), 0.247, 0.788, 0.949)
+        local red = { 0.95, 0.38, 0.38 }
+        if state == "req" then
+            GameTooltip:AddLine(not one and "Required: click to exclude it instead."
+                or (rec.noExclude and "Picked: click to drop it." or "Taken: click for Not taken instead."),
+                COL.arc[1], COL.arc[2], COL.arc[3])
+        elseif state == "not" then
+            GameTooltip:AddLine(one and "Not taken: click to drop it."
+                or "Excluded: this never loads while you have it. Click to drop the condition.",
+                red[1], red[2], red[3], true)
+        else
+            GameTooltip:AddLine(one and "Click to pick this talent." or "Click to require this talent.",
+                COL.arc[1], COL.arc[2], COL.arc[3])
+        end
+        GameTooltip:AddLine("Right-click clears it.", 0.55, 0.65, 0.78)
         GameTooltip:AddLine("Node " .. e.nodeID, 0.4, 0.47, 0.57)
         GameTooltip:Show()
     end)
@@ -1951,14 +1993,16 @@ local function TPNode(i)
         GameTooltip:Hide()
         TPPaint()      -- puts the state border back
     end)
-    btn:SetScript("OnClick", function()
+    -- left click cycles required, excluded, off; a right click clears
+    btn:SetScript("OnClick", function(_, button)
         local rec, e = TPRecord(), node.entry
         if not (rec and e) then return end
-        if rec.talentTarget then
-            rec.Set(e.nodeID, (not TPChosen(rec)[e.nodeID]) and "req" or nil)
-        else
-            Store.ToggleTalent(rec, e.nodeID)
+        local cur = TPState(rec, e.nodeID)
+        local nxt
+        if button ~= "RightButton" then
+            if cur == nil then nxt = "req" elseif cur == "req" and not rec.noExclude then nxt = "not" end
         end
+        TPState(rec, e.nodeID, true, nxt)
         TPPaint()
         RefreshAll()
     end)
@@ -1969,8 +2013,22 @@ end
 TPLayout = function()
     if not tpWin then return end
     local cat = NS.TalentCatalog
+    -- the class the picker was opened on: your own live tree or the game's
+    -- view of another; the note names it on a line of its own under the
+    -- search row, and the canvas moves down for it
+    local src = Options.TalentPickSource(TPRecord(), tpWin._adClass)
+    local note = tpWin._adNote
+    note:SetText(src.note or "")
+    note:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
+    note:SetShown(src.note ~= nil)
+    tpCanvas:SetPoint("TOPLEFT", 0, src.note and -44 or -28)
+    tpEmpty:SetText(src.empty or "No talent tree on this character yet.")
     local list, groups, bounds
-    if cat then list, groups, bounds = cat.Layout() end
+    if src.view then
+        list, groups, bounds = src.view.entries, src.view.groups, src.view.bounds
+    elseif cat and not src.empty then
+        list, groups, bounds = cat.Layout()
+    end
     list, groups = list or {}, groups or {}
     local have = #list > 0 and bounds ~= nil and bounds.minX ~= nil
     tpEmpty:SetShown(not have)
@@ -2111,7 +2169,8 @@ local function TPBuild()
     -- The default size matches the tree's aspect, so the panels fill the window.
     tpWin = AT.CreateWindow("ArcUIv2TalentPicker", {
         w = 1020, h = 580, minW = 620, minH = 420, maxW = 1600, maxH = 1200,
-        title = "|cff3fc9f2Arc|r|cffd5e2f2 Talents|r",
+        scaleH = Options.MAIN_H,
+        title = AT.Brand("Arc", " Talents"),
         onResize = function() TPLayout() end,
     })
 
@@ -2123,12 +2182,12 @@ local function TPBuild()
     tpSearch:SetSize(220, 20)
     tpSearch:SetPoint("TOPLEFT", 0, 0)
     AT.Skin(tpSearch, COL.well)
-    tpSearch:SetFont(STANDARD_TEXT_FONT, 11, "")
+    tpSearch:SetFont(AT.FONT, 11, "")
     tpSearch:SetTextInsets(6, 6, 0, 0)
     tpSearch:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     tpSearch:SetAutoFocus(false)
     local hint = tpSearch:CreateFontString(nil, "OVERLAY")
-    hint:SetFont(STANDARD_TEXT_FONT, 11, "")
+    hint:SetFont(AT.FONT, 11, "")
     hint:SetPoint("LEFT", 6, 0)
     hint:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     hint:SetText("Search talents")
@@ -2144,9 +2203,19 @@ local function TPBuild()
     end)
 
     tpCount = body:CreateFontString(nil, "OVERLAY")
-    tpCount:SetFont(STANDARD_TEXT_FONT, 11, "")
+    tpCount:SetFont(AT.FONT, 11, "")
     tpCount:SetPoint("LEFT", tpSearch, "RIGHT", 12, 0)
     tpCount:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+
+    -- whose talents show, on a line of its own so it never meets the row above
+    local note = body:CreateFontString(nil, "OVERLAY")
+    note:SetFont(AT.FONT, 11, "")
+    note:SetPoint("TOPLEFT", 2, -26)
+    note:SetPoint("TOPRIGHT", -2, -26)
+    note:SetJustifyH("LEFT")
+    note:SetWordWrap(false)
+    note:Hide()
+    tpWin._adNote = note
 
     local clear = AT.MakeSmallButton(body, "Clear all", 80)
     clear:SetPoint("TOPRIGHT", 0, 0)
@@ -2154,16 +2223,16 @@ local function TPBuild()
     clear:SetScript("OnClick", function()
         local rec = TPRecord()
         if not rec then return end
-        if rec.talentTarget then rec.Clear() else Store.ClearTalents(rec) end
+        if rec.talentTarget then rec.Clear() else Store.ClearTalentsOf(rec, tpWin._adClass) end
         TPPaint()
         RefreshAll()
     end)
-    AT.Tooltip(clear, "Clear all", "Drops every talent requirement from this one.")
+    AT.Tooltip(clear, "Clear all", "Drops every talent picked in this tree. Other classes' picks stay.")
 
     local done = AT.MakeSmallButton(body, "Done", 70)
     done:SetPoint("RIGHT", clear, "LEFT", -6, 0)
     done:SetHeight(20)
-    done.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    done.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     done:SetScript("OnClick", function() tpWin:Hide() end)
 
     -- no box of its own: the three tree panels are the boxes, edge to edge
@@ -2178,7 +2247,7 @@ local function TPBuild()
     tpLineHost:SetFrameLevel(tpCanvas:GetFrameLevel() + 4)
 
     tpEmpty = tpCanvas:CreateFontString(nil, "OVERLAY")
-    tpEmpty:SetFont(STANDARD_TEXT_FONT, 12, "")
+    tpEmpty:SetFont(AT.FONT, 12, "")
     tpEmpty:SetPoint("CENTER", 0, 0)
     tpEmpty:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     tpEmpty:SetText("No talent tree on this character yet.")
@@ -2187,14 +2256,18 @@ local function TPBuild()
     tpWin:HookScript("OnShow", function() TPLayout() end)
 end
 
-local function OpenTalentPicker(ctxFn)
+-- classTag: the class whose talents to pick (a class row's button); nil is
+-- your own. A talent target always picks on your own live tree, untagged.
+local function OpenTalentPicker(ctxFn, classTag, specID)
     -- retail's picker (class, hero and spec panels) lives in its own file
     if NS.IsForever ~= true and Options.OpenRetailTalentPicker then
-        Options.OpenRetailTalentPicker(ctxFn)
+        Options.OpenRetailTalentPicker(ctxFn, classTag, specID)
         return
     end
     TPBuild()
     tpCtx = ctxFn
+    local rec = ctxFn and ctxFn()
+    tpWin._adClass = (rec and not rec.talentTarget) and (classTag or Store.ClassTag()) or nil
     tpQuery = ""
     tpSearch:SetText("")
     if NS.TalentCatalog then NS.TalentCatalog.Rescan() end
@@ -2226,6 +2299,157 @@ function Options.TalentPickName(nodeID, entryID)
     return e.name and tostring(e.name) or ("Talent " .. nodeID)
 end
 
+-- The class matrix row of a class tag, or nil.
+function Options.TalentClassRow(tag)
+    for _, cls in ipairs(Store.ClassSpecMatrix()) do
+        if cls.tag == tag then return cls end
+    end
+    return nil
+end
+
+-- Retail: the spec a class's talents open on, the record's one checked spec
+-- of that class, else your current spec when it is your class, else the
+-- class's first. nil where the class has no specs (Forever).
+function Options.TalentDefaultSpec(rec, tag)
+    local cls = Options.TalentClassRow(tag)
+    if not (cls and #cls.specs > 0) then return nil end
+    local one, n = nil, 0
+    if rec and rec.c then
+        for _, s in ipairs(cls.specs) do
+            if Store.SpecConditionState(rec, tag, s.id) then one, n = s.id, n + 1 end
+        end
+    end
+    if n == 1 then return one end
+    if tag == Store.ClassTag() then
+        local cur = Store.CurSpecID()
+        for _, s in ipairs(cls.specs) do
+            if s.id == cur then return cur end
+        end
+    end
+    return cls.specs[1].id
+end
+
+-- Which tree a talent picker opened on a class shows: your own class (on
+-- retail, your current spec) is the live tree; any other class or spec is
+-- the game's view of it, where nothing is taken. A talent target always
+-- uses your live tree. Returns { view, other (a class not yours), classTag,
+-- specID, note (the header's one line naming the tree), empty (the text when
+-- the view yields nothing) }; view nil = the live tree.
+function Options.TalentPickSource(rec, classTag, specID)
+    local out = {}
+    local T = NS.TalentCatalog
+    if not (rec and rec.c) or rec.talentTarget then return out end
+    local own = Store.ClassTag()
+    local tag = classTag or own
+    if not tag then return out end
+    local cls = Options.TalentClassRow(tag)
+    local name = (cls and cls.name) or tag
+    local sp
+    if cls and #cls.specs > 0 then
+        local want = specID or Options.TalentDefaultSpec(rec, tag)
+        for _, s in ipairs(cls.specs) do
+            if s.id == want then sp = s end
+        end
+        sp = sp or cls.specs[1]
+    end
+    out.classTag, out.specID = tag, sp and sp.id
+    out.note = (sp and (sp.name .. " ") or "") .. name .. " talents"
+    if tag ~= own then out.other = tag end
+    if tag == own and (not sp or sp.id == Store.CurSpecID()) then return out end
+    out.view = T and T.View and T.View(tag, sp and sp.id) or nil
+    if not out.view then
+        if tag == own then
+            out.empty = "Can't show " .. sp.name .. " talents here. Switch to " .. sp.name .. " to pick its talents."
+        else
+            local a = name:find("^[AEIOU]") and "an " or "a "
+            out.empty = "Can't show " .. name .. " talents here. Log in on " .. a .. name .. " to pick its talents."
+        end
+    end
+    return out
+end
+
+-- "Fury Warrior" / "Warrior" for a pick's tags.
+function Options.TalentClassLabel(tag, specID)
+    local cls = Options.TalentClassRow(tag)
+    local name = (cls and cls.name) or tostring(tag)
+    if not specID then return name end
+    for _, s in ipairs((cls and cls.specs) or {}) do
+        if s.id == specID then return s.name .. " " .. name end
+    end
+    local sn = GetSpecializationInfoForSpecID and select(2, GetSpecializationInfoForSpecID(specID))
+    return (type(sn) == "string" and sn ~= "") and (sn .. " " .. name) or name
+end
+
+-- The picks in one line, per class: "Warrior 2 required, Mage 1 excluded".
+-- Picks made before tags lead as "Every class" (they count on every class),
+-- or alone with no class at all. "" when nothing is picked.
+function Options.TalentSummary(rec)
+    local by, tagged = {}, false
+    for _, e in ipairs(rec and Store.TalentList(rec) or {}) do
+        local k = e.class or ""
+        if k ~= "" then tagged = true end
+        local g = by[k]
+        if not g then
+            g = { req = 0, exc = 0 }
+            by[k] = g
+        end
+        if e.excluded then g.exc = g.exc + 1 else g.req = g.req + 1 end
+    end
+    local parts = {}
+    local function add(k, label)
+        local g = by[k]
+        if not g then return end
+        local p = {}
+        if g.req > 0 then p[#p + 1] = g.req .. " required" end
+        if g.exc > 0 then p[#p + 1] = g.exc .. " excluded" end
+        parts[#parts + 1] = (label and (label .. " ") or "") .. table.concat(p, " + ")
+        by[k] = nil
+    end
+    add("", tagged and "Every class" or nil)
+    for _, cls in ipairs(Store.ClassSpecMatrix()) do add(cls.tag, cls.name) end
+    local rest = {}
+    for k in pairs(by) do rest[#rest + 1] = k end
+    table.sort(rest)
+    for _, k in ipairs(rest) do add(k, k) end
+    return table.concat(parts, ", ")
+end
+
+-- A class's Talents button on Load Conditions: it opens that class's talents
+-- and reads "Talents (n)" in the accent colour once the class has picks.
+-- Its width holds the longest label, so a row can lay out around it.
+-- SetCount(n) from the row's _sync.
+function Options.TalentClassButton(parent, ctx, tag, name)
+    local b = AT.MakeSmallButton(parent, "Talents (99)", 60)
+    b:SetHeight(18)
+    b.fs:SetFont(AT.FONT, 10, "")
+    b.fs:SetText("Talents (99)")
+    b:SetWidth(math.max(60, math.ceil(b.fs:GetStringWidth() or 0) + 10))
+    b._adTalentClass = tag
+    function b.SetCount(n)
+        n = n or 0
+        b.fs:SetText(n > 0 and ("Talents (" .. n .. ")") or "Talents")
+        local c = n > 0 and COL.arc or COL.ink
+        b.fs:SetTextColor(c[1], c[2], c[3])
+    end
+    b.SetCount(0)
+    b:SetScript("OnClick", function() OpenTalentPicker(ctx, tag) end)
+    local a = name:find("^[AEIOU]") and "an " or "a "
+    AT.Tooltip(b, "Choose " .. name .. " talents",
+        "Click a talent to require it, again to exclude it, again to drop it. Picks count only on "
+        .. a .. name .. (NS.IsForever == true and "." or "; spec and hero ones in their spec."))
+    return b
+end
+
+-- How many picks each class's button shows: a pick's tag, else the class
+-- whose tree holds it.
+function Options.TalentClassCounts(rec)
+    local out = {}
+    for _, e in ipairs(rec and Store.TalentList(rec) or {}) do
+        if e.owner then out[e.owner] = (out[e.owner] or 0) + 1 end
+    end
+    return out
+end
+
 -- One talent picked on the Load Conditions talent tree for a setting of its
 -- own (a rule's guard, a look's talent). target() builds, for the record
 -- being edited, { talentTarget = true, State(node) -> state, entry;
@@ -2238,7 +2462,7 @@ function Options.TalentPickRow(pg, label, target, visibleFn, tip)
     end, visibleFn, 120, label)
     row._adTalentTarget = target
     local fs = row:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    fs:SetFont(AT.FONT, 11, "")
     fs:SetPoint("LEFT", row.button, "RIGHT", 10, 0)
     fs:SetPoint("RIGHT", row, "RIGHT", -8, 0)
     fs:SetJustifyH("LEFT")
@@ -2305,7 +2529,7 @@ local function CondGrid(pg, ctx, visible, list)
             return out
         end
         local hdr = row:CreateFontString(nil, "OVERLAY")
-        hdr:SetFont(STANDARD_TEXT_FONT, 10, "")
+        hdr:SetFont(AT.FONT, 10, "")
         hdr:SetPoint("TOPLEFT", 6, -2)
         hdr:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
         hdr:SetText(cat.text)
@@ -2320,7 +2544,7 @@ local function CondGrid(pg, ctx, visible, list)
                 local cb = AT.MakeCheckbox(cell)
                 cb:SetPoint("LEFT", 0, 0)
                 local fs = cell:CreateFontString(nil, "OVERLAY")
-                fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+                fs:SetFont(AT.FONT, 11, "")
                 fs:SetPoint("LEFT", cb, "RIGHT", 6, 0)
                 fs:SetJustifyH("LEFT")
                 fs:SetWordWrap(false)
@@ -2411,7 +2635,7 @@ local function CondStatusRow(pg, ctx, visible, list, textFn)
     local C = NS.Conditions
     local row = AT.AddRow(pg, 24, visible)
     local fs = row:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    fs:SetFont(AT.FONT, 11, "")
     fs:SetPoint("TOPLEFT", 10, -4)
     fs:SetJustifyH("LEFT")
     fs:SetJustifyV("TOP")
@@ -2420,7 +2644,7 @@ local function CondStatusRow(pg, ctx, visible, list, textFn)
     local clear = AT.MakeSmallButton(row, "Clear", 56)
     clear:SetPoint("TOPRIGHT", -8, -2)
     clear:SetHeight(18)
-    clear.fs:SetFont(STANDARD_TEXT_FONT, 10, "")
+    clear.fs:SetFont(AT.FONT, 10, "")
     AT.Tooltip(clear, "Clear", "Unchecks every condition in this list.")
     clear:SetScript("OnClick", function()
         local r = ctx()
@@ -2465,11 +2689,11 @@ local function ConditionRows(pg, ctx, tabVisible)
     local allB = AT.MakeSmallButton(btnRow, "Check all", 76)
     allB:SetPoint("LEFT", 4, 0)
     allB:SetHeight(18)
-    allB.fs:SetFont(STANDARD_TEXT_FONT, 10, "")
+    allB.fs:SetFont(AT.FONT, 10, "")
     local noneB = AT.MakeSmallButton(btnRow, "Uncheck all", 86)
     noneB:SetPoint("LEFT", allB, "RIGHT", 6, 0)
     noneB:SetHeight(18)
-    noneB.fs:SetFont(STANDARD_TEXT_FONT, 10, "")
+    noneB.fs:SetFont(AT.FONT, 10, "")
     AT.Tooltip(allB, "Check all", "Show everywhere - clears every class and spec restriction.")
     AT.Tooltip(noneB, "Uncheck all", "Clears the whole matrix so you can check just the classes or specs you want.")
     allB:SetScript("OnClick", function()
@@ -2485,12 +2709,66 @@ local function ConditionRows(pg, ctx, tabVisible)
         RefreshAll()
     end)
     if anySpecs then
+        -- Each row reads box, name, Talents button, then the spec columns, laid
+        -- out from measured widths so nothing clips or overlaps and the columns
+        -- line up across rows. Too narrow for that on one line (Druid's four
+        -- specs at the window's minimum width), every class row takes two:
+        -- name and button above, the specs below.
+        local lines, lastKey = {}, nil
+        local function At(f, row, x, line)
+            f:ClearAllPoints()
+            f:SetPoint("LEFT", row, "TOPLEFT", x, -11 - (line - 1) * 22)
+        end
+        local function PlaceClassRows()
+            if #lines == 0 then return false end
+            local w = lines[1].row:GetWidth() or 0
+            if w < 90 then w = (pg:GetWidth() or 0) - 24 end
+            if w < 90 then w = 10000 end
+            local key = math.floor(w) .. "|" .. #lines .. "|" .. tostring(AT.FONT)
+            if key == lastKey then return false end
+            local nameW, specW = 0, 0
+            for _, l in ipairs(lines) do
+                nameW = math.max(nameW, math.ceil(l.fs:GetStringWidth() or 0))
+                for _, c in ipairs(l.cells) do
+                    specW = math.max(specW, math.ceil(c.fs:GetStringWidth() or 0))
+                end
+            end
+            -- a font that has not measured yet places now and measures again
+            lastKey = (nameW > 0 and specW > 0) and key or nil
+            local btnX = 28 + nameW + 6
+            local x0 = btnX + lines[1].tb:GetWidth() + 8
+            local step = math.max(104, 30 + specW)
+            local need = 0
+            for _, l in ipairs(lines) do
+                local n = #l.cells
+                if n > 0 then
+                    local last = math.ceil(l.cells[n].fs:GetStringWidth() or 0)
+                    need = math.max(need, x0 + (n - 1) * step + 22 + last)
+                end
+            end
+            local narrow = need > w - 4
+            local h = narrow and 44 or 22
+            local changed = false
+            for _, l in ipairs(lines) do
+                At(l.tb, l.row, btnX, 1)
+                for i, c in ipairs(l.cells) do
+                    if narrow then At(c.cb, l.row, 28 + (i - 1) * step, 2)
+                    else At(c.cb, l.row, x0 + (i - 1) * step, 1) end
+                end
+                if l.row._h ~= h then
+                    l.row._h = h
+                    l.row:SetHeight(h)
+                    changed = true
+                end
+            end
+            return changed
+        end
         for _, cls in ipairs(matrix) do
             local row = AT.AddRow(pg, 22, tabVisible)
             local cb = AT.MakeCheckbox(row)
-            cb:SetPoint("LEFT", 4, 0)
+            cb:SetPoint("LEFT", row, "TOPLEFT", 4, -11)
             local fs = row:CreateFontString(nil, "OVERLAY")
-            fs:SetFont(STANDARD_TEXT_FONT, 10, "")
+            fs:SetFont(AT.FONT, 10, "")
             fs:SetPoint("LEFT", cb, "RIGHT", 6, 0)
             fs:SetText(cls.name)
             local cc = RAID_CLASS_COLORS and RAID_CLASS_COLORS[cls.tag]
@@ -2507,13 +2785,13 @@ local function ConditionRows(pg, ctx, tabVisible)
             end)
             cb:HookScript("OnEnter", function() cb:SetHover(true) end)
             cb:HookScript("OnLeave", function() cb:SetHover(false) end)
+            local tb = Options.TalentClassButton(row, ctx, cls.tag, cls.name)
             row._spec = {}
-            local x = 128
+            lines[#lines + 1] = { row = row, fs = fs, tb = tb, cells = row._spec }
             for si, sp in ipairs(cls.specs) do
                 local cell = { cb = AT.MakeCheckbox(row) }
-                cell.cb:SetPoint("LEFT", row, "LEFT", x, 0)
                 cell.fs = row:CreateFontString(nil, "OVERLAY")
-                cell.fs:SetFont(STANDARD_TEXT_FONT, 10, "")
+                cell.fs:SetFont(AT.FONT, 10, "")
                 cell.fs:SetPoint("LEFT", cell.cb, "RIGHT", 4, 0)
                 cell.fs:SetText(sp.name)
                 cell.fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
@@ -2528,10 +2806,10 @@ local function ConditionRows(pg, ctx, tabVisible)
                 end)
                 cell.cb:HookScript("OnEnter", function() cell.cb:SetHover(true) end)
                 cell.cb:HookScript("OnLeave", function() cell.cb:SetHover(false) end)
-                x = x + 104
                 row._spec[si] = cell
             end
             row._sync = function()
+                PlaceClassRows()
                 local r = ctx()
                 if not r then return end
                 local any = Store.ClassConditionState(r, cls.tag)
@@ -2539,66 +2817,97 @@ local function ConditionRows(pg, ctx, tabVisible)
                 for si, sp in ipairs(cls.specs) do
                     row._spec[si].cb:SetOn(Store.SpecConditionState(r, cls.tag, sp.id))
                 end
+                tb.SetCount(Options.TalentClassCounts(r)[cls.tag])
             end
+            -- a pane resize can change one line into two, and with it the height
+            row:SetScript("OnSizeChanged", function()
+                if row._adPlacing then return end
+                row._adPlacing = true
+                if PlaceClassRows() then AT.LayoutPage(pg) end
+                row._adPlacing = nil
+            end)
         end
     else
         -- No specs (WoW Forever): one row per class would be a tall, mostly empty
-        -- stack, so the class toggles go in a grid that follows the panel width.
-        local PERROW = 3
-        for r = 1, math.ceil(#matrix / PERROW) do
-            local row = AT.AddRow(pg, 22, tabVisible)
-            local cells = {}
-            for c = 1, PERROW do
-                local cls = matrix[(r - 1) * PERROW + c]
-                if cls then
-                    local cell = CreateFrame("Frame", nil, row)
-                    cell:SetHeight(22)
-                    local cb = AT.MakeCheckbox(cell)
-                    cb:SetPoint("LEFT", 0, 0)
-                    local fs = cell:CreateFontString(nil, "OVERLAY")
-                    fs:SetFont(STANDARD_TEXT_FONT, 11, "")
-                    fs:SetPoint("LEFT", cb, "RIGHT", 6, 0)
-                    fs:SetPoint("RIGHT", -4, 0)
-                    fs:SetJustifyH("LEFT")
-                    fs:SetWordWrap(false)
-                    fs:SetText(cls.name)
-                    local cc = RAID_CLASS_COLORS and RAID_CLASS_COLORS[cls.tag]
-                    if cc then fs:SetTextColor(cc.r, cc.g, cc.b)
-                    else fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3]) end
-                    cb:SetScript("OnClick", function()
-                        local rr = ctx()
-                        if rr then
-                            Store.SetClassSpecs(rr, cls.tag,
-                                not Store.ClassConditionState(rr, cls.tag))
-                        end
-                        AT.LayoutPage(pg)
-                        RefreshAll()
-                    end)
-                    cb:HookScript("OnEnter", function() cb:SetHover(true) end)
-                    cb:HookScript("OnLeave", function() cb:SetHover(false) end)
-                    cells[#cells + 1] = { f = cell, cb = cb, tag = cls.tag }
-                end
-            end
-            -- OnSizeChanged catches the first real width; placing only from _sync
-            -- would leave the cells at the left edge until the next layout pass.
-            local function place()
-                local w = row:GetWidth() or 0
-                if w < 90 then return end
-                local cw = math.floor(w / PERROW)
-                for i, cell in ipairs(cells) do
-                    cell.f:ClearAllPoints()
-                    cell.f:SetPoint("TOPLEFT", row, "TOPLEFT", (i - 1) * cw + 4, 0)
-                    cell.f:SetWidth(cw - 8)
-                end
-            end
-            row:SetScript("OnSizeChanged", place)
-            row._sync = function()
-                place()
+        -- stack, so the class toggles go in one grid that follows the panel
+        -- width: three columns while a cell holds the box, the longest name and
+        -- the Talents button whole, else two.
+        local row = AT.AddRow(pg, 22, tabVisible)
+        local cells = {}
+        for _, cls in ipairs(matrix) do
+            local cell = CreateFrame("Frame", nil, row)
+            cell:SetHeight(22)
+            local cb = AT.MakeCheckbox(cell)
+            cb:SetPoint("LEFT", 0, 0)
+            local fs = cell:CreateFontString(nil, "OVERLAY")
+            fs:SetFont(AT.FONT, 11, "")
+            fs:SetPoint("LEFT", cb, "RIGHT", 6, 0)
+            fs:SetText(cls.name)
+            local cc = RAID_CLASS_COLORS and RAID_CLASS_COLORS[cls.tag]
+            if cc then fs:SetTextColor(cc.r, cc.g, cc.b)
+            else fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3]) end
+            -- placed by place(): after the longest name, so the buttons line up
+            local tb = Options.TalentClassButton(cell, ctx, cls.tag, cls.name)
+            cb:SetScript("OnClick", function()
                 local rr = ctx()
-                if not rr then return end
-                for _, cell in ipairs(cells) do
-                    cell.cb:SetOn(Store.ClassConditionState(rr, cell.tag))
+                if rr then
+                    Store.SetClassSpecs(rr, cls.tag,
+                        not Store.ClassConditionState(rr, cls.tag))
                 end
+                AT.LayoutPage(pg)
+                RefreshAll()
+            end)
+            cb:HookScript("OnEnter", function() cb:SetHover(true) end)
+            cb:HookScript("OnLeave", function() cb:SetHover(false) end)
+            cells[#cells + 1] = { f = cell, cb = cb, tag = cls.tag, tb = tb, fs = fs }
+        end
+        -- OnSizeChanged catches the first real width; placing only from _sync
+        -- would leave the cells at the left edge until the next layout pass.
+        local lastKey
+        local function place()
+            if #cells == 0 then return false end
+            local w = row:GetWidth() or 0
+            if w < 90 then w = (pg:GetWidth() or 0) - 24 end
+            if w < 90 then w = 10000 end
+            local nameW = 0
+            for _, c in ipairs(cells) do
+                nameW = math.max(nameW, math.ceil(c.fs:GetStringWidth() or 0))
+            end
+            local btnX = 18 + 6 + nameW + 6
+            local ncol = (math.floor(w / 3) - 8 >= btnX + cells[1].tb:GetWidth()) and 3 or 2
+            local key = math.floor(w) .. "|" .. ncol .. "|" .. btnX
+            if key == lastKey then return false end
+            -- a font that has not measured yet places now and measures again
+            lastKey = nameW > 0 and key or nil
+            local cw = math.floor(w / ncol)
+            for i, c in ipairs(cells) do
+                c.f:ClearAllPoints()
+                c.f:SetPoint("TOPLEFT", row, "TOPLEFT", ((i - 1) % ncol) * cw + 4,
+                    -math.floor((i - 1) / ncol) * 22)
+                c.f:SetWidth(cw - 8)
+                c.tb:ClearAllPoints()
+                c.tb:SetPoint("LEFT", c.f, "LEFT", btnX, 0)
+            end
+            local want = math.ceil(#cells / ncol) * 22
+            if row._h == want then return false end
+            row._h = want
+            row:SetHeight(want)
+            return true
+        end
+        row:SetScript("OnSizeChanged", function()
+            if row._adPlacing then return end
+            row._adPlacing = true
+            if place() then AT.LayoutPage(pg) end
+            row._adPlacing = nil
+        end)
+        row._sync = function()
+            place()
+            local rr = ctx()
+            if not rr then return end
+            local counts = Options.TalentClassCounts(rr)
+            for _, cell in ipairs(cells) do
+                cell.cb:SetOn(Store.ClassConditionState(rr, cell.tag))
+                cell.tb.SetCount(counts[cell.tag])
             end
         end
     end
@@ -2643,6 +2952,155 @@ local function ConditionRows(pg, ctx, tabVisible)
     if ctx == SelLayout and Options.LayoutFollow then
         Options.LayoutFollow.Rows(pg, ctx, tabVisible, anySpecs)
     end
+    -- Talents, in the class section under a hairline: the build-level gate
+    -- (on WoW Forever, with no specs, what "only on Enhancement" is on retail).
+    AT.RowDivider(pg, tabVisible)
+    local haveTree = function()
+        local cat = NS.TalentCatalog
+        return cat ~= nil and #cat.All() > 0
+    end
+    AT.RowDesc(pg, "No talent tree on this character: talent conditions do not apply.",
+        20, function() return tabVisible() and not haveTree() end)
+
+    -- The picks per class in one line that wraps, never cut. The Talents
+    -- button by each class above picks them.
+    local pickRow = AT.AddRow(pg, 24, tabVisible)
+    local pickFs = pickRow:CreateFontString(nil, "OVERLAY")
+    pickFs:SetFont(AT.FONT, 11, "")
+    pickFs:SetPoint("TOPLEFT", 10, -5)
+    pickFs:SetJustifyH("LEFT")
+    pickFs:SetJustifyV("TOP")
+    pickFs:SetWordWrap(true)
+    pickFs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+    pickRow._adPickText = pickFs
+    pickRow._adSearch = function() return { "Talents" } end
+    pickRow._sync = function()
+        local r = ctx()
+        -- another class's (or retail spec's) picks are named from its tree,
+        -- read once a session while this list shows, never in combat
+        local T = NS.TalentCatalog
+        if r and T and T.LoadNames then
+            for _, e in ipairs(Store.TalentList(r)) do
+                if e.class and not e.named then T.LoadNames(e.class, e.spec) end
+            end
+        end
+        local sum = Options.TalentSummary(r)
+        pickFs:SetText(sum ~= "" and ("Talents: " .. sum)
+            or "Talents: none, shows on any build. The Talents button by a class picks its talents.")
+        local w = pickRow:GetWidth() or 0
+        if w < 90 then w = (pg:GetWidth() or 0) - 24 end
+        if w > 90 then pickFs:SetWidth(w - 20) end
+        local want = math.max(24, math.floor((pickFs:GetStringHeight() or 12) + 10))
+        if pickRow._h ~= want then
+            pickRow._h = want
+            pickRow:SetHeight(want)
+        end
+    end
+
+    local haveMulti = function()
+        local r = ctx()
+        return r ~= nil and #Store.TalentList(r) > 1
+    end
+    AT.RowDropdown(pg, win, "Match",
+        function()
+            local r = ctx()
+            return (r and r.c.talentMode == "any") and "any" or "all"
+        end,
+        function(v)
+            local r = ctx()
+            if r then Store.SetTalentMode(r, v) end
+            RefreshAll()
+        end,
+        function() return {
+            { value = "all", text = "Need all of them" },
+            { value = "any", text = "Need any one" },
+        } end,
+        function() return tabVisible() and haveMulti() end)
+
+    local chosenRows = {}
+    for i = 1, 10 do
+        local row = AT.AddRow(pg, 22, function()
+            if not tabVisible() then return false end
+            local r = ctx()
+            if not r then return false end
+            return #Store.TalentList(r) >= i
+        end)
+        local tex = row:CreateTexture(nil, "ARTWORK")
+        tex:SetSize(16, 16)
+        tex:SetPoint("LEFT", 10, 0)
+        tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        local nameFs = row:CreateFontString(nil, "OVERLAY")
+        nameFs:SetFont(AT.FONT, 11, "")
+        nameFs:SetPoint("LEFT", 32, 0)
+        nameFs:SetPoint("RIGHT", -150, 0)
+        nameFs:SetJustifyH("LEFT")
+        nameFs:SetWordWrap(false)
+        local stateFs = row:CreateFontString(nil, "OVERLAY")
+        stateFs:SetFont(AT.FONT, 10, "")
+        stateFs:SetPoint("RIGHT", -74, 0)
+        stateFs:SetJustifyH("RIGHT")
+        local del = AT.MakeSmallButton(row, "Remove", 62)
+        del:SetPoint("RIGHT", -8, 0)
+        del:SetHeight(18)
+        del.fs:SetFont(AT.FONT, 10, "")
+        row._sync = function()
+            local r = ctx()
+            if not r then return end
+            local list = Store.TalentList(r)
+            local e = list[i]
+            if not e then return end
+            tex:SetTexture(e.icon)
+            -- a pick made for a class says so, in that class's colour
+            local label = ""
+            if e.class then
+                local cc = RAID_CLASS_COLORS and RAID_CLASS_COLORS[e.class]
+                local hex = cc and (cc.colorStr or string.format("ff%02x%02x%02x",
+                    math.floor((cc.r or 1) * 255 + 0.5), math.floor((cc.g or 1) * 255 + 0.5),
+                    math.floor((cc.b or 1) * 255 + 0.5)))
+                label = Options.TalentClassLabel(e.class, e.spec) .. ": "
+                if hex then label = "|c" .. hex .. label .. "|r" end
+            end
+            nameFs:SetText(label .. e.name)
+            if e.class and not e.here then
+                -- made for another class or spec: not tested on this character
+                nameFs:SetTextColor(0.7, 0.78, 0.88)
+                stateFs:SetText(e.excluded and "excluded" or "required")
+                stateFs:SetTextColor(0.55, 0.65, 0.78)
+            elseif not e.known then
+                -- stored from another class or a changed tree: say so rather
+                -- than quietly reading as "not taken"
+                nameFs:SetTextColor(0.55, 0.65, 0.78)
+                stateFs:SetText("not in this tree")
+                stateFs:SetTextColor(0.55, 0.65, 0.78)
+            elseif e.excluded then
+                -- a must-not-have: met while the node is not taken
+                if e.taken then
+                    nameFs:SetTextColor(0.7, 0.78, 0.88)
+                    stateFs:SetText("excluded, taken")
+                    stateFs:SetTextColor(0.95, 0.62, 0.30)
+                else
+                    nameFs:SetTextColor(0.95, 0.97, 1)
+                    stateFs:SetText("excluded")
+                    stateFs:SetTextColor(0.48, 0.85, 0.56)
+                end
+            elseif e.taken then
+                nameFs:SetTextColor(0.95, 0.97, 1)
+                stateFs:SetText("taken")
+                stateFs:SetTextColor(0.48, 0.85, 0.56)
+            else
+                nameFs:SetTextColor(0.7, 0.78, 0.88)
+                stateFs:SetText("not taken")
+                stateFs:SetTextColor(0.95, 0.62, 0.30)
+            end
+            del:SetScript("OnClick", function()
+                local rr = ctx()
+                if rr then Store.RemoveTalent(rr, e.nodeID) end
+                AT.LayoutPage(pg)
+                RefreshAll()
+            end)
+        end
+        chosenRows[i] = row
+    end
     -- retail only: the Role row and the Hero Talents section (UI\AD_RetailWho.lua)
     if Options.RetailWhoRows then Options.RetailWhoRows(pg, ctx, tabVisible, uiStore) end
 
@@ -2658,7 +3116,7 @@ local function ConditionRows(pg, ctx, tabVisible)
             local cb = AT.MakeCheckbox(facRow)
             cb:SetPoint("LEFT", 4 + (i - 1) * 150, 0)
             local fs = facRow:CreateFontString(nil, "OVERLAY")
-            fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+            fs:SetFont(AT.FONT, 11, "")
             fs:SetPoint("LEFT", cb, "RIGHT", 6, 0)
             fs:SetText((fac == "Alliance" and FACTION_ALLIANCE)
                 or (fac == "Horde" and FACTION_HORDE) or fac)
@@ -2708,7 +3166,7 @@ local function ConditionRows(pg, ctx, tabVisible)
             and r.c.chars[Store.CharKey()] ~= true
     end)
     local lockFs = lockRow:CreateFontString(nil, "OVERLAY")
-    lockFs:SetFont(STANDARD_TEXT_FONT, 10, "")
+    lockFs:SetFont(AT.FONT, 10, "")
     lockFs:SetPoint("LEFT", 10, 0)
     lockFs:SetPoint("RIGHT", -76, 0)
     lockFs:SetJustifyH("LEFT")
@@ -2729,143 +3187,6 @@ local function ConditionRows(pg, ctx, tabVisible)
         for k in pairs(r.c.chars) do names[#names + 1] = k end
         table.sort(names)
         lockFs:SetText("Locked to another character: " .. table.concat(names, ", "))
-    end
-
-    -- Talents: the build-level gate. WoW Forever has no specs, so this does what
-    -- "only on Enhancement" does on retail.
-    AT.Section(pg, "Talents",
-        { collapsible = true, store = uiStore, visibleFn = tabVisible })
-
-    local haveTree = function()
-        local cat = NS.TalentCatalog
-        return cat ~= nil and #cat.All() > 0
-    end
-    AT.RowDesc(pg, "Shows only with these talents. None listed = no restriction.",
-        18, function() return tabVisible() and haveTree() end)
-    AT.RowDesc(pg, "No talent tree on this character: talent conditions do not apply.",
-        20, function() return tabVisible() and not haveTree() end)
-
-    local pickRow = AT.AddRow(pg, 26, function() return tabVisible() and haveTree() end)
-    local pick = AT.MakeSmallButton(pickRow, "Choose talents", 130)
-    pick:SetPoint("LEFT", 10, 0)
-    pick:SetHeight(20)
-    pick.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
-    pick:SetScript("OnClick", function() OpenTalentPicker(ctx) end)
-    AT.Tooltip(pick, "Choose talents",
-        "Opens the talent tree. Click a node to require it, click it again to drop it.")
-    local pickFs = pickRow:CreateFontString(nil, "OVERLAY")
-    pickFs:SetFont(STANDARD_TEXT_FONT, 10, "")
-    pickFs:SetPoint("LEFT", pick, "RIGHT", 10, 0)
-    pickFs:SetPoint("RIGHT", -8, 0)
-    pickFs:SetJustifyH("LEFT")
-    pickFs:SetWordWrap(false)
-    pickFs:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
-    pickRow._sync = function()
-        local r = ctx()
-        local req, exc = 0, 0
-        for _, e in ipairs(r and Store.TalentList(r) or {}) do
-            if e.excluded then exc = exc + 1 else req = req + 1 end
-        end
-        local text
-        if req + exc == 0 then
-            text = "nothing required - shows on any build"
-        elseif req > 0 then
-            text = (req == 1) and "1 talent required" or (req .. " talents required")
-            if exc > 0 then text = text .. ", " .. exc .. " excluded" end
-        else
-            text = (exc == 1) and "1 talent excluded" or (exc .. " talents excluded")
-        end
-        pickFs:SetText(text)
-    end
-
-    local haveMulti = function()
-        local r = ctx()
-        return r ~= nil and #Store.TalentList(r) > 1
-    end
-    AT.RowDropdown(pg, win, "Match",
-        function()
-            local r = ctx()
-            return (r and r.c.talentMode == "any") and "any" or "all"
-        end,
-        function(v)
-            local r = ctx()
-            if r then Store.SetTalentMode(r, v) end
-            RefreshAll()
-        end,
-        function() return {
-            { value = "all", text = "Need all of them" },
-            { value = "any", text = "Need any one" },
-        } end,
-        function() return tabVisible() and haveMulti() end)
-
-    local chosenRows = {}
-    for i = 1, 10 do
-        local row = AT.AddRow(pg, 22, function()
-            if not tabVisible() then return false end
-            local r = ctx()
-            if not r then return false end
-            return #Store.TalentList(r) >= i
-        end)
-        local tex = row:CreateTexture(nil, "ARTWORK")
-        tex:SetSize(16, 16)
-        tex:SetPoint("LEFT", 10, 0)
-        tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-        local nameFs = row:CreateFontString(nil, "OVERLAY")
-        nameFs:SetFont(STANDARD_TEXT_FONT, 11, "")
-        nameFs:SetPoint("LEFT", 32, 0)
-        nameFs:SetPoint("RIGHT", -150, 0)
-        nameFs:SetJustifyH("LEFT")
-        nameFs:SetWordWrap(false)
-        local stateFs = row:CreateFontString(nil, "OVERLAY")
-        stateFs:SetFont(STANDARD_TEXT_FONT, 10, "")
-        stateFs:SetPoint("RIGHT", -74, 0)
-        stateFs:SetJustifyH("RIGHT")
-        local del = AT.MakeSmallButton(row, "Remove", 62)
-        del:SetPoint("RIGHT", -8, 0)
-        del:SetHeight(18)
-        del.fs:SetFont(STANDARD_TEXT_FONT, 10, "")
-        row._sync = function()
-            local r = ctx()
-            if not r then return end
-            local list = Store.TalentList(r)
-            local e = list[i]
-            if not e then return end
-            tex:SetTexture(e.icon)
-            nameFs:SetText(e.name)
-            if not e.known then
-                -- stored from another class or a changed tree: say so rather
-                -- than quietly reading as "not taken"
-                nameFs:SetTextColor(0.55, 0.65, 0.78)
-                stateFs:SetText("not in this tree")
-                stateFs:SetTextColor(0.55, 0.65, 0.78)
-            elseif e.excluded then
-                -- a must-not-have: met while the node is not taken
-                if e.taken then
-                    nameFs:SetTextColor(0.7, 0.78, 0.88)
-                    stateFs:SetText("excluded, taken")
-                    stateFs:SetTextColor(0.95, 0.62, 0.30)
-                else
-                    nameFs:SetTextColor(0.95, 0.97, 1)
-                    stateFs:SetText("excluded")
-                    stateFs:SetTextColor(0.48, 0.85, 0.56)
-                end
-            elseif e.taken then
-                nameFs:SetTextColor(0.95, 0.97, 1)
-                stateFs:SetText("taken")
-                stateFs:SetTextColor(0.48, 0.85, 0.56)
-            else
-                nameFs:SetTextColor(0.7, 0.78, 0.88)
-                stateFs:SetText("not taken")
-                stateFs:SetTextColor(0.95, 0.62, 0.30)
-            end
-            del:SetScript("OnClick", function()
-                local rr = ctx()
-                if rr then Store.RemoveTalent(rr, e.nodeID) end
-                AT.LayoutPage(pg)
-                RefreshAll()
-            end)
-        end
-        chosenRows[i] = row
     end
 
     -- Load When / Never Load When: a failing record is not released but goes
@@ -2943,7 +3264,7 @@ local function ConditionRows(pg, ctx, tabVisible)
     do
         local row = AT.AddRow(pg, 24, tabVisible)
         local fs = row:CreateFontString(nil, "OVERLAY")
-        fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+        fs:SetFont(AT.FONT, 11, "")
         fs:SetPoint("TOPLEFT", 10, -4)
         fs:SetJustifyH("LEFT")
         fs:SetJustifyV("TOP")
@@ -3014,7 +3335,7 @@ function Options.KnownRuleText(r)
     if mode ~= "known" and mode ~= "unknown" then return "No spell rule." end
     local id = c.knownSpell
     if not id then return "Type the spell to check." end
-    local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+    local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: the typed spell, for the editor's words
     if issecretvalue and issecretvalue(nm) then nm = nil end
     local what = (type(nm) == "string" and nm ~= "") and nm or ("spell " .. id)
     if NS.IsForever == true then
@@ -3033,7 +3354,7 @@ function Options.RangeRuleText(r)
     if mode ~= "in" and mode ~= "out" then return "No range rule." end
     local id = C and C.RangeRule and C.RangeRule(r)
     if not id then return "Type the spell to check." end
-    local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+    local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: the typed spell, for the editor's words
     if issecretvalue and issecretvalue(nm) then nm = nil end
     local what = (type(nm) == "string" and nm ~= "") and nm or ("spell " .. id)
     local where = (mode == "in") and "in range of " or "out of range of "
@@ -3079,7 +3400,7 @@ local function VisibilityRows(pg, ctx, tabVisible)
     do
         local row = AT.AddRow(pg, 24, tabVisible)
         local fs = row:CreateFontString(nil, "OVERLAY")
-        fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+        fs:SetFont(AT.FONT, 11, "")
         fs:SetPoint("TOPLEFT", 10, -4)
         fs:SetJustifyH("LEFT")
         fs:SetJustifyV("TOP")
@@ -3273,6 +3594,7 @@ local function MakeThumb(parent, size, groupSize)
         end
         fs:ClearAllPoints()
         fs:SetPoint("CENTER", self, "LEFT", size / 2, 0)
+        -- the text element on screen, so the game's font, not the panel's
         fs:SetFont(STANDARD_TEXT_FONT, math.max(8, math.floor(size * 0.5 + 0.5)), "OUTLINE")
         local c = Store.Resolve(rec, "textel", "color") or { 1, 1, 1, 1 }
         fs:SetTextColor(c[1], c[2], c[3], 1)
@@ -3293,7 +3615,8 @@ local function MakeThumb(parent, size, groupSize)
     function t:SetGroup(color)
         self:SetSize(groupSize, groupSize)
         Mode(false, true, false)
-        color = color or YELLOW
+        -- the kind colour as the palette's pills show it
+        color = AT.Mute(color or YELLOW)
         for i = 1, 3 do
             self.cells[i]:SetColorTexture(color[1], color[2], color[3], 1)
         end
@@ -3418,7 +3741,6 @@ end
 Options._makeThumb = MakeThumb   -- offline harness access
 
 local RAIL_W = 232
-local RAIL_SEL = { 0.055, 0.165, 0.227 }
 local ADDLINE = { 0.18, 0.34, 0.24 }
 
 -- The side-icon override, then the driver spell, as the bar's own side icon
@@ -3426,22 +3748,29 @@ local ADDLINE = { 0.18, 0.34, 0.24 }
 local function BarTexture(rec)
     local ov = Store.Resolve(rec, "icon", "iconOverride") or 0
     if type(ov) == "number" and ov > 0 then
-        return C_Spell.GetSpellTexture(ov) or ov
+        return C_Spell.GetSpellTexture(ov) or ov -- raw-id: an art pick, not a tracked spell
     end
     local d = rec.driver or {}
     if rec.barKind == "swing" then
         local slot = (d.swingType == 1 and 17) or (d.swingType == 2 and 18) or 16
         return GetInventoryItemTexture("player", slot)
     end
-    if rec.barKind == "cooldown" or rec.barKind == "aura" then
-        return d.spellID and C_Spell.GetSpellTexture(d.spellID) or nil
+    -- the spell the bar reads, or its aura (each question's own entry)
+    if rec.barKind == "cooldown" then
+        local sid = Store.RecordSpellID(d)
+        return sid and C_Spell.GetSpellTexture(sid) or nil
+    end
+    if rec.barKind == "aura" then
+        local aid = Store.TrackedAuraIDs(d)[1]
+        return aid and C_Spell.GetSpellTexture(aid) or nil
     end
     -- a deck bar wears its tracker's art
     if rec.barKind == "special" and NS.SpecialIcon then return NS.SpecialIcon.Texture(rec) end
     -- a text for a spell or an aura wears its art under its letters
     local TO = Options.TextElement
     if rec.barKind == "text" and TO and TO.Subject(d.source) ~= "other" then
-        return d.spellID and C_Spell.GetSpellTexture(d.spellID) or nil
+        local sid = (TO.Subject(d.source) == "spell") and Store.RecordSpellID(d) or Store.TrackedAuraIDs(d)[1]
+        return sid and C_Spell.GetSpellTexture(sid) or nil
     end
     return nil
 end
@@ -3451,8 +3780,11 @@ end
 local function PaintRailRow(row, selected, style)
     row._sel, row._style = selected, style
     local fill, edge, ink = COL.well, COL.well, COL.dim
-    if selected then
-        fill, edge, ink = RAIL_SEL, COL.arcDeep, COL.arc
+    if selected and AT.LOOK.selBar then
+        -- the fill and the left bar alone: no accent edge or words
+        fill, edge, ink = COL.sel, COL.sel, COL.ink
+    elseif selected then
+        fill, edge, ink = COL.sel, COL.arcDeep, COL.arc
     elseif style == "layout" then
         fill, edge, ink = COL.panel, COL.line, COL.ink
     elseif style == "add" then
@@ -3468,7 +3800,7 @@ local function PaintRailRow(row, selected, style)
         if style == "add" or style == "addbtn" then
             edge = GREENC
         else
-            edge, ink = COL.arcDeep, COL.ink
+            edge, ink = COL.focus, COL.ink
         end
     end
     -- part of a multi-selection (UI\AD_MultiSelect.lua): outlined and worded
@@ -3668,14 +4000,14 @@ function RailDD.Start(row)
         ghost:EnableMouse(false)
         AT.Skin(ghost, COL.panel, COL.arcDeep)
         ghost.fs = ghost:CreateFontString(nil, "OVERLAY")
-        ghost.fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+        ghost.fs:SetFont(AT.FONT, 11, "")
         ghost.fs:SetPoint("TOPLEFT", 8, -5)
         ghost.fs:SetPoint("TOPRIGHT", -8, -5)
         ghost.fs:SetJustifyH("LEFT")
         ghost.fs:SetWordWrap(false)
         ghost.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
         ghost.sub = ghost:CreateFontString(nil, "OVERLAY")
-        ghost.sub:SetFont(STANDARD_TEXT_FONT, 10, "")
+        ghost.sub:SetFont(AT.FONT, 10, "")
         ghost.sub:SetPoint("TOPLEFT", ghost.fs, "BOTTOMLEFT", 0, -2)
         ghost.sub:SetPoint("TOPRIGHT", ghost.fs, "BOTTOMRIGHT", 0, -2)
         ghost.sub:SetJustifyH("LEFT")
@@ -3817,7 +4149,7 @@ function Options.MakeEye(parent)
         if r and Store.IsLoaded(r) then
             return Store.EditHidden(r) and "Hidden while editing" or "Hide while editing"
         end
-        return (r and Store.UnloadedShown(r)) and "Shown while editing" or "Not loaded here"
+        return (r and Store.UnloadedDrawn(r)) and "Shown while editing" or "Not loaded here"
     end, function()
         local r = b._rec
         if not r then return nil end
@@ -3828,9 +4160,13 @@ function Options.MakeEye(parent)
             return "Hides it on screen while this window is open, so you can get at what sits under it. Closing the window shows it again."
         end
         local why = (Store.BadgeText(r))
-        if Store.UnloadedShown(r) then
+        if Store.UnloadedDrawn(r) then
             return "Drawn on screen while this window is open, with an \"unloaded\" tag. It loads on: "
                 .. why .. ". Click to hide it again."
+        end
+        if Store.UnloadedShown(r) then
+            return "Not loaded on this character. It loads on: " .. why
+                .. ". The sidebar View keeps it off screen; Everything shows it."
         end
         return "Not loaded on this character. It loads on: " .. why
             .. ". Click to draw it on screen while this window is open. Its load conditions stay as they are."
@@ -3850,7 +4186,8 @@ function Options.PaintEye(b, rec)
         worked = Store.EditHidden(rec)
         open = not worked
     else
-        worked = Store.UnloadedShown(rec)
+        -- the screen's answer: the View "This character" draws none
+        worked = Store.UnloadedDrawn(rec)
         open = worked
     end
     local c = (b._hot and COL.ink) or (worked and COL.arc) or COL.faint
@@ -3973,7 +4310,7 @@ local function RailRow(i)
     row.guide:SetPoint("TOPLEFT", 11, 1)
     row.guide:SetPoint("BOTTOMLEFT", 11, 0)
     row.name = row:CreateFontString(nil, "OVERLAY")
-    row.name:SetFont(STANDARD_TEXT_FONT, 12, "")
+    row.name:SetFont(AT.FONT, 12, "")
     row.name:SetJustifyH("LEFT")
     row.name:SetWordWrap(false)
     row.pill = KindPill(row)
@@ -3981,7 +4318,7 @@ local function RailRow(i)
     row.eye = Options.MakeEye(row)
     row.lock = Options.MakeLock(row)
     row.badge = row:CreateFontString(nil, "OVERLAY")
-    row.badge:SetFont(STANDARD_TEXT_FONT, 8, "")
+    row.badge:SetFont(AT.FONT, 8, "")
     row.badge:SetPoint("RIGHT", -6, 0)
     row.badge:SetJustifyH("RIGHT")
     row.badge:SetWordWrap(false)
@@ -3995,16 +4332,16 @@ local function RailRow(i)
     row.edit = AT.MakeSmallButton(row, "Edit", 38)
     row.edit:SetPoint("RIGHT", -4, 0)
     row.edit:SetHeight(16)
-    row.edit.fs:SetFont(STANDARD_TEXT_FONT, 9, "")
+    row.edit.fs:SetFont(AT.FONT, 9, "")
     row.export = AT.MakeSmallButton(row, "Exp", 32)
     row.export:SetPoint("RIGHT", row.edit, "LEFT", -3, 0)
     row.export:SetHeight(16)
-    row.export.fs:SetFont(STANDARD_TEXT_FONT, 9, "")
+    row.export.fs:SetFont(AT.FONT, 9, "")
     AT.Tooltip(row.export, "Export", "Copy a share string for this layout.")
     row.add = AT.MakeSmallButton(row, "+", 20)
     row.add:SetPoint("RIGHT", row.export, "LEFT", -3, 0)
     row.add:SetHeight(16)
-    row.add.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    row.add.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     AT.Tooltip(row.add, "Add", "Add an icon, bar or group to this layout.")
     RailChrome(row)
     -- a row's item may carry a tooltip (rows are pooled: read it on hover)
@@ -4700,11 +5037,11 @@ local function MakeHeader(parent)
     h:SetPoint("TOPRIGHT", 0, 0)
     h:SetHeight(30)
     h.name = h:CreateFontString(nil, "OVERLAY")
-    h.name:SetFont(STANDARD_TEXT_FONT, 15, "")
+    h.name:SetFont(AT.FONT, 15, "")
     h.name:SetPoint("LEFT", 4, 0)
     h.name:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     h.sub = h:CreateFontString(nil, "OVERLAY")
-    h.sub:SetFont(STANDARD_TEXT_FONT, 10, "")
+    h.sub:SetFont(AT.FONT, 10, "")
     h.sub:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     h.chip1 = HeaderChip(h)
     h.chip2 = HeaderChip(h)
@@ -4772,12 +5109,12 @@ local function LayoutMemberRow(i)
     row.thumbHit = CreateFrame("Button", nil, row)
     row.thumbHit:SetAllPoints(row.thumb)
     row.name = row:CreateFontString(nil, "OVERLAY")
-    row.name:SetFont(STANDARD_TEXT_FONT, 12, "")
+    row.name:SetFont(AT.FONT, 12, "")
     row.name:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     row.pill = KindPill(row)
     row.pill:SetPoint("LEFT", row.name, "RIGHT", 8, 0)
     row.sub = row:CreateFontString(nil, "OVERLAY")
-    row.sub:SetFont(STANDARD_TEXT_FONT, 10, "")
+    row.sub:SetFont(AT.FONT, 10, "")
     row.sub:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     row.edit = AT.MakeSmallButton(row, "Edit", 46)
     row.edit:SetHeight(20)
@@ -4785,17 +5122,17 @@ local function LayoutMemberRow(i)
     row.del:SetHeight(20)
     row.del:SetPoint("RIGHT", row.edit, "LEFT", -6, 0)
     row.badge = row:CreateFontString(nil, "OVERLAY")
-    row.badge:SetFont(STANDARD_TEXT_FONT, 9, "")
+    row.badge:SetFont(AT.FONT, 9, "")
     row.badge:SetPoint("RIGHT", row.del, "LEFT", -8, 0)
     row.badge:SetTextColor(SHR[1], SHR[2], SHR[3])
     row.capsule = CreateFrame("Frame", nil, row, "BackdropTemplate")
     row.capsule:SetPoint("TOPLEFT", 10, -32)
     row.capsule:SetPoint("BOTTOMRIGHT", -8, 8)
     row.more = row.capsule:CreateFontString(nil, "OVERLAY")
-    row.more:SetFont(STANDARD_TEXT_FONT, 10, "")
+    row.more:SetFont(AT.FONT, 10, "")
     row.more:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     row.empty = row.capsule:CreateFontString(nil, "OVERLAY")
-    row.empty:SetFont(STANDARD_TEXT_FONT, 10, "")
+    row.empty:SetFont(AT.FONT, 10, "")
     row.empty:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     row.empty:SetText("Nothing here yet - add the first icon")
     row.caps = {}
@@ -4806,6 +5143,7 @@ end
 -- shape a pooled card: strip = true (header over the member well) or false
 -- (leading art tile). Returns the card height.
 local function ShapeCard(row, strip, color, thumbed, thumbW)
+    color = AT.Mute(color)
     row.stripe:SetColorTexture(color[1], color[2], color[3], 0.85)
     row.name:ClearAllPoints()
     row.sub:ClearAllPoints()
@@ -4877,10 +5215,10 @@ local function FillCapsule(row, icons, borderColor, addFn, cardW)
         b:SetSize(TILE, TILE)
         AT.Skin(b, COL.box, COL.arcDeep)
         b.fs = b:CreateFontString(nil, "OVERLAY")
-        b.fs:SetFont(STANDARD_TEXT_FONT, 15, "")
+        b.fs:SetFont(AT.FONT, 15, "")
         b.fs:SetPoint("CENTER", 0, 0)
         b.fs:SetText("+")
-        b.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+        b.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
         b:SetScript("OnEnter", function(s)
             s:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
         end)
@@ -4941,7 +5279,7 @@ function Options.LayoutTile(i)
         t.cells[c] = x
     end
     t.name = t:CreateFontString(nil, "OVERLAY")
-    t.name:SetFont(STANDARD_TEXT_FONT, 11, "")
+    t.name:SetFont(AT.FONT, 11, "")
     t.name:SetPoint("BOTTOMLEFT", 5, 10)
     t.name:SetPoint("BOTTOMRIGHT", -5, 10)
     t.name:SetJustifyH("CENTER")
@@ -4951,7 +5289,7 @@ function Options.LayoutTile(i)
     t.x:SetSize(16, 18)
     t.x:SetPoint("TOPRIGHT", -2, -5)
     t.x.fs = t.x:CreateFontString(nil, "OVERLAY")
-    t.x.fs:SetFont(STANDARD_TEXT_FONT, 13, "")
+    t.x.fs:SetFont(AT.FONT, 13, "")
     t.x.fs:SetPoint("CENTER", 0, 1)
     t.x.fs:SetText("x")
     -- always shown, top right, red; brighter under the cursor
@@ -5057,6 +5395,7 @@ function Options.FillLayoutTile(t, rec)
             or (text:find("Bar") and text or (text .. " bar"))
         t._open = function() Options.Select("bar", rec.id) end
     end
+    color = AT.Mute(color)
     t.stripe:SetColorTexture(color[1], color[2], color[3], 0.85)
     t.name:SetText(rec.name or "?")
     -- Not loaded here: the eye says so, so the tile keeps full alpha.
@@ -5114,12 +5453,12 @@ function Options.LayoutAddTile()
     AT.Skin(t, COL.well, dark)
     t._adAddTile = true
     t.plus = t:CreateFontString(nil, "OVERLAY")
-    t.plus:SetFont(STANDARD_TEXT_FONT, 26, "")
+    t.plus:SetFont(AT.FONT, 26, "")
     t.plus:SetPoint("CENTER", 0, 8)
     t.plus:SetTextColor(green[1], green[2], green[3])
     t.plus:SetText("+")
     t.name = t:CreateFontString(nil, "OVERLAY")
-    t.name:SetFont(STANDARD_TEXT_FONT, 11, "")
+    t.name:SetFont(AT.FONT, 11, "")
     t.name:SetPoint("BOTTOMLEFT", 5, 10)
     t.name:SetPoint("BOTTOMRIGHT", -5, 10)
     t.name:SetJustifyH("CENTER")
@@ -5148,7 +5487,7 @@ function Options.LayoutNLHeader()
     h.chev = AT.MakeChevron(h)
     h.chev:SetPoint("LEFT", 7, 0)
     h.fs = h:CreateFontString(nil, "OVERLAY")
-    h.fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    h.fs:SetFont(AT.FONT, 11, "")
     h.fs:SetPoint("LEFT", h.chev, "RIGHT", 6, 0)
     local function paint(c)
         h.fs:SetTextColor(c[1], c[2], c[3])
@@ -5442,7 +5781,7 @@ local function BandActions(host, nameFS, getRec, opts)
     local function Btn(label, w, tip)
         local b = AT.MakeSmallButton(host, label, w)
         b:SetHeight(18)
-        b.fs:SetFont(STANDARD_TEXT_FONT, 9, "")
+        b.fs:SetFont(AT.FONT, 9, "")
         AT.Tooltip(b, label, tip)
         Place(b)
         return b
@@ -5473,7 +5812,7 @@ local function BandActions(host, nameFS, getRec, opts)
     box:SetPoint("LEFT", nameFS, "LEFT", -6, 0)
     box:SetPoint("RIGHT", ren, "LEFT", -10, 0)
     AT.Skin(box, COL.well)
-    box:SetFont(STANDARD_TEXT_FONT, 12, "")
+    box:SetFont(AT.FONT, 12, "")
     box:SetTextInsets(6, 6, 0, 0)
     box:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     box:SetAutoFocus(false)
@@ -5698,7 +6037,7 @@ function Options.AnchorPickRows(pg, family, ctx, vis, fields, note)
     if Options.FramePickRows then Options.FramePickRows(pg, ctx, frameVis, win, vis) end
     local status = AT.AddRow(pg, 22, vis)
     local fs = status:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    fs:SetFont(AT.FONT, 11, "")
     fs:SetPoint("LEFT", 10, 0)
     fs:SetPoint("RIGHT", -10, 0)
     fs:SetJustifyH("LEFT")
@@ -5791,7 +6130,7 @@ local function BuildLayoutPane()
     del:SetScript("OnClick", function() Options.ConfirmDelete(SelLayout()) end)
     local addBtn = AT.MakeSmallButton(layoutPane, "+ Add", 52)
     addBtn:SetPoint("RIGHT", del, "LEFT", -5, 0)
-    addBtn.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    addBtn.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     addBtn:SetScript("OnClick", function()
         local layout = SelLayout()
         if layout then Options.OpenAdd(layout.id) end
@@ -5804,26 +6143,26 @@ local function BuildLayoutPane()
     bar:SetHeight(22)
     bar:SetPoint("TOPLEFT", 0, -36)
     bar:SetPoint("TOPRIGHT", -4, -36)
-    AT.Skin(bar, COL.panel, COL.line)
+    AT.Skin(bar, COL.head, COL.line)
     local chev = AT.MakeChevron(bar)
     chev:SetPoint("LEFT", 7, 0)
     chev:SetDown(true)
     local title = bar:CreateFontString(nil, "OVERLAY")
-    title:SetFont(STANDARD_TEXT_FONT, 11, "")
+    title:SetFont(AT.FONT, 11, "")
     title:SetPoint("LEFT", chev, "RIGHT", 6, 0)
-    title:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    title:SetTextColor(COL.title[1], COL.title[2], COL.title[3])
     title:SetText("CONTENTS")
     local rule = bar:CreateTexture(nil, "OVERLAY")
-    rule:SetColorTexture(COL.arc[1], COL.arc[2], COL.arc[3], 1)
+    rule:SetColorTexture(COL.rule[1], COL.rule[2], COL.rule[3], 1)
     rule:SetPoint("BOTTOMLEFT", 1, 1)
     rule:SetPoint("BOTTOMRIGHT", -1, 1)
     rule:SetHeight(1)
     rule:Hide()
     local function paintBar(hot)
-        local c = hot and COL.ink or COL.arc
+        local c = hot and COL.ink or COL.title
         title:SetTextColor(c[1], c[2], c[3])
-        chev:SetColor(c)
-        local f = hot and COL.btnHover or COL.panel
+        chev:SetColor(hot and COL.ink or COL.chev)
+        local f = hot and COL.btnHover or COL.head
         bar:SetBackdropColor(f[1], f[2], f[3], 1)
     end
     bar:SetScript("OnEnter", function() paintBar(true) end)
@@ -5852,7 +6191,7 @@ local function BuildLayoutPane()
         c:SetHeight(16)
         AT.Skin(c, COL.well, COL.line)
         c.fs = c:CreateFontString(nil, "OVERLAY")
-        c.fs:SetFont(STANDARD_TEXT_FONT, 10, "")
+        c.fs:SetFont(AT.FONT, 10, "")
         c.fs:SetPoint("CENTER", 0, 0)
         c.fs:SetText(v.text)
         local tw = (c.fs.GetUnboundedStringWidth and c.fs:GetUnboundedStringWidth())
@@ -5879,7 +6218,7 @@ local function BuildLayoutPane()
             RefreshLayoutPane()
         end)
         c:SetScript("OnEnter", function(s)
-            s:SetBackdropBorderColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 1)
+            s:SetBackdropBorderColor(COL.focus[1], COL.focus[2], COL.focus[3], 1)
             s.fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
         end)
         c:SetScript("OnLeave", function() layoutPane.PaintViewChips() end)
@@ -5975,7 +6314,7 @@ local function BuildLayoutPane()
     layoutAddRow:SetHeight(28)
     AT.Skin(layoutAddRow, COL.well, { 0.18, 0.34, 0.24 })
     layoutAddRow.fs = layoutAddRow:CreateFontString(nil, "OVERLAY")
-    layoutAddRow.fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    layoutAddRow.fs:SetFont(AT.FONT, 11, "")
     layoutAddRow.fs:SetPoint("CENTER", 0, 0)
     layoutAddRow.fs:SetTextColor(0.482, 0.847, 0.561)
     layoutAddRow.fs:SetText("+ Add to this layout")
@@ -6002,10 +6341,10 @@ local function BuildLayoutPane()
     hbg:SetPoint("BOTTOMRIGHT", 0, 4)
     AT.Skin(hbg, COL.panel, COL.arcDeep)
     hd._fs = hbg:CreateFontString(nil, "OVERLAY")
-    hd._fs:SetFont(STANDARD_TEXT_FONT, 12, "")
+    hd._fs:SetFont(AT.FONT, 12, "")
     -- on the first line: a narrow pane puts the actions on lines under it
     hd._fs:SetPoint("LEFT", hbg, "TOPLEFT", 10, -13)
-    hd._fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    hd._fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     hd._chip = KindPill(hbg)
     hd._chip:SetPoint("LEFT", hd._fs, "RIGHT", 8, 0)
     BandActions(hbg, hd._fs, SelLayout, { hide = { hd._chip }, noMove = true, row = hd })
@@ -6022,7 +6361,7 @@ local function BuildLayoutPane()
         return l ~= nil and Store.UndoInfo(l.id) ~= nil
     end)
     und._fs = und:CreateFontString(nil, "OVERLAY")
-    und._fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    und._fs:SetFont(AT.FONT, 11, "")
     und._fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     und._fs:SetJustifyH("LEFT")
     und._fs:SetWordWrap(false)
@@ -6118,7 +6457,7 @@ function Options.LayoutLookStatus(pg, family, section, vis, fields, lt)
         return (Counts()) > 0
     end)
     local fs = row:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    fs:SetFont(AT.FONT, 11, "")
     fs:SetPoint("LEFT", 10, 0)
     fs:SetJustifyH("LEFT")
     fs:SetWordWrap(false)
@@ -6484,10 +6823,10 @@ local function PreviewRestyle(rec, f)
         ab = Options.PreviewAuraButton(f)
         NS.DriverAura.AnchorButton(ab, f, 1)
         local ov = rec.driver and rec.driver.overlay
-        local aid = ov and ov.spellID
+        local aid = ov and Store.TrackedAuraIDs(ov)[1]
         -- a totem or a set duration wears the spell it follows
         local PH = NS.DriverPhase
-        if ov and PH and PH.Source(rec) then aid = PH.SpellOf(rec, ov) or aid end
+        if ov and PH and PH.Source(rec) then aid = Store.RecordSpellID(rec.driver, PH.SpellOf(rec, ov)) or aid end
         ab._adIcon:SetTexture((aid and C_Spell.GetSpellTexture(aid)) or Factory.KindTexture(rec))
         Factory.StyleAuraButton(ab, rec, h, { w = w, h = h, ghost = true })
         if ab._adStacks:IsShown() then ab._adStacks:SetText("2") end
@@ -6781,14 +7120,14 @@ function Options.PreviewBgSwatches(stage)
         sw:SetColor(p.col or Options.PREVIEW_BG[2].col)
         if p.key == "custom" then
             local plus = sw:CreateFontString(nil, "OVERLAY")
-            plus:SetFont(STANDARD_TEXT_FONT, 10, "OUTLINE")
+            plus:SetFont(AT.FONT, 10, "OUTLINE")
             plus:SetPoint("CENTER", 0, 0)
             plus:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
             plus:SetText("+")
         end
         -- the picked swatch keeps its cyan border through hover
         sw:SetScript("OnEnter", function(s)
-            if not s._adOn then s:SetBackdropBorderColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 1) end
+            if not s._adOn then s:SetBackdropBorderColor(COL.focus[1], COL.focus[2], COL.focus[3], 1) end
         end)
         sw:SetScript("OnLeave", function(s)
             local b = s._adOn and COL.arc or COL.line
@@ -6997,12 +7336,12 @@ local function BuildIconEditor(parent)
     head._icon:SetPoint("LEFT", head, "TOPLEFT", 8, -17)
     head._icon:EnableMouse(false)
     head._name = head:CreateFontString(nil, "OVERLAY")
-    head._name:SetFont(STANDARD_TEXT_FONT, 13, "")
+    head._name:SetFont(AT.FONT, 13, "")
     head._name:SetPoint("LEFT", head, "TOPLEFT", 42, -17)
-    head._name:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    head._name:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     head._pill = KindPill(head)
     head._badge = head:CreateFontString(nil, "OVERLAY")
-    head._badge:SetFont(STANDARD_TEXT_FONT, 9, "")
+    head._badge:SetFont(AT.FONT, 9, "")
     head._badge:SetTextColor(SHR[1], SHR[2], SHR[3])
     head._del = AT.MakeSmallButton(head, "Delete", 56)
     head._del:SetPoint("RIGHT", -8, 0)
@@ -7156,7 +7495,7 @@ local function BuildIconEditor(parent)
             local sid = tonumber(v)
             if sid then
                 r.driver.spellID = sid
-                local info = C_Spell.GetSpellName and C_Spell.GetSpellName(sid)
+                local info = C_Spell.GetSpellName and C_Spell.GetSpellName(sid) -- raw-id: the typed ID names the record
                 if info then r.name = info end
                 Store.Dirty("tree")
                 RefreshAll()
@@ -7456,7 +7795,7 @@ local function BuildIconEditor(parent)
         "Any enchant")
     local nowRow = AT.AddRow(pg, 22, enchVis)
     local nowFS = nowRow:CreateFontString(nil, "OVERLAY")
-    nowFS:SetFont(STANDARD_TEXT_FONT, 11, "")
+    nowFS:SetFont(AT.FONT, 11, "")
     nowFS:SetPoint("LEFT", 10, 0)
     nowFS:SetPoint("RIGHT", -10, 0)
     nowFS:SetJustifyH("LEFT")
@@ -7521,8 +7860,8 @@ local function BuildIconEditor(parent)
     end
 
     -- On this icon: what shows over the cooldown (an aura, its totem or a set
-    -- duration on cast), then that source's rows; the look is on the Show &
-    -- Hide, Glows and Swipe tabs. Offered only with the game's aura container,
+    -- duration on cast), then that source's rows; the look is on the
+    -- Conditions and Swipe tabs. Offered only with the game's aura container,
     -- without which the aura could not work in combat.
     local ovSecVis = function()
         local r = SelIcon()
@@ -8427,7 +8766,7 @@ local function BuildGroupPane()
 
     local addIcon = AT.MakeSmallButton(groupPane, "+ Add Icon", 82)
     addIcon:SetPoint("TOPRIGHT", -4, -2)
-    addIcon.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    addIcon.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     addIcon:SetScript("OnClick", function()
         local group = SelGroup()
         if group then Options.OpenAdd(group.layoutId, group.id) end
@@ -8478,9 +8817,9 @@ local function BuildGroupPane()
     gbg:SetPoint("BOTTOMRIGHT", 0, 4)
     AT.Skin(gbg, COL.panel, COL.arcDeep)
     ghd._fs = gbg:CreateFontString(nil, "OVERLAY")
-    ghd._fs:SetFont(STANDARD_TEXT_FONT, 12, "")
+    ghd._fs:SetFont(AT.FONT, 12, "")
     ghd._fs:SetPoint("LEFT", gbg, "TOPLEFT", 10, -13)
-    ghd._fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    ghd._fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     ghd._chip = KindPill(gbg)
     ghd._chip:SetPoint("LEFT", ghd._fs, "RIGHT", 8, 0)
     BandActions(gbg, ghd._fs, SelGroup, { hide = { ghd._chip }, row = ghd })
@@ -8880,7 +9219,7 @@ local function BuildFreePane()
     local addIcon = AT.MakeSmallButton(freePane, "+ Add Icon", 82)
     addIcon:SetPoint("TOPRIGHT", -4, -2)
     freeHeader._btns = { addIcon }
-    addIcon.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    addIcon.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     addIcon:SetScript("OnClick", function()
         local layout = SelLayout()
         if layout then Options.OpenAdd(layout.id, nil, true) end
@@ -9125,14 +9464,15 @@ function barPrev.Plate()
     f.hpFill = f.hp:CreateTexture(nil, "ARTWORK")
     f.hpFill:SetColorTexture(0.78, 0.18, 0.16, 0.95)
     f.name = f:CreateFontString(nil, "OVERLAY")
+    -- a nameplate's name, so the game's font, not the panel's
     f.name:SetFont(STANDARD_TEXT_FONT, 9, "OUTLINE")
     f.name:SetPoint("BOTTOM", f.hp, "TOP", 0, 2)
     f.name:SetTextColor(1, 0.82, 0.1)
     f.name:SetText("Target")
     f.tag = f:CreateFontString(nil, "OVERLAY")
-    f.tag:SetFont(STANDARD_TEXT_FONT, 8, "")
+    f.tag:SetFont(AT.FONT, 8, "")
     f.tag:SetPoint("TOPLEFT", 3, -3)
-    f.tag:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    f.tag:SetTextColor(COL.title[1], COL.title[2], COL.title[3])
     f.tag:SetText("Nameplate stand-in")
     f:Hide()
     barPrev.plate = f
@@ -9423,9 +9763,9 @@ local function BuildBarPane()
     hbg:SetPoint("BOTTOMRIGHT", 0, 4)
     AT.Skin(hbg, COL.panel, COL.arcDeep)
     hd._fs = hbg:CreateFontString(nil, "OVERLAY")
-    hd._fs:SetFont(STANDARD_TEXT_FONT, 12, "")
+    hd._fs:SetFont(AT.FONT, 12, "")
     hd._fs:SetPoint("LEFT", hbg, "TOPLEFT", 10, -13)
-    hd._fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    hd._fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     hd._chip = KindPill(hbg)
     hd._chip:SetPoint("LEFT", hd._fs, "RIGHT", 8, 0)
     BandActions(hbg, hd._fs, SelBar, { hide = { hd._chip }, row = hd })
@@ -9478,7 +9818,7 @@ local function BuildBarPane()
             local sid = tonumber(v)
             if sid then
                 r.driver.spellID = sid
-                local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(sid)
+                local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(sid) -- raw-id: the typed ID names the record
                 if nm then r.name = nm end
                 Store.Dirty("tree")
                 RefreshAll()
@@ -9576,7 +9916,7 @@ local function BuildBarPane()
         local sid = tonumber(v)
         if sid then
             r.driver.spellID = sid
-            local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(sid)
+            local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(sid) -- raw-id: the typed ID names the record
             if nm then r.name = nm end
             Store.Dirty("tree")
             RefreshAll()
@@ -9796,7 +10136,7 @@ local function BuildBarPane()
                 and Store.Resolve(r, "behavior", "clickable") == true
         end)
         local fs = row:CreateFontString(nil, "OVERLAY")
-        fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+        fs:SetFont(AT.FONT, 11, "")
         fs:SetPoint("TOPLEFT", 10, -4)
         fs:SetJustifyH("LEFT")
         fs:SetJustifyV("TOP")
@@ -9868,7 +10208,7 @@ local function BuildBarPane()
         "Any enchant")
     local ebNow = AT.AddRow(pg, 22, enchBarVis)
     local ebNowFS = ebNow:CreateFontString(nil, "OVERLAY")
-    ebNowFS:SetFont(STANDARD_TEXT_FONT, 11, "")
+    ebNowFS:SetFont(AT.FONT, 11, "")
     ebNowFS:SetPoint("LEFT", 10, 0)
     ebNowFS:SetPoint("RIGHT", -10, 0)
     ebNowFS:SetJustifyH("LEFT")
@@ -9986,7 +10326,7 @@ local function BuildBarPane()
                 local DR = NS.DriverRange
                 local id = (DR and DR.ParseSpell(v)) or tonumber(v)
                 if id and id <= 0 then id = nil end
-                if r.driver.spellID == id then return end
+                if r.driver.spellID == id then return end -- raw-id: an unchanged entry, not a match
                 r.driver.spellID = id
                 Store.Dirty("style", r.id)
             end,
@@ -10001,7 +10341,7 @@ local function BuildBarPane()
             end)
         local st = AT.AddRow(pg, 22, rangeVis)
         local stFS = st:CreateFontString(nil, "OVERLAY")
-        stFS:SetFont(STANDARD_TEXT_FONT, 11, "")
+        stFS:SetFont(AT.FONT, 11, "")
         stFS:SetPoint("LEFT", 10, 0)
         stFS:SetPoint("RIGHT", -10, 0)
         stFS:SetJustifyH("LEFT")
@@ -10135,9 +10475,14 @@ local function BuildBarPane()
             -- follow their deps, so an off card is its header line alone
             local card = ET.CardStart(pg, { vis = vis, ctx = SelBar, family = "bar", section = section,
                 switch = fields[1], name = title, when = rowOpts.card.when, word = rowOpts.card.word })
-            local rest = {}
-            for i = 2, #fields do rest[#rest + 1] = fields[i] end
-            SectionRows(pg, "bar", section, SelBar, vis, rest)
+            if rowOpts.card.rows then
+                -- a card that draws its own rows (a bar glow's aura rows sit mid-card)
+                rowOpts.card.rows(vis)
+            else
+                local rest = {}
+                for i = 2, #fields do rest[#rest + 1] = fields[i] end
+                SectionRows(pg, "bar", section, SelBar, vis, rest)
+            end
             ET.CardEnd(card)
             def.card = card
             return vis
@@ -10456,7 +10801,7 @@ local function BuildBarPane()
     -- The bands in words, re-read on every sync.
     local scSum = AT.AddRow(pg, 22, scVis)
     local scFS = scSum:CreateFontString(nil, "OVERLAY")
-    scFS:SetFont(STANDARD_TEXT_FONT, 10, "")
+    scFS:SetFont(AT.FONT, 10, "")
     scFS:SetPoint("LEFT", 10, 0)
     scFS:SetPoint("RIGHT", -10, 0)
     scFS:SetJustifyH("LEFT")
@@ -10725,7 +11070,8 @@ local function BuildBarPane()
     -- (maxCharges > 1); every other kind always has one.
     local function StackTextExists(r)
         if r.barKind ~= "cooldown" then return true end
-        local sid = r.driver and r.driver.spellID
+        -- the spell the bar reads (its rank, its override)
+        local sid = Store.RecordSpellID(r.driver)
         local info = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
         return ((info and info.maxCharges) or 0) > 1
     end
@@ -10800,14 +11146,14 @@ local function BuildBarPane()
     }))
 
 
-    -- Show & Hide > By State: the state hides and their opacity (a cooldown
+    -- Conditions > By State: the state hides and their opacity (a cooldown
     -- bar's ready and full charges; an aura, timer, swing or enchant bar's
     -- inactive). Per bar, like the driver: no push bar.
-    BarBlock("Hide by state", "behavior", "Show & Hide", {
+    BarBlock("Hide by state", "behavior", "Conditions", {
         "hideWhenReady", "hideWhenFullCharges", "hiddenAlpha",
     }, function(r) return r.barKind == "cooldown" end, "By State")
     do
-        local inactiveVis = BarBlock("Hide when inactive", "behavior", "Show & Hide", {
+        local inactiveVis = BarBlock("Hide when inactive", "behavior", "Conditions", {
             "hideWhenInactive", "hiddenAlpha",
         }, function(r)
             return r.barKind == "aura" or r.barKind == "timer" or r.barKind == "swing" or r.barKind == "enchant"
@@ -10853,11 +11199,17 @@ local function BuildBarPane()
                 return inactiveVis() and r ~= nil and r.barKind == "swing"
             end }
     end
-    -- Show & Hide > Fade When: the fade rules.
-    VisibilityRows(pg, SelBar, BarPane("Fade When", "Show & Hide"))
-    -- Show & Hide > Blizzard's Bar (resource bars): the game's own class bar,
+    -- Conditions > Glows: up to three glows around any bar, on every kind in
+    -- Schema.BAR_GLOW_KINDS (UI\AD_BarGlowOptions.lua).
+    if Options.BarGlowRows then
+        Options.BarGlowRows(pg, SelBar, win, { BarBlock = BarBlock, SubPush = SubPush,
+            SectionRows = SectionRows, BarTabVisible = BarTabVisible })
+    end
+    -- Conditions > Fade When: the fade rules.
+    VisibilityRows(pg, SelBar, BarPane("Fade When", "Conditions"))
+    -- Conditions > Blizzard's Bar (resource bars): the game's own class bar,
     -- faded while this bar is loaded. Per bar: no push bar.
-    BarBlock("Blizzard's Bar", "resource", "Show & Hide", { "hideBlizzard" },
+    BarBlock("Blizzard's Bar", "resource", "Conditions", { "hideBlizzard" },
         function(r) return Schema.HasBlizzardBar(r) end)
 
     -- Heals & Shields (health bars): one page of titled sections, one per
@@ -10924,13 +11276,13 @@ local function BuildEmptyPane()
     pane:SetAllPoints()
     panes.empty = pane
     local fs = pane:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 13, "")
+    fs:SetFont(AT.FONT, 13, "")
     fs:SetPoint("CENTER", 0, 40)
     fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     fs:SetText("Create a layout to begin - it is one movable block on your screen.")
     local b = AT.MakeSmallButton(pane, "+ New Layout", 110)
     b:SetPoint("CENTER", 0, 8)
-    b.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    b.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     b:SetScript("OnClick", function() Options.Select("newlayout") end)
 end
 
@@ -10983,7 +11335,7 @@ end
 function Options.AuraSuggestPanel(pg, visibleFn, getText, setText, multi, onPicked)
     local row = AT.AddRow(pg, 134, visibleFn)
     local status = row:CreateFontString(nil, "OVERLAY")
-    status:SetFont(STANDARD_TEXT_FONT, 9, "")
+    status:SetFont(AT.FONT, 9, "")
     status:SetPoint("TOPLEFT", 10, -2)
     status:SetPoint("TOPRIGHT", -12, -2)
     status:SetJustifyH("LEFT")
@@ -11004,23 +11356,23 @@ function Options.AuraSuggestPanel(pg, visibleFn, getText, setText, multi, onPick
         b.tex:SetPoint("LEFT", 3, 0)
         b.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         b.name = b:CreateFontString(nil, "OVERLAY")
-        b.name:SetFont(STANDARD_TEXT_FONT, 11, "")
+        b.name:SetFont(AT.FONT, 11, "")
         b.name:SetPoint("LEFT", 27, 0)
         b.name:SetPoint("RIGHT", -110, 0)
         b.name:SetJustifyH("LEFT")
         b.name:SetWordWrap(false)
         b.name:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
         b.id = b:CreateFontString(nil, "OVERLAY")
-        b.id:SetFont(STANDARD_TEXT_FONT, 9, "")
+        b.id:SetFont(AT.FONT, 9, "")
         b.id:SetPoint("RIGHT", -6, 0)
         b.id:SetJustifyH("RIGHT")
         b.id:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
         b:SetScript("OnEnter", function()
-            b:SetBackdropBorderColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 1)
+            b:SetBackdropBorderColor(COL.focus[1], COL.focus[2], COL.focus[3], 1)
             local g = b._g
             if not g then return end
             GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
-            GameTooltip:SetSpellByID(g.pick)
+            GameTooltip:SetSpellByID(g.pick) -- raw-id: a name search's result
             local n = #g.ids
             GameTooltip:AddLine((n > 1 and "Spell IDs: " or "Spell ID: ")
                 .. table.concat(g.ids, ", ", 1, math.min(n, 12)) .. ((n > 12) and ", ..." or ""),
@@ -11050,7 +11402,7 @@ function Options.AuraSuggestPanel(pg, visibleFn, getText, setText, multi, onPick
             if g then
                 local n = #g.ids
                 b.tex:SetTexture(g.icon or 134400)
-                b.name:SetText(g.knownID and (g.name .. "  |cff3fc9f2(yours)|r") or g.name)
+                b.name:SetText(g.knownID and (g.name .. "  |cff" .. AT.Hex(COL.arc) .. "(yours)|r") or g.name)
                 if multi then
                     b.id:SetText((n > 1) and (n .. " IDs: " .. g.ids[1] .. " +" .. (n - 1)) or tostring(g.ids[1]))
                 else
@@ -11124,7 +11476,7 @@ end
 local function BuildAddWindow()
     addWin = AT.CreateWindow("ArcUIv2Add", {
         w = 500, h = 560, minW = 500, minH = 560, resizable = false,
-        title = "|cff3fc9f2Add|r|cffd5e2f2 New|r",
+        title = AT.Brand("Add", " New"),
     })
     addWin:SetFrameLevel(win:GetFrameLevel() + 40)
     -- Inset from the window: the page's panel body is a child frame, and child
@@ -11593,7 +11945,7 @@ local function BuildAddWindow()
     local sugRow = AT.AddRow(pg, SUG.top + SUG.pitch, sugVis)
     addWin._sugRow = sugRow
     local sugLabel = sugRow:CreateFontString(nil, "OVERLAY")
-    sugLabel:SetFont(STANDARD_TEXT_FONT, 9, "")
+    sugLabel:SetFont(AT.FONT, 9, "")
     sugLabel:SetPoint("TOPLEFT", 10, -2)
     sugLabel:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     sugLabel:SetText("FROM YOUR SPELLBOOK - click to fill")
@@ -11601,7 +11953,7 @@ local function BuildAddWindow()
     sugRow._scroll:SetPoint("TOPLEFT", 8, -SUG.top)
     sugRow._scroll:SetPoint("BOTTOMRIGHT", -12, SUG.gap)
     sugRow._empty = sugRow:CreateFontString(nil, "OVERLAY")
-    sugRow._empty:SetFont(STANDARD_TEXT_FONT, 11, "")
+    sugRow._empty:SetFont(AT.FONT, 11, "")
     sugRow._empty:SetPoint("LEFT", sugRow._scroll, "TOPLEFT", 2, -SUG.cell / 2)
     sugRow._empty:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     local sugBtns = {}
@@ -11620,7 +11972,7 @@ local function BuildAddWindow()
         b.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         -- the pick stays cyan under the cursor too
         function b.Edge(hot)
-            local c = (b._picked and COL.arc) or (hot and COL.arcDeep) or COL.line
+            local c = (b._picked and COL.arc) or (hot and COL.focus) or COL.line
             b:SetBackdropBorderColor(c[1], c[2], c[3], 1)
         end
         b:SetScript("OnEnter", function()
@@ -11628,7 +11980,7 @@ local function BuildAddWindow()
             local e = b._e
             if not e then return end
             GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
-            GameTooltip:SetSpellByID(e.spellID)
+            GameTooltip:SetSpellByID(e.spellID) -- raw-id: a catalog entry
             GameTooltip:AddLine("Spell ID: " .. e.spellID, COL.arc[1], COL.arc[2], COL.arc[3])
             GameTooltip:Show()
         end)
@@ -11668,13 +12020,13 @@ local function BuildAddWindow()
         local results
         if pickID then
             for _, e in ipairs(all) do
-                if e.spellID == pickID then results = all break end
+                if e.spellID == pickID then results = all break end -- raw-id: a catalog pick, not a match
             end
         end
         results = results or NS.SpellCatalog.Search(query, #all)
         for i, e in ipairs(results) do
             local b = SugBtn(i)
-            b._e, b._picked = e, e.spellID == pickID
+            b._e, b._picked = e, e.spellID == pickID -- raw-id: a catalog pick, not a match
             b.tex:SetTexture(e.texture)
             b:ClearAllPoints()
             b:SetPoint("TOPLEFT", ((i - 1) % SUG.cols) * SUG.pitch,
@@ -11781,7 +12133,7 @@ local function BuildAddWindow()
     local btnRow = AT.AddRow(pg, 30)
     local create = AT.MakeSmallButton(btnRow, "Create", 84)
     create:SetPoint("LEFT", 10, 0)
-    create.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    create.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     local cancel = AT.MakeSmallButton(btnRow, "Cancel", 64)
     cancel:SetPoint("LEFT", create, "RIGHT", 6, 0)
     cancel:SetScript("OnClick", function() addWin:Hide() end)
@@ -11843,7 +12195,7 @@ local function BuildAddWindow()
         create:SetEnabled(on)
         create:SetBackdropColor(COL.btn[1], COL.btn[2], COL.btn[3], 1)
         if on then
-            create.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+            create.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
             create:SetBackdropBorderColor(COL.steel[1], COL.steel[2], COL.steel[3], 1)
         else
             create.fs:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
@@ -11918,7 +12270,7 @@ local function BuildAddWindow()
         if iconKind == "spell" then
             local sid = ResolveSpellInput(addState.spellID)
             if not sid then return end
-            local name = (C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or ("Spell " .. sid)
+            local name = (C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or ("Spell " .. sid) -- raw-id: the Add window's typed spell
             local rec = Store.NewIcon("spell", { spellID = sid }, dest, layoutId, name)
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
         elseif iconKind == "aura" then
@@ -11954,7 +12306,7 @@ local function BuildAddWindow()
             local slot = addState.totemSlot or 1
             local sid = tonumber(addState.totemSpell)
             if sid and sid <= 0 then sid = nil end
-            local name = (sid and C_Spell.GetSpellName and C_Spell.GetSpellName(sid))
+            local name = (sid and C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) -- raw-id: the Add window's typed spell
                 or ("Totem Slot " .. slot)
             local rec = Store.NewIcon("totem", { slot = slot, spellID = sid }, dest, layoutId, name)
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
@@ -12039,13 +12391,13 @@ local function BuildAddWindow()
                     local ms = tonumber(addState.barMaxStacks)
                     if ms and ms >= 1 then driver.maxStacks = math.floor(ms) end
                 end
-                name = (C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or ("Aura " .. sid)
+                name = (C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or ("Aura " .. sid) -- raw-id: the Add window's typed aura
             else
                 bk = "cooldown"
                 local sid = ResolveSpellInput(addState.barSpell)
                 if not sid then return end
                 driver = { spellID = sid }
-                name = (C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or ("Spell " .. sid)
+                name = (C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or ("Spell " .. sid) -- raw-id: the Add window's typed spell
             end
             local rec = Store.NewBar(layoutId, bk, driver, name, mode)
             if rec then
@@ -12205,6 +12557,8 @@ local function BuildSettingsPane()
     local pg = settingsPage
     Options.SEARCH_SRC = Options.SEARCH_SRC or {}
     Options.SEARCH_SRC.settings = { page = pg }
+    -- palettes and finish (UI\AD_ThemeOptions.lua)
+    if Options.Theme then Options.Theme.Build(pg) end
     AT.Section(pg, "Panel")
     -- Scale applies on release, not mid-drag: the slider lives inside the window
     -- it resizes, so rescaling on every OnValueChanged moves it under a held
@@ -12511,7 +12865,7 @@ function IE.Row(i)
     r.chev = AT.MakeChevron(r.chevBtn)
     r.chev:SetPoint("CENTER")
     r.name = r:CreateFontString(nil, "OVERLAY")
-    r.name:SetFont(STANDARD_TEXT_FONT, 11, "")
+    r.name:SetFont(AT.FONT, 11, "")
     r.name:SetJustifyH("LEFT")
     r.name:SetWordWrap(false)
     r.pill = KindPill(r)
@@ -12528,7 +12882,7 @@ local function BuildIEPane()
     h.name:SetText("Import / Export")
 
     local exLbl = iePane:CreateFontString(nil, "OVERLAY")
-    exLbl:SetFont(STANDARD_TEXT_FONT, 9, "")
+    exLbl:SetFont(AT.FONT, 9, "")
     exLbl:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     exLbl:SetPoint("TOPLEFT", 4, -40)
     exLbl:SetText("EXPORT - tick whole layouts, or open one and tick just the items to share")
@@ -12548,7 +12902,7 @@ local function BuildIEPane()
 
     local expBtn = AT.MakeSmallButton(iePane, "Export selected", 108)
     expBtn:SetPoint("TOPLEFT", pickHost, "BOTTOMLEFT", 0, -6)
-    expBtn.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    expBtn.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     expBtn:SetScript("OnClick", function() Options.ExportSelected() end)
     AT.Tooltip(expBtn, "Export selected", "Builds one share string from everything ticked above.")
     local allBtn = AT.MakeQuietButton(iePane, "Tick all", 60)
@@ -12578,7 +12932,7 @@ local function BuildIEPane()
     lo.check:SetPoint("LEFT", 0, 0)
     lo.check:EnableMouse(false)
     lo.fs = lo:CreateFontString(nil, "OVERLAY")
-    lo.fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    lo.fs:SetFont(AT.FONT, 11, "")
     lo.fs:SetPoint("LEFT", lo.check, "RIGHT", 6, 0)
     lo.fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     lo.fs:SetText("Only what loads here")
@@ -12593,7 +12947,7 @@ local function BuildIEPane()
     AT.Tooltip(lo, "Only what loads here", "Leaves out everything that does not load on this character, so the string holds only what you use here. What stays out is still listed, greyed, under each layout's NOT LOADED.")
     IE.loadedOnly = lo
     IE.expStatus = iePane:CreateFontString(nil, "OVERLAY")
-    IE.expStatus:SetFont(STANDARD_TEXT_FONT, 10, "")
+    IE.expStatus:SetFont(AT.FONT, 10, "")
     IE.expStatus:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     IE.expStatus:SetPoint("LEFT", lo, "RIGHT", 10, 0)
     IE.expStatus:SetPoint("RIGHT", iePane, "RIGHT", -4, 0)
@@ -12617,7 +12971,7 @@ local function BuildIEPane()
     end, IE.TargetId, function(v) ui.ieTargetId = v end)
     AT.Tooltip(IE.target, "Items import into", "A string holding a group, icon or bar without its layout lands it in this layout. A string holding whole layouts makes new layouts.")
     local tgtLbl = iePane:CreateFontString(nil, "OVERLAY")
-    tgtLbl:SetFont(STANDARD_TEXT_FONT, 9, "")
+    tgtLbl:SetFont(AT.FONT, 9, "")
     tgtLbl:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     tgtLbl:SetPoint("RIGHT", IE.target, "LEFT", -6, 0)
     tgtLbl:SetText("ITEMS IMPORT INTO")
@@ -12660,7 +13014,7 @@ local function BuildIEPane()
     eg.check:SetPoint("LEFT", 0, 0)
     eg.check:EnableMouse(false)
     eg.fs = eg:CreateFontString(nil, "OVERLAY")
-    eg.fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    eg.fs:SetFont(AT.FONT, 11, "")
     eg.fs:SetPoint("LEFT", eg.check, "RIGHT", 6, 0)
     eg.fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     eg.fs:SetText("Import groups empty")
@@ -12676,7 +13030,7 @@ local function BuildIEPane()
     IE.emptyGroups = eg
     -- a reminder exported alone joins a Reminder group picked here, or a new one
     local remLbl = iePane:CreateFontString(nil, "OVERLAY")
-    remLbl:SetFont(STANDARD_TEXT_FONT, 9, "")
+    remLbl:SetFont(AT.FONT, 9, "")
     remLbl:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     remLbl:SetPoint("LEFT", eg, "RIGHT", 16, 0)
     remLbl:SetText("REMINDERS IMPORT INTO")
@@ -12691,7 +13045,7 @@ local function BuildIEPane()
 
     local impBtn = AT.MakeSmallButton(iePane, "Import", 92)
     impBtn:SetPoint("BOTTOMLEFT", 0, 4)
-    impBtn.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    impBtn.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     -- a string whose items are here already (an earlier version of it) asks
     -- first: update them, or import a copy; anything else imports at once.
     -- One made for the other game warns on the first press (the update
@@ -12737,7 +13091,7 @@ local function BuildIEPane()
     IE.undoBtn:Hide()
 
     ieStatus = iePane:CreateFontString(nil, "OVERLAY")
-    ieStatus:SetFont(STANDARD_TEXT_FONT, 11, "")
+    ieStatus:SetFont(AT.FONT, 11, "")
     ieStatus:SetPoint("LEFT", clrBtn, "RIGHT", 10, 0)
     ieStatus:SetPoint("RIGHT", iePane, "RIGHT", -4, 0)
     ieStatus:SetJustifyH("LEFT")
@@ -12857,7 +13211,7 @@ function IE.CheckRow(parent, get, set, tip)
     b.check:SetPoint("LEFT", 0, 0)
     b.check:EnableMouse(false)
     b.fs = b:CreateFontString(nil, "OVERLAY")
-    b.fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    b.fs:SetFont(AT.FONT, 11, "")
     b.fs:SetPoint("LEFT", b.check, "RIGHT", 6, 0)
     b.fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     b.fs:SetJustifyH("LEFT")
@@ -12876,7 +13230,7 @@ end
 -- one of the pane's small capital labels, faint
 function IE.Caps(parent, text)
     local fs = parent:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 9, "")
+    fs:SetFont(AT.FONT, 9, "")
     fs:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     fs:SetJustifyH("LEFT")
     fs:SetText(text or "")
@@ -12910,7 +13264,7 @@ function IE.InfoBlock(parent)
     blk:SetSize(10, 1)
     local function Text(size, col, lines)
         local fs = blk:CreateFontString(nil, "OVERLAY")
-        fs:SetFont(STANDARD_TEXT_FONT, size, "")
+        fs:SetFont(AT.FONT, size, "")
         fs:SetTextColor(col[1], col[2], col[3])
         fs:SetJustifyH("LEFT")
         fs:SetJustifyV("TOP")
@@ -12926,7 +13280,7 @@ function IE.InfoBlock(parent)
     local box = CreateFrame("EditBox", nil, blk, "BackdropTemplate")
     box:SetHeight(20)
     AT.Skin(box, COL.well)
-    box:SetFont(STANDARD_TEXT_FONT, 11, "")
+    box:SetFont(AT.FONT, 11, "")
     box:SetTextInsets(6, 6, 0, 0)
     box:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     box:SetAutoFocus(false)
@@ -13018,7 +13372,7 @@ function IE.BuildPackInfo()
     fold.lbl = IE.Caps(fold, "PACK INFO")
     fold.lbl:SetPoint("LEFT", fold.chev, "RIGHT", 6, 0)
     fold.note = fold:CreateFontString(nil, "OVERLAY")
-    fold.note:SetFont(STANDARD_TEXT_FONT, 10, "")
+    fold.note:SetFont(AT.FONT, 10, "")
     fold.note:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     fold.note:SetPoint("LEFT", fold.lbl, "RIGHT", 10, 0)
     fold.note:SetPoint("RIGHT", fold, "RIGHT", -4, 0)
@@ -13039,7 +13393,7 @@ function IE.BuildPackInfo()
         local b = CreateFrame("EditBox", nil, iePane, "BackdropTemplate")
         b:SetHeight(20)
         AT.Skin(b, COL.well)
-        b:SetFont(STANDARD_TEXT_FONT, 11, "")
+        b:SetFont(AT.FONT, 11, "")
         b:SetTextInsets(6, 6, 0, 0)
         b:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
         b:SetAutoFocus(false)
@@ -13055,7 +13409,7 @@ function IE.BuildPackInfo()
         b:SetScript("OnEnterPressed", function(s) s:ClearFocus() end)
         b:SetScript("OnEscapePressed", function(s) s:ClearFocus() end)
         b:SetScript("OnEditFocusGained", function(s)
-            s:SetBackdropBorderColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 1)
+            s:SetBackdropBorderColor(COL.focus[1], COL.focus[2], COL.focus[3], 1)
         end)
         b:SetScript("OnEditFocusLost", function(s)
             s:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1)
@@ -13267,13 +13621,13 @@ function IE.BuildUpdate()
     IE.upd = f
     local function Label(text, size, col)
         local fs = f:CreateFontString(nil, "OVERLAY")
-        fs:SetFont(STANDARD_TEXT_FONT, size, "")
+        fs:SetFont(AT.FONT, size, "")
         fs:SetTextColor(col[1], col[2], col[3])
         fs:SetJustifyH("LEFT")
         if text then fs:SetText(text) end
         return fs
     end
-    f.title = Label(nil, 14, COL.arc)
+    f.title = Label(nil, 14, COL.lead)
     f.title:SetPoint("TOPLEFT", 12, -10)
     -- the string's pack info and the media missing here, under the title
     f.info = IE.InfoBlock(f)
@@ -13327,7 +13681,7 @@ function IE.BuildUpdate()
     f.dead:SetSize(COLW * 4, 20)
     f.dead:SetPoint("TOPLEFT", f.add, "BOTTOMLEFT", 0, -4)
     f.dead.fs = f.dead:CreateFontString(nil, "OVERLAY")
-    f.dead.fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    f.dead.fs:SetFont(AT.FONT, 11, "")
     f.dead.fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     f.dead.fs:SetPoint("LEFT", f.dead, "LEFT", 0, 0)
     f.dead.fs:SetJustifyH("LEFT")
@@ -13355,7 +13709,7 @@ function IE.BuildUpdate()
     f:HookScript("OnSizeChanged", function() IE.FillUpdInfo() end)
     f.go = AT.MakeSmallButton(f, "Update", 150)
     f.go:SetPoint("BOTTOMLEFT", 12, 10)
-    f.go.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    f.go.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     f.go:SetScript("OnClick", function() IE.RunUpdate() end)
     f.cancel = AT.MakeQuietButton(f, "Cancel", 70)
     f.cancel:SetPoint("LEFT", f.go, "RIGHT", 8, 0)
@@ -13382,7 +13736,7 @@ function IE.ListRow(i)
     r = CreateFrame("Frame", nil, f.listHost)
     r:SetHeight(IE.LIST_H)
     r.fs = r:CreateFontString(nil, "OVERLAY")
-    r.fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    r.fs:SetFont(AT.FONT, 11, "")
     r.fs:SetJustifyH("LEFT")
     r.fs:SetWordWrap(false)
     r.keep = IE.CheckRow(r, function() return r.uid ~= nil and IE.keep[r.uid] == true end, function(v)
@@ -13408,7 +13762,7 @@ function IE.FillList(plan)
         r:SetPoint("TOPRIGHT", f.listHost, "TOPRIGHT", 0, y)
         r.kind, r.uid = kind, uid
         r.keep:SetShown(kind == "changed")
-        r.fs:SetFont(STANDARD_TEXT_FONT, (kind == "head") and 9 or 11, "")
+        r.fs:SetFont(AT.FONT, (kind == "head") and 9 or 11, "")
         r.fs:ClearAllPoints()
         r.fs:SetPoint("LEFT", r, "LEFT", (kind == "head") and 2 or 12, 0)
         if kind == "changed" then
@@ -13949,7 +14303,7 @@ Options.Search = {
             item = "item icons", timer = "custom icons", totem = "totem icons",
             ammo = "ammo icons", enchant = "enchant icons", stance = "stance icons" },
         bar = { cooldown = "cooldown bars", aura = "aura bars", timer = "custom bars",
-            stack = "stack bars", swing = "swing bars", resource = "resource bars",
+            stack = "stack bars", swing = "swing bars", resource = "resource bars", cast = "castbars",
             health = "health bars", enchant = "enchant bars", range = "range bars",
             text = "text elements", texture = "textures", wheel = "wheels", special = "deck bars", sound = "sounds" },
         group = { aura = "aura groups", cooldown = "CD groups", reminder = "reminder groups" },
@@ -14726,12 +15080,12 @@ function Options.Search.ResultRow(pg, which, i)
     b.pill = KindPill(b)
     b.pill:SetPoint("RIGHT", b, "TOPRIGHT", -8, -11)
     b.name = b:CreateFontString(nil, "OVERLAY")
-    b.name:SetFont(STANDARD_TEXT_FONT, 12, "")
+    b.name:SetFont(AT.FONT, 12, "")
     b.name:SetJustifyH("LEFT")
     b.name:SetWordWrap(false)
     b.name:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     b.where = b:CreateFontString(nil, "OVERLAY")
-    b.where:SetFont(STANDARD_TEXT_FONT, 10, "")
+    b.where:SetFont(AT.FONT, 10, "")
     b.where:SetJustifyH("LEFT")
     b.where:SetWordWrap(false)
     b.where:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
@@ -14799,7 +15153,7 @@ function Options.Search.MoreRow(pg, which, max)
         return S.res ~= nil and #S.res[which] > max
     end)
     local fs = row:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(STANDARD_TEXT_FONT, 10, "")
+    fs:SetFont(AT.FONT, 10, "")
     fs:SetPoint("LEFT", 10, 0)
     fs:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     row._sync = function()
@@ -14952,8 +15306,8 @@ local function Build()
     built = true
     Options.ApplySavedScale()
     win = AT.CreateWindow("ArcUIv2Options", {
-        w = 1020, h = 760, minW = 820, minH = 620, maxW = 1500, maxH = 1200,
-        title = "|cff3fc9f2Arc|r|cffd5e2f2 Auras|r",
+        w = 1020, h = Options.MAIN_H, minW = 820, minH = 620, maxW = 1500, maxH = 1200,
+        title = AT.Brand("Arc", " Auras"),
         -- The toc's Version, so the title matches the release.
         version = C_AddOns and C_AddOns.GetAddOnMetadata
             and C_AddOns.GetAddOnMetadata(ADDON, "Version") or nil,
@@ -14990,12 +15344,12 @@ local function Build()
     search:SetPoint("TOPRIGHT", -30, -8)   -- room for the collapse button
     search:SetHeight(20)
     AT.Skin(search, COL.box)
-    search:SetFont(STANDARD_TEXT_FONT, 11, "")
+    search:SetFont(AT.FONT, 11, "")
     search:SetTextInsets(6, 6, 0, 0)
     search:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     search:SetAutoFocus(false)
     local hint = search:CreateFontString(nil, "OVERLAY")
-    hint:SetFont(STANDARD_TEXT_FONT, 10, "")
+    hint:SetFont(AT.FONT, 10, "")
     hint:SetPoint("LEFT", 6, 0)
     hint:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     hint:SetText("Search everything...")
@@ -15026,7 +15380,7 @@ local function Build()
     home:SetPoint("TOPRIGHT", -6, -34)
     AT.Skin(home, COL.panel, COL.line)
     home.name = home:CreateFontString(nil, "OVERLAY")
-    home.name:SetFont(STANDARD_TEXT_FONT, 13, "")
+    home.name:SetFont(AT.FONT, 13, "")
     home.name:SetPoint("LEFT", 29, 0)
     home.name:SetText("Home")
     if Options.Home then
@@ -15039,7 +15393,7 @@ local function Build()
     railAddonRows.home = home
 
     local cat = rail:CreateFontString(nil, "OVERLAY")
-    cat:SetFont(STANDARD_TEXT_FONT, 9, "")
+    cat:SetFont(AT.FONT, 9, "")
     cat:SetPoint("TOPLEFT", 10, -70)
     cat:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     cat:SetText("LAYOUTS")
@@ -15051,7 +15405,7 @@ local function Build()
     viewDD:SetPoint("TOPRIGHT", -6, -65)
     AT.Tooltip(viewDD, "View", "Everything, only what loads on this character, a section per class, or one class's items with what every class shares.")
     local viewWord = rail:CreateFontString(nil, "OVERLAY")
-    viewWord:SetFont(STANDARD_TEXT_FONT, 9, "")
+    viewWord:SetFont(AT.FONT, 9, "")
     viewWord:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     viewWord:SetPoint("RIGHT", viewDD, "LEFT", -5, 0)
     viewWord:SetText("View")
@@ -15105,7 +15459,7 @@ local function Build()
     stripChev:SetPoint("TOP", 0, -8)
     stripChev:SetDown(false)
     railStrip:SetScript("OnEnter", function(s)
-        s:SetBackdropBorderColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 1)
+        s:SetBackdropBorderColor(COL.focus[1], COL.focus[2], COL.focus[3], 1)
     end)
     railStrip:SetScript("OnLeave", function(s)
         s:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1)
@@ -15159,7 +15513,7 @@ local function Build()
     footLine:SetPoint("TOPRIGHT", 0, 0)
     footLine:SetHeight(1)
     local acat = foot:CreateFontString(nil, "OVERLAY")
-    acat:SetFont(STANDARD_TEXT_FONT, 9, "")
+    acat:SetFont(AT.FONT, 9, "")
     acat:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     acat:SetPoint("BOTTOMLEFT", 9, 85)
     acat:SetText("ADDON")
@@ -15171,7 +15525,7 @@ local function Build()
         r:SetFrameLevel(rail:GetFrameLevel() + 20)
         AT.Skin(r, COL.well, COL.well)
         r.name = r:CreateFontString(nil, "OVERLAY")
-        r.name:SetFont(STANDARD_TEXT_FONT, 12, "")
+        r.name:SetFont(AT.FONT, 12, "")
         r.name:SetPoint("LEFT", 8, 0)
         r.name:SetText(label)
         RailChrome(r)
@@ -15238,6 +15592,16 @@ function Options.WhenBuilt(fn)
     end
 end
 
+-- The window never opens in combat: a press then waits and opens it as combat
+-- ends, and a window open when combat starts closes. The game's error line
+-- says so; never chat.
+function Options.CombatBlocked()
+    if not InCombatLockdown() then return false end
+    Options._openAfterCombat = true
+    if UIErrorsFrame then UIErrorsFrame:AddMessage("Arc Auras opens when combat ends.", 1, 0.82, 0) end
+    return true
+end
+
 function Options.Toggle()
     local L = Options.Loader
     -- A second press while it loads closes it (the window too, while a pane
@@ -15247,10 +15611,12 @@ function Options.Toggle()
         if win and win:IsShown() then win:Hide() end
         return
     end
+    if not (win and win:IsShown()) and Options.CombatBlocked() then return end
     Options.WhenBuilt(function()
         if win:IsShown() then
             win:Hide()
-        else
+        elseif not Options.CombatBlocked() then
+            -- a build that spans frames can end in combat
             win:Show()
             RefreshAll()
         end
@@ -15258,8 +15624,27 @@ function Options.Toggle()
 end
 
 function Options.Open()
+    if Options.CombatBlocked() then return end
     Options.WhenBuilt(function()
+        if Options.CombatBlocked() then return end
         if not win:IsShown() then win:Show() end
         RefreshAll()
+    end)
+end
+
+if Events then
+    Events.On("PLAYER_REGEN_DISABLED", "adoptcombat", function()
+        if not (win and win:IsShown()) then return end
+        win:Hide()
+        if addWin and addWin:IsShown() then addWin:Hide() end
+        if UIErrorsFrame then UIErrorsFrame:AddMessage("Arc Auras closed for combat.", 1, 0.82, 0) end
+    end)
+    Events.On("PLAYER_REGEN_ENABLED", "adoptcombat", function()
+        if not Options._openAfterCombat then return end
+        Options._openAfterCombat = nil
+        -- a beat after the edge, so the combat flags have settled
+        C_Timer.After(0.1, function()
+            if not InCombatLockdown() then Options.Open() end
+        end)
     end)
 end

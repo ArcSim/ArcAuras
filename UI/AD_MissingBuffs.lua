@@ -233,7 +233,7 @@ function MB.SectionRow(pg, sect, addState, vis)
     end
     local row = AT.AddRow(pg, MB.TOP + MB.CELL + 4, function() return vis() and #Entries() > 0 end)
     local cap = row:CreateFontString(nil, "OVERLAY")
-    cap:SetFont(STANDARD_TEXT_FONT, 9, "")
+    cap:SetFont(NS.AT.FONT, 9, "")
     cap:SetPoint("TOPLEFT", 10, -2)
     cap:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     cap:SetText(sect.text)
@@ -250,7 +250,7 @@ function MB.SectionRow(pg, sect, addState, vis)
         b.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         function b.Edge(hot)
             local on = addState.mbPicks and addState.mbPicks[b._key]
-            local c = (on and COL.arc) or (hot and COL.arcDeep) or COL.line
+            local c = (on and COL.arc) or (hot and COL.focus) or COL.line
             b:SetBackdropBorderColor(c[1], c[2], c[3], 1)
         end
         b:SetScript("OnEnter", function()
@@ -299,7 +299,7 @@ function MB.AddRows(pg, owner, addState)
     -- while Create reads the game's spells for the ranks
     local st = AT.AddRow(pg, 20, function() return vis() and MB.busy == true end)
     st.fs = st:CreateFontString(nil, "OVERLAY")
-    st.fs:SetFont(STANDARD_TEXT_FONT, 11, "")
+    st.fs:SetFont(NS.AT.FONT, 11, "")
     st.fs:SetPoint("TOPLEFT", 10, -2)
     st.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
     st.fs:SetText("")

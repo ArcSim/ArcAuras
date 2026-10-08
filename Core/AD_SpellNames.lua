@@ -29,7 +29,7 @@ local function ProbeStep(deadline)
     local id, list = p.nextID, p.list
     while true do
         for _ = 1, 500 do
-            if GetName(id) then
+            if GetName(id) then -- raw-id: the name search walks every ID
                 if not p.runStart then p.runStart = id end
                 p.lastFound = id
             elseif p.runStart then
@@ -70,12 +70,12 @@ local function QueryStep(deadline)
         local e = runs[j.ri + 1]
         local id = j.id or runs[j.ri]
         while id <= e do
-            local nm = GetName(id)
+            local nm = GetName(id) -- raw-id: the name search walks every ID
             if nm and not Secret(nm) then
                 local low = nm:lower()
                 local at = low:find(q, 1, true)
                 if at then
-                    local tex = GetTex(id)
+                    local tex = GetTex(id) -- raw-id: the name search walks every ID
                     if Secret(tex) then tex = nil end
                     local key = nm .. "\1" .. tostring(tex)
                     local g = j.groups[key]
@@ -108,7 +108,7 @@ local function ExactStep(deadline)
         local e = runs[j.ri + 1]
         local id = j.id or runs[j.ri]
         while id <= e do
-            local nm = GetName(id)
+            local nm = GetName(id) -- raw-id: the name search walks every ID
             local hit = (nm and not Secret(nm)) and j.byName[nm] or nil
             if hit then
                 local tex
@@ -116,7 +116,7 @@ local function ExactStep(deadline)
                     local icons = j.wants[i].icons
                     if icons then
                         if tex == nil then
-                            tex = GetTex(id)
+                            tex = GetTex(id) -- raw-id: the name search walks every ID
                             if tex == nil or Secret(tex) then tex = false end
                         end
                         if tex and icons[tex] then j.out[i][#j.out[i] + 1] = id end
@@ -143,7 +143,7 @@ local function Finish(j)
     local out = {}
     local known = C_Spell.GetSpellIDForSpellIdentifier
     for _, g in pairs(j.groups) do
-        local k = known and known(g.name)
+        local k = known and known(g.name) -- raw-id: a search result's name
         if Secret(k) then k = nil end
         g.knownID, g.pick = nil, g.ids[1]
         if k then

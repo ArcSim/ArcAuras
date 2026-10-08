@@ -458,7 +458,7 @@ function TX.WatchRange(e)
     e.txBands = (list and RB) and RB.EngineBands(list) or nil
     if not (DR and e.txBands) then return end
     local id = e.rec.id
-    DR.Use(TX.RANGE_OWNER .. id, RB.Need(e.txBands), function()
+    DR.Use(TX.RANGE_OWNER .. id, RB.Need(e.txBands, e.rec.driver), function()
         local cur = K.live[id]
         if cur then TX.Paint(cur) end
     end)
@@ -468,7 +468,7 @@ function TX.BandText(e)
     local DR = NS.DriverRange
     local list, bands = e.txBandList, e.txBands
     if not (DR and list and bands) then return nil end
-    local i = DR.Band(bands)
+    local i = DR.Band(bands, e.rec.driver)
     local b = i and list[i]
     if not b or b.off then return nil end
     return b.text
@@ -479,20 +479,10 @@ function TX.PaintRange(e)
 end
 
 -- A spell's cooldown: the countdown draws itself from the duration object,
--- so the time is never read. The spell resolves as the icons' does: the rank
--- known by name when asked, then its override.
+-- so the time is never read. The spell resolves as the icons' does, with the
+-- record's own Auto rank and Ignore override.
 function TX.EffSpell(rec)
-    local d = rec.driver
-    local sid = tonumber(d.spellID)
-    if not (sid and sid > 0) then return nil end
-    if NS.Store.AutoRankOn(d) and NS.DriverRange and NS.DriverRange.Resolve then
-        sid = NS.DriverRange.Resolve(sid) or sid
-    end
-    if C_Spell and C_Spell.GetOverrideSpell then
-        local ov = C_Spell.GetOverrideSpell(sid)
-        if not IsSecret(ov) and type(ov) == "number" and ov ~= 0 and ov ~= sid then sid = ov end
-    end
-    return sid
+    return NS.Store.RecordSpellID(rec.driver)
 end
 
 function TX.EnsureCD(e)
@@ -652,24 +642,19 @@ function TX.ReadUsable(e)
 end
 
 -- The tracked spell, the rank or form it resolves to, or another rank of it
--- (the same name): a proc overlay can name any of them.
+-- (the same name, on either client): a proc overlay can name any of them.
 function TX.SameSpell(rec, sid)
     if type(sid) ~= "number" then return false end
-    local d = rec.driver
-    if sid == d.spellID or sid == TX.EffSpell(rec) then return true end
-    if not (d.spellID and C_Spell and C_Spell.GetSpellName) then return false end
-    local a, b = C_Spell.GetSpellName(sid), C_Spell.GetSpellName(d.spellID)
-    if IsSecret(a) or IsSecret(b) then return false end
-    return type(a) == "string" and a ~= "" and a == b
+    return NS.Store.SpellMatch(rec.driver.spellID, sid, TX.EffSpell(rec), true)
 end
 
--- The first answer; the overlay events keep it after.
+-- The first answer; the overlay events keep it after. Asked of every form the
+-- one matcher knows the spell by (resolved, typed, override, base).
 function TX.ReadProc(e)
     local O = C_SpellActivationOverlay
     if not (O and O.IsSpellOverlayed) then return end
     local on = false
-    local eff, base = TX.EffSpell(e.rec), tonumber(e.rec.driver.spellID)
-    for _, sid in ipairs({ eff or base, base or eff }) do
+    for _, sid in ipairs(NS.Store.WantKeys(e.rec.driver.spellID, TX.EffSpell(e.rec), false)) do
         local v = O.IsSpellOverlayed(sid)
         if not IsSecret(v) and v == true then on = true end
     end
@@ -1216,7 +1201,7 @@ TX.HANDLERS = {
         end
         if IsSecret(spellID) then return end
         K.ForEach("text", function(e)
-            if SpellPred(e) and (e.rec.driver.spellID == spellID or TX.EffSpell(e.rec) == spellID) then
+            if SpellPred(e) and NS.Store.SpellMatch(e.rec.driver.spellID, spellID, TX.EffSpell(e.rec)) then
                 TX.Paint(e)
             end
         end)
@@ -1508,7 +1493,7 @@ function TX.Describe(rec)
     local d = rec.driver or {}
     if s == "static" then return (d.text and d.text ~= "") and ('"' .. d.text .. '"') or "words" end
     if s == "spellText" or s == "auraText" then
-        local nm = d.spellID and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(d.spellID)
+        local nm = d.spellID and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(d.spellID) -- raw-id: the typed spell, as the editor shows it
         if IsSecret(nm) or type(nm) ~= "string" then nm = nil end
         local what = nm or (d.spellID and tostring(d.spellID)) or ((s == "spellText") and "no spell" or "no aura")
         local WL = (s == "spellText") and Schema.TEXT_SPELL_WHEN_LABELS or Schema.TEXT_AURA_WHEN_LABELS
@@ -1527,7 +1512,7 @@ function TX.Describe(rec)
         local SL = Schema.TEXT_SHOW_LABELS or {}
         base = base .. ", " .. (SL[d.show or "current"] or d.show or "current"):lower()
     elseif s == "spellCd" or s == "spellCharges" then
-        local nm = d.spellID and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(d.spellID)
+        local nm = d.spellID and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(d.spellID) -- raw-id: the typed spell, as the editor shows it
         if IsSecret(nm) then nm = nil end
         base = base .. ": " .. (nm or (d.spellID and ("spell " .. d.spellID)) or "no spell")
     elseif AURA[s] then

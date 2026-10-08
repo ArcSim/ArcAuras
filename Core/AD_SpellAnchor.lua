@@ -34,9 +34,9 @@ local function Plain(v)
     return v
 end
 
--- a spell's name while it reads plain, else nil
+-- a spell's name while it reads plain, else nil (the pin's words)
 function SA.NameOf(id)
-    local nm = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
+    local nm = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: a typed pin or a seen button, for words
     if Secret(nm) or type(nm) ~= "string" or nm == "" then return nil end
     return nm
 end
@@ -67,27 +67,18 @@ function SA.Parse(spec)
     return p or nil
 end
 
--- A spell id the game reports stands for the pin's spell: one of its ids, or a
--- spell of the same name (another rank on a ranked realm). Names are read when
--- first needed: spell data can arrive after the pin is typed.
+-- A spell id the game reports stands for the pin's spell: one of its ids by
+-- the one matcher, so a form of it or a spell of the same name (another rank
+-- on a ranked realm) counts too.
 function SA.Matches(p, id)
     id = Plain(id)
     if type(id) ~= "number" then return false end
     if p.set[id] then return true end
-    if not p.names then
-        local names, any = {}, false
-        for _, v in ipairs(p.list) do
-            local nm = SA.NameOf(v)
-            if nm then
-                names[nm] = true
-                any = true
-            end
-        end
-        if not any then return false end
-        p.names = names
+    local St = NS.Store
+    for _, v in ipairs(p.list) do
+        if St.SpellMatch(v, id, nil, true) then return true end
     end
-    local nm = SA.NameOf(id)
-    return nm ~= nil and p.names[nm] == true
+    return false
 end
 
 -- the slot a button shows now: the game's buttons keep a field, a bar

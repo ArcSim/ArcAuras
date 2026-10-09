@@ -541,18 +541,25 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
 
     -- Appearance: v1's pulse window. The group's own frame is its spot, so
     -- Lock position and Show Anchor are this window's edit mode.
-    local function Rows(fields) kit.SectionRows(pg, "iconGroup", "pulse", ctx, lookVis, fields) end
+    -- each titled block also feeds the Defaults page (Options.LookBlock)
+    local function Look(tab, title, section, fields, sub)
+        Options.LookBlock("iconGroup", tab, title, section, fields, sub, { kindOnly = "reminder" })
+    end
+    local function Rows(title, fields)
+        kit.SectionRows(pg, "iconGroup", "pulse", ctx, lookVis, fields)
+        Look("Appearance", title, "pulse", fields, "Pulse")
+    end
     AT.Section(pg, "Pulse", { visibleFn = lookVis })
     local function Marked() return Store.Resolve(G(), "pulse", "hideMarker") ~= true end
     AT.RowDesc(pg, "While this window is open a dim icon marks the spot; drag its name tab to move it.", 20,
         function() return lookVis() and Marked() end)
     AT.RowDesc(pg, "While this window is open the outline marks the spot; drag its name tab to move it.", 20,
         function() return lookVis() and not Marked() end)
-    Rows({ "iconEnabled", "cancelOnCast", "holdUntilCast", "hideMarker" })
+    Rows("Pulse", { "iconEnabled", "cancelOnCast", "holdUntilCast", "hideMarker" })
     AT.Section(pg, "Overlap", { visibleFn = lookVis })
-    Rows({ "queueMode", "stackDirection", "stackSpacing", "replaceGuard", "queueMaxLen", "queueInterDelay" })
+    Rows("Overlap", { "queueMode", "stackDirection", "stackSpacing", "replaceGuard", "queueMaxLen", "queueInterDelay" })
     AT.Section(pg, "Size and Time", { visibleFn = lookVis })
-    Rows({ "pulseDuration", "size", "iconOpacity" })
+    Rows("Size and Time", { "pulseDuration", "size", "iconOpacity" })
     AT.RowActions(pg, {
         { label = "Preview Alert", w = 110, onClick = function()
             local g, R = G(), NS.Reminders
@@ -564,7 +571,7 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
         end },
     }, "left", function() return lookVis() and Count() > 0 end)
     AT.Section(pg, "Animation Tuning", { visibleFn = lookVis })
-    Rows({ "animStyle", "animFadeSmoothing", "animFlashSpeed", "animZoomStart", "animZoomPeak",
+    Rows("Animation Tuning", { "animStyle", "animFadeSmoothing", "animFlashSpeed", "animZoomStart", "animZoomPeak",
         "animZoomPopTime", "animZoomSettleTime" })
     AT.RowButton(pg, "Reset", function()
         local g = G()
@@ -579,17 +586,21 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
     AT.Section(pg, "Aura Reminders", { visibleFn = rowVis })
     AT.RowDesc(pg, "Each shows in its own slot while its aura is missing; the pulse keeps its spot.", 20, rowVis)
     kit.SectionRows(pg, "iconGroup", "pulse", ctx, rowVis, RP.AURA_ROW)
+    Look("Appearance", "Aura Reminders", "pulse", RP.AURA_ROW, "Pulse")
     AT.Section(pg, nil, { visibleFn = lookVis })
     kit.PushBar(pg, ctx, "pulse", lookVis, RP.PULSE)
 
     -- Audio: the group's sound and speech; each trigger picks its own.
-    local function ARows(fields) kit.SectionRows(pg, "iconGroup", "audio", ctx, audVis, fields) end
+    local function ARows(title, fields)
+        kit.SectionRows(pg, "iconGroup", "audio", ctx, audVis, fields)
+        Look("Sounds", title, "audio", fields)
+    end
     AT.Section(pg, "Audio", { visibleFn = audVis })
     AT.RowDesc(pg, "New triggers start silent: turn Play sound on in each reminder's triggers.", 20, audVis)
-    ARows({ "soundEnabled", "soundChannel", "soundName", "cutoffPreviousSound", "cutoffFadeTime" })
+    ARows("Audio", { "soundEnabled", "soundChannel", "soundName", "cutoffPreviousSound", "cutoffFadeTime" })
     AT.Section(pg, "Text to Speech", { visibleFn = audVis })
     AT.RowDesc(pg, "The text to speak is set on each trigger.", 20, audVis)
-    ARows({ "ttsVoiceOverride", "ttsRateOverride", "ttsRate" })
+    ARows("Text to Speech", { "ttsVoiceOverride", "ttsRateOverride", "ttsRate" })
     AT.RowButton(pg, "Preview Voice", function()
         local g, R = G(), NS.Reminders
         if g and R then R.Speak(g, "Cooldown Reminder test") end

@@ -13,6 +13,46 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "2.5.0",
+        intro = "A Defaults page, resource bar states, a texture update and icons that wait for the end of a cooldown or aura.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Defaults page",
+                    desc = "Every kind of item's defaults in one place (sidebar > Defaults)." },
+                { title = "Resource bar states",
+                    desc = "Color the bar, mark costs and glow by spell, aura or power under Conditions > By State." },
+                { title = "Opacity near the end",
+                    desc = "Hide or fade a cooldown until its last seconds, or an aura until its pandemic window." },
+                { title = "Textures",
+                    desc = "Stack pictures, ring fills, time left looks and texts, animations, tiling and a full art search." },
+                { title = "Item level on tooltips",
+                    desc = "Modules > Tooltip IDs." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Import / Export",
+                    desc = "Two clear tabs: what you share, and what an import holds and where it goes." },
+                { title = "Recharging",
+                    desc = "Its own look on charge spells, with its own preview loop." },
+                { title = "Weapon enchants",
+                    desc = "A No weapon state and an option to load only with a weapon in hand." },
+                { title = "Resource bars",
+                    desc = "Fold in half on any power, and druid form conditions." },
+                { title = "Pet autocast",
+                    desc = "Counts as toggled on." },
+                { title = "Options window",
+                    desc = "A loading bar, draggable scroll bars and clearer tabs." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Centred groups",
+                    desc = "No longer shift by a pixel." },
+                { title = "Comparison tooltips",
+                    desc = "The IDs show every time." },
+                { title = "Save as Default",
+                    desc = "No longer copies an icon's own picture onto its whole kind." },
+            } },
+        },
+    },
+    {
         version = "2.4.0",
         intro = "Themes, glows on every bar, talents for any class and Emity's refreshed layouts.",
         sections = {
@@ -760,6 +800,50 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "2.5.0",
+        intro = "A Defaults page, resource bar states, a texture update and icons that wait for the end of a cooldown or aura.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Defaults page",
+                    desc = "Every kind of item's defaults in one place (sidebar > Defaults)." },
+                { title = "Resource bar states",
+                    desc = "Color the bar, mark costs and glow by spell, aura or power under Conditions > By State." },
+                { title = "Opacity near the end",
+                    desc = "Hide or fade a cooldown until its last seconds, or an aura until its pandemic window." },
+                { title = "Textures",
+                    desc = "Stack pictures, ring fills, time left looks and texts, animations, tiling and a full art search." },
+                { title = "Item level on tooltips",
+                    desc = "Modules > Tooltip IDs." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Arc Procs",
+                    desc = "Special Auras are now Arc Procs everywhere." },
+                { title = "Import / Export",
+                    desc = "Two clear tabs: what you share, and what an import holds and where it goes." },
+                { title = "Recharging",
+                    desc = "Its own look on charge spells, with its own preview loop." },
+                { title = "Weapon enchants",
+                    desc = "A No weapon state and an option to load only with a weapon in hand." },
+                { title = "Resource bars",
+                    desc = "Fold in half on any power, and druid form conditions." },
+                { title = "Pet autocast",
+                    desc = "Counts as toggled on." },
+                { title = "Options window",
+                    desc = "A loading bar, draggable scroll bars and clearer tabs." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Centred groups",
+                    desc = "No longer shift by a pixel." },
+                { title = "Aura icons",
+                    desc = "Max stacks color, dispel borders and target swaps fixed." },
+                { title = "Comparison tooltips",
+                    desc = "The IDs show every time." },
+                { title = "Save as Default",
+                    desc = "No longer copies an icon's own picture onto its whole kind." },
+            } },
+        },
+    },
     {
         version = "2.4.0",
         intro = "Themes, glows on every bar and talents for any class and spec.",

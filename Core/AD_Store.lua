@@ -144,6 +144,13 @@ function Store.Init()
     DB.settings = DB.settings or {}
     if DB.settings.showTooltips == nil then DB.settings.showTooltips = true end
     if DB.settings.clickThrough == nil then DB.settings.clickThrough = true end
+    -- Eyes saved by older versions can draw a loaded group's unloaded members
+    -- while editing, and nothing tells them from a player's own clicks: every
+    -- eye starts over once per account, then follows the Settings switch.
+    if not DB.eyesReset then
+        DB.settings.unloadedShow = nil
+        DB.eyesReset = true
+    end
     Store.Normalize()
 end
 
@@ -530,8 +537,8 @@ end
 
 -- A resource bar's looks (Core\AD_Looks.lua) cleaned like its overrides: a
 -- known mode, number keys (a talent's: 1 with it, 0 without), known fields
--- that a look may carry; empty ones go. The talent its looks follow is a node
--- ID, its choice an entry ID.
+-- that a look may carry and its own state rows; empty ones go. The talent its
+-- looks follow is a node ID, its choice an entry ID.
 function Store.CleanLooks(rec, fam)
     local lk = rec.looks
     if lk == nil then return end
@@ -561,7 +568,10 @@ function Store.CleanLooks(rec, fam)
                 else
                     for section, values in pairs(set) do
                         local sec = fam[section]
-                        if not sec or Schema.LOOK_SKIP[section] or type(values) ~= "table" then
+                        if section == "resColors" then
+                            -- the look's own state rows; an empty list is a look with none
+                            set[section] = (type(values) == "table") and (Store.CleanResStates(values) or {}) or nil
+                        elseif not sec or Schema.LOOK_SKIP[section] or type(values) ~= "table" then
                             set[section] = nil
                         else
                             for field, v in pairs(values) do
@@ -888,6 +898,12 @@ function Store.Normalize()
             end
             -- A swing bar's ability colours: every rule kept, its fields made
             -- usable (Bars\AD_SwingColors.lua reads them as they are).
+            -- A resource bar's state rows, the same way (Bars\AD_ResColors.lua),
+            -- after its old colour settings became rows.
+            if rec.barKind == "resource" then
+                Store.ConvertResStates(rec)
+                rec.driver.resColors = Store.CleanResStates(rec.driver.resColors)
+            end
             if rec.barKind == "swing" then
                 rec.driver.swingColors = Store.CleanSwingColors(rec.driver.swingColors)
                 rec.driver.swingAbilIDs, rec.driver.swingAbilRanks =
@@ -1002,9 +1018,16 @@ function Store.Normalize()
         if (rec.v or 0) < 3 and (not DB.offsetsZero or rec.v ~= nil) then Store.KeepOldOffsets(rec) end
         -- The same for the color bands that became a count (v 4).
         if (rec.v or 0) < 4 and (not DB.bandCounts or rec.v ~= nil) then Store.KeepOldBands(rec) end
+        -- Recharging with a look of its own (v 5); a v1 import still carries
+        -- the retired switches, so they fold whatever its v.
+        local st = rec.o and rec.o.states
+        if ((rec.v or 0) < 5 and (not DB.rechargeOwn or rec.v ~= nil))
+            or (st and (st.waitForNoCharges ~= nil or st.rechargeAlphaEnabled ~= nil)) then
+            Store.KeepRechargeLook(rec)
+        end
         -- Per-record schema version that versioned folds key off; a new one
         -- bumps it and runs before this stamp.
-        rec.v = 4
+        rec.v = 5
         CleanWho(rec)
         if NS.Conditions then NS.Conditions.Normalize(rec) end
         -- Only a layout carries looks for the things inside it.
@@ -1044,6 +1067,7 @@ function Store.Normalize()
     end
     DB.offsetsZero = true
     DB.bandCounts = true
+    DB.rechargeOwn = true
     EnsureUids()
     Store.CleanPackExtras()
 end
@@ -1194,6 +1218,60 @@ function Store.KeepOldBands(rec)
     end
 end
 
+-- Recharging became a state with its own look (rec.v 5). It used to copy
+-- Depleted's look, or Ready's with the old Wait for no charges, and had its
+-- own opacity only while switched on. A save from before keeps what it showed:
+-- the copied opacity, tint, grey out and glow go into Recharging's own fields,
+-- then the two retired switches go.
+function Store.KeepRechargeLook(rec)
+    local st = rec.o and rec.o.states
+    if rec.type ~= "icon" or Store.KindOf(rec) ~= "spell" then
+        if st then st.waitForNoCharges, st.rechargeAlphaEnabled = nil, nil end
+        return
+    end
+    local inh, nd = InhOf(rec), DB.newDefaults and DB.newDefaults[FamilyKey(rec)]
+    local fields = Schema.icon.states.fields
+    -- the record's value, its layout's, a saved default's, else the schema's
+    local function Val(field)
+        for _, t in ipairs({ st or false, (inh and inh.states) or false, (nd and nd.states) or false }) do
+            if t and t[field] ~= nil then return t[field] end
+        end
+        local def = fields[field]
+        if def then return def.d end
+    end
+    local function Put(field, v)
+        local def = fields[field]
+        if not def or SameValue(def.d, v) then return end
+        rec.o.states = rec.o.states or {}
+        rec.o.states[field] = type(v) == "table" and { v[1], v[2], v[3], v[4] } or v
+    end
+    local from = (Val("waitForNoCharges") == true) and "ready" or "cooldown"
+    -- a value it held while switched off never showed: the copied look replaces it
+    if Val("rechargeAlphaEnabled") ~= true then
+        if st then st.rechargeAlpha = nil end
+        Put("rechargeAlpha", Val(from .. "Alpha"))
+    end
+    if Val("rechargeTintEnabled") ~= true and Val(from .. "TintEnabled") == true then
+        Put("rechargeTintEnabled", true)
+        Put("rechargeTintColor", Val(from .. "TintColor"))
+    end
+    -- Depleted's grey out never reached a recharging icon (it waits for the last charge)
+    if from == "ready" and Val("readyDesaturate") == true then Put("rechargeDesaturate", true) end
+    if Val("rechargeGlow") ~= true and Val(from .. "Glow") == true then
+        for _, s in ipairs({ "", "Type", "Color", "CombatOnly", "Intensity", "Length", "Level", "Lines",
+            "MoveX", "MoveY", "Particles", "Scale", "Speed", "Strata", "Thickness", "XOffset", "YOffset" }) do
+            if st then st["rechargeGlow" .. s] = nil end
+            local v = Val(from .. "Glow" .. s)
+            if v ~= nil then Put("rechargeGlow" .. s, v) end
+        end
+    end
+    st = rec.o.states
+    if st then
+        st.waitForNoCharges, st.rechargeAlphaEnabled = nil, nil
+        if next(st) == nil then rec.o.states = nil end
+    end
+end
+
 -- the layout whose looks `rec` follows (nil for a layout itself)
 function Store.LayoutOf(rec)
     if not rec or rec.type == "layout" or rec._adLayoutTier then return nil end
@@ -1319,6 +1397,16 @@ function Store.SetOverride(rec, section, field, value)
     -- the value lands in the layout, for everything inside it
     if rec._adLayoutTier then
         Store.SetLayoutValue(rec._adLayout, rec._adFamily, section, field, value)
+        return
+    end
+    -- the Defaults page's rows (Store.DefaultsProxy / DefaultsAllProxy): the
+    -- kind's saved default, or every kind's on an All row, under the page's batch
+    if rec._adDefaults then
+        if rec._adKinds then
+            Store.SetDefaultAll(rec._adFamily, rec._adKinds, section, field, value, rec._adBatch)
+        else
+            Store.SetDefaultValue(rec._adFamily, rec._adKind, section, field, value, rec._adBatch)
+        end
         return
     end
     -- a type's full look on a show-all group (Store.TypeLookProxy)
@@ -1484,21 +1572,21 @@ function Store.PushTo(rec, section, ids, fields)
     return PushInto(rec, section, targets, fields)
 end
 
--- Saves this record's resolved `fields` as its family key's new-record defaults.
--- nil rebuilds the whole section's bucket; a list merges into it.
-function Store.SaveAsDefault(rec, section, fields)
+-- Saves this record's resolved `fields` (nil: the whole section) as the
+-- defaults of its family and kind, through Store.SetDefaultValue: what makes
+-- an item itself (noDefault) never goes, and every item that follows the old
+-- default keeps it under `batch` until the player answers.
+function Store.SaveAsDefault(rec, section, fields, batch)
     local family = Store.FamilyOf(rec)
-    local sec = Schema[family][section]
-    if not (sec and sec.push) then return end
-    local key = FamilyKey(rec)
-    DB.newDefaults[key] = DB.newDefaults[key] or {}
-    local bucket = fields and (DB.newDefaults[key][section] or {}) or {}
+    local sec = Schema[family] and Schema[family][section]
+    local kind = Store.KindOf(rec)
+    if not (sec and sec.push and kind) then return end
     for _, field in ipairs(FieldList(sec, fields)) do
-        if sec.fields[field] then
-            bucket[field] = Store.Resolve(rec, section, field)
+        local def = sec.fields[field]
+        if def and not def.noDefault and Schema.Applies(def, sec, kind) then
+            Store.SetDefaultValue(family, kind, section, field, Store.Resolve(rec, section, field), batch)
         end
     end
-    DB.newDefaults[key][section] = bucket
 end
 
 -- this record's `fields` back to the resolved defaults (a saved default
@@ -1521,21 +1609,21 @@ function Store.ResetSection(rec, section, fields)
     return changed
 end
 
--- Drops the saved default for `fields`, so new records get the addon defaults.
-function Store.ForgetDefault(rec, section, fields)
+-- Drops the saved default for `fields`, so they read the shipped value again;
+-- items that followed it keep it under `batch` until the player answers.
+function Store.ForgetDefault(rec, section, fields, batch)
     local nd = DB.newDefaults[FamilyKey(rec)]
     local bucket = nd and nd[section]
     if not bucket then return false end
-    local sec = Schema[Store.FamilyOf(rec)][section]
-    if not sec then return false end
+    local family, kind = Store.FamilyOf(rec), Store.KindOf(rec)
+    local sec = Schema[family][section]
+    if not (sec and kind) then return false end
     local changed = false
     for _, field in ipairs(FieldList(sec, fields)) do
-        if bucket[field] ~= nil then
-            bucket[field] = nil
+        if bucket[field] ~= nil and Store.SetDefaultValue(family, kind, section, field, nil, batch) then
             changed = true
         end
     end
-    if next(bucket) == nil then nd[section] = nil end
     return changed
 end
 
@@ -1550,6 +1638,400 @@ function Store.HasDefault(rec, section, fields)
         if bucket[field] ~= nil then return true end
     end
     return false
+end
+
+-- Defaults tier: the Defaults page (UI\AD_DefaultsOptions.lua) edits the saved
+-- defaults of one family and kind through a proxy whose overrides are that
+-- bucket, as the layout editor edits a layout. A change ASKS: every item it
+-- would restyle gets its old value as its own (a pin) at once, and the pins
+-- wait in a named batch until the player answers Change them too (they go) or
+-- Only new (they stay). No answer is Only new.
+do
+    -- one local for the block's helpers and session state
+    local DF = { TYPE = { icon = "icon", iconGroup = "group", bar = "bar" },
+        batches = {}, proxies = {}, all = {}, tpl = {} }
+
+    function DF.Copy(v)
+        if type(v) ~= "table" then return v end
+        local t = {}
+        for k, x in pairs(v) do t[k] = DF.Copy(x) end
+        return t
+    end
+
+    function DF.Field(family, section, field)
+        local sec = Schema[family] and Schema[family][section]
+        return sec and sec.fields[field], sec
+    end
+
+    -- A kind's creation template as { [section] = { [field] = value } }, read
+    -- off a blank record of the kind (no driver: a player castbar, no power).
+    function Store.KindTemplate(family, kind)
+        local key = family .. ":" .. tostring(kind)
+        local t = DF.tpl[key]
+        if t then return t end
+        t = {}
+        local function put(section, field, v)
+            t[section] = t[section] or {}
+            t[section][field] = v
+        end
+        if family == "icon" and Store.IconTemplate then
+            Store.IconTemplate({ type = "icon", kind = kind, driver = {}, o = {}, c = {} }, put)
+        elseif family == "bar" and Store.BarTemplate then
+            local mode = (kind == "cooldown" or kind == "aura" or kind == "timer") and "duration" or nil
+            Store.BarTemplate({ type = "bar", barKind = kind, barMode = mode, driver = {}, o = {}, c = {} }, put)
+        end
+        DF.tpl[key] = t
+        return t
+    end
+
+    -- What a new item of the kind is born with: its creation template, the
+    -- per-kind default, else the plain one.
+    function Store.ArcDefault(family, kind, section, field)
+        local def = DF.Field(family, section, field)
+        if not def then return nil end
+        local t = Store.KindTemplate(family, kind)[section]
+        if t and t[field] ~= nil then return t[field] end
+        if def.dk and kind and def.dk[kind] ~= nil then return def.dk[kind] end
+        return def.d
+    end
+
+    -- The saved default of a kind (nil: it reads the shipped value).
+    function Store.DefaultValue(family, kind, section, field)
+        local bucket = DB.newDefaults[family .. ":" .. tostring(kind)]
+        local vals = bucket and bucket[section]
+        if vals then return vals[field] end
+    end
+
+    -- A saved default that differs from the shipped value (an old Save as Default
+    -- may hold one that equals it).
+    function Store.DefaultChanged(family, kind, section, field)
+        local v = Store.DefaultValue(family, kind, section, field)
+        return v ~= nil and not SameValue(v, Store.ArcDefault(family, kind, section, field))
+    end
+
+    -- The proxy the page's rows read and write: Resolve walks it as an item
+    -- with no layout, its overrides a read-only view of the bucket over the
+    -- kind's creation template, so it reads what a new item gets.
+    function Store.DefaultsProxy(family, kind)
+        local t = DF.TYPE[family]
+        if not (t and kind) then return nil end
+        local key = family .. ":" .. kind
+        local px = DF.proxies[key]
+        if not px then
+            px = { type = t, _adDefaults = true, _adFamily = family, _adKind = kind, _adBatch = key,
+                driver = {}, c = {} }
+            if t == "icon" then px.kind = kind elseif t == "group" then px.groupKind = kind else px.barKind = kind end
+            local views = {}
+            px.o = setmetatable({}, { __newindex = function() end, __index = function(_, section)
+                local view = views[section]
+                if not view then
+                    view = setmetatable({}, { __newindex = function() end, __index = function(_, field)
+                        local b = DB.newDefaults[key]
+                        local vals = b and b[section]
+                        if vals and vals[field] ~= nil then return vals[field] end
+                        local tv = Store.KindTemplate(family, kind)[section]
+                        if tv then return tv[field] end
+                    end })
+                    views[section] = view
+                end
+                return view
+            end })
+            DF.proxies[key] = px
+        end
+        return px
+    end
+
+    -- Several kinds at once (the "All bars" row): a row reads the first kind
+    -- it applies to, and a write lands on every kind it applies to.
+    function Store.DefaultsAllProxy(family, kinds)
+        local t = DF.TYPE[family]
+        if not (t and kinds and kinds[1]) then return nil end
+        local sig = family .. "=" .. table.concat(kinds, ",")
+        local px = DF.all[sig]
+        if not px then
+            px = { type = t, _adDefaults = true, _adFamily = family, _adKinds = kinds, _adBatch = "all:" .. family,
+                driver = {}, c = {} }
+            if t == "icon" then px.kind = kinds[1] elseif t == "group" then px.groupKind = kinds[1]
+            else px.barKind = kinds[1] end
+            local views = {}
+            px.o = setmetatable({}, { __newindex = function() end, __index = function(_, section)
+                local view = views[section]
+                if not view then
+                    view = setmetatable({}, { __newindex = function() end, __index = function(_, field)
+                        local def, sec = DF.Field(family, section, field)
+                        if not def then return nil end
+                        for _, k in ipairs(kinds) do
+                            if Schema.Applies(def, sec, k) then
+                                return Store.Resolve(Store.DefaultsProxy(family, k), section, field)
+                            end
+                        end
+                    end })
+                    views[section] = view
+                end
+                return view
+            end })
+            DF.all[sig] = px
+        end
+        return px
+    end
+
+    -- The kinds of `kinds` a field applies to.
+    function Store.DefaultKinds(family, kinds, section, field)
+        local def, sec = DF.Field(family, section, field)
+        local out = {}
+        if not def then return out end
+        for _, k in ipairs(kinds or {}) do
+            if Schema.Applies(def, sec, k) then out[#out + 1] = k end
+        end
+        return out
+    end
+
+    -- Every item of a family and kind.
+    function Store.DefaultsItems(family, kind)
+        local key, out = family .. ":" .. kind, {}
+        for _, r in pairs(DB.records) do
+            if FamilyKey(r) == key then out[#out + 1] = r end
+        end
+        return out
+    end
+
+    function DF.Batch(name)
+        if not name then return nil end
+        local b = DF.batches[name]
+        if not b then
+            b = { pins = {}, pinned = {}, fields = {}, nFields = 0, kinds = {}, nKinds = 0 }
+            DF.batches[name] = b
+        end
+        return b
+    end
+
+    -- Sets (nil drops) one saved default of a kind: push sections only, never
+    -- a noDefault field (only dropping an old one), stored only where it
+    -- differs from the shipped value. Each item of the kind whose look it would
+    -- change keeps its old value as its own, filed under `batch`. True when it
+    -- changed.
+    function Store.SetDefaultValue(family, kind, section, field, value, batch)
+        local def, sec = DF.Field(family, section, field)
+        if not (def and sec.push and kind) then return false end
+        if def.noDefault and value ~= nil then return false end
+        local key = family .. ":" .. kind
+        local bucket = DB.newDefaults[key]
+        local old = bucket and bucket[section] and bucket[section][field]
+        local new = value
+        if new ~= nil and SameValue(new, Store.ArcDefault(family, kind, section, field)) then new = nil end
+        if SameValue(old, new) then return false end
+        -- what every item reads now; a value an item was born with (its
+        -- template's) follows the kind while nothing is saved, so it lets go
+        -- here and is pinned below like any follower (not where its layout
+        -- sets the row: the layout's look wins there)
+        local tv = Store.KindTemplate(family, kind)[section]
+        tv = tv and tv[field]
+        local recs, before = {}, {}
+        for _, r in pairs(DB.records) do
+            if FamilyKey(r) == key and Schema.Applies(def, sec, kind, r.barMode) then
+                recs[#recs + 1] = r
+                before[#recs] = Store.Resolve(r, section, field)
+                local o, li = r.o[section], InhOf(r)
+                li = li and li[section]
+                if old == nil and tv ~= nil and o and SameValue(o[field], tv) and not (li and li[field] ~= nil) then
+                    o[field] = nil
+                    if next(o) == nil then r.o[section] = nil end
+                end
+            end
+        end
+        if new == nil then
+            bucket[section][field] = nil
+            if next(bucket[section]) == nil then bucket[section] = nil end
+            if next(bucket) == nil then DB.newDefaults[key] = nil end
+        else
+            bucket = bucket or {}
+            DB.newDefaults[key] = bucket
+            bucket[section] = bucket[section] or {}
+            bucket[section][field] = DF.Copy(new)
+        end
+        local b = DF.Batch(batch)
+        for i, r in ipairs(recs) do
+            if not SameValue(Store.Resolve(r, section, field), before[i]) then
+                r.o[section] = r.o[section] or {}
+                r.o[section][field] = DF.Copy(before[i])
+                if b then
+                    b.pins[#b.pins + 1] = { id = r.id, section = section, field = field, v = DF.Copy(before[i]),
+                        family = family, kind = kind, tv = tv }
+                    b.pinned[r.id] = true
+                end
+            end
+        end
+        if b then
+            local fk = key .. "|" .. section .. "." .. field
+            if not b.fields[fk] then
+                b.fields[fk] = true
+                b.nFields = b.nFields + 1
+            end
+            if not b.kinds[key] then
+                b.kinds[key] = true
+                b.nKinds = b.nKinds + 1
+            end
+        end
+        Store.Dirty("style")
+        return true
+    end
+
+    -- An All row's write: every kind of `kinds` the field applies to.
+    function Store.SetDefaultAll(family, kinds, section, field, value, batch)
+        local n = 0
+        for _, k in ipairs(Store.DefaultKinds(family, kinds, section, field)) do
+            if Store.SetDefaultValue(family, k, section, field, DF.Copy(value), batch) then n = n + 1 end
+        end
+        return n
+    end
+
+    -- What a batch waits on: { changes, items, kinds }, nil when nothing does
+    -- (a batch that pinned no item is done at once).
+    function Store.DefaultsPending(name)
+        local b = name and DF.batches[name]
+        if not b then return nil end
+        local items = 0
+        for id in pairs(b.pinned) do
+            if DB.records[id] then items = items + 1 end
+        end
+        if items == 0 then
+            DF.batches[name] = nil
+            return nil
+        end
+        return { changes = b.nFields, items = items, kinds = b.nKinds }
+    end
+
+    -- The answer: follow (Change them too) drops every pin the item still
+    -- holds as it was; Only new keeps them, minus any the new default made
+    -- equal to what the item reads anyway.
+    function Store.AnswerDefaults(name, follow)
+        local b = name and DF.batches[name]
+        DF.batches[name] = nil
+        if not b then return 0 end
+        local n = 0
+        for _, p in ipairs(b.pins) do
+            local r = DB.records[p.id]
+            local o = r and r.o[p.section]
+            local cur = o and o[p.field]
+            if cur ~= nil and SameValue(cur, p.v) then
+                o[p.field] = nil
+                if not follow and not SameValue(Store.Resolve(r, p.section, p.field), cur) then
+                    o[p.field] = cur
+                else
+                    n = n + 1
+                    -- nothing saved now: it follows the kind as born (its template's value)
+                    if follow and p.tv ~= nil and Store.DefaultValue(p.family, p.kind, p.section, p.field) == nil then
+                        o[p.field] = DF.Copy(p.tv)
+                    end
+                end
+                if next(o) == nil then r.o[p.section] = nil end
+            end
+        end
+        if n > 0 then Store.Dirty("style") end
+        return n
+    end
+
+    -- The saved defaults of a kind that differ from the shipped value, as
+    -- { section, field } pairs.
+    function Store.DefaultsChanged(family, kind)
+        local out = {}
+        local bucket = DB.newDefaults[family .. ":" .. tostring(kind)]
+        for section, vals in pairs(bucket or {}) do
+            if type(vals) == "table" then
+                for field in pairs(vals) do
+                    if DF.Field(family, section, field) and Store.DefaultChanged(family, kind, section, field) then
+                        out[#out + 1] = { section, field }
+                    end
+                end
+            end
+        end
+        return out
+    end
+
+    -- Every saved default of a kind back to the shipped value (asks through `batch`).
+    function Store.ResetDefaults(family, kind, parts, batch)
+        local n = 0
+        local bucket = DB.newDefaults[family .. ":" .. tostring(kind)]
+        if not bucket then return 0 end
+        local list = {}
+        if parts then
+            for _, p in ipairs(parts) do
+                for _, f in ipairs(p.fields) do list[#list + 1] = { p.section, f } end
+            end
+        else
+            for section, vals in pairs(bucket) do
+                for field in pairs(type(vals) == "table" and vals or {}) do list[#list + 1] = { section, field } end
+            end
+        end
+        for _, e in ipairs(list) do
+            if Store.SetDefaultValue(family, kind, e[1], e[2], nil, batch) then n = n + 1 end
+        end
+        return n
+    end
+
+    -- A page's rows of one kind onto other kinds, each where the row applies
+    -- and is not what makes an item itself. Returns how many kinds took one.
+    function Store.CopyDefaults(family, from, targets, parts, batch)
+        local src = Store.DefaultsProxy(family, from)
+        local took = 0
+        for _, k in ipairs(targets or {}) do
+            local hit = false
+            if k ~= from then
+                for _, p in ipairs(parts or {}) do
+                    for _, f in ipairs(p.fields) do
+                        local def, sec = DF.Field(family, p.section, f)
+                        if def and sec.push and not def.noDefault and Schema.Applies(def, sec, k) then
+                            Store.SetDefaultValue(family, k, p.section, f, Store.Resolve(src, p.section, f), batch)
+                            hit = true
+                        end
+                    end
+                end
+            end
+            if hit then took = took + 1 end
+        end
+        return took
+    end
+
+    -- The items of a kind holding their own value for a row of `parts` that
+    -- reads the default (its layout does not set it). A value the item was
+    -- born with (its template's) counts as following while nothing is saved:
+    -- it shows what the page shows. Make them follow drops exactly those values.
+    function DF.OwnWalk(family, kind, parts, drop)
+        local n = 0
+        local tpl = Store.KindTemplate(family, kind)
+        for _, r in ipairs(Store.DefaultsItems(family, kind)) do
+            local inh, hit = InhOf(r), false
+            for _, p in ipairs(parts or {}) do
+                local o = r.o[p.section]
+                local li = inh and inh[p.section]
+                local tv = tpl[p.section]
+                for _, f in ipairs(p.fields) do
+                    local def, sec = DF.Field(family, p.section, f)
+                    local born = tv and tv[f] ~= nil and o and SameValue(o[f], tv[f])
+                        and Store.DefaultValue(family, kind, p.section, f) == nil
+                    if o and o[f] ~= nil and def and Schema.Applies(def, sec, kind, r.barMode)
+                        and not (li and li[f] ~= nil) and not born then
+                        hit = true
+                        if drop then
+                            -- with nothing saved it follows the kind as born
+                            local bornV = tv and tv[f]
+                            if bornV ~= nil and Store.DefaultValue(family, kind, p.section, f) == nil then
+                                o[f] = DF.Copy(bornV)
+                            else
+                                o[f] = nil
+                            end
+                        end
+                    end
+                end
+                if drop and o and next(o) == nil then r.o[p.section] = nil end
+            end
+            if hit then n = n + 1 end
+        end
+        if drop and n > 0 then Store.Dirty("style") end
+        return n
+    end
+    function Store.DefaultsOwnCount(family, kind, parts) return DF.OwnWalk(family, kind, parts, false) end
+    function Store.DefaultsFollow(family, kind, parts) return DF.OwnWalk(family, kind, parts, true) end
 end
 
 -- Layout tier: writing, counting, resetting
@@ -2329,6 +2811,11 @@ function Store.IsLoaded(rec)
     local d = rec.driver
     if d and d.onlyKnown == true and d.spellID
         and Store.KnowsSpell(d.spellID, d.knownExact == true) == false then
+        return false
+    end
+    -- A weapon enchant icon's Tracking toggle: only while its hand holds a weapon
+    if d and d.onlyArmed == true and rec.kind == "enchant" and NS.DriverEnchant
+        and NS.DriverEnchant.WeaponIn(d.hand) == nil then
         return false
     end
     local km = c.knownMode
@@ -3328,6 +3815,19 @@ function Store.CleanTriggers(list, kind)
     return out
 end
 
+-- Creation templates: the looks a new icon or bar of a kind is born with,
+-- written on the record only (a saved default or its layout's look wins:
+-- TemplateSet). put(section, field, value). The Defaults page reads them as a
+-- kind's shipped values (Store.KindTemplate).
+function Store.IconTemplate(rec, put)
+    local kind = rec.kind
+    -- a duration runs out towards 0, so its swipe fills as it goes; a spell
+    -- or item cooldown keeps the normal one (it clears when usable)
+    if kind == "totem" or kind == "enchant" or kind == "timer" then put("swipe", "reverse", true) end
+    -- an ammo count is the icon's number: a new one starts in the centre
+    if kind == "ammo" then put("text", "stackAnchor", "CENTER") end
+end
+
 -- destGroupId places the icon in a group; destGroupId == nil makes it a
 -- free-position icon of layoutId
 function Store.NewIcon(kind, driver, destGroupId, layoutId, name)
@@ -3352,13 +3852,7 @@ function Store.NewIcon(kind, driver, destGroupId, layoutId, name)
         rec.pos = { x = sx, y = sy }
         layout.members[#layout.members + 1] = id
     end
-    -- a duration runs out towards 0, so its swipe fills as it goes; a spell
-    -- or item cooldown keeps the normal one (it clears when usable)
-    if kind == "totem" or kind == "enchant" or kind == "timer" then
-        TemplateSet(rec, "swipe", "reverse", true)
-    end
-    -- an ammo count is the icon's number: a new one starts in the centre
-    if kind == "ammo" then TemplateSet(rec, "text", "stackAnchor", "CENTER") end
+    Store.IconTemplate(rec, function(sec, fld, v) TemplateSet(rec, sec, fld, v) end)
     DB.records[id] = rec
     Store.Dirty("tree")
     return rec
@@ -3435,6 +3929,287 @@ function Store.CleanSwingColors(list)
     end
     if #out == 0 then return nil end
     return out
+end
+
+-- A resource bar's state rows (Conditions > By State, Bars\AD_ResColors.lua):
+-- each kept up to the cap, its "when" one the runtime knows, its colours in
+-- range, its spells whole positive IDs, its value a whole number, its glow
+-- sparse. The aura pick (the aura icons' shape) is kept as it is, as the bar
+-- glows keep theirs. A rule from before the table (one spell, one colour)
+-- takes this shape.
+Store.RES_STATE_WHEN = { enough = true, usable = true, ready = true, recharging = true, cooldown = true,
+    up = true, missing = true, below = true, above = true, full = true }
+Store.RES_SPELL_WHEN = { enough = true, usable = true, ready = true, recharging = true, cooldown = true }
+local function ResUnit(v, dflt)
+    v = tonumber(v)
+    if not v then return dflt end
+    return math.max(0, math.min(1, v))
+end
+local function ResColor(c, d)
+    if type(c) ~= "table" then return nil end
+    return { ResUnit(c[1], d[1]), ResUnit(c[2], d[2]), ResUnit(c[3], d[3]), ResUnit(c[4], 1) }
+end
+
+-- a row's glow: its style and colour, then only the tuning that differs from
+-- the bar glows' defaults, each in the bar glows' range
+function Store.CleanRowGlow(g)
+    if type(g) ~= "table" then return nil end
+    local gf = Schema.bar.glows.fields
+    local out = { style = (g.style == "autocast") and "autocast" or "pixel",
+        color = ResColor(g.color, gf.barGlowColor.d) or nil,
+        combat = (g.combat == true) or nil }
+    for key, field in pairs(Schema.RES_GLOW_KEYS) do
+        local def = gf[field]
+        local v = tonumber(g[key])
+        if v and def then
+            if def.t == "int" then v = math.floor(v + 0.5) end
+            v = math.max(def.min, math.min(def.max, v))
+            if v ~= def.d then out[key] = v end
+        end
+    end
+    return out
+end
+
+function Store.CleanResStates(list)
+    if type(list) ~= "table" then return nil end
+    local max = Schema.RES_STATE_MAX or 12
+    local maxSp = Schema.RES_STATE_SPELLS or 8
+    local d = Schema.RES_COLOR_DEFAULT or { 0.66, 0.42, 1, 1 }
+    local out = {}
+    for _, r in ipairs(list) do
+        if type(r) == "table" and #out < max then
+            -- the rule shape before the table: one spell, one colour
+            if r.fill == nil and type(r.color) == "table" then r.fill = r.color end
+            if r.rowSpells == nil and r.cdSpellID ~= nil then r.rowSpells = { r.cdSpellID } end -- raw-id: typed IDs, each resolved when a row is read
+            if r.follow == nil and r.cdFollowRank == false then r.follow = false end
+            r.color, r.cdSpellID, r.cdFollowRank = nil, nil, nil
+            r.when = Store.RES_STATE_WHEN[r.when] and r.when or "enough"
+            local w = r.when
+            if Store.RES_SPELL_WHEN[w] then
+                local ids = {}
+                for _, v in ipairs(type(r.rowSpells) == "table" and r.rowSpells or {}) do
+                    local n = tonumber(v)
+                    if n and n > 0 and #ids < maxSp then ids[#ids + 1] = math.floor(n) end
+                end
+                r.rowSpells = (#ids > 0) and ids or nil
+                if r.follow ~= false then r.follow = nil end
+                r.mark = (r.mark == true) or nil
+            else
+                r.rowSpells, r.follow, r.mark = nil, nil, nil
+            end
+            if w == "below" or w == "above" then
+                local v = tonumber(r.value)
+                r.value = v and math.max(0, math.floor(v + 0.5)) or 50
+                r.units = (r.units == true) or nil
+            else
+                r.value, r.units = nil, nil
+            end
+            r.fill = ResColor(r.fill, d)
+            -- an aura row's state is never read, so it has no text colour
+            r.text = (w ~= "up" and w ~= "missing") and ResColor(r.text, { 1, 1, 1, 1 }) or nil
+            r.glow = Store.CleanRowGlow(r.glow)
+            out[#out + 1] = r
+        end
+    end
+    if #out == 0 then return nil end
+    return out
+end
+
+-- Before the States table a resource bar coloured itself in four places:
+-- Power Colors, Text Colors, the colour rules and the cost ticks' spells, and
+-- glowed from the Glows sub-tab. Once per bar (rec.driver.statesV) and for
+-- each of its looks, those become rows that show what they showed, read
+-- through the bar's layout and saved defaults as the bar read them; the bar's
+-- own copies of them go. Runs in Normalize (logins and imports) and before
+-- any read of a bar's rows.
+Store.RES_STATES_V = 1
+local function ResCopy(v)
+    if type(v) ~= "table" then return v end
+    local t = {}
+    for k, x in pairs(v) do t[k] = ResCopy(x) end
+    return t
+end
+local function ResSame(a, b)
+    if type(a) ~= type(b) then return false end
+    if type(a) ~= "table" then return a == b end
+    for k, v in pairs(a) do
+        if not ResSame(v, b[k]) then return false end
+    end
+    for k in pairs(b) do
+        if a[k] == nil then return false end
+    end
+    return true
+end
+-- the sections a look or the bar may carry that the rows replace
+local RES_MOVED = { powerthresholds = true, ptextcolors = true, glows = true }
+
+-- One band set (Power Colors "pth", Text Colors "ptx") as rows, in the order
+-- that gives each value the band it had: at or below, the lowest value on
+-- top; at or above, the highest. key: "fill" or "text".
+local function BandRows(R, sec, pre, key, rows)
+    if R(sec, pre .. "Enabled") ~= true then return end
+    local below = (R(sec, pre .. "Direction") or "below") ~= "above"
+    local units = R(sec, pre .. "Absolute") == true
+    local n = math.floor(tonumber(R(sec, pre .. "Count")) or 3)
+    n = math.max(1, math.min(4, n))
+    local bands, at = {}, {}
+    for i = 2, 1 + n do
+        local v = math.floor((tonumber(R(sec, pre .. i .. "Value")) or 0) + 0.5)
+        -- the curve drew no band at 0 or at the full bar
+        if v > 0 and (units or v < 100) then
+            -- a value two bands share keeps the later one
+            if at[v] then bands[at[v]].c = R(sec, pre .. i .. "Color")
+            else
+                bands[#bands + 1] = { v = v, c = R(sec, pre .. i .. "Color") }
+                at[v] = #bands
+            end
+        end
+    end
+    table.sort(bands, function(a, b)
+        if below then return a.v < b.v end
+        return a.v > b.v
+    end)
+    for _, b in ipairs(bands) do
+        rows[#rows + 1] = { when = below and "below" or "above", value = b.v, units = units or nil,
+            [key] = ResCopy(type(b.c) == "table" and b.c or { 1, 1, 1, 1 }) }
+    end
+end
+
+-- The rows that show what a resource bar's old settings show, read through
+-- Store.Resolve as the bar (or the look being read) reads them now.
+local function OldResRows(rec)
+    local function R(s, f) return Store.Resolve(rec, s, f) end
+    local rows = {}
+    -- the colour rules first: they won over the bands
+    local rules = rec.driver and rec.driver.resColors
+    if R("rescolors", "resColorsOn") == true and type(rules) == "table" then
+        for _, r in ipairs(rules) do
+            if type(r) == "table" then rows[#rows + 1] = ResCopy(r) end
+        end
+    end
+    -- the full colour was the curve's last step, over every band
+    if R("powerthresholds", "pthFullEnabled") == true then
+        rows[#rows + 1] = { when = "full", fill = ResCopy(R("powerthresholds", "pthFullColor") or { 0, 1, 0, 1 }) }
+    end
+    BandRows(R, "powerthresholds", "pth", "fill", rows)
+    BandRows(R, "ptextcolors", "ptx", "text", rows)
+    -- each switched-on glow: its trigger and the aura or spell it watched
+    local picks = rec.driver and rec.driver.glows
+    local count = math.max(1, math.min(3, math.floor(tonumber(R("glows", "barGlowCount")) or 1)))
+    local gf = Schema.bar.glows.fields
+    for k = 1, count do
+        local suf = (k > 1) and tostring(k) or ""
+        if R("glows", "barGlow" .. suf) == true then
+            local when = R("glows", "barGlowWhen" .. suf) or "up"
+            local pick = type(picks) == "table" and type(picks[k]) == "table" and picks[k] or {}
+            local glow = { style = (R("glows", "barGlowType" .. suf) == "autocast") and "autocast" or "pixel",
+                color = ResCopy(R("glows", "barGlowColor" .. suf) or gf.barGlowColor.d),
+                combat = R("glows", "barGlowCombatOnly" .. suf) == true or nil }
+            for key, field in pairs(Schema.RES_GLOW_KEYS) do glow[key] = R("glows", field .. suf) end
+            local row
+            if when == "up" or when == "missing" then
+                row = { when = when, glow = glow }
+                for key, v in pairs(pick) do
+                    if key ~= "own" and key ~= "cdOwn" and key ~= "cdSpellID" and key ~= "cdFollowRank" then
+                        row[key] = ResCopy(v)
+                    end
+                end
+            else
+                local sid = tonumber(pick.cdSpellID)
+                if sid and sid > 0 then
+                    row = { when = when, rowSpells = { math.floor(sid) }, glow = glow }
+                    if pick.cdFollowRank == false then row.follow = false end
+                end
+            end
+            if row then rows[#rows + 1] = row end
+        end
+    end
+    -- the cost ticks' spells: one row that marks them, while ticks showed
+    local list = R("ticks", "tickSpells")
+    if R("ticks", "ticksShow") == true and type(list) == "string" and list ~= "" then
+        local ids = {}
+        for id in list:gmatch("%d+") do ids[#ids + 1] = tonumber(id) end
+        if #ids > 0 then rows[#rows + 1] = { when = "enough", rowSpells = ids, mark = true } end
+    end
+    return Store.CleanResStates(rows)
+end
+
+-- "Color the text too" coloured the texts only while the bands drew
+local function OldTextFill(rec)
+    local function R(s, f) return Store.Resolve(rec, s, f) end
+    return R("powerthresholds", "pthText") == true
+        and (R("powerthresholds", "pthEnabled") == true or R("powerthresholds", "pthFullEnabled") == true)
+end
+
+-- what the rows replace, out of one section table set (the bar's overrides or a look's)
+local function DropOld(set)
+    if type(set) ~= "table" then return end
+    for s in pairs(RES_MOVED) do set[s] = nil end
+    if type(set.ticks) == "table" then
+        set.ticks.tickSpells = nil
+        if next(set.ticks) == nil then set.ticks = nil end
+    end
+    if type(set.rescolors) == "table" then
+        set.rescolors.resColorsOn = nil
+        if next(set.rescolors) == nil then set.rescolors = nil end
+    end
+end
+
+-- a look's set carries something the rows replace
+local function TouchesOld(set)
+    for s in pairs(RES_MOVED) do
+        if set[s] ~= nil then return true end
+    end
+    return (type(set.ticks) == "table" and (set.ticks.tickSpells ~= nil or set.ticks.ticksShow ~= nil))
+        or (type(set.rescolors) == "table" and set.rescolors.resColorsOn ~= nil)
+end
+
+function Store.ConvertResStates(rec)
+    if not (rec and rec.type == "bar" and rec.barKind == "resource") then return end
+    if type(rec.driver) ~= "table" then rec.driver = {} end
+    local d = rec.driver
+    if d.statesV == Store.RES_STATES_V then return end
+    d.statesV = Store.RES_STATES_V
+    rec.o = rec.o or {}
+    local LK = NS.Looks
+    local editing = LK and LK.editing[rec.id]
+    -- the bar's own settings, no look in play
+    if LK then LK.editing[rec.id] = LK.BASE end
+    local base = OldResRows(rec)
+    local baseText = OldTextFill(rec)
+    -- each look that changed what the rows replace: its own rows where they differ
+    local lk = type(rec.looks) == "table" and rec.looks or nil
+    if lk and LK then
+        local by = lk.by
+        for _, mode in ipairs(Schema.LOOK_MODES) do
+            local sets = lk[mode]
+            if type(sets) == "table" then
+                for key, set in pairs(sets) do
+                    if type(set) == "table" and TouchesOld(set) then
+                        lk.by = mode
+                        LK.editing[rec.id] = key
+                        local rows = OldResRows(rec)
+                        if not ResSame(rows, base) then set.resColors = rows or {} end
+                        local tf = OldTextFill(rec)
+                        if tf ~= baseText then
+                            set.rescolors = type(set.rescolors) == "table" and set.rescolors or {}
+                            set.rescolors.resTextFill = tf
+                        end
+                        DropOld(set)
+                    end
+                end
+            end
+        end
+        lk.by = by
+    end
+    if LK then LK.editing[rec.id] = editing end
+    d.resColors = base
+    d.glows = nil
+    DropOld(rec.o)
+    if baseText then
+        rec.o.rescolors = rec.o.rescolors or {}
+        rec.o.rescolors.resTextFill = true
+    end
 end
 
 -- A swing bar's next-swing abilities: the spell IDs in order (whole positive
@@ -3722,12 +4497,113 @@ function Store.CleanTexture(d)
     if d.auraType ~= "buff" and d.auraType ~= "debuff" then d.auraType = nil end
     if not TEXTURE_UNIT_SET[d.unit] then d.unit = nil end
     if d.caster ~= "mine" and d.caster ~= "others" then d.caster = nil end
-    if d.cdActive ~= "cooldown" then d.cdActive = nil end
+    if d.cdActive ~= "cooldown" and d.cdActive ~= "charges" then d.cdActive = nil end
+    -- your power's type: mana is 0; none = the power you use now
+    local pt = tonumber(d.powerType)
+    d.powerType = (d.source == "power" and pt and pt >= 0) and math.floor(pt) or nil
     if d.source == "rules" or d.rules ~= nil then
         if d.source == "rules" and type(d.rules) ~= "table" then d.rules = {} end
         Store.CleanCustom(d, false)
     else
         d.duration, d.maxStacks, d.clearOnEnd, d.showWhile = nil, nil, nil, nil
+    end
+end
+
+-- A new bar's creation template (Store.IconTemplate's note).
+function Store.BarTemplate(rec, put)
+    local barKind = rec.barKind
+    if barKind == "cooldown" or barKind == "aura" or barKind == "enchant" or barKind == "special" then
+        put("icon", "iconShow", true)
+    end
+    -- A deck bar marks where each proc landed.
+    if barKind == "special" then put("ticks", "ticksShow", true) end
+    -- Name text shows on spell bars. A resource or swing bar's name is just its
+    -- power or hand, and a player health bar's is your own, so it stays off
+    -- there; other health bars show their unit's live name.
+    local hpUnit = barKind == "health" and (rec.driver.unit or "player") or nil
+    if barKind ~= "resource" and barKind ~= "swing" and barKind ~= "text" and barKind ~= "texture"
+        and barKind ~= "wheel" and barKind ~= "sound" and hpUnit ~= "player" then
+        put("text", "nameShow", true)
+    end
+    -- A text element is born as a small box; its look is the schema's (white, 14).
+    if barKind == "text" then
+        put("size", "width", 140)
+        put("size", "height", 24)
+    end
+    -- A texture is born as a square picture.
+    if barKind == "texture" then
+        put("size", "width", 64)
+        put("size", "height", 64)
+    end
+    -- A health bar is born green with incoming heals and absorb shields on;
+    -- both are one click off in Heals & Shields (the schema defaults stay off).
+    if barKind == "health" then
+        put("fill", "color", { 0.18, 0.8, 0.3, 1 })
+        put("healpred", "healShow", true)
+        put("healpred", "absorbShow", true)
+        put("healpred", "absorbOverflow", true)
+    end
+    -- A castbar is born looking like one; every piece is still one click away,
+    -- as the schema defaults stay off. A target or focus bar also greys and
+    -- shields casts you cannot interrupt. The player's bar does not: nobody
+    -- interrupts your casts, so the grey would read as a fault.
+    if barKind == "cast" then
+        put("size", "width", 220)
+        put("size", "height", 20)
+        put("fill", "color", { 1, 0.7, 0.1, 1 })
+        put("fill", "castChannelOn", true)
+        put("look", "borderThickness", 2)
+        put("icon", "iconShow", true)
+        put("icon", "iconFollowBar", true)
+        put("text", "nameAnchor", "LEFT")
+        put("text", "nameOffsetX", 4)
+        put("text", "nameOffsetY", 0)
+        put("text", "nameColor", { 1, 1, 1, 1 })
+        put("text", "durDecimalsEnabled", true)
+        put("cast", "sparkOn", true)
+        put("cast", "holdOn", true)
+        if (rec.driver.unit or "player") ~= "player" then
+            put("fill", "castLockOn", true)
+            put("icon", "iconShield", true)
+        end
+    end
+    -- A range bar reads its band's name, white and centred on the plate.
+    if barKind == "range" then
+        put("look", "borderThickness", 3)
+        put("text", "nameAnchor", "CENTER")
+        put("text", "nameOffsetX", 0)
+        put("text", "nameOffsetY", 0)
+        put("text", "nameSize", 12)
+        put("text", "nameColor", { 1, 1, 1, 1 })
+    end
+    if rec.barMode == "stack" then put("text", "stkAnchor", "CENTER") end
+    -- A counted bar (aura stacks, a point power: combo points, holy power,
+    -- chi, shards, runes, Maelstrom Weapon ...) is born with one tick mark per
+    -- point; mana-sized powers stay clean.
+    local pt = barKind == "resource" and rec.driver.powerType or nil
+    local RP = NS.Bars and NS.Bars.ResPowers
+    local point = pt ~= nil and (pt == 4 or (RP ~= nil and RP.IsPoint(pt)))
+    if (barKind == "aura" and rec.barMode == "stack") or point then
+        put("ticks", "ticksShow", true)
+        put("ticks", "tickMode", "all")
+    end
+    if pt ~= nil then
+        -- runes and essence are born as pips: their recharge timers live in the cells
+        if pt == 5 or pt == 19 then put("resource", "style", "pips") end
+        -- stagger in Blizzard's light / moderate / heavy colours
+        if pt == 100 then
+            put("powerthresholds", "pthEnabled", true)
+            put("powerthresholds", "pthCount", 2)
+            put("powerthresholds", "pthDirection", "above")
+            put("powerthresholds", "pth2Value", 30)
+            put("powerthresholds", "pth2Color", { 1, 0.98, 0.72, 1 })
+            put("powerthresholds", "pth3Value", 60)
+            put("powerthresholds", "pth3Color", { 1, 0.42, 0.42, 1 })
+        end
+        -- a rogue's charged points show in their own colour
+        if pt == 4 and ClassTag() == "ROGUE" and NS.IsForever ~= true then
+            put("resource", "chargedShow", true)
+        end
     end
 end
 
@@ -3759,102 +4635,12 @@ function Store.NewBar(layoutId, barKind, driver, name, barMode)
     end
     ScopeToCreator(rec)
     -- Creation template, written on the record only: the schema defaults
-    -- stay off and a saved default wins.
-    if barKind == "cooldown" or barKind == "aura" or barKind == "enchant" or barKind == "special" then
-        TemplateSet(rec, "icon", "iconShow", true)
-    end
-    -- A deck bar marks where each proc landed.
-    if barKind == "special" then TemplateSet(rec, "ticks", "ticksShow", true) end
-    -- Name text shows on spell bars. A resource or swing bar's name is just its
-    -- power or hand, and a player health bar's is your own, so it stays off
-    -- there; other health bars show their unit's live name.
-    local hpUnit = barKind == "health" and (rec.driver.unit or "player") or nil
-    if barKind ~= "resource" and barKind ~= "swing" and barKind ~= "text" and barKind ~= "texture"
-        and barKind ~= "wheel" and barKind ~= "sound" and hpUnit ~= "player" then
-        TemplateSet(rec, "text", "nameShow", true)
-    end
-    -- A text element is born as a small box; its look is the schema's (white, 14).
-    if barKind == "text" then
-        TemplateSet(rec, "size", "width", 140)
-        TemplateSet(rec, "size", "height", 24)
-    end
-    -- A texture is born as a square picture.
-    if barKind == "texture" then
-        TemplateSet(rec, "size", "width", 64)
-        TemplateSet(rec, "size", "height", 64)
-    end
-    -- A health bar is born green with incoming heals and absorb shields on;
-    -- both are one click off in Heals & Shields (the schema defaults stay off).
-    if barKind == "health" then
-        TemplateSet(rec, "fill", "color", { 0.18, 0.8, 0.3, 1 })
-        TemplateSet(rec, "healpred", "healShow", true)
-        TemplateSet(rec, "healpred", "absorbShow", true)
-        TemplateSet(rec, "healpred", "absorbOverflow", true)
-    end
-    -- A castbar is born looking like one; every piece is still one click away,
-    -- as the schema defaults stay off. A target or focus bar also greys and
-    -- shields casts you cannot interrupt. The player's bar does not: nobody
-    -- interrupts your casts, so the grey would read as a fault.
-    if barKind == "cast" then
-        TemplateSet(rec, "size", "width", 220)
-        TemplateSet(rec, "size", "height", 20)
-        TemplateSet(rec, "fill", "color", { 1, 0.7, 0.1, 1 })
-        TemplateSet(rec, "fill", "castChannelOn", true)
-        TemplateSet(rec, "look", "borderThickness", 2)
-        TemplateSet(rec, "icon", "iconShow", true)
-        TemplateSet(rec, "icon", "iconFollowBar", true)
-        TemplateSet(rec, "text", "nameAnchor", "LEFT")
-        TemplateSet(rec, "text", "nameOffsetX", 4)
-        TemplateSet(rec, "text", "nameOffsetY", 0)
-        TemplateSet(rec, "text", "nameColor", { 1, 1, 1, 1 })
-        TemplateSet(rec, "text", "durDecimalsEnabled", true)
-        TemplateSet(rec, "cast", "sparkOn", true)
-        TemplateSet(rec, "cast", "holdOn", true)
-        if (rec.driver.unit or "player") ~= "player" then
-            TemplateSet(rec, "fill", "castLockOn", true)
-            TemplateSet(rec, "icon", "iconShield", true)
-        end
-    end
-    -- A range bar reads its band's name, white and centred on the plate.
-    if barKind == "range" then
-        TemplateSet(rec, "look", "borderThickness", 3)
-        TemplateSet(rec, "text", "nameAnchor", "CENTER")
-        TemplateSet(rec, "text", "nameOffsetX", 0)
-        TemplateSet(rec, "text", "nameOffsetY", 0)
-        TemplateSet(rec, "text", "nameSize", 12)
-        TemplateSet(rec, "text", "nameColor", { 1, 1, 1, 1 })
-    end
-    if rec.barMode == "stack" then TemplateSet(rec, "text", "stkAnchor", "CENTER") end
-    -- A counted bar (aura stacks, a point power: combo points, holy power,
-    -- chi, shards, runes, Maelstrom Weapon ...) is born with one tick mark per
-    -- point; mana-sized powers stay clean.
-    local pt = barKind == "resource" and rec.driver.powerType or nil
-    local RP = NS.Bars and NS.Bars.ResPowers
-    local point = pt ~= nil and (pt == 4 or (RP ~= nil and RP.IsPoint(pt)))
-    if (barKind == "aura" and rec.barMode == "stack") or point then
-        TemplateSet(rec, "ticks", "ticksShow", true)
-        TemplateSet(rec, "ticks", "tickMode", "all")
-    end
-    if pt ~= nil then
-        -- runes and essence are born as pips: their recharge timers live in the cells
-        if pt == 5 or pt == 19 then TemplateSet(rec, "resource", "style", "pips") end
-        -- stagger in Blizzard's light / moderate / heavy colours
-        if pt == 100 then
-            TemplateSet(rec, "powerthresholds", "pthEnabled", true)
-            TemplateSet(rec, "powerthresholds", "pthCount", 2)
-            TemplateSet(rec, "powerthresholds", "pthDirection", "above")
-            TemplateSet(rec, "powerthresholds", "pth2Value", 30)
-            TemplateSet(rec, "powerthresholds", "pth2Color", { 1, 0.98, 0.72, 1 })
-            TemplateSet(rec, "powerthresholds", "pth3Value", 60)
-            TemplateSet(rec, "powerthresholds", "pth3Color", { 1, 0.42, 0.42, 1 })
-        end
-        -- a druid's combo points show in Cat Form only, as the game's do; the
-        -- condition sits in Visibility, one click to remove
-        if pt == 4 and ClassTag() == "DRUID" then rec.c.showWhen = { formCat = true } end
-        -- a rogue's charged points show in their own colour
-        if pt == 4 and ClassTag() == "ROGUE" and NS.IsForever ~= true then
-            TemplateSet(rec, "resource", "chargedShow", true)
-        end
+    -- stay off and a saved default wins (Store.BarTemplate).
+    Store.BarTemplate(rec, function(sec, fld, v) TemplateSet(rec, sec, fld, v) end)
+    -- a druid's combo points show in Cat Form only, as the game's do; the
+    -- condition sits in Visibility, one click to remove
+    if barKind == "resource" and rec.driver.powerType == 4 and ClassTag() == "DRUID" then
+        rec.c.showWhen = { formCat = true }
     end
     -- at the screen centre; a bar already there pushes the new one down
     -- one row (24px bar + the name above it + a gap = 42)
@@ -4975,10 +5761,13 @@ local PART_OF_SECTION = {
         deck = "appearance",
         fill = "appearance", frame = "position", glows = "glows", healpred = "appearance",
         healththresholds = "appearance",
-        icon = "appearance", look = "appearance", powerthresholds = "appearance", predict = "appearance",
+        icon = "appearance", look = "appearance", powerthresholds = "appearance", ptextcolors = "text",
+        rescolors = "appearance",
+        predict = "appearance",
         range = "appearance", regen = "appearance", resource = "appearance", segments = "appearance",
         size = "position",
-        stackcolors = "appearance", texlook = "appearance", text = "text", textel = "text",
+        stackcolors = "appearance", texlook = "appearance", texstate = "showhide", pictext = "text",
+        text = "text", textel = "text",
         thresholds = "appearance", ticks = "appearance", wheel = "appearance" },
     iconGroup = { anchor = "position", arrangement = "arrange", audio = "sounds", frame = "position",
         keybind = "text", look = "appearance", mouse = "position", pulse = "appearance",

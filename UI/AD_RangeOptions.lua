@@ -64,7 +64,7 @@ function Options.RangeBandRows(pg, ctx, vis, owner)
         end
         box:SetScript("OnEnterPressed", function() box:ClearFocus() end)
         box:SetScript("OnEscapePressed", function()
-            box:SetText(Shown())
+            AT.BoxText(box, Shown())
             box:ClearFocus()
         end)
         box:SetScript("OnEditFocusLost", function()
@@ -100,7 +100,7 @@ function Options.RangeBandRows(pg, ctx, vis, owner)
             local spell = k ~= nil and k.kind == "spell"
             box:SetShown(spell)
             yards:SetShown(not spell)
-            if spell and not box:HasFocus() then box:SetText(Shown()) end
+            if spell and not box:HasFocus() then AT.BoxText(box, Shown()) end
             if not spell then yards.Refresh() end
             del:ClearAllPoints()
             del:SetPoint("LEFT", spell and box or yards, "RIGHT", 6, 0)

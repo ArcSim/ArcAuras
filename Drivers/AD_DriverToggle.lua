@@ -1,9 +1,10 @@
 -- Toggled on: a spell icon's state while its toggle is on, as the action bar
--- flashes it: Shoot or Auto Shot repeating, melee Attack swinging. Its glow
--- is drawn here; its alpha, grey and tint by Factory.SetState (f._adToggled).
+-- shows it: Shoot or Auto Shot repeating, melee Attack swinging, a pet spell
+-- on autocast. Its glow is drawn here; its alpha, grey and tint by
+-- Factory.SetState (f._adToggled).
 -- Factory.ApplyStyle hands every styled icon to Sync, Factory.Release to Drop.
 -- The auto attack conditions read the same state through Use.
--- The game reports both toggles with plain events, in combat too.
+-- The game reports all three with plain events and values, in combat too.
 
 local ADDON, NS = ...
 local Store = NS.Store
@@ -18,12 +19,20 @@ DT.ATTACK = 6603
 -- the auto-repeat spells the options know before one is cast: Auto Shot, Shoot
 DT.REPEAT = { [75] = true, [5019] = true }
 DT.EVENTS = { "START_AUTOREPEAT_SPELL", "STOP_AUTOREPEAT_SPELL", "PLAYER_ENTER_COMBAT", "PLAYER_LEAVE_COMBAT" }
+-- a pet spell's autocast changes with its pet bar, and with the pet
+DT.PET_EVENTS = { "PET_BAR_UPDATE", "UNIT_PET" }
+DT.PET_SLOTS = 10   -- the pet bar's buttons
 DT.frames = {}   -- [icon frame] = rec, icons with the toggle glow or a toggled-on look
 -- [owner] = fn, readers besides the icons (the auto attack conditions)
 DT.users = {}
 DT.repeating = false
 DT.attacking = false
 DT.armed = false
+DT.petArmed = false
+-- [spell ID] = true once seen able to autocast: its rows stay while the pet is away
+DT.petCan = {}
+DT.bar = {}      -- the pet bar's autocast spells, { id, on }, read once a frame
+DT.barAt = nil
 
 function DT.R(rec, k)
     return Store.Resolve(rec, "states", k)
@@ -34,21 +43,81 @@ function DT.Yes(v)
     return not (issecretvalue and issecretvalue(v)) and v == true
 end
 
--- "attack", "repeat" or nil: which toggle a spell icon's spell is.
-function DT.Kind(rec)
+-- A spell icon's spell ID, or nil for any other icon.
+function DT.SpellID(rec)
     if not (rec and rec.kind == "spell" and type(rec.driver) == "table") then return nil end
-    local sid = tonumber(rec.driver.spellID)
+    return tonumber(rec.driver.spellID)
+end
+
+-- "attack", "repeat", "autocast" or nil: which toggle a spell icon's spell is.
+function DT.Kind(rec)
+    local sid = DT.SpellID(rec)
     if not sid then return nil end
     if sid == DT.ATTACK then return "attack" end
     if DT.REPEAT[sid] then return "repeat" end
     -- the game is asked about the spell the icon reads (rank, override)
     local eff = Store.RecordSpellID(rec.driver)
     if eff and C_Spell and C_Spell.IsAutoRepeatSpell and DT.Yes(C_Spell.IsAutoRepeatSpell(eff)) then return "repeat" end
+    if DT.petCan[sid] or DT.Auto(sid, eff) then
+        DT.petCan[sid] = true
+        return "autocast"
+    end
     return nil
 end
 
 function DT.IsToggle(rec)
     return DT.Kind(rec) ~= nil
+end
+
+-- The pet bar's spells that can autocast, read at most once a frame (the pet
+-- events clear barAt). A token (Attack, Follow) never autocasts.
+function DT.ReadBar()
+    local now = GetTime()
+    if DT.barAt == now then return DT.bar end
+    DT.barAt = now
+    local bar = {}
+    if GetPetActionInfo then
+        for i = 1, DT.PET_SLOTS do
+            local _, _, isToken, _, can, on, id = GetPetActionInfo(i)
+            if DT.Yes(can) and not DT.Yes(isToken) and type(id) == "number"
+                and not (issecretvalue and issecretvalue(id)) then
+                bar[#bar + 1] = { id = id, on = DT.Yes(on) }
+            end
+        end
+    end
+    DT.bar = bar
+    return bar
+end
+
+-- A pet spell that casts itself: can it, and is it on now? C_Spell answers by
+-- ID with two plain booleans; the pet bar answers where the client lacks that
+-- and for another rank of the spell (Store.SpellMatch). No pet out: neither.
+function DT.Auto(sid, eff)
+    local get = C_Spell and C_Spell.GetSpellAutoCast
+    if get then
+        local can, on = get(eff or sid)
+        if not DT.Yes(can) and eff and eff ~= sid then can, on = get(sid) end
+        if DT.Yes(can) then return true, DT.Yes(on) end
+    end
+    for _, slot in ipairs(DT.ReadBar()) do
+        if Store.SpellMatch(sid, slot.id, eff) then return true, slot.on end
+    end
+    return false, false
+end
+
+-- A spell the player does not know may be a pet's whose pet is not out yet
+-- (a login, a dismissed pet), so its icon is followed until the pet shows.
+function DT.MaybePet(rec)
+    local sid = DT.SpellID(rec)
+    if not sid then return false end
+    return Store.KnowsSpell(sid) ~= true
+end
+
+-- A followed icon listens to the pet bar's events, not the swing's.
+function DT.PetIcon(rec)
+    local k = DT.Kind(rec)
+    if k then return k == "autocast" end
+    return DT.MaybePet(rec)
 end
 
 -- the toggled-on row on Conditions changes something
@@ -57,8 +126,11 @@ function DT.StateSet(rec)
         or DT.R(rec, "toggleTintEnabled") == true
 end
 
+-- A set toggle look is followed on a toggle spell, and on a spell that may be
+-- a pet's (its rows were set while the pet was out).
 function DT.Wanted(rec)
-    return DT.IsToggle(rec) and (DT.R(rec, "toggleGlow") == true or DT.StateSet(rec))
+    if not (DT.R(rec, "toggleGlow") == true or DT.StateSet(rec)) then return false end
+    return DT.IsToggle(rec) or DT.MaybePet(rec)
 end
 
 -- The state on the frame: repainted when it flips and the look depends on it.
@@ -75,6 +147,10 @@ function DT.On(rec)
     local k = DT.Kind(rec)
     if k == "attack" then return DT.attacking end
     if k == "repeat" then return DT.repeating end
+    if k == "autocast" then
+        local _, on = DT.Auto(DT.SpellID(rec), Store.RecordSpellID(rec.driver))
+        return on
+    end
     return false
 end
 
@@ -163,19 +239,40 @@ function DT.Valid(e)
     return not (C_EventUtils and C_EventUtils.IsEventValid and not C_EventUtils.IsEventValid(e))
 end
 
--- The events stay registered only while an icon or a reader wants them.
-function DT.Arm()
-    local want = next(DT.frames) ~= nil or next(DT.users) ~= nil
-    if want == DT.armed then return end
-    DT.armed = want
-    for _, e in ipairs(DT.EVENTS) do
-        if want then
-            if DT.Valid(e) then Events.On(e, DT.KEY, DT.OnEvent) end
+-- A pet spell's state is read live, so a change only repaints. Another
+-- unit's pet is not ours.
+function DT.OnPet(event, unit)
+    if event == "UNIT_PET" and unit ~= "player" then return end
+    DT.barAt = nil
+    DT.ApplyAll()
+end
+
+function DT.Listen(list, on, fn)
+    for _, e in ipairs(list) do
+        if on then
+            if DT.Valid(e) then Events.On(e, DT.KEY, fn) end
         else
             Events.Off(e, DT.KEY)
         end
     end
-    if want then
+end
+
+-- Each set of events stays registered only while something wants it: the
+-- swing and repeat events for their icons and the readers, the pet bar's for
+-- the pet spells' icons.
+function DT.Arm()
+    local swing, pet = next(DT.users) ~= nil, false
+    for _, rec in pairs(DT.frames) do
+        if DT.PetIcon(rec) then pet = true else swing = true end
+    end
+    if pet ~= DT.petArmed then
+        DT.petArmed = pet
+        DT.Listen(DT.PET_EVENTS, pet, DT.OnPet)
+    end
+    if swing == DT.armed then return end
+    DT.armed = swing
+    DT.Listen(DT.EVENTS, swing, DT.OnEvent)
+    if swing then
         DT.repeating = false
         DT.Read()
     end

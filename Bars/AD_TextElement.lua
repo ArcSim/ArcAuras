@@ -1002,7 +1002,7 @@ function TX.EnsureAura(e)
             elseif sub.which == "auraStacks" then
                 local o = {}
                 -- count from 1; 12.1.0 does not know the field and shows from 2
-                if not NS.OldAuraEngine then o.minApplications = 1 end
+                if not NS.AuraEngine1210 then o.minApplications = 1 end
                 if fmt then o.formatter = fmt end
                 b:SetApplicationCount(fs, o)
             else

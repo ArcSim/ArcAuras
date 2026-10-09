@@ -432,6 +432,18 @@ local function FormIs(name)
     return function() return Form() == name end
 end
 
+-- The power you are using (a druid's form picks it; UnitPowerType is plain),
+-- so a bar that follows your power can stand down for one of them.
+local POWER_EV = { "UNIT_DISPLAYPOWER", "UPDATE_SHAPESHIFT_FORM" }
+local function PowerIs(pt)
+    return function()
+        local p = UnitPowerType and UnitPowerType("player")
+        if IsSecret(p) then return lastPlain.power == pt end
+        lastPlain.power = p
+        return p == pt
+    end
+end
+
 local VOCAB = {
     { key = "inCombat", cat = "combat", text = "In combat",
         read = function() return inCombat end },
@@ -600,6 +612,14 @@ local VOCAB = {
         ev = FORM_EV, read = FormIs("travel") },
     { key = "formTree", cat = "form", class = "DRUID", text = "Tree of Life",
         ev = FORM_EV, read = FormIs("tree") },
+    { key = "powerMana", cat = "form", class = "DRUID", text = "Using mana",
+        ev = POWER_EV, read = PowerIs(0) },
+    { key = "powerRage", cat = "form", class = "DRUID", text = "Using rage",
+        ev = POWER_EV, read = PowerIs(1) },
+    { key = "powerEnergy", cat = "form", class = "DRUID", text = "Using energy",
+        ev = POWER_EV, read = PowerIs(3) },
+    { key = "powerAstral", cat = "form", class = "DRUID", text = "Using astral power", avail = Retail,
+        ev = POWER_EV, read = PowerIs(8) },
     { key = "stanceBattle", cat = "form", class = "WARRIOR", text = "Battle Stance",
         ev = FORM_EV, read = FormIs("battle") },
     { key = "stanceDefensive", cat = "form", class = "WARRIOR", text = "Defensive Stance",
@@ -982,7 +1002,7 @@ local UNIT_ARG = {
     UNIT_SPELLCAST_START = "player", UNIT_SPELLCAST_STOP = "player",
     UNIT_SPELLCAST_CHANNEL_START = "player", UNIT_SPELLCAST_CHANNEL_STOP = "player",
     UNIT_SPELLCAST_EMPOWER_START = "player", UNIT_SPELLCAST_EMPOWER_STOP = "player",
-    UNIT_PET = "player", UNIT_INVENTORY_CHANGED = "player",
+    UNIT_PET = "player", UNIT_INVENTORY_CHANGED = "player", UNIT_DISPLAYPOWER = "player",
     UNIT_HAPPINESS = "pet", UNIT_HEALTH = "pet", UNIT_TARGET = "pet", PLAYER_SPECIALIZATION_CHANGED = "player",
     UNIT_FACTION = "either",   -- the PvP flag (player) or hostility (target)
 }

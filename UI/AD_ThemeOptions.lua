@@ -1,4 +1,4 @@
--- Settings > Theme: the options window's palette and finish. Each
+-- Settings > Theme: the options window's palette, finish and scroll bar width. Each
 -- palette shows as a small sample drawn in its own colours. A pick is saved
 -- and lands on the next reload: a built window keeps the colours it was
 -- drawn with.
@@ -35,15 +35,22 @@ local function SavedFinish()
     return (v == "soft") and v or "flat"
 end
 
+local function SavedScroll()
+    local v = NS.Store.GetSetting("scrollWidth")
+    return AT.SCROLL_SIZES[v] and v or "normal"
+end
+
 -- At load, once the saved variables exist and before any window is built.
 function TH.ApplySaved()
     AT.UsePalette(SavedTheme())
     AT.UseFinish(SavedFinish())
+    AT.UseScrollWidth(SavedScroll())
 end
 
 -- A saved look this window is not drawn in yet.
 function TH.Pending()
     return SavedTheme() ~= AT.PALETTE or SavedFinish() ~= AT.FINISH
+        or AT.SCROLL_SIZES[SavedScroll()] ~= AT.ScrollW
 end
 
 -- The Reload button leaves a one-shot flag so the window comes back on
@@ -181,7 +188,7 @@ local function Sample(card, key)
 end
 
 -- The Theme section, first on the Settings page.
-function TH.Build(pg)
+function TH.Build(pg, owner)
     local cards = {}
     local function Paint()
         local saved = SavedTheme()
@@ -272,6 +279,16 @@ function TH.Build(pg)
             AT.LayoutPage(pg)
         end,
         nil, "Brightens the top of the window and shades its foot, for a little depth.")
+    AT.RowDropdown(pg, owner, "Scroll bar width",
+        function() return SavedScroll() end,
+        function(v)
+            NS.Store.SetSetting("scrollWidth", v ~= "normal" and v or nil)
+            AT.LayoutPage(pg)
+        end,
+        function()
+            return { { value = "thin", text = "Thin" }, { value = "normal", text = "Normal" },
+                { value = "wide", text = "Wide" } }
+        end)
     AT.RowButton(pg, "Reload now", function()
         local u = NS.Store.UI()
         if u then u.themeReopen = true end

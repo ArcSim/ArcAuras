@@ -1,4 +1,4 @@
--- AD_SpecialBar: the Special Aura deck bar (barKind "special"), a tracker's deck as a fill with a mark where each proc landed and two deck texts (retail only).
+-- AD_SpecialBar: the Arc Proc deck bar (barKind "special"), a tracker's deck as a fill with a mark where each proc landed and two deck texts (retail only).
 -- Plugs into the bars runtime through Bars.RegisterKind and Bars.Kit; attaches to NS.Special and borrows NS.SpecialIcon's templates, art and proc state at call time.
 -- Everything it draws is a plain number our own tracker hands over; nothing here reads the game.
 local ADDON, NS = ...
@@ -105,8 +105,8 @@ end
 -- What an empty template field says it shows.
 function SB.TemplateHint(rec, which)
     local tpl = SB.DefaultTemplate(SB.Def(rec), which)
-    if tpl == "" then return "the tracker's own" end
-    return "the tracker's own: " .. tpl
+    if tpl == "" then return "the Arc Proc's own" end
+    return "the Arc Proc's own: " .. tpl
 end
 
 function SB.Expand(rec, which, t, read)

@@ -37,7 +37,7 @@ end
 
 function RC.Folded(entry)
     if entry.kind ~= "resource" or K.R(entry.rec, "resource", "foldOn") ~= true then return false end
-    return NS.Schema.Foldable(entry.rec) == true
+    return NS.Schema.Foldable(entry.rec) == true and NS.Schema.FoldsPower(entry.powerType) == true
 end
 
 function RC.ChargedOn(entry)
@@ -472,7 +472,8 @@ function RC.Painted(entry)
         end
     end
     if entry.foldOn and entry.foldBar then
-        local fc = K.R(rec, "resource", "foldColor") or { 1, 0.5, 0, 1 }
+        -- a colour rule that holds wears the whole bar, the second lap too
+        local fc = entry.crColor or K.R(rec, "resource", "foldColor") or { 1, 0.5, 0, 1 }
         entry.foldBar:SetStatusBarColor(fc[1], fc[2], fc[3], fc[4] or 1)
     end
 end

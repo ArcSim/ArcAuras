@@ -293,7 +293,8 @@ function MR.Ensure(e)
     -- bar pushes them out of sight
     local clip = CreateFrame("Frame", nil, shell)
     clip:SetAllPoints(shell.fill)
-    clip:SetFrameLevel(shell.fill:GetFrameLevel() + 1)
+    -- over a colour rule's layers (Bars\AD_ResColors.lua)
+    clip:SetFrameLevel(shell.fill:GetFrameLevel() + Bars.LADDER.fillMarks)
     clip:SetClipsChildren(true)
     v.clip = clip
     v.ghost = CreateFrame("StatusBar", nil, clip)

@@ -214,10 +214,10 @@ function RP.CurveColor(pt, curve)
     return curve:Evaluate(math.max(0, math.min(1, p / 100)))
 end
 
-function RP.PercentText(pt)
+function RP.PercentText(pt, bare)
     local p = RP.PlainPercent(pt)
     if not p then return nil end
-    return string.format("%d%%", math.floor(p + 0.5))
+    return string.format(bare and "%d" or "%d%%", math.floor(p + 0.5))
 end
 
 -- Availability

@@ -94,6 +94,8 @@ IA.AURA_UNITS = { "player", "target", "focus", "pet", "party1", "party2", "party
 -- v1 secondary resource names -> retail power ids Arc Auras draws
 IA.POWERS = { comboPoints = 4, holyPower = 9, chi = 12, runes = 5, soulShards = 7, essence = 19,
     arcaneCharges = 16, stagger = 100 }
+-- an Automatic bar's excluded powers -> the conditions' "Using ..." rows
+IA.POWER_ROWS = { [0] = "powerMana", [1] = "powerRage", [3] = "powerEnergy", [8] = "powerAstral" }
 
 local function Copy(v)
     if type(v) ~= "table" then return v end
@@ -696,8 +698,8 @@ IA.BAR_MAP = {
     ["display.barPaddingT"] = { special = "padding" },
     ["display.barPaddingB"] = { special = "padding" },
     ["display.textColorThresholdEnabled"] = { special = "textThresh" },
-    ["display.textColorThresholdFill"] = { gap = "the text takes the bar's threshold colours (Color the text too)" },
-    ["display.textColorThresholdBaseColor"] = { gap = "the text takes the bar's threshold colours (Color the text too)" },
+    ["display.textColorThresholdFill"] = { special = "textThresh" },
+    ["display.textColorThresholdBaseColor"] = { special = "textThresh" },
     ["display.frameWidth"] = { gap = "the charge bar's outer frame follows its width" },
     ["display.frameHeight"] = { gap = "the charge bar's outer frame follows its height" },
     ["display.durationThreshold5Enabled"] = { gap = "three duration thresholds at most in Arc Auras; the fourth is dropped" },
@@ -714,15 +716,15 @@ IA.BAR_MAP = {
     ["display.nameTextStrata"] = { gap = "texts sit on the bar's own level", nv = true },
     ["display.stackTextStrata"] = { gap = "texts sit on the bar's own level", nv = true },
     ["display.tickTrackSegments"] = { gap = "ticks follow the tick mode" },
-    ["display.tickThicknessAnchor"] = { gap = "ticks are centred on their spot" },
+    ["display.tickThicknessAnchor"] = { "ticks", "tickThicknessAnchor" },
     ["display.fillTextureScale"] = { gap = "the fill texture is not scaled" },
     ["display.borderStyle"] = { gap = "one drawn border style" },
     ["display.durationShowWhenReady"] = { gap = "a duration bar hides its time when ready; Ready text is its own switch" },
     ["display.smartChargingColor"] = { gap = "a setting Arc UI itself retired", nv = true },
     ["display.activeCountColors"] = { gap = "a setting Arc UI itself retired", nv = true },
     ["display.enableActiveCountColors"] = { gap = "a setting Arc UI itself retired", nv = true },
-    ["display.foldedColor1"] = { gap = "the folded colour mode is not carried" },
-    ["display.foldedColor2"] = { gap = "the folded colour mode is not carried" },
+    ["display.foldedColor1"] = { special = "fold" },
+    ["display.foldedColor2"] = { special = "fold" },
     ["display.iconMultiPositions"] = { gap = "the multi-icon display mode is not carried; the bar is", nv = true },
     ["display.iconsPositions"] = { gap = "the icons display mode is not carried; the bar is", nv = true },
     ["display.iconsSpacing"] = { gap = "the icons display mode is not carried; the bar is" },
@@ -744,11 +746,12 @@ IA.BAR_SPECIALS = {
     chargeText = "text.stkAnchor / stkOffsetX / stkOffsetY (when the text anchor keys are unset)",
     font = "text.font (the stack text's font, else the duration's, else the name's)",
     durCurve = "thresholds.thresh2 at the curve's threshold with its low colour; fill.color = the high colour",
-    layers = "resource: powerthresholds.pth2..4 / pthEnabled / Count / Direction / Absolute; aura stack: stackcolors.sc2..4 / scEnabled / Count (+ scPosition per stack); charge: segments.fullColor",
+    layers = "resource: powerthresholds.pth2..5 / pthEnabled / Count / Direction / Absolute; aura stack: stackcolors.sc2..4 / scEnabled / Count (+ scPosition per stack); charge: segments.fullColor",
+    fold = "resource.foldOn + foldColor (the second lap), fill.color (the first)",
     maxColor = "stackcolors.maxColor / powerthresholds.pthFullColor / segments.fullColor (by bar kind)",
     pipColors = "stackcolors.sc2..4 + scPosition (each pip its own colour)",
     padding = "fill.fillInset (the largest side)", costTicks = "ticks.tickSpells + ticksShow", predict = "predict.predictEnabled",
-    textThresh = "powerthresholds.pthText",
+    textThresh = "ptextcolors.ptx2..5 / ptxEnabled / Count / Direction / BaseColor (the texts' own bands)",
 }
 
 -- A cast bar record (v1's flat castbar table) -> the cast bar schema.
@@ -1100,7 +1103,7 @@ IA.ICON_SPECIALS = {
     durationOverride = "driver.overlay (enabled + an aura spell id); the manual and totem modes are dropped",
     labels = "label.labelText / Size / Color / Anchor / X / Y / ShowReady / ShowCooldown / ActiveOnly / MissingOnly 1..3 + labelFont",
     glowTime = "auraActive.activeGlowWhen = time + activeGlowTimeUnit / TimePct / TimeSec",
-    glowCharges = "states.waitForNoCharges = true (the icon stays ready, glow and all, while a charge remains)",
+    glowCharges = "states.waitForNoCharges = true, folded at the end into Recharging's own look and glow (Store.KeepRechargeLook)",
     keepBrightAura = "auraMissing.missingDesaturate = false",
     readyDesat = "states.readyDesaturate = true (on with the ready state's own grey out)",
 }
@@ -1636,6 +1639,13 @@ function IA.MapBarLook(B, cfg, map, ctx)
     if type(d.barOrientation) == "string" then Put(o, "fill", "orientation", (d.barOrientation:lower() == "vertical") and "VERTICAL" or "HORIZONTAL") end
     if d.tickMode == "all" or d.tickMode == "percent" or d.tickMode == "custom" then Put(o, "ticks", "tickMode", d.tickMode) end
     if d.thresholdMode == "fragmented" or d.thresholdMode == "icons" then Put(o, "resource", "style", "pips") end
+    -- folded in half: the first lap's colour is the fill's, the second its own
+    if kind == "resource" and d.thresholdMode == "folded" then
+        Put(o, "resource", "foldOn", true)
+        local c1, c2 = Color(d.foldedColor1), Color(d.foldedColor2)
+        if c1 then Put(o, "fill", "color", c1) end
+        if c2 then Put(o, "resource", "foldColor", c2) end
+    end
     local pos = type(d.barPosition) == "table" and d.barPosition or {}
     B.pos = { x = tonumber(pos.x) or 0, y = tonumber(pos.y) or 0 }
     if d.anchorToGroup == true and type(d.anchorGroupName) == "string" and d.anchorGroupName ~= "" then
@@ -1724,16 +1734,30 @@ function IA.MapBarLook(B, cfg, map, ctx)
             Put(o, "stackcolors", "maxColorEnabled", true) Put(o, "stackcolors", "maxColor", maxc)
         end
     end
-    -- cost ticks and the cast cost forecast
-    local ids = {}
+    -- cost ticks and the cast cost forecast: a v1 tick naming a spell follows
+    -- its cost; one holding a typed number (the custom mode's list) is a
+    -- custom tick in power units
+    local ids, costs = {}, {}
     for _, t in pairs(type(cfg.abilityThresholds) == "table" and cfg.abilityThresholds or {}) do
+        local on = not (type(t) == "table" and t.enabled == false)
         local sid = type(t) == "table" and tonumber(t.spellID) or tonumber(t)
-        if sid and sid > 0 and not (type(t) == "table" and t.enabled == false) then ids[#ids + 1] = sid end
+        local cost = type(t) == "table" and tonumber(t.cost)
+        if on and sid and sid > 0 then
+            ids[#ids + 1] = sid
+        elseif on and cost and cost > 0 then
+            costs[#costs + 1] = cost
+        end
     end
     if #ids > 0 then
         table.sort(ids)
         Put(o, "ticks", "tickSpells", table.concat(ids, ","))
         Put(o, "ticks", "ticksShow", true)
+    end
+    if kind == "resource" and #costs > 0 and d.tickMode == "custom" then
+        table.sort(costs)
+        for i, v in ipairs(costs) do costs[i] = (v == math.floor(v)) and tostring(math.floor(v)) or tostring(v) end
+        Put(o, "ticks", "tickValues", table.concat(costs, ","))
+        Put(o, "ticks", "tickAsPercent", false)
     end
     local pr = type(cfg.prediction) == "table" and cfg.prediction.spells
     if type(pr) == "table" then
@@ -1741,7 +1765,27 @@ function IA.MapBarLook(B, cfg, map, ctx)
             if type(s) == "table" and s.enabled ~= false then Put(o, "predict", "predictEnabled", true) break end
         end
     end
-    if kind == "resource" and d.textColorThresholdEnabled == true then Put(o, "powerthresholds", "pthText", true) end
+    -- the texts' own bands (v1's text colour thresholds, in percent)
+    if kind == "resource" and d.textColorThresholdEnabled == true then
+        local n = 0
+        for i = 1, 4 do
+            local key = "textColorThresholdT" .. i
+            local v = tonumber(d[key .. "Value"])
+            if d[key .. "Enabled"] == true and v then
+                n = n + 1
+                Put(o, "ptextcolors", "ptx" .. (n + 1) .. "Value", math.floor(v + 0.5))
+                local col = Color(d[key .. "Color"])
+                if col then Put(o, "ptextcolors", "ptx" .. (n + 1) .. "Color", col) end
+            end
+        end
+        if n > 0 then
+            Put(o, "ptextcolors", "ptxEnabled", true)
+            Put(o, "ptextcolors", "ptxCount", n)
+            Put(o, "ptextcolors", "ptxDirection", (d.textColorThresholdFill == true) and "above" or "below")
+            local bc = Color(d.textColorThresholdBaseColor)
+            if bc then Put(o, "ptextcolors", "ptxBaseColor", bc) end
+        end
+    end
     local bh = type(cfg.behavior) == "table" and cfg.behavior or {}
     local vis = bh.hideWhen
     if bh.hideOutOfCombat == true then
@@ -1767,7 +1811,7 @@ function IA.MapLayers(o, cfg, d, kind, isStack)
         local unitsMax = tonumber(cfg.tracking and cfg.tracking.maxValue) or tonumber(layers[1] and layers[1].maxValue) or 100
         local base = type(layers[1]) == "table" and layers[1].enabled ~= false and Color(layers[1].color)
         if base and d.barColor == nil then Put(o, "fill", "color", base) end
-        for i = 2, 4 do
+        for i = 2, 5 do
             local t = layers[i]
             if type(t) == "table" and t.enabled == true and tonumber(t.minValue) then
                 n = n + 1
@@ -1778,7 +1822,7 @@ function IA.MapLayers(o, cfg, d, kind, isStack)
         end
         if n > 0 then
             Put(o, "powerthresholds", "pthEnabled", true)
-            Put(o, "powerthresholds", "pthCount", math.min(3, n))
+            Put(o, "powerthresholds", "pthCount", math.min(4, n))
             Put(o, "powerthresholds", "pthDirection", "above")
             Put(o, "powerthresholds", "pthAbsolute", unitsMax ~= 100)
         end
@@ -1937,6 +1981,17 @@ function IA.PlanBars(ctx, charDB, L)
                     driver = { powerType = power }, o = {}, c = {} }
                 IA.MapBarLook(B, cfg, IA.BAR_MAP, ctx)
                 IA.Cover(cov, cfg, IA.BAR_MAP, route, nil, "bar")
+                -- v1 hid an Automatic bar on the powers it excluded: the
+                -- "Using ..." condition rows fade it out instead
+                if power == -1 and type(tr.autoPowerExclude) == "table" then
+                    for pt, on in pairs(tr.autoPowerExclude) do
+                        local key = on == true and IA.POWER_ROWS[tonumber(pt)]
+                        if key then
+                            B.c.fadeWhen = B.c.fadeWhen or {}
+                            B.c.fadeWhen[key] = true
+                        end
+                    end
+                end
                 L.bars[#L.bars + 1] = B
                 counts.bars.resource = (counts.bars.resource or 0) + 1
             else

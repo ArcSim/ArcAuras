@@ -249,7 +249,8 @@ local function KindTexture(rec)
         local E = NS.DriverEnchant
         local e = E and E.Read(rec)
         if e and e.icon then return e.icon end
-        return GetInventoryItemTexture("player", E and E.InvSlot(rec) or 16) or QUESTION_MARK
+        return GetInventoryItemTexture("player", E and E.InvSlot(rec) or 16)
+            or (E and E.SlotArt(rec)) or QUESTION_MARK
     elseif kind == "special" then
         -- the tracker's own art (Core\AD_SpecialIcon.lua; nil without the hub)
         return NS.SpecialIcon and NS.SpecialIcon.Texture(rec) or QUESTION_MARK
@@ -730,6 +731,9 @@ function Factory.Release(id)
         -- pinned texts come home, their carriers hidden with the icon
         if NS.TextAnchor then NS.TextAnchor.Release(f) end
         f._adPureGCD = nil   -- pooled frames must not carry GCD presentation
+        f._adNoWeapon = nil
+        Factory.SetTimed(f, nil)
+        f._adTimedDur = nil
         f._adPureWand = nil
         f._adRecharging = nil
         f._adTipsOn = nil
@@ -743,16 +747,48 @@ end
 -- frame's alpha belongs to ApplyFrameAlpha and child alpha multiplies (texts
 -- could never stay bright), nor f.cooldown:SetAlpha, whose frame holds the
 -- countdown fontstring. The swipe and edge dim by their colour instead.
+-- On cooldown's opacity with N seconds left (states.cooldownAlphaTimed): the
+-- cooldown's duration object maps its time left through a step curve, so the
+-- answer (secret in combat) only ever reaches the setters. One curve per
+-- seconds / late / before triple.
+local stepCurves = {}
+local function StepCurve(sec, late, before)
+    local key = sec .. "/" .. late .. "/" .. before
+    local c = stepCurves[key]
+    if c == nil then
+        c = C_CurveUtil.CreateCurve()
+        if c.SetType and Enum and Enum.LuaCurveType then c:SetType(Enum.LuaCurveType.Linear) end
+        c:AddPoint(0, late)
+        c:AddPoint(sec, late)
+        c:AddPoint(sec + 0.001, before)
+        c:AddPoint(1e6, before)
+        stepCurves[key] = c
+    end
+    return c
+end
+
+-- The value for now: late with sec or less left, else before (plain when they match).
+local function TimedValue(f, late, before)
+    local T, dur = f._adTimed, f._adTimedDur
+    if late == before or not (T and dur) then return late end
+    return dur:EvaluateRemainingDuration(StepCurve(T.sec, late, before))
+end
+
 local function ApplySwipeAlpha(f)
     -- The shown alpha (with the editing floor), not the raw state value.
     local a = f._adShownAlpha or f._adStateAlpha or 1
+    local T = f._adTimed
+    local function A(own)
+        if T then return TimedValue(f, own * T.late, own * T.before) end
+        return own * a
+    end
     local sc = f._adSwipeColor
     -- a GCD or wand spin draws in its own colour
     if f._adPureGCD then sc = (f._adPureWand and f._adWandSwipeColor or f._adGcdSwipeColor) or sc end
-    if sc then f.cooldown:SetSwipeColor(sc[1], sc[2], sc[3], (sc[4] or 0.8) * a) end
+    if sc then f.cooldown:SetSwipeColor(sc[1], sc[2], sc[3], A(sc[4] or 0.8)) end
     local ec = f._adEdgeColor
     if ec and f.cooldown.SetEdgeColor then
-        f.cooldown:SetEdgeColor(ec[1], ec[2], ec[3], (ec[4] or 1) * a)
+        f.cooldown:SetEdgeColor(ec[1], ec[2], ec[3], A(ec[4] or 1))
     end
 end
 Factory.ApplySwipeAlpha = ApplySwipeAlpha
@@ -810,6 +846,76 @@ local function ApplyStateAlpha(f, a, preserveText)
         if cfs then PaintText(cfs, ta) end
     end
 end
+
+-- A text's colour with the timed dim, as PaintText does with a plain one.
+local function TimedText(f, fs, T)
+    local c = fs._adTextRGBA
+    if c then
+        local k = c[4] or 1
+        fs:SetTextColor(c[1], c[2], c[3], TimedValue(f, k * T.tLate, k * T.tBefore))
+    else
+        fs:SetAlpha(TimedValue(f, T.tLate, T.tBefore))
+    end
+end
+
+-- The timed look on everything ApplyStateAlpha dims; the tint SetState
+-- picked rides the art's alpha.
+local function TimedPaint(f)
+    local T = f._adTimed
+    if not (T and f._adTimedDur) then return end
+    local a = TimedValue(f, T.late, T.before)
+    local tc = T.tint or { 1, 1, 1 }
+    f.icon:SetVertexColor(tc[1], tc[2], tc[3], a)
+    if f._adShadow then f._adShadow:SetAlpha(a) end
+    if f._adBorderHost then f._adBorderHost:SetAlpha(a) end
+    if f._adMissGlow then f._adMissGlow:SetAlpha(a) end
+    ApplySwipeAlpha(f)
+    local ta = TimedValue(f, T.tLate, T.tBefore)
+    if f.textHost then f.textHost:SetAlpha(ta) end
+    if f._adMissClip then f._adMissClip:SetAlpha(ta) end
+    if f._adLowText then f._adLowText:SetAlpha(ta) end
+    if f.stackText then TimedText(f, f.stackText, T) end
+    if f.cooldown.GetCountdownFontString then
+        local cfs = f.cooldown:GetCountdownFontString()
+        if cfs then TimedText(f, cfs, T) end
+    end
+end
+Factory.TimedPaint = TimedPaint
+
+-- The curve answers for one moment, so a frame on a timed look is repainted
+-- while it is on (20 a second); the driver's next state write ends it. A
+-- preview frame out of sight drops out, as no state write may follow.
+local timedOn, timedAcc = {}, 0
+local timedTick = CreateFrame("Frame")
+local function TimedOnUpdate(_, el)
+    timedAcc = timedAcc + el
+    if timedAcc < 0.05 then return end
+    timedAcc = 0
+    for f in pairs(timedOn) do
+        if f._adRecId == nil and not f:IsVisible() then
+            timedOn[f] = nil
+            f._adTimed = nil
+        else
+            TimedPaint(f)
+        end
+    end
+    if next(timedOn) == nil then timedTick:SetScript("OnUpdate", nil) end
+end
+
+local function SetTimed(f, T)
+    f._adTimed = T
+    if T then
+        timedOn[f] = true
+        if not timedTick:GetScript("OnUpdate") then
+            timedAcc = 0
+            timedTick:SetScript("OnUpdate", TimedOnUpdate)
+        end
+    elseif timedOn[f] then
+        timedOn[f] = nil
+        if next(timedOn) == nil then timedTick:SetScript("OnUpdate", nil) end
+    end
+end
+Factory.SetTimed = SetTimed
 
 -- Border geometry: four strips on `edges` around `anchor`, shared by the
 -- holder and the live aura button so an aura icon's two borders match. They
@@ -894,14 +1000,14 @@ end
 local function ApplyAuraButtonDispel(b, rec, on, alpha)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
     local styles = Enum and Enum.CustomAuraButtonDispelTypeTextureStyle
-    -- 12.1.0 removes these by index, so once added they could never come off
+    -- they come off through NS.RemoveDispelTexture: 12.1.0 removes by index
     local canEngine = not NS.OldAuraEngine and b.AddDispelTypeTexture ~= nil and b.RemoveDispelTypeTexture ~= nil
         and styles ~= nil and styles.PreserveAsset ~= nil
     local edges = b._adDispelEdges
     if not (on and canEngine) then
         if edges and b._adDispelSig then
             for _, k in ipairs(BORDER_KEYS) do
-                b:RemoveDispelTypeTexture(edges[k])
+                NS.RemoveDispelTexture(b, edges[k])
                 edges[k]:Hide()
             end
             b._adDispelSig = nil
@@ -933,7 +1039,7 @@ local function ApplyAuraButtonDispel(b, rec, on, alpha)
         ("|" .. c[1] .. "," .. c[2] .. "," .. c[3] .. "," .. (c[4] or 1)) or "|none")
     if b._adDispelSig ~= sig then
         if b._adDispelSig then
-            for _, k in ipairs(BORDER_KEYS) do b:RemoveDispelTypeTexture(edges[k]) end
+            for _, k in ipairs(BORDER_KEYS) do NS.RemoveDispelTexture(b, edges[k]) end
         end
         local opts = {
             showWhenHarmful = harmful,
@@ -1648,7 +1754,7 @@ local function StackOwnLevel(b)
     if type(b._adLevel) == "number" then return end
     local base = ButtonBase(b)
     if not base then return end
-    local S = Factory.BUTTON_STACK
+    local S = Factory.ButtonStack(b)
     if b._adSwipe then b._adSwipe:SetFrameLevel(base + S.swipe) end
     if b._adEdgeHost then b._adEdgeHost:SetFrameLevel(base + S.edge) end
     if b.TextOverlay then b.TextOverlay:SetFrameLevel(base + S.text) end
@@ -1698,10 +1804,132 @@ function Factory.AuraActiveAlpha(rec)
     return EditFloor(aA)
 end
 
+-- the gate mask on `frame`, anchored to the gate bar's fill
+local function GateMask(frame, fill)
+    local m = frame._adGateMask
+    if not m then
+        m = frame:CreateMaskTexture()
+        -- NEAREST + CLAMPTOBLACKADDITIVE: clear outside the fill, no soft edge.
+        m:SetTexture(WHITE, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE", "NEAREST")
+        frame._adGateMask = m
+    end
+    m:ClearAllPoints()
+    m:SetAllPoints(fill)
+    return m
+end
+
+local function SetGated(tex, mask)
+    if tex._adGate == mask then return end
+    if tex._adGate then tex:RemoveMaskTexture(tex._adGate) end
+    if mask then tex:AddMaskTexture(mask) end
+    tex._adGate = mask
+end
+
+-- Before that: an aura icon's opacity while the aura is up until Active's
+-- starts (auraActive.activeTimeBefore), 0 off the time gate.
+function Factory.TimeGateBefore(rec)
+    if Factory.TimeGateFrac(rec) == nil then return 0 end
+    local v = Store.Resolve(rec, "auraActive", "activeTimeBefore") or 0
+    if v < 0 then v = 0 elseif v > 1 then v = 1 end
+    return v
+end
+
+-- A Before that above 0 puts the gate under the swipe and texts, which then
+-- show the whole time the aura is up, and a copy of the art, border and
+-- shadow over the gate at that opacity, cut to the gate's fill.
+Factory.BUTTON_STACK_LOW = { edge = 2, gate = 3, copy = 4, swipe = 5, text = GLOW_LEVEL + 2 }
+
+function Factory.ButtonStack(b)
+    return (b and b._adLowStack) and Factory.BUTTON_STACK_LOW or Factory.BUTTON_STACK
+end
+
+-- The button's stack from its own plain level, every piece it has.
+local function LayStack(b)
+    local base = ButtonBase(b)
+    if not base then return end
+    local S = Factory.ButtonStack(b)
+    if b._adSwipe then b._adSwipe:SetFrameLevel(base + S.swipe) end
+    if b._adEdgeHost then b._adEdgeHost:SetFrameLevel(base + S.edge) end
+    if b.TextOverlay then b.TextOverlay:SetFrameLevel(base + S.text) end
+    if b._adTimeGate then b._adTimeGate:SetFrameLevel(base + S.gate) end
+    if b._adBeforeCopy then b._adBeforeCopy:SetFrameLevel(base + Factory.BUTTON_STACK_LOW.copy) end
+end
+
+-- The Before that copy: the art (the Active override or the aura's own, the
+-- holder's stand-in), its border and shadow at `alpha`, shown only while the
+-- gate's fill spans it. Accessible passes only, like the button.
+local function ApplyBeforeCopy(b, rec, on, alpha, w, h, padPx)
+    local c = b._adBeforeCopy
+    local gb = b._adTimeGate
+    if not (on and gb) then
+        if c then c:Hide() end
+        return
+    end
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    if not c then
+        c = CreateFrame("Frame", nil, b)
+        c:SetAllPoints(b)
+        c:EnableMouse(false)
+        c._adArt = c:CreateTexture(nil, "ARTWORK")
+        c._adEdges = {}
+        for _, k in ipairs(BORDER_KEYS) do
+            local t = c:CreateTexture(nil, "OVERLAY", nil, 6)
+            t:SetColorTexture(1, 1, 1, 1)
+            c._adEdges[k] = t
+        end
+        b._adBeforeCopy = c
+    end
+    local base = ButtonBase(b)
+    if base then c:SetFrameLevel(base + Factory.BUTTON_STACK_LOW.copy) end
+    local art = c._adArt
+    art:SetTexture(Factory.AuraLiveTexture(rec))
+    art:SetTexCoord(IconTexCoords(rec))
+    art:ClearAllPoints()
+    if padPx > 0 then
+        art:SetPoint("TOPLEFT", b, "TOPLEFT", padPx, -padPx)
+        art:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -padPx, padPx)
+    else
+        art:SetAllPoints(b)
+    end
+    art:SetDesaturated(R("auraActive", "activeDesaturate") == true)
+    local tint = R("auraActive", "activeTintEnabled") == true and (R("auraActive", "activeTintColor") or { 1, 1, 1, 1 })
+        or { 1, 1, 1, 1 }
+    art:SetVertexColor(tint[1], tint[2], tint[3], alpha)
+    if R("appearance", "borderEnabled") then
+        PaintBorderEdges(c._adEdges, b, rec, alpha)
+    else
+        for _, t in pairs(c._adEdges) do t:Hide() end
+    end
+    ApplyShadow(c, "_adShadow", art, rec, w, h, alpha, R("appearance", "shadowEnabled") == true)
+    local m = GateMask(c, gb:GetStatusBarTexture())
+    SetGated(art, m)
+    for _, t in pairs(c._adEdges) do SetGated(t, m) end
+    if c._adShadow then SetGated(c._adShadow, m) end
+    c:Show()
+end
+
+-- The editor's stand-in before Active starts (its Aura loop): the art, border
+-- and shadow at Before that's opacity, with the editing floor; the next
+-- restyle puts the Active look back.
+function Factory.PaintBeforeLook(b, rec)
+    if not (b and rec) then return end
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    local a = EditFloor(Factory.TimeGateBefore(rec))
+    local ic = (b._adIconOv and b._adIconOv:IsShown()) and b._adIconOv or b._adIcon
+    if ic then
+        local c = R("auraActive", "activeTintEnabled") == true and (R("auraActive", "activeTintColor") or { 1, 1, 1, 1 })
+            or { 1, 1, 1, 1 }
+        ic:SetVertexColor(c[1], c[2], c[3], a)
+    end
+    if b._adBtnEdges and R("appearance", "borderEnabled") then PaintBorderEdges(b._adBtnEdges, b, rec, a) end
+    if b._adShadow then b._adShadow:SetAlpha(a) end
+end
+
 -- Show only when little time is left: a hidden bar the engine fills with the
 -- time left, over the live look. frac = the share it shows under (nil = off);
 -- w, h = the button; reach = how far its texts go. A button binds one
 -- duration bar (b._adBarOn), so glow 1 leaves it meanwhile (DriverAura).
+-- True while the gate is on.
 local function ApplyShowGate(b, frac, w, h, reach)
     local gb = b._adTimeGate
     local E = NS.LayoutEngine
@@ -1711,7 +1939,7 @@ local function ApplyShowGate(b, frac, w, h, reach)
         and not (E ~= nil and E.IsEditMode ~= nil and E.IsEditMode() == true)
     if not on then
         if gb then gb:Hide() end
-        return
+        return false
     end
     if not gb then
         gb = CreateFrame("StatusBar", nil, b)
@@ -1739,8 +1967,9 @@ local function ApplyShowGate(b, frac, w, h, reach)
     gb:SetSize(L, gh)
     gb:SetPoint("LEFT", b, "CENTER", math.min(-gw / 2, gw / 2 - frac * L), 0)
     local base = ButtonBase(b)
-    if base then gb:SetFrameLevel(base + Factory.BUTTON_STACK.gate) end
+    if base then gb:SetFrameLevel(base + Factory.ButtonStack(b).gate) end
     gb:Show()
+    return true
 end
 
 -- The live engine button shows exactly while the aura is up: no presence read, nothing read off it.
@@ -1766,6 +1995,13 @@ function Factory.StyleAuraButton(b, rec, px, opts)
     local textA = (forceHide or (aA > 0 and keep)) and 1 or aA
     -- Active alpha goes on the pieces, so the button stays at 1.
     b:SetAlpha(1)
+    -- a Before that above 0 lays the low stack (the gate under the swipe and texts)
+    local before = Factory.TimeGateBefore(rec)
+    local low = timed ~= nil and before > 0 and not forceHide
+    if (b._adLowStack or false) ~= low then
+        b._adLowStack = low
+        LayStack(b)
+    end
     StackOwnLevel(b)
     local padPx = (R("appearance", "padding") or 0) * kS
     -- Art override: the engine only ever calls SetTexture on b._adIcon, so an
@@ -1955,12 +2191,15 @@ function Factory.StyleAuraButton(b, rec, px, opts)
             and R("auraActive", "activeGlow" .. k) == true and not Elsewhere(k),
             opts.w or px, opts.h or px, aA, k)
     end
-    -- Show only when little time is left (opts.erase)
+    -- Show only when little time is left (opts.erase), at Before that's
+    -- opacity until then
+    local gated = false
     if timed and opts.erase == true then
-        ApplyShowGate(b, timed, opts.w or px, opts.h or px, Factory.LiveTextReach(rec, kS))
+        gated = ApplyShowGate(b, timed, opts.w or px, opts.h or px, Factory.LiveTextReach(rec, kS))
     else
         ApplyShowGate(b, nil)
     end
+    ApplyBeforeCopy(b, rec, gated and low, before, opts.w or px, opts.h or px, padPx)
 end
 
 -- Aura button glow: drawn on the live engine button, so it shows exactly while
@@ -2478,27 +2717,6 @@ local function GlowTextures(host)
     return out
 end
 
--- the gate mask on `frame`, anchored to the gate bar's fill
-local function GateMask(frame, fill)
-    local m = frame._adGateMask
-    if not m then
-        m = frame:CreateMaskTexture()
-        -- NEAREST + CLAMPTOBLACKADDITIVE: clear outside the fill, no soft edge.
-        m:SetTexture(WHITE, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE", "NEAREST")
-        frame._adGateMask = m
-    end
-    m:ClearAllPoints()
-    m:SetAllPoints(fill)
-    return m
-end
-
-local function SetGated(tex, mask)
-    if tex._adGate == mask then return end
-    if tex._adGate then tex:RemoveMaskTexture(tex._adGate) end
-    if mask then tex:AddMaskTexture(mask) end
-    tex._adGate = mask
-end
-
 -- The time-left gate: frac = the fraction of time left the glow shows under
 -- (nil = no gate); W, H = the glow rect, centred on b and moved by mx, my.
 local function ApplyTimeGate(b, host, frac, W, H, mx, my)
@@ -2885,14 +3103,13 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     if keepBright then
         f._adStateAlpha = 1
     else
-        if onCooldown then
+        if recharging then
+            -- a look of its own, neither Ready's nor Depleted's
+            f._adStateAlpha = R("states", "rechargeAlpha") or 1
+        elseif onCooldown then
             f._adStateAlpha = R("states", "cooldownAlpha") or 1
         else
             f._adStateAlpha = R("states", "readyAlpha") or 1
-        end
-        -- its own alpha, switched on, over the look Wait for no charges picks
-        if recharging and R("states", "rechargeAlphaEnabled") == true then
-            f._adStateAlpha = R("states", "rechargeAlpha") or 1
         end
         -- Usability dim: an unusable, no-resource or out-of-range castable
         -- spell takes the lower of the two alphas (out of range at full by default).
@@ -2905,13 +3122,15 @@ function Factory.SetState(f, rec, onCooldown, desatState)
             f._adStateAlpha = math.min(f._adStateAlpha, R("states", "rangeAlpha") or 1)
         end
     end
-    -- Toggled on (Shoot, Auto Shot, Attack: Drivers\AD_DriverToggle.lua) has its own alpha.
+    -- Toggled on (Shoot, Auto Shot, Attack, pet autocast: Drivers\AD_DriverToggle.lua) has its own alpha.
     if f._adToggled and not keepBright and R("states", "toggleAlphaEnabled") == true then
         f._adStateAlpha = R("states", "toggleAlpha") or 1
     end
     -- A group buff in combat: nobody's buffs can be read, so its count and
     -- icon step aside (its driver's layers show instead, when switched on).
     if rec.kind == "groupbuff" and f._adGBHidden then f._adStateAlpha = 0 end
+    -- A weapon enchant whose hand holds no weapon: its No weapon state.
+    if rec.kind == "enchant" and f._adNoWeapon then f._adStateAlpha = R("states", "noWeaponAlpha") or 0 end
     -- procOverride: a lit proc forces full opacity, over the usability dim too.
     if f._adProcLit and R("states", "procOverride") == true then
         f._adStateAlpha = 1
@@ -2923,6 +3142,27 @@ function Factory.SetState(f, rec, onCooldown, desatState)
             and (R("states", "rangeAlpha") or 1) >= 1)) then
         f._adStateAlpha = 1
     end
+    -- On cooldown's opacity waiting for the last seconds: only On cooldown's
+    -- own value (no toggle or proc took over), and only with the cooldown's
+    -- duration object (the driver's, or the preview's fake one). The plain
+    -- value is the brighter of the two, for packing and the glows.
+    local T
+    local cdA = R("states", "cooldownAlpha") or 1
+    if rec.kind == "spell" and onCooldown and not recharging and not keepBright
+        and f._adTimedDur ~= nil
+        and not (f._adToggled and R("states", "toggleAlphaEnabled") == true)
+        and not (f._adProcLit and R("states", "procOverride") == true)
+        and R("states", "cooldownAlphaTimed") == true
+        and C_CurveUtil ~= nil and C_CurveUtil.CreateCurve ~= nil then
+        local before = R("states", "cooldownAlphaBefore") or 0
+        if before < 0 then before = 0 elseif before > 1 then before = 1 end
+        local keepText = R("states", "preserveDurationText") ~= false
+        local late, early = EditFloor(cdA), EditFloor(before)
+        T = { sec = R("states", "cooldownAlphaSec") or 3, late = late, before = early,
+            tLate = (late > 0 and keepText) and 1 or late, tBefore = (early > 0 and keepText) and 1 or early }
+        f._adStateAlpha = math.max(cdA, before)
+    end
+    SetTimed(f, T)
     -- preserveDurationText (on by default) keeps the texts out of the dim.
     ApplyStateAlpha(f, f._adStateAlpha,
         R("states", "preserveDurationText") ~= false)
@@ -2930,7 +3170,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     f.icon:SetDesaturated(desatOK and f._adDesatState
         and R("states", "cooldownDesaturate") == true or false)
     -- The ready look (a Custom Icon's Active) has its own grey out; a
-    -- recharging spell wears it only when it copies Ready.
+    -- recharging spell has its own, below.
     if desatOK and not onCooldown and R("states", "readyDesaturate") == true then
         f.icon:SetDesaturated(true)
     end
@@ -2968,8 +3208,11 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         tc = R("states", "unusableTintColor") or { 0.45, 0.45, 0.45, 1 }
     elseif castable and f._adToggled and R("states", "toggleTintEnabled") == true then
         tc = R("states", "toggleTintColor") or { 1, 0.35, 0.35, 1 }
-    elseif recharging and R("states", "rechargeTintEnabled") == true then
-        tc = R("states", "rechargeTintColor") or { 1, 0.85, 0.4, 1 }
+    elseif recharging then
+        -- its own tint or none: never Ready's or Depleted's
+        if R("states", "rechargeTintEnabled") == true then
+            tc = R("states", "rechargeTintColor") or { 1, 0.85, 0.4, 1 }
+        end
     elseif not onCooldown then
         if R("states", "readyTintEnabled") == true then tc = R("states", "readyTintColor") end
     elseif R("states", "cooldownTintEnabled") == true then
@@ -2982,6 +3225,10 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         f.icon:SetVertexColor(tc[1], tc[2], tc[3], va)
     else
         f.icon:SetVertexColor(1, 1, 1, va)
+    end
+    if T then
+        T.tint = tc
+        TimedPaint(f)
     end
     -- Hide-when-missing is frame alpha. Out of stock forces desat and alpha
     -- (the driver keeps the last known state while reads are secret).
@@ -3490,7 +3737,7 @@ end
 
 -- The recharging glow, key "adrc": lit while a charge spell has a charge left
 -- and another on its way (the driver's f._adRecharging). The options preview
--- shows it while it is the lane on.
+-- sets the flag in its Recharging moments and shows it while it is the lane on.
 function Factory.StopRechargeGlow(f)
     if not f._adRechargeOn then return end
     StopLane(f, "adrc")
@@ -3503,7 +3750,7 @@ function Factory.UpdateRechargeGlow(f, rec)
     local preview = f._adGlowLaneOnly == "recharge"
     local want = rec.kind == "spell"
         and R("states", "rechargeGlow") == true
-        and (preview or f._adRecharging == true)
+        and f._adRecharging == true
         and R("appearance", "forceHideIcon") ~= true
         and LaneAllowed(f, "recharge") and not Factory.GlowHidden(f)
     if want and not preview and R("states", "rechargeGlowCombatOnly") == true
@@ -3608,7 +3855,8 @@ function Factory.UpdateCooldownGlow(f, rec)
     local LCG = GetLCG()
     if not LCG then return end
     local R = function(s, k) return Store.Resolve(rec, s, k) end
-    local want = f._adOnCooldown == true and rec.kind ~= "aura"
+    -- Depleted's glow: a recharging charge spell has a glow of its own
+    local want = f._adOnCooldown == true and f._adRecharging ~= true and rec.kind ~= "aura"
         and R("states", "cooldownGlow") == true
         and R("appearance", "forceHideIcon") ~= true
         and LaneAllowed(f, "cooldown") and not Factory.GlowHidden(f)

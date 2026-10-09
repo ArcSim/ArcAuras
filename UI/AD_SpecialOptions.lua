@@ -1,4 +1,4 @@
--- AD_SpecialOptions: the Special Aura rows: the Add window's Special tab, a special icon's Tracking and Text blocks, a deck bar's Tracking rows and blocks, and the set-pieces rule on every item's Load Conditions tab (retail only).
+-- AD_SpecialOptions: the Arc Procs rows (internally "special"): the Add window's Arc Procs tab, a special icon's Tracking and Text blocks, a deck bar's Tracking rows and blocks, and the set-pieces rule on every item's Load Conditions tab (retail only).
 -- AD_Options calls in behind nil checks (Options.SpecialAddTab / SpecialAddRows / SpecialCanCreate / SpecialMakesBar / SpecialCreate / SpecialWhat / SpecialBarWhat / SpecialIconRows / SpecialTextBlocks / SpecialBarRows / SpecialBarBlocks / SetPiecesRows); every write goes through NS.SpecialIcon, NS.Store and NS.Conditions.
 local ADDON, NS = ...
 local Options = NS.Options
@@ -48,13 +48,13 @@ function SO.WhoWords(def)
 end
 
 function Options.SpecialAddTab(tabs)
-    if SO.On() then tabs[#tabs + 1] = "Special" end
+    if SO.On() then tabs[#tabs + 1] = "Arc Procs" end
 end
 
--- The Special rows show on their own tab, and under the Icon and Bar tabs'
--- "Special Aura" kinds.
+-- The Arc Procs rows show on their own tab, and under the Icon and Bar tabs'
+-- "Arc Proc" kinds.
 function SO.Showing(addState)
-    return addState.cat == "Special" or (addState.cat == "Icon" and addState.iconKind == "special")
+    return addState.cat == "Arc Procs" or (addState.cat == "Icon" and addState.iconKind == "special")
         or (addState.cat == "Bar" and addState.barKind == "special")
 end
 
@@ -62,7 +62,7 @@ end
 -- not added into a group (a bar is always free).
 function SO.BarMode(addState)
     if addState.cat == "Bar" then return addState.barKind == "special" end
-    if addState.cat ~= "Special" then return false end
+    if addState.cat ~= "Arc Procs" then return false end
     return addState.specialAs == "bar" and not addState.groupOnly
 end
 
@@ -87,9 +87,9 @@ function Options.SpecialAddRows(pg, owner, addState)
     local SP, SI = NS.Special, NS.SpecialIcon
     if not (SP and SI) then return end
     local vis = function() return SO.On() and SO.Showing(addState) and not addState.remGroupId end
-    AT.RowDesc(pg, "Pick a tracker, then Create: it lands in the group under Add to, or free.", 20,
+    AT.RowDesc(pg, "Pick an Arc Proc, then Create: it lands in the group under Add to, or free.", 20,
         function() return vis() and not SO.BarMode(addState) end)
-    AT.RowDesc(pg, "Pick a tracker, then Create: a deck bar fills as the deck is drawn.", 20,
+    AT.RowDesc(pg, "Pick an Arc Proc, then Create: a deck bar fills as the deck is drawn.", 20,
         function() return vis() and SO.BarMode(addState) end)
     -- on its own tab: an icon or a deck bar, first, so the bars are in plain
     -- sight; adding into a group is icons only. A pick with no deck lets go
@@ -104,15 +104,15 @@ function Options.SpecialAddRows(pg, owner, addState)
             AT.LayoutPage(pg)
         end,
         function() return { { value = "icon", text = "Icon" }, { value = "bar", text = "Deck bar" } } end,
-        function() return vis() and addState.cat == "Special" and not addState.groupOnly end)
+        function() return vis() and addState.cat == "Arc Procs" and not addState.groupOnly end)
     AT.Tooltip(asRow, "Create as", "A deck bar fills as the deck is drawn, with a mark for each proc.")
-    AT.RowToggle(pg, "Show every tracker",
+    AT.RowToggle(pg, "Show every Arc Proc",
         function() return addState.specialAll == true end,
         function(v)
             addState.specialAll = v or nil
             AT.LayoutPage(pg)
         end,
-        vis, "Other classes' trackers too. Each loads only for its own class.")
+        vis, "Other classes' Arc Procs too. Each loads only for its own class.")
     local cell, gap, top = Options.TPL_CELL or 32, Options.TPL_GAP or 4, Options.TPL_TOP or 14
     local gridVis = function() return vis() and #SO.Offered(addState) > 0 end
     local row = AT.AddRow(pg, top + cell + gap, gridVis)
@@ -121,7 +121,7 @@ function Options.SpecialAddRows(pg, owner, addState)
     cap:SetFont(NS.AT.FONT, 9, "")
     cap:SetPoint("TOPLEFT", 10, -2)
     cap:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
-    cap:SetText("TRACKER - click one, then Create")
+    cap:SetText("ARC PROC - click one, then Create")
     row._cells = {}
     local function Cell(i)
         local b = row._cells[i]
@@ -173,10 +173,10 @@ function Options.SpecialAddRows(pg, owner, addState)
     end
     SO.Line(pg, 22, function()
         local def = SO.Picked(addState)
-        if not def then return "Nothing picked yet: click a tracker above." end
+        if not def then return "Nothing picked yet: click an Arc Proc above." end
         return def.name .. "  |cff8fa3b8" .. SO.WhoWords(def) .. "|r   " .. (SO.NOTES[addState.specialId] or "")
     end, gridVis)
-    AT.RowDesc(pg, "No tracker is written for your class yet.", 20, function()
+    AT.RowDesc(pg, "No Arc Proc is written for your class yet.", 20, function()
         return vis() and not SO.BarMode(addState) and #SO.Offered(addState) == 0
     end)
     AT.RowDesc(pg, "No deck bar is written for your class yet.", 20, function()
@@ -331,7 +331,7 @@ end
 function Options.SpecialWhat(rec)
     local SI = NS.SpecialIcon
     if SI then return SI.Words(rec) end
-    return "special: " .. tostring(rec.driver and (rec.driver.tracker or rec.driver.special) or "unknown")
+    return "Arc Proc: " .. tostring(rec.driver and (rec.driver.tracker or rec.driver.special) or "unknown")
 end
 
 -- A deck bar's card line: its tracker's name.
@@ -339,7 +339,7 @@ function Options.SpecialBarWhat(rec)
     local SI = NS.SpecialIcon
     local def = SI and SI.Def(rec)
     if def then return def.name end
-    return tostring(rec.driver and (rec.driver.tracker or rec.driver.special) or "unknown tracker")
+    return tostring(rec.driver and (rec.driver.tracker or rec.driver.special) or "unknown Arc Proc")
 end
 
 -- A dim one-line row whose words come from textFn on every sync.
@@ -370,7 +370,7 @@ function SO.SafeResetRow(pg, vis)
             local SP = NS.Special
             if SP and SP.SetSafeMPlusReset then SP.SetSafeMPlusReset(v) end
         end,
-        vis, "On: every tracker resets the moment a key starts, so a reset is never missed. Off: on the gate drop, which keeps the skip working.")
+        vis, "On: every Arc Proc resets the moment a key starts, so a reset is never missed. Off: on the gate drop, which keeps the skip working.")
 end
 
 -- A special icon's Tracking rows: the tracker, its status, Reset, and the
@@ -392,10 +392,10 @@ function Options.SpecialIconRows(pg, ctx, trackVis, owner)
     end
     local function Line(h, textFn, visFn) return SO.Line(pg, h, textFn, visFn or vis) end
 
-    AT.Section(pg, "Special Aura", { visibleFn = vis })
+    AT.Section(pg, "Arc Proc", { visibleFn = vis })
     Line(22, function()
         local def = Def()
-        if not def then return "Tracks an unknown tracker: this icon came from a newer version." end
+        if not def then return "Tracks an unknown Arc Proc: this icon came from a newer version." end
         return "Tracks " .. def.name .. "  (" .. SO.WhoWords(def) .. ")"
     end)
     Line(22, function()
@@ -696,10 +696,10 @@ function Options.SpecialBarRows(pg, ctx, trackVis)
         return (r and SI) and SI.Def(r) or nil
     end
     local vis = function() return trackVis() and Rec() ~= nil end
-    AT.Section(pg, "Special Aura", { visibleFn = vis })
+    AT.Section(pg, "Arc Proc", { visibleFn = vis })
     SO.Line(pg, 22, function()
         local def = Def()
-        if not def then return "Tracks an unknown tracker: this bar came from a newer version." end
+        if not def then return "Tracks an unknown Arc Proc: this bar came from a newer version." end
         return "Tracks " .. def.name .. "  (" .. SO.WhoWords(def) .. ")"
     end, vis)
     SO.Line(pg, 22, function()

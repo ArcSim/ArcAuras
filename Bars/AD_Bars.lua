@@ -152,7 +152,10 @@ local ForEach
 -- a kind's own marks that ride a frame of their own (a swing bar's off-hand
 -- mark and label, a resource bar's recharge countdowns), and the overlay host
 -- (ticks, texts) over all of them.
-Bars.LADDER = { aura = 1, auraTop = 18, border = 19, glow = 20, missBtn = 21, marks = 22, overlay = 23 }
+Bars.LADDER = { aura = 1, auraTop = 18, border = 19, glow = 20, missBtn = 21, marks = 22, overlay = 23,
+    -- a resource bar: its colour rules' layers from here up (two rungs each,
+    -- Bars\AD_ResColors.lua), and the cost preview and regen marks over them
+    rule = 10, fillMarks = 18 }
 
 local function R(rec, section, field)
     return Store.Resolve(rec, section, field)
@@ -179,9 +182,11 @@ local function IsEditMode()
 end
 
 -- How many of a section's three bands are in use (1-3; absent = all three).
-local function BandCount(rec, section, field)
+-- top: the section's own cap (power colors take four, the rest three)
+local function BandCount(rec, section, field, top)
+    top = top or 3
     local n = tonumber(R(rec, section, field)) or 3
-    if n < 1 then n = 1 elseif n > 3 then n = 3 end
+    if n < 1 then n = 1 elseif n > top then n = top end
     return math.floor(n)
 end
 
@@ -376,7 +381,7 @@ local function StackLayerPlan(rec, maxStacks, segmented)
         end
     end
     -- 12.1.0 has no applications window, so a max layer would paint from zero
-    if R(rec, "stackcolors", "maxColorEnabled") == true and not NS.OldAuraEngine then
+    if R(rec, "stackcolors", "maxColorEnabled") == true and NS.AuraAppWindow == true then
         -- continuous: the whole fill at max; segmented: the last segment
         layers[#layers + 1] = { kind = "max", minA = M - 1, maxA = M,
             x0 = segmented and (M - 1) / M or 0, x1 = 1,
@@ -385,6 +390,12 @@ local function StackLayerPlan(rec, maxStacks, segmented)
     return layers, fillColor
 end
 Bars.StackLayerPlan = StackLayerPlan
+
+-- Colour by position (each cell keeps its band) or the flip model; the flip
+-- layers need the applications window, position ones do not.
+function Bars.StackSegmented(rec)
+    return NS.AuraAppWindow ~= true or R(rec, "stackcolors", "scPosition") ~= false
+end
 
 -- Aura duration composition. Each layer is a full fill clipped by a mask
 -- (AuraMaskRect). Fractions are of the full duration; a drain bar paints the
@@ -1121,6 +1132,8 @@ local function ApplyVisibility(entry)
     entry.holder:SetAlpha(alpha)
     -- the bar glows' lanes hang off UIParent and take this alpha (Bars\AD_BarGlow.lua)
     if Bars.Glow then Bars.Glow.Visible(entry) end
+    -- so do a resource bar's colour rule layers (Bars\AD_ResColors.lua)
+    if Bars.ResColor and entry.kind == "resource" then Bars.ResColor.Visible(entry) end
 end
 
 -- The conditions module paints bars through this writer, since the holder
@@ -2329,8 +2342,13 @@ local function LayoutTicks(entry)
     local thick = Bars.StripPx(shell, tn)
     -- pixels before the mark's spot, counted from the fill origin: centring
     -- an odd count would put both edges on half pixels, so its spare pixel
-    -- goes right of the spot (below on a standing bar), either fill direction
+    -- goes right of the spot (below on a standing bar), either fill direction;
+    -- a resource bar's mark may start or end at its spot instead
     local lead = (vertical == rev) and math.floor(tn / 2) or (tn - math.floor(tn / 2))
+    if entry.kind == "resource" then
+        local ta = R(rec, "ticks", "tickThicknessAnchor")
+        if ta == "start" then lead = 0 elseif ta == "end" then lead = tn end
+    end
     local hp = (R(rec, "ticks", "tickHeight") or 100) / 100
     local anchor = R(rec, "ticks", "tickHeightAnchor") or "center"
     local c = R(rec, "ticks", "tickColor") or { 0, 0, 0, 1 }
@@ -2456,111 +2474,37 @@ local function ResourceSyncType(entry)
     return true
 end
 
--- Threshold colours: a colour curve on the percent domain (0..1).
--- UnitPowerPercent(unit, pt, false, curve) evaluates the possibly secret
--- percent C-side and returns a plain colour (the curve is ours). Steps are
--- epsilon pairs. "below": band k covers (p_k-1, p_k], the lowest from 0, the
--- base above the last; "above": band k covers [p_k, p_k+1), the base below
--- the first. The full colour is a final step at 1.0. Cached by recipe.
-local function ResourceCurve(entry)
-    local rec = entry.rec
-    local on = R(rec, "powerthresholds", "pthEnabled") == true
-    local fullOn = R(rec, "powerthresholds", "pthFullEnabled") == true
-    if not (on or fullOn) then
-        entry.pthCurve, entry.pthHash = nil, nil
-        return nil
-    end
-    if not (C_CurveUtil and C_CurveUtil.CreateColorCurve and CreateColor and UnitPowerPercent) then
-        return nil
-    end
-    -- the base keeps its alpha: a Fill or Point colour can be see-through
-    local br, bg, bb, ba = PowerColorOf(rec, entry.powerType)
-    local base = { br, bg, bb, ba or 1 }
-    local below = (R(rec, "powerthresholds", "pthDirection") or "below") ~= "above"
-    local bands = {}
-    -- Percent by default; "power units" convert through the plain cached max,
-    -- so the value never reaches Lua. No plain max yet means no bands until the
-    -- first unrestricted refresh brings one (the range change re-enters here).
-    local absolute = R(rec, "powerthresholds", "pthAbsolute") == true
-    local domain = absolute and Bars.PlainMax(entry) or 100
-    if on and domain and domain > 0 then
-        for i = 2, 1 + BandCount(rec, "powerthresholds", "pthCount") do
-            local v = R(rec, "powerthresholds", "pth" .. i .. "Value") or 0
-            local p = v / domain
-            if p > 0 and p < 1 then
-                bands[#bands + 1] = { p = p,
-                    color = R(rec, "powerthresholds", "pth" .. i .. "Color") or { 1, 1, 1, 1 } }
-            end
-        end
-        table.sort(bands, function(a, b) return a.p < b.p end)
-        local dd = {}
-        for _, b in ipairs(bands) do
-            if dd[#dd] and math.abs(dd[#dd].p - b.p) < 0.0005 then dd[#dd] = b else dd[#dd + 1] = b end
-        end
-        bands = dd
-    end
-    local full = fullOn and (R(rec, "powerthresholds", "pthFullColor") or { 0, 1, 0, 1 }) or nil
-    -- the alphas too, or an opacity-only edit keeps the old curve
-    local hash = (below and "b" or "a") .. (absolute and ("u" .. tostring(domain)) or "")
-        .. string.format("|%.2f,%.2f,%.2f,%.2f", base[1], base[2], base[3], base[4])
-    for _, b in ipairs(bands) do
-        hash = hash .. string.format("|%.3f:%.2f,%.2f,%.2f,%.2f", b.p, b.color[1], b.color[2], b.color[3],
-            b.color[4] or 1)
-    end
-    if full then
-        hash = hash .. string.format("|F%.2f,%.2f,%.2f,%.2f", full[1], full[2], full[3], full[4] or 1)
-    end
-    if entry.pthCurve and entry.pthHash == hash then return entry.pthCurve end
-
-    local EPS = 0.0001
-    local curve = C_CurveUtil.CreateColorCurve()
-    local function P(x, c) curve:AddPoint(x, CreateColor(c[1], c[2], c[3], c[4] or 1)) end
-    if below then
-        P(0, bands[1] and bands[1].color or base)
-        for i = 1, #bands do
-            P(bands[i].p, bands[i].color)
-            P(bands[i].p + EPS, bands[i + 1] and bands[i + 1].color or base)
-        end
-        if full then P(1 - EPS, base) end
-        P(1, full or base)
+-- A curve's answer for the power now: a plain colour object from the client
+-- (the curve is ours), or nil when it reads secret (restricted power). The
+-- States table's power rows ask theirs (Bars\AD_ResColors.lua).
+local function CurveRGBA(entry, curve)
+    local RP = Bars.ResPowers
+    local col
+    if RP and RP.Pseudo(entry.powerType) then
+        -- stagger: the curve takes the plain percent; no power API knows it
+        col = RP.CurveColor(entry.powerType, curve)
     else
-        P(0, base)
-        for i = 1, #bands do
-            P(bands[i].p - EPS, bands[i - 1] and bands[i - 1].color or base)
-            P(bands[i].p, bands[i].color)
-        end
-        local top = bands[#bands] and bands[#bands].color or base
-        if full then P(1 - EPS, top) end
-        P(1, full or top)
+        col = UnitPowerPercent("player", entry.powerType, false, curve)
     end
-    entry.pthCurve, entry.pthHash = curve, hash
-    return curve
+    if col ~= nil and type(col) ~= "number" and col.GetRGBA then
+        local cr, cg, cb, ca = col:GetRGBA()
+        if cr ~= nil and not (issecretvalue and (issecretvalue(cr) or issecretvalue(ca))) then
+            return cr, cg, cb, ca or 1
+        end
+    end
+    return nil
 end
 
--- the fill colour for this refresh: the power colour, or the curve's answer
--- (a plain colour object; its components are guarded anyway)
+-- the fill colour for this refresh: the highest States row that holds and
+-- colours the fill (Bars\AD_ResColors.lua), else the power colour
 local function ResourceColor(entry)
     local rec = entry.rec
-    local r, g, b, a = PowerColorOf(rec, entry.powerType)
-    local curve = ResourceCurve(entry)
-    if curve then
-        local RP = Bars.ResPowers
-        local col
-        if RP and RP.Pseudo(entry.powerType) then
-            -- stagger: the curve takes the plain percent; no power API knows it
-            col = RP.CurveColor(entry.powerType, curve)
-        else
-            col = UnitPowerPercent("player", entry.powerType, false, curve)
-        end
-        if col ~= nil and type(col) ~= "number" and col.GetRGBA then
-            local cr, cg, cb, ca = col:GetRGBA()
-            if cr ~= nil and not (issecretvalue and (issecretvalue(cr) or issecretvalue(ca))) then
-                r, g, b, a = cr, cg, cb, ca or 1
-            end
-        end
-    end
-    return r, g, b, a, curve ~= nil
+    local CRm = Bars.ResColor
+    local rc = CRm and entry.crRows and CRm.Pick(entry)
+    if rc then return rc[1], rc[2], rc[3], rc[4] or 1 end
+    return PowerColorOf(rec, entry.powerType)
 end
+
 
 -- Power can read secret, and a rule formatter's FormatNumber takes a secret
 -- only from untainted code (it threw on mana in combat). These two C_StringUtil
@@ -2571,10 +2515,11 @@ local function SecretSafeText(v, suffix)
     return SU.WrapString(SU.RoundToNearestString(v), nil, suffix)
 end
 
--- "47%": the client scales the value through a 0..100 curve first
+-- "47%" (or "47" with bare): the client scales the value through a 0..100
+-- curve first
 local pctCurve
-local function PercentText(pt)
-    if Bars.ResPowers and Bars.ResPowers.Pseudo(pt) then return Bars.ResPowers.PercentText(pt) end
+local function PercentText(pt, bare)
+    if Bars.ResPowers and Bars.ResPowers.Pseudo(pt) then return Bars.ResPowers.PercentText(pt, bare) end
     if not (UnitPowerPercent and C_CurveUtil and C_CurveUtil.CreateCurve) then return nil end
     if not pctCurve then
         pctCurve = C_CurveUtil.CreateCurve()
@@ -2583,7 +2528,7 @@ local function PercentText(pt)
     end
     local v = UnitPowerPercent("player", pt, false, pctCurve)
     if v == nil then return nil end
-    return SecretSafeText(v, "%")
+    return SecretSafeText(v, (not bare) and "%" or nil)
 end
 
 -- "1234 / 5000": the range is plain (the cached max)
@@ -2614,8 +2559,8 @@ local function ResourceRunText(entry, key, fmt, cur, range)
     if fmt == "abbreviated" and AbbreviateNumbers then
         SetRunText(shell, key, AbbreviateNumbers(cur))   -- takes secrets
         return
-    elseif fmt == "percent" then
-        local s = PercentText(entry.powerType)
+    elseif fmt == "percent" or fmt == "pctnum" then
+        local s = PercentText(entry.powerType, fmt == "pctnum")
         if s ~= nil then SetRunText(shell, key, s) return end
     elseif fmt == "valuemax" then
         local s = ValueMaxText(cur, range)
@@ -2630,6 +2575,37 @@ local function ResourceText(entry, cur, range)
     for _, run in ipairs(RES_RUNS) do
         if run.n <= count then
             ResourceRunText(entry, run.key, R(rec, "text", run.fmt) or "value", cur, range)
+        end
+    end
+end
+
+-- The readouts' colour: the highest States row that holds and colours the
+-- texts (e.crText, read by CR.Pick), else the fill's colour with "Texts take
+-- the bar's color", else each text's own. Written when it changes, and
+-- whenever the bar's colour was repainted (a restyle re-sets the texts).
+local function ResourceTextTint(entry, r, g, b, barMoved)
+    local rec, shell = entry.rec, entry.shell
+    local mode, tr, tg, tb, ta = "own", nil, nil, nil, nil
+    local t = entry.crText
+    if t then
+        mode, tr, tg, tb, ta = "x", t[1], t[2], t[3], t[4] or 1
+    elseif R(rec, "rescolors", "resTextFill") == true then
+        mode, tr, tg, tb, ta = "b", r, g, b, 1
+    end
+    if not barMoved and entry.txMode == mode and entry.txr == tr and entry.txg == tg
+        and entry.txb == tb and entry.txa == ta then
+        return
+    end
+    entry.txMode, entry.txr, entry.txg, entry.txb, entry.txa = mode, tr, tg, tb, ta
+    for _, run in ipairs(RES_RUNS) do
+        local fs = shell.texts[run.key]
+        if fs then
+            if mode ~= "own" then
+                fs:SetTextColor(tr, tg, tb, ta)
+            else
+                local c = R(rec, "text", TEXT_DEF_BY_KEY[run.key].colour) or { 0.95, 0.97, 1, 1 }
+                fs:SetTextColor(c[1], c[2], c[3], c[4] or 1)
+            end
         end
     end
 end
@@ -2992,8 +2968,9 @@ local function ResourceRefresh(entry)
         PredictLayout(entry)
     end
 
-    local r, g, b, a, curved = ResourceColor(entry)
-    if entry.cr ~= r or entry.cg ~= g or entry.cb ~= b or entry.ca ~= a then
+    local r, g, b, a = ResourceColor(entry)
+    local barMoved = entry.cr ~= r or entry.cg ~= g or entry.cb ~= b or entry.ca ~= a
+    if barMoved then
         -- the alpha rides along: the pips paint from this cache
         entry.cr, entry.cg, entry.cb, entry.ca = r, g, b, a
         shell.fill:SetStatusBarColor(r, g, b, a)
@@ -3002,21 +2979,9 @@ local function ResourceRefresh(entry)
         elseif Bars.ResCells then
             Bars.ResCells.Painted(entry)   -- the bar-style slots wear it too
         end
-        -- "colour the text too" rides the same answer, on every readout;
-        -- off = each text's own colour
-        local tinted = curved and R(rec, "powerthresholds", "pthText") == true
-        for _, run in ipairs(RES_RUNS) do
-            local fs = shell.texts[run.key]
-            if fs then
-                if tinted then
-                    fs:SetTextColor(r, g, b, 1)
-                else
-                    local c = R(rec, "text", TEXT_DEF_BY_KEY[run.key].colour) or { 0.95, 0.97, 1, 1 }
-                    fs:SetTextColor(c[1], c[2], c[3], c[4] or 1)
-                end
-            end
-        end
     end
+    -- the texts: a row's colour, the bar's colour, or their own colours
+    ResourceTextTint(entry, r, g, b, barMoved)
 
     local cur = ResourceCurrent(pt)
     if cur == nil then return end
@@ -3069,7 +3034,7 @@ local function ResourceEnsure(entry)
     ResourceSyncType(entry)
     entry.lastMax = nil      -- re-derive the range: segments, ticks, preview
     entry.cr, entry.cg, entry.cb = nil, nil, nil
-    entry.pthCurve, entry.pthHash = nil, nil
+    entry.txMode = nil
     entry.stateHidden = false     -- the refresh hides a power the character lacks
     ResourceRefresh(entry)
     ApplyVisibility(entry)
@@ -3111,17 +3076,17 @@ local function SpellCostFor(spellID, pt)
     return nil
 end
 
--- the "cost ticks" spell list resolved against this bar's power: one
--- { eff, cost, frac } per spell that costs it, each typed spell read as the
--- rank you know (a higher rank costs more) or its override, with the bar's
--- own switches (re-laid on SPELLS_CHANGED)
+-- the cost marks (a States row's COST MARK, Bars\AD_ResColors.lua) resolved
+-- against this bar's power: one { eff, cost, frac } per spell that costs it,
+-- each read as the rank you know (a higher rank costs more) or its override
+-- (re-laid on SPELLS_CHANGED)
 function ResourceCostList(entry, range)
     if not range or range <= 0 then return nil end
-    local list = R(entry.rec, "ticks", "tickSpells") or ""
-    if list == "" then return nil end
+    local CRm = Bars.ResColor
+    local spells = CRm and CRm.MarkSpells(entry.rec)
+    if not spells then return nil end
     local out = {}
-    for id in tostring(list):gmatch("%d+") do
-        local sid = Store.RecordSpellID(entry.rec.driver, tonumber(id))
+    for _, sid in ipairs(spells) do
         local cost = SpellCostFor(sid, entry.powerType)
         if cost then out[#out + 1] = { eff = sid, cost = cost, frac = cost / range } end
     end
@@ -3136,6 +3101,25 @@ function ResourceCostFractions(entry, range)
     for i, it in ipairs(items) do out[i] = it.frac end
     return out
 end
+
+-- A cost can move with an aura (a cost cut while a cooldown or form runs):
+-- the cost marks and icons re-lay when a cost they show changed.
+local function ResourceCostsMoved()
+    ForEach("resource", function(e)
+        local rec = e.rec
+        if R(rec, "ticks", "ticksShow") ~= true then return end
+        local CRm = Bars.ResColor
+        if not (CRm and CRm.HasMarks(rec)) then return end
+        local items = ResourceCostList(e, 1)
+        local sig = ""
+        for _, it in ipairs(items or {}) do sig = sig .. tostring(it.eff) .. ":" .. tostring(it.cost) .. "," end
+        if e.costSig ~= sig then
+            e.costSig = sig
+            LayoutTicks(e)
+        end
+    end)
+end
+Bars.ResourceCostsMoved = ResourceCostsMoved
 
 -- Spell cost preview: on UNIT_SPELLCAST_START (the player's casts are not
 -- secret) the spell's cost becomes a texture anchored to the fill edge, which
@@ -3164,7 +3148,8 @@ function PredictLayout(entry)
     if not tex then
         local clip = CreateFrame("Frame", nil, shell)
         clip:SetAllPoints(fill)
-        clip:SetFrameLevel(fill:GetFrameLevel() + 1)
+        -- over a colour rule's layers (Bars\AD_ResColors.lua)
+        clip:SetFrameLevel(fill:GetFrameLevel() + Bars.LADDER.fillMarks)
         clip:SetClipsChildren(true)
         tex = clip:CreateTexture(nil, "ARTWORK")
         entry.predClip, entry.predTex = clip, tex
@@ -3606,11 +3591,14 @@ function HB.TextRun(fs, fmt, unit, preview)
         local max = 10000
         local cur = math.floor(max * HB.PREVIEW + 0.5)
         if fmt == "percent" then fs:SetFormattedText("%.0f%%", HB.PREVIEW * 100)
+        elseif fmt == "pctnum" then fs:SetFormattedText("%.0f", HB.PREVIEW * 100)
         elseif fmt == "abbreviated" and AbbreviateNumbers then fs:SetText(AbbreviateNumbers(cur))
         elseif fmt == "valuemax" then fs:SetFormattedText("%d / %d", cur, max)
         else fs:SetText(cur) end
     elseif fmt == "percent" and HB.Scale() and UnitHealthPercent then
         fs:SetFormattedText("%.0f%%", UnitHealthPercent(unit, true, HB.Scale()))
+    elseif fmt == "pctnum" and HB.Scale() and UnitHealthPercent then
+        fs:SetFormattedText("%.0f", UnitHealthPercent(unit, true, HB.Scale()))
     elseif fmt == "abbreviated" and AbbreviateNumbers then
         fs:SetText(AbbreviateNumbers(UnitHealth(unit)))
     elseif fmt == "valuemax" then
@@ -4393,7 +4381,7 @@ local function ArmAuraTargetWatch()
             for i = 1, 4 do SyncParks("party" .. i) end
         end)
     end
-    if NS.OldAuraEngine then
+    if NS.AuraEngine1210 then
         -- 12.1.0 containers never re-read a side change (a duel, mind control) themselves
         local function turned(_, u)
             if u == "target" or u == "focus" then SyncParks(u) end
@@ -4430,7 +4418,7 @@ end
 -- first aura it finds, so the bar's engine fill hides there instead.
 function Bars.AuraBlindSync(e)
     local sub, DA = e.auraSub, NS.DriverAura
-    if not (sub and NS.OldAuraEngine and DA and DA.LaneBlind) then return end
+    if not (sub and NS.AuraEngine1210 and DA and DA.LaneBlind) then return end
     sub.container:SetAlpha(DA.LaneBlind(sub.unit, sub.harmful, e.rec) and 0 or 1)
 end
 
@@ -4550,9 +4538,7 @@ local function AuraPlan(entry)
     local layers, fillColor, parts = {}, nil, {}
     if entry.mode == "stack" then
         local M = AuraMaxStacks(rec)
-        -- colour by position (each cell keeps its band) or the flip model; the
-        -- flip layers need 12.1.5's applications window, position ones do not
-        local segmented = NS.OldAuraEngine == true or R(rec, "stackcolors", "scPosition") ~= false
+        local segmented = Bars.StackSegmented(rec)
         layers, fillColor = StackLayerPlan(rec, M, segmented)
         parts[#parts + 1] = "S" .. M .. (segmented and "g" or "c")
         for _, L in ipairs(layers) do
@@ -5162,7 +5148,7 @@ local function AuraBarEnsure(entry)
             local win = L and kind ~= "shade"
             local o = { maxApplications = win and L.maxA or M }
             -- 12.1.0 does not know the field; every layer it gets starts at 0
-            if not NS.OldAuraEngine then o.minApplications = win and L.minA or 0 end
+            if NS.AuraAppWindow == true then o.minApplications = win and L.minA or 0 end
             if li then o.interpolation = li end
             b:SetApplicationBar(bar, o)
         else
@@ -5312,6 +5298,9 @@ local function EnsureSharedEvents()
     -- aura-bar presence rides UNIT_AURA (vectors are non-secret to receive;
     -- only the nil-check is read), for every unit a lane can watch
     Events.On("UNIT_AURA", "adbars", function(_, unit)
+        -- your auras can move a spell's cost: the cost marks follow, read
+        -- plain next frame (the aura itself is never read)
+        if unit == "player" then Events.Coalesce("adbars_costs", ResourceCostsMoved) end
         local units = NS.DriverAura and NS.DriverAura.AURA_UNITS
         if not (units and units[unit]) and unit ~= "player" and unit ~= "target" then return end
         ForEach("aura", function(e)
@@ -5576,6 +5565,8 @@ function Bars.EnsureBar(rec, holder)
     e.shell:SetShown(Bars.screenRecId ~= rec.id)
     -- the glows last: every size (a pips row's too) and level is settled
     if Bars.Glow then Bars.Glow.Styled(e) end
+    -- a resource bar's colour rules, on the settled fill (Bars\AD_ResColors.lua)
+    if e.kind == "resource" and Bars.ResColor then Bars.ResColor.Styled(e) end
 end
 
 function Bars.Release(barId)
@@ -5631,6 +5622,7 @@ function Bars.Release(barId)
     if e.kind == "swing" and Bars.SwingAbil then Bars.SwingAbil.Release(e) end
     if e.kind == "swing" and Bars.SwingColor then Bars.SwingColor.Release(e) end
     if Bars.Glow then Bars.Glow.Release(e) end
+    if e.kind == "resource" and Bars.ResColor then Bars.ResColor.Release(e) end
     ReleaseSharedEvents()
     ReleaseSwingEvents()
     ReleasePredictEvents()
@@ -5859,11 +5851,11 @@ function PV.PaintResource(e, cur)
         LayoutTicks(e)
     end
     local r, g, b, a = PowerColorOf(rec, e.powerType)
-    local curve = ResourceCurve(e)
-    if curve and range > 0 then
-        local col = curve:Evaluate(cur / range)
-        if col then r, g, b, a = col:GetRGBA() end
-    end
+    -- the States rows on the sample, and the row the table has open
+    -- (Bars\AD_ResColors.lua)
+    e.pvShare = (range > 0) and (cur / range) or nil
+    local rc = Bars.ResColor and e.crRows and Bars.ResColor.Pick(e)
+    if rc then r, g, b, a = rc[1], rc[2], rc[3], rc[4] or 1 end
     -- as live: the pips paint from this cache, alpha included
     e.cr, e.cg, e.cb, e.ca = r, g, b, a
     shell.fill:SetStatusBarColor(r, g, b, a or 1)
@@ -5883,7 +5875,14 @@ function PV.PaintResource(e, cur)
         local ci = e.costIcons and e.costIcons[i]
         if ci then ci.lit:SetAlpha(1) end
     end
-    local tinted = curve ~= nil and R(rec, "powerthresholds", "pthText") == true
+    -- as live: a row's text colour, else the fill's with "Texts take the bar's color"
+    local tinted = R(rec, "rescolors", "resTextFill") == true
+    local ta = 1
+    local t = e.crText
+    if t then
+        tinted = true
+        r, g, b, ta = t[1], t[2], t[3], t[4] or 1
+    end
     local count = R(rec, "text", "resCount") or 1
     for _, run in ipairs(RES_RUNS) do
         local fs = shell.texts[run.key]
@@ -5893,11 +5892,12 @@ function PV.PaintResource(e, cur)
             if fmt == "none" then s = ""
             elseif fmt == "abbreviated" and AbbreviateNumbers then s = AbbreviateNumbers(cur)
             elseif fmt == "percent" then s = string.format("%d%%", math.floor(cur / range * 100 + 0.5))
+            elseif fmt == "pctnum" then s = string.format("%d", math.floor(cur / range * 100 + 0.5))
             elseif fmt == "valuemax" then s = string.format("%d / %d", cur, range)
             else s = tostring(cur) end
             SetRunText(shell, run.key, s)
             if tinted then
-                fs:SetTextColor(r, g, b, 1)
+                fs:SetTextColor(r, g, b, ta or 1)
             else
                 local c = R(rec, "text", TEXT_DEF_BY_KEY[run.key].colour) or { 0.95, 0.97, 1, 1 }
                 fs:SetTextColor(c[1], c[2], c[3], c[4] or 1)
@@ -6185,7 +6185,7 @@ function PV.Build(rec, holder, screen)
     end
     if e.kind == "resource" then
         ResourceSyncType(e)
-        e.lastMax, e.pthCurve, e.pthHash = nil, nil, nil
+        e.lastMax = nil
     end
     if e.kind == "swing" then e.swingLen = PV.SwingLen(rec) end
     if e.kind == "swing" or e.kind == "timer" then e.plainThresh = BuildPlainBands(rec) end
@@ -6210,6 +6210,8 @@ function PV.Build(rec, holder, screen)
     if not screen then ApplyVisibility(e) end
     PV.Relayout(e)
     e.shell:Show()
+    -- a resource bar's colour rules: the preview wears the first one's colour
+    if e.kind == "resource" and Bars.ResColor then Bars.ResColor.Styled(e) end
     PV.Apply(e, newRec)
     -- the bar glows, while their sub-tab is open (Bars\AD_BarGlow.lua)
     if Bars.Glow then Bars.Glow.Preview(e) end
@@ -6229,6 +6231,17 @@ function Bars.PreviewSetMode(mode)
 end
 
 function Bars.PreviewMode() return PV.mode end
+
+-- A resource bar's States table opened another row: the preview wears it now,
+-- its glow too (Bars\AD_ResColors.lua, CR.previewSel).
+function Bars.PreviewRepaint()
+    for _, e in pairs({ pane = PV.e, screen = PV.se }) do
+        if e.kind == "resource" then
+            PV.Apply(e, false)
+            if Bars.Glow then Bars.Glow.Preview(e) end
+        end
+    end
+end
 
 -- the pane's OnUpdate while a loop runs: ~30 paints a second, and the
 -- swing / timer loops restart after their rest. The Play on screen copy
@@ -6285,6 +6298,7 @@ function Bars.PreviewScreenStart(rec)
     if le then
         le.shell:Hide()
         if Bars.Glow then Bars.Glow.Visible(le) end
+        if Bars.ResColor and le.kind == "resource" then Bars.ResColor.Visible(le) end
     end
     PV.Build(rec, f, true)
     return true
@@ -6302,6 +6316,7 @@ function Bars.PreviewScreenStop()
     if le then
         le.shell:Show()
         if Bars.Glow then Bars.Glow.Visible(le) end
+        if Bars.ResColor and le.kind == "resource" then Bars.ResColor.Visible(le) end
     end
 end
 
@@ -6370,9 +6385,9 @@ SlashCmdList.ADBARS = function(msg)
             -- secret=: whether this client hands the value secret right now;
             -- the probe reads, never compares
             local v = e.powerType and ResourceCurrent(e.powerType)
-            print(("  %s [resource pt=%s] range=%s segments=%s curve=%s cost=%s secret=%s pips=%s"):format(
+            print(("  %s [resource pt=%s] range=%s segments=%s states=%s cost=%s secret=%s pips=%s"):format(
                 tostring(e.rec.name), tostring(e.powerType), tostring(e.lastMax),
-                tostring(e.segments), tostring(e.pthCurve ~= nil), tostring(e.predCost),
+                tostring(e.segments), tostring(e.crRows and #e.crRows or 0), tostring(e.predCost),
                 tostring(issecretvalue and issecretvalue(v) or false),
                 tostring(e.pipsOn and (e.pipCount or 0) or false)))
         elseif e.kind == "health" then
@@ -6417,6 +6432,8 @@ Bars.Kit = {
     -- the health percent scale, the font probe and the aura engine's gates
     ResourceCurrent = ResourceCurrent, HealthScale = HB.Scale, ProvenFontPath = ProvenFontPath,
     AuraSecretNow = AuraSecretNow, AuraEngineUp = AuraEngineUp,
+    -- a resource curve's plain answer for the power now (the States power rows)
+    CurveRGBA = CurveRGBA,
     -- a running swing's start, length and end (GetTime plus PLAYER_SWING's
     -- plain duration), or nil between swings
     SwingClock = function(e)
@@ -6439,6 +6456,7 @@ Bars.Kit = {
         local had = e.shellGate ~= nil
         e.shellGate = flag
         if (had or flag ~= nil) and Bars.Glow then Bars.Glow.Visible(e) end
+        if (had or flag ~= nil) and Bars.ResColor and e.kind == "resource" then Bars.ResColor.Visible(e) end
     end,
 }
 -- the timer (custom) bar kind: its engine loads before this file, so the host

@@ -103,22 +103,22 @@ local function Slash(msg)
         end
         return
     end
-    -- "/arcauras special" prints every Special Aura tracker's state (retail only).
-    if msg == "special" and NS.Special and NS.Special.Diag then
+    -- "/arcauras special" (or "procs") prints every Arc Proc's state (retail only).
+    if (msg == "special" or msg == "procs") and NS.Special and NS.Special.Diag then
         for _, line in ipairs(NS.Special.Diag()) do
             print("|cff3fc9f2Arc Auras:|r " .. line)
         end
         return
     end
-    -- "/arcauras reset dw" restarts one Special Aura's count, "reset" alone
+    -- "/arcauras reset dw" restarts one Arc Proc's count, "reset" alone
     -- every one, as ProcTracker's /pt reset did (retail).
     local tracker = msg:match("^reset%s*(%S*)$")
     local SP = NS.Special
     if tracker and SP and SP.Reset then
         local def = tracker ~= "" and SP.Get(tracker) or nil
         if tracker == "" then SP.ResetAll("command") elseif def then SP.Reset(tracker) end
-        print("|cff3fc9f2Arc Auras:|r " .. ((tracker == "" and "every Special Aura count reset.")
-            or (def and (def.name .. " count reset.")) or ("no Special Aura called " .. tracker .. ".")))
+        print("|cff3fc9f2Arc Auras:|r " .. ((tracker == "" and "every Arc Proc count reset.")
+            or (def and (def.name .. " count reset.")) or ("no Arc Proc called " .. tracker .. ".")))
         return
     end
     -- "/arcui2 proctracker" opens the ProcTracker import (retail); ArcUI

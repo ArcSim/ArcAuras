@@ -51,6 +51,9 @@ function TA.Place(fs, owner, slot, kind, spec, point, rel, x, y, home)
     if not (fs and owner) then return end
     point = point or "CENTER"
     rel = rel or point
+    -- the editor's stage keeps its texts on its icon: pinned out to the live
+    -- target they would leave the stage (Play on screen keeps the real pin)
+    if owner._adOnStage == true then kind = nil end
     local target = TA.Pinned(kind) and TA.Target(kind, spec) or nil
     local hp = fs._adPinHome
     if target then

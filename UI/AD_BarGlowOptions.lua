@@ -25,6 +25,8 @@ BGO.TRACK_WORDS = {
 }
 -- the spell suggestions: this many buttons under a status line
 BGO.SUG_N = 5
+-- the aura pick's field, worded as the aura icon's in the Add window
+BGO.AURA_IDS = "Aura name or spell IDs"
 BGO.STALE_NOTE = "This spell has no charges: Recharging never lights."
 
 function BGO.Suf(k) return (k > 1) and tostring(k) or "" end
@@ -199,15 +201,12 @@ end
 function BGO.SpellSuggest(pg, visibleFn, getText, pick)
     local AT = NS.AT
     local COL = AT.COL
-    local row = AT.AddRow(pg, 14 + BGO.SUG_N * 23, visibleFn)
-    local status = row:CreateFontString(nil, "OVERLAY")
-    status:SetFont(AT.FONT, 9, "")
-    status:SetPoint("TOPLEFT", 10, -2)
-    status:SetPoint("TOPRIGHT", -12, -2)
-    status:SetJustifyH("LEFT")
-    status:SetWordWrap(false)
-    status:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
+    -- as tall as what it shows (Options.SuggestFit): no gap under a set ID
+    local row = AT.AddRow(pg, 14, visibleFn)
+    local lines = {}
+    local status = Options.SuggestLine(row, lines, 1)
     local btns, lastText = {}, nil
+    local syncing = false
     local Refresh
     local function Btn(i)
         local b = btns[i]
@@ -257,11 +256,13 @@ function BGO.SpellSuggest(pg, visibleFn, getText, pick)
     end
     local function Show(results, head)
         status:SetText(head)
+        local shown = 0
         for i = 1, BGO.SUG_N do
             local b = Btn(i)
             local e = results and results[i]
             b._e = e
             if e then
+                shown = shown + 1
                 b.tex:SetTexture(e.texture or 134400)
                 local mx = tonumber(e.maxCharges)
                 b.name:SetText((mx and mx > 1) and (e.name .. "  |cff" .. AT.Hex(COL.arc) .. "(" .. mx .. " charges)|r")
@@ -271,6 +272,10 @@ function BGO.SpellSuggest(pg, visibleFn, getText, pick)
             else
                 b:Hide()
             end
+        end
+        -- a pass running this places the new height itself
+        if Options.SuggestFit(row, shown, 1, 0) and not syncing and row:IsShown() then
+            AT.LayoutPage(pg)
         end
     end
     Refresh = function(force)
@@ -296,7 +301,13 @@ function BGO.SpellSuggest(pg, visibleFn, getText, pick)
         end
     end
     -- every re-layout re-judges, but only a changed field searches again
-    row._sync = function() Refresh(false) end
+    row._sync = function()
+        syncing = true
+        Refresh(false)
+        syncing = false
+    end
+    -- test handles: the status line and the buttons
+    row._adLines, row._adBtns = lines, btns
     return Refresh
 end
 
@@ -346,34 +357,48 @@ function BGO.AuraRows(pg, ctx, win, k, cardVis)
         return stampVis() and not BGO.Own(r, k)
     end
 
-    local function Commit(v)
-        local sid = tonumber(v)
-        if not sid or sid <= 0 then return end
-        Edit(function(g) g.spellID = math.floor(sid) g.spellIDs = nil end)
+    -- the glow's IDs as the aura icons keep theirs: spellID, spellIDs past one
+    local function IDsText()
+        local r = Rec()
+        local g = r and BGO.Aura(r, k, false)
+        return g and table.concat(Store.AuraIDList(g), ", ") or ""
     end
-    local idRow = AT.RowInput(pg, "Aura name or spell ID",
-        function()
-            local r = Rec()
-            local g = r and BGO.Aura(r, k, false)
-            return (g and g.spellID) and tostring(g.spellID) or ""
-        end,
-        Commit, otherVis,
-        "Type the aura's name to see its spell IDs and click one, or type the numeric ID and press Enter.")
-    Stamp(idRow, "glowAuraID" .. suf, "Aura name or spell ID", stampOtherVis)
-    local Suggest = Options.AuraSuggestPanel and Options.AuraSuggestPanel(pg, otherVis,
-        function()
-            local eb = idRow._colCtrl
-            return eb and eb:GetText() or ""
-        end,
-        function(v)
-            if idRow._colCtrl then idRow._colCtrl:SetText(v) end
-            Commit(v)
-        end, false)
+    -- every number typed, in order, once; words with no ID change nothing,
+    -- and the same list is no edit, so its lane is never sent it again
+    local function Commit(v)
+        local ids = Options.ParseSpellIDs(v)
+        if #ids == 0 or table.concat(ids, ", ") == IDsText() then return end
+        Edit(function(g) Options.SetAuraSpellIDs(g, ids) end)
+    end
+    local idRow = AT.RowInput(pg, BGO.AURA_IDS, IDsText, Commit, otherVis,
+        "Type the aura's name and click one to add its ID, or type IDs separated by commas or spaces. Any of them lights the glow.",
+        "e.g. 2825, 32182")
+    Stamp(idRow, "glowAuraID" .. suf, BGO.AURA_IDS, stampOtherVis)
+    -- a pick from the name search joins the IDs already there
+    local function Add(v)
+        local r = Rec()
+        if not r then return end
+        local changed = Options.AddAuraSpellID(BGO.Aura(r, k, true), v)
+        if changed then Store.Dirty("style", r.id) end
+        if idRow._colCtrl then idRow._colCtrl:SetText(IDsText()) end
+        AT.LayoutPage(pg)
+    end
+    -- a name typed after the IDs already in the box is what is searched
+    local function Typed()
+        local eb = idRow._colCtrl
+        local t = eb and eb:GetText() or ""
+        if t:find("%a") then t = t:gsub("^[%d%s,;]+", "") end
+        return t
+    end
+    local Suggest = Options.AuraSuggestPanel and Options.AuraSuggestPanel(pg, otherVis, Typed, Add,
+        false, nil, true)
     if Suggest and idRow._colCtrl then
         idRow._colCtrl:HookScript("OnTextChanged", function(_, userInput)
             if userInput then Suggest(false) end
         end)
     end
+    -- test handles: the commit, the pick and the panel's refresh
+    idRow._adCommit, idRow._adAdd, idRow._adSuggest = Commit, Add, Suggest
 
     AT.RowToggle(pg, "Follow my rank",
         function()
@@ -475,9 +500,11 @@ function Options.BarGlowRows(pg, ctx, win, c)
         -- glow 1 carries the count in its push list
         if k == 1 then fields[#fields + 1] = "barGlowCount" end
         local vis
+        -- registered as a look block for the Defaults page; glows never
+        -- inherit, so the layout looks leave them out
         vis = c.BarBlock("Glow " .. k, "glows", "Conditions", fields,
             function(r) return k <= ((NS.Bars and NS.Bars.Glow and NS.Bars.Glow.Count(r)) or 1) end,
-            "Glows", true, { card = {
+            "Glows", nil, { card = {
                 when = function(r)
                     if Store.Resolve(r, "glows", "barGlow" .. suf) ~= true then return "" end
                     local w = BGO.WHEN_WORDS[Store.Resolve(r, "glows", "barGlowWhen" .. suf) or "up"]

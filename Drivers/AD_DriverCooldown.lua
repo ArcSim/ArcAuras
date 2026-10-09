@@ -495,10 +495,10 @@ end
 local function PushState(a)
     local m, c = ShadowState(a)
     -- m: the main cooldown runs (for a charge spell, every charge is spent).
-    -- c: a charge is recharging. Dim on m, or on c unless waitForNoCharges.
+    -- c: a charge is recharging. Only every charge back is Ready: Recharging
+    -- (c without m) has a look of its own, which SetState reads off the flag.
     -- Desaturation follows m alone: a charge spell desaturates only when spent.
-    local wait = Store.Resolve(a.rec, "states", "waitForNoCharges") == true
-    local dim = m or (c and not wait)
+    local dim = m or c
     -- Ready sound on the dim-to-ready edge, re-checked after 0.15s because the
     -- GCD filter can report a transient edge. A first push never fires.
     if a.lastDim == true and dim == false then
@@ -623,6 +623,8 @@ Feed = function(a)
     -- Shadows always ignore the GCD: state must not see it.
     if not hold then
         local mainDur = C_Spell.GetSpellCooldownDuration(sid, true)
+        -- the time left to ready, for On cooldown's timed opacity (Factory.SetState)
+        a.frame._adTimedDur = mainDur
         if mainDur and not onGcd and not disabled then
             a.sCD:SetCooldownFromDurationObject(mainDur, true)
         else

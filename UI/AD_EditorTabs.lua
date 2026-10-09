@@ -373,6 +373,15 @@ end
 local SPELL_COOLDOWN = {}
 for k, v in pairs(COOLDOWN) do SPELL_COOLDOWN[k] = v end
 SPELL_COOLDOWN.labelFn = function(r) return ET.IsCharge(r) and "Depleted" or "On cooldown" end
+-- `timed`: the clock after a state's opacity, when that opacity starts
+-- (ET.TimePop). `on` switches it, `sec` the seconds, `before` the opacity
+-- until then; an aura also takes a share (`unit`, `pct`) and its length
+-- (`len`), as its gate runs on a share of the time. `ownLook`: Options files
+-- its look block itself.
+SPELL_COOLDOWN.timed = { S, fields = { "cooldownAlphaTimed", "cooldownAlphaSec", "cooldownAlphaBefore" },
+    on = "cooldownAlphaTimed", sec = "cooldownAlphaSec", before = "cooldownAlphaBefore",
+    whole = "the whole cooldown", left = "seconds left on the cooldown",
+    ok = function() return C_CurveUtil ~= nil and C_CurveUtil.CreateCurve ~= nil end }
 -- One entry per state a kind has, in order: its key (the Effects box's pick),
 -- its words, then the field each column drives as { section, field }. A tint's
 -- switch is `on`; an opacity with `on` has a switch before its slider. A
@@ -381,13 +390,11 @@ SPELL_COOLDOWN.labelFn = function(r) return ET.IsCharge(r) and "Depleted" or "On
 ET.STATES = {
     spell = {
         READY,
-        -- a charge spell with a charge left and another on its way; it copies
-        -- Depleted or, with Wait for no charges, Ready
+        -- a charge spell with a charge left and another on its way: a state
+        -- with its own look, as Ready and Depleted have
         { key = "recharge", label = "Recharging", when = "while a charge comes back",
-          alpha = { S, "rechargeAlpha", on = "rechargeAlphaEnabled" },
-          onTip = "On: this opacity while a charge comes back. Off: the opacity of the look picked under Recharging.",
+          alpha = { S, "rechargeAlpha" },
           grey = { S, "rechargeDesaturate" }, tint = { S, "rechargeTintColor", on = "rechargeTintEnabled" },
-          base = { S, "waitForNoCharges" },
           showIf = ET.IsCharge,
           fx = { glow = { "states.rechargeGlow" },
               sound = { "alerts.rechargeSoundEnabled", "alerts.chargeGainedSoundEnabled" } } },
@@ -403,7 +410,7 @@ ET.STATES = {
           grey = { S, "rangeDesaturate" }, tint = { S, "rangeTintColor", on = "rangeTint" },
           alphaTip = "Never brighter than Ready's opacity.",
           fx = { glow = { "states.rangeGlow" } } },
-        -- Shoot, Auto Shot or Attack on (Drivers\AD_DriverToggle.lua)
+        -- Shoot, Auto Shot or Attack on, a pet spell on autocast (Drivers\AD_DriverToggle.lua)
         { key = "toggle", label = "Toggled on", when = "while it is toggled on",
           alpha = { S, "toggleAlpha", on = "toggleAlphaEnabled" },
           onTip = "On: this opacity while toggled on. Off: it keeps its opacity.",
@@ -426,6 +433,17 @@ ET.STATES = {
     aura = {
         { key = "active", label = "Active", when = "while the aura is up", alpha = { A, "activeAlpha" },
           grey = { A, "activeDesaturate" }, tint = { A, "activeTintColor", on = "activeTintEnabled" },
+          timed = { A, fields = { "activeTimeOnly", "activeTimeUnit", "activeTimeSec", "activeTimePct",
+              "activeTimeLen", "activeTimeBefore" },
+              on = "activeTimeOnly", sec = "activeTimeSec", before = "activeTimeBefore", unit = "activeTimeUnit",
+              pct = "activeTimePct", len = "activeTimeLen", whole = "the whole time it is up",
+              left = "seconds left on the aura", ownLook = true,
+              ok = function(r)
+                  if r == nil then return false end
+                  if r._adDefaults then return true end
+                  local DA = NS.DriverAura
+                  return DA ~= nil and DA.TimeGateOK ~= nil and DA.TimeGateOK(r) == true
+              end },
           fx = { glow = AuraGlowKeys(false), sound = { "alerts.auraGainSoundEnabled", "alerts.auraStackSoundEnabled" },
               art = { "art.active" } } },
         { key = "missing", label = "Missing", when = "while the aura is missing", alpha = { M, "missingAlpha" },
@@ -466,6 +484,9 @@ ET.STATES = {
         { key = "missing", label = "Missing", when = "while the weapon has none", alpha = COOLDOWN.alpha,
           grey = COOLDOWN.grey, tint = COOLDOWN.tint,
           fx = { sound = { "alerts.cooldownSoundEnabled" } } },
+        -- a two-hander's off hand, a shield, bare hands
+        { key = "noweapon", label = "No weapon", when = "while this hand holds no weapon",
+          alpha = { S, "noWeaponAlpha" }, alphaTip = "0 hides it while the hand has no weapon to enchant." },
         WARNING,
     },
     ammo = {
@@ -542,8 +563,10 @@ local function OverlayOn(rec)
     return DA ~= nil and DA.OverlayOn ~= nil and DA.OverlayOn(rec) == true
 end
 
--- A row that waits on something: the aura overlay, or its own gate.
+-- A row that waits on something: the aura overlay, or its own gate. The
+-- Defaults page (rec._adDefaults) sets every state's look a kind can have.
 local function RowShows(st, rec)
+    if rec and rec._adDefaults then return true end
     if st.overlay and not OverlayOn(rec) then return false end
     return not st.showIf or st.showIf(rec) == true
 end
@@ -584,12 +607,16 @@ function ET.StateParts(rec)
             end
         end
         if st.base then add(st.base[1], st.base[2]) end
+        if st.timed then
+            for _, f in ipairs(st.timed.fields) do add(st.timed[1], f) end
+        end
     end
     return out
 end
 
 -- The layout's looks mirror the table as plain rows, one block per state,
--- each field once (a totem's Active is the spell's Ready).
+-- each field once (a totem's Active is the spell's Ready), on the table's own
+-- sub-tab; the Defaults page draws the table itself instead (b.state).
 function ET.StateLooks(tabName)
     local seen = {}
     for _, kind in ipairs(Schema.ICON_KINDS) do
@@ -601,6 +628,10 @@ function ET.StateLooks(tabName)
                 if st[c] then specs[#specs + 1] = st[c] end
             end
             if st.base then specs[#specs + 1] = st.base end
+            -- when its opacity starts goes with the opacity
+            if st.timed and not st.timed.ownLook then
+                for _, f in ipairs(st.timed.fields) do specs[#specs + 1] = { st.timed[1], f } end
+            end
             for _, spec in ipairs(specs) do
                 for _, f in ipairs({ spec.on or false, spec[2] }) do
                     local k = f and (spec[1] .. "." .. f)
@@ -615,7 +646,8 @@ function ET.StateLooks(tabName)
                 end
             end
             for _, section in ipairs(order) do
-                Options.LookBlock("icon", tabName, st.lookTitle or st.label, section, bySec[section])
+                Options.LookBlock("icon", tabName, st.lookTitle or st.label, section, bySec[section], "By State",
+                    { state = true })
             end
         end
     end
@@ -874,7 +906,7 @@ local function CompactSlider(parent, w, lo, hi, step, pct, fmtStr, get, set)
         s:SetMinMaxValues(a, b)
         local v = tonumber(get()) or a
         s:SetValue(math.max(a, math.min(b, v)))
-        if not box:HasFocus() then box:SetText(fmt(v)) end
+        if not box:HasFocus() then AT.BoxText(box, fmt(v)) end
         settingUp = false
     end
     s:SetOrientation("HORIZONTAL")
@@ -891,7 +923,7 @@ local function CompactSlider(parent, w, lo, hi, step, pct, fmtStr, get, set)
     s:SetScript("OnValueChanged", function(_, v)
         if settingUp then return end
         v = math.floor(v / step + 0.5) * step
-        if not box:HasFocus() then box:SetText(fmt(v)) end
+        if not box:HasFocus() then AT.BoxText(box, fmt(v)) end
         set(v)
     end)
     box:SetSize(VALUE_W, 16)
@@ -934,8 +966,8 @@ local function NumberBox(parent, w, get, set, lo, hi, int, isId)
     local function refresh()
         if box:HasFocus() then return end
         local v = tonumber(get())
-        if isId then box:SetText((v and v ~= 0) and tostring(v) or "")
-        else box:SetText(v and tostring(v) or "") end
+        if isId then AT.BoxText(box, (v and v ~= 0) and tostring(v) or "")
+        else AT.BoxText(box, v and tostring(v) or "") end
     end
     local function commit(self)
         local n = tonumber(self:GetText() or "")
@@ -998,6 +1030,10 @@ local GLYPH = {
     art = { { 12, 1.5, 0, 4 }, { 12, 1.5, 0, -4 }, { 1.5, 8, -5.25, 0 }, { 1.5, 8, 5.25, 0 },
         { 4.6, 1.5, -2.4, -1.3, 49 }, { 5.3, 1.5, 1.1, -1.3, -41 } },
     add = { { 8, 1.5, 0, 0 }, { 1.5, 8, 0, 0 } },
+    -- a dial of eight chords and its two hands
+    clock = { { 3.8, 1.2, 4.6, 0, 90 }, { 3.8, 1.2, 3.25, 3.25, 135 }, { 3.8, 1.2, 0, 4.6 },
+        { 3.8, 1.2, -3.25, 3.25, 45 }, { 3.8, 1.2, -4.6, 0, 90 }, { 3.8, 1.2, -3.25, -3.25, 135 },
+        { 3.8, 1.2, 0, -4.6 }, { 3.8, 1.2, 3.25, -3.25, 45 }, { 1.3, 3, 0, 1.4 }, { 2.4, 1.3, 0.95, -0.6, -32 } },
 }
 
 function ET.Glyph(parent, kind)
@@ -1626,6 +1662,366 @@ end
 -- per column, then a cell per effect it has: lit in the effect's colour while
 -- one is on, a plus while none is. A click on an effect cell opens it under
 -- the row; another click closes it.
+-- When a state's opacity starts: the clock after its opacity cell, and one
+-- popover per table that sets it.
+
+local CIRCLE = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
+-- A round piece on `parent`'s own textures (a mask clips only its frame's).
+local function Round(parent, size, sub)
+    local t = parent:CreateTexture(nil, "ARTWORK", nil, sub or 0)
+    t:SetTexture(AT.WHITE)
+    t:SetSize(size, size)
+    t:SetPoint("CENTER", 0, 0)
+    local m = parent:CreateMaskTexture()
+    m:SetTexture(CIRCLE, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    m:SetAllPoints(t)
+    t:AddMaskTexture(m)
+    return t
+end
+
+-- A radio: a steel ring, lit under the mouse, the accent dot when picked.
+local function Radio(parent, onClick)
+    local b = CreateFrame("Button", nil, parent)
+    b:SetSize(14, 14)
+    local ring = Round(b, 14, 0)
+    local hole = Round(b, 12, 1)
+    hole:SetVertexColor(COL.panel[1], COL.panel[2], COL.panel[3], 1)
+    local dot = Round(b, 6, 2)
+    dot:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
+    local function paint()
+        local c = b._hot and COL.arc or COL.steel
+        ring:SetVertexColor(c[1], c[2], c[3], 1)
+    end
+    function b:SetOn(on) dot:SetShown(on == true) end
+    b:SetScript("OnEnter", function() b._hot = true paint() end)
+    b:SetScript("OnLeave", function() b._hot = nil paint() end)
+    b:SetScript("OnClick", onClick)
+    paint()
+    b:SetOn(false)
+    return b
+end
+
+local function TimedGet(r, t, k) return r and k and Store.Resolve(r, t[1], k) end
+
+-- What a timed opacity waits for, as its clock says it ("3s", "30%"), or nil.
+function ET.TimedWord(r, st)
+    local t = st and st.timed
+    if not (t and r) or TimedGet(r, t, t.on) ~= true then return nil end
+    if t.unit and TimedGet(r, t, t.unit) ~= "sec" then
+        return ("%d%%"):format(math.floor((tonumber(TimedGet(r, t, t.pct)) or 30) + 0.5))
+    end
+    return ("%gs"):format(tonumber(TimedGet(r, t, t.sec)) or 3)
+end
+
+-- Set and working: an aura's seconds also need its length.
+function ET.TimedLive(r, st)
+    local t = st and st.timed
+    if not ET.TimedWord(r, st) then return false end
+    if t.unit and TimedGet(r, t, t.unit) == "sec" then
+        return (tonumber(TimedGet(r, t, t.len)) or 0) > 0
+    end
+    return true
+end
+
+-- A Dynamic group can't move icons at that moment (it can't be read in
+-- combat), so a spell there keeps its spot, or is gone the whole cooldown.
+function ET.TimedGroupNote(r)
+    if not (r and r.kind == "spell" and r.groupId) then return nil end
+    local g = Store.Get(r.groupId)
+    if not (g and Store.Resolve(g, "arrangement", "dynamicLayout") == true) then return nil end
+    local c = Store.Resolve(g, "arrangement", "dynamicCollapse")
+    if c == "hidden" then return "It keeps its spot in its Dynamic group." end
+    if c == "cooldown" then return "Its Dynamic group hides it on cooldown." end
+    return nil
+end
+
+-- True when an icon of the group has a timed opacity on.
+function ET.GroupHasTimed(g)
+    for _, r in ipairs(g and Store.IconsOf(g) or {}) do
+        if r.kind == "spell" and Store.Resolve(r, "states", "cooldownAlphaTimed") == true then return true end
+    end
+    return false
+end
+
+-- The clock: a dial, and what it waits for once set; cyan while it works.
+local function PaintClock(ck, r, st)
+    local word = ET.TimedWord(r, st)
+    local lit = ET.TimedLive(r, st)
+    local fill = lit and COL.sel or COL.well
+    local edge = lit and COL.arc or COL.line2
+    local ink = lit and COL.arc or (word and COL.dim or COL.faint)
+    ck:SetBackdropColor(fill[1], fill[2], fill[3], 1)
+    ck:SetBackdropBorderColor(edge[1], edge[2], edge[3], 1)
+    ck._adGlyph:SetColor(ink)
+    local w = ck._adWord
+    w:SetTextColor(ink[1], ink[2], ink[3])
+    w:SetText(word or "")
+    w:SetShown(word ~= nil)
+    local ww = word and Measure(w) or 0
+    local total = 11 + (word and (3 + ww) or 0)
+    local x0 = math.floor((40 - total) / 2 + 0.5)
+    ck._adGlyph:ClearAllPoints()
+    ck._adGlyph:SetPoint("CENTER", ck, "LEFT", x0 + 5.5, 0)
+    w:ClearAllPoints()
+    w:SetPoint("LEFT", ck, "LEFT", x0 + 14, 0)
+end
+
+local POP_W, POP_PAD, POP_GAP = 286, 12, 8
+
+-- The popover under a clock: Right away, or With [N] seconds left (an aura
+-- also With [N] % of it left, and its length for seconds), then Before that.
+function ET.TimePop(T)
+    if T.pop then return T.pop end
+    -- on the window, as a dropdown's list: a section box clips its children
+    local p = CreateFrame("Frame", nil, T.owner or T.head:GetParent(), "BackdropTemplate")
+    AT.Skin(p, COL.panel, COL.arc)
+    p:EnableMouse(true)
+    p:Hide()
+    T.pop = p
+    local function Rec() return p._ctx and p._ctx() end
+    local function Tm() return p._st and p._st.timed end
+    -- a field of the open row's spec (nil while closed: the widgets refresh at birth)
+    local function TK(k) local t = Tm() return t and t[k] end
+    local function Get(k) local t = Tm() return t and TimedGet(Rec(), t, k) end
+    local function Put(k, v)
+        local r, t = Rec(), Tm()
+        if r and t and k then Store.SetOverride(r, t[1], k, v) end
+    end
+    local function Changed()
+        if p._relay then p._relay() end
+        p:Sync()
+    end
+    local function Words(parent, size, col)
+        local fs = parent:CreateFontString(nil, "OVERLAY")
+        fs:SetFont(AT.FONT, size, "")
+        fs:SetTextColor(col[1], col[2], col[3])
+        fs:SetJustifyH("LEFT")
+        fs:SetWordWrap(false)
+        return fs
+    end
+    local function Line(h)
+        local l = CreateFrame("Frame", nil, p)
+        l:SetHeight(h)
+        return l
+    end
+    local function Bounds(field, lo, hi)
+        local t = Tm()
+        local def = t and Def(t[1], field)
+        return (def and def.min) or lo, (def and def.max) or hi
+    end
+
+    local title = Words(p, 11, COL.arc)
+    title:SetPoint("TOPLEFT", POP_PAD, -POP_PAD)
+    local close = CreateFrame("Button", nil, p, "BackdropTemplate")
+    close:SetSize(16, 16)
+    AT.Skin(close, COL.well, COL.line2)
+    close:SetPoint("TOPRIGHT", -POP_PAD, -10)
+    local cx = Words(close, 11, COL.dim)
+    cx:SetPoint("CENTER", 0, 1)
+    cx:SetText("x")
+    close:SetScript("OnClick", function() p:Close() end)
+
+    -- Right away
+    local l1 = Line(18)
+    local r1 = Radio(l1, function()
+        Put(TK("on"), false)
+        Changed()
+    end)
+    r1:SetPoint("LEFT", 0, 0)
+    local w1 = Words(l1, 13, COL.ink)
+    w1:SetPoint("LEFT", r1, "RIGHT", 8, 0)
+
+    -- With [N] seconds left
+    local function PickSec()
+        local t = Tm()
+        Put(t.on, true)
+        if t.unit then Put(t.unit, "sec") end
+    end
+    local l2 = Line(18)
+    local r2 = Radio(l2, function()
+        PickSec()
+        Changed()
+    end)
+    r2:SetPoint("LEFT", 0, 0)
+    local w2a = Words(l2, 13, COL.ink)
+    w2a:SetPoint("LEFT", r2, "RIGHT", 8, 0)
+    w2a:SetText("With")
+    local b2, b2sync = NumberBox(l2, 30, function() return Get(TK("sec")) or 3 end, function(v)
+        local lo, hi = Bounds(TK("sec"), 0.5, 600)
+        Put(TK("sec"), math.max(lo, math.min(hi, v)))
+        PickSec()
+        Changed()
+    end)
+    b2:SetPoint("LEFT", w2a, "RIGHT", 6, 0)
+    local w2b = Words(l2, 13, COL.ink)
+    w2b:SetPoint("LEFT", b2, "RIGHT", 6, 0)
+    Tip(b2, "Seconds left", "The opacity starts with this many seconds left.")
+
+    -- An aura's length, which seconds need
+    local l2l = Line(18)
+    local wl = Words(l2l, 12, COL.dim)
+    wl:SetPoint("LEFT", 22, 0)
+    wl:SetText("The aura lasts")
+    local bl, blsync = NumberBox(l2l, 30, function()
+        local v = tonumber(Get(TK("len"))) or 0
+        return v > 0 and v or nil
+    end, function(v)
+        local lo, hi = Bounds(TK("len"), 0, 600)
+        Put(TK("len"), math.max(lo, math.min(hi, math.floor(v + 0.5))))
+        Changed()
+    end)
+    bl:SetPoint("LEFT", wl, "RIGHT", 6, 0)
+    local wl2 = Words(l2l, 12, COL.dim)
+    wl2:SetPoint("LEFT", bl, "RIGHT", 6, 0)
+    wl2:SetText("seconds")
+    Tip(bl, "The aura lasts", "The game keeps an aura's length from addons, so seconds need it. A share needs none.")
+
+    -- With [N] % of the aura left (30 % is a debuff's pandemic window)
+    local function PickPct()
+        local t = Tm()
+        Put(t.on, true)
+        Put(t.unit, "pct")
+    end
+    local l3 = Line(18)
+    local r3 = Radio(l3, function()
+        PickPct()
+        Changed()
+    end)
+    r3:SetPoint("LEFT", 0, 0)
+    local w3a = Words(l3, 13, COL.ink)
+    w3a:SetPoint("LEFT", r3, "RIGHT", 8, 0)
+    w3a:SetText("With")
+    local b3, b3sync = NumberBox(l3, 30, function() return Get(TK("pct")) or 30 end, function(v)
+        local lo, hi = Bounds(TK("pct"), 1, 99)
+        Put(TK("pct"), math.max(lo, math.min(hi, math.floor(v + 0.5))))
+        PickPct()
+        Changed()
+    end)
+    b3:SetPoint("LEFT", w3a, "RIGHT", 6, 0)
+    local w3b = Words(l3, 13, COL.ink)
+    w3b:SetPoint("LEFT", b3, "RIGHT", 6, 0)
+    w3b:SetText("% of the aura left")
+    Tip(b3, "Share of the aura left", "30 is a debuff's pandemic window. Needs no length.")
+
+    -- Before that
+    local div = p:CreateTexture(nil, "ARTWORK")
+    div:SetTexture(AT.WHITE)
+    div:SetVertexColor(COL.line[1], COL.line[2], COL.line[3], 1)
+    local l4 = Line(18)
+    local w4 = Words(l4, 12, COL.dim)
+    w4:SetPoint("LEFT", 0, 0)
+    w4:SetWidth(74)
+    w4:SetText("Before that")
+    local s4, box4, s4sync = CompactSlider(l4, SLIDER_W, 0, 1, 0.01, true, nil,
+        function() return Get(TK("before")) or 0 end,
+        function(v)
+            Put(TK("before"), v)
+            if p._relay then p._relay() end
+        end)
+    s4:SetPoint("LEFT", w4, "RIGHT", 6, 0)
+    Tip(s4, "Before that", "How visible the icon is until this opacity starts. 0 hides it.")
+    Tip(box4, "Before that", "How visible the icon is until this opacity starts. 0 hides it.")
+
+    -- what its Dynamic group does with it
+    local l5 = Line(16)
+    local w5 = Words(l5, 12, COL.dim)
+    w5:SetPoint("LEFT", 0, 0)
+    -- its parts by name, as a row keeps its cells
+    p._adParts = { title = title, close = close, right = r1, sec = r2, pct = r3, secBox = b2, lenBox = bl,
+        pctBox = b3, before = s4, beforeBox = box4, lenLine = l2l, pctLine = l3, beforeLine = l4,
+        rightWords = w1, secWords = w2b, noteLine = l5, note = w5 }
+
+    -- Lays the lines out for the record and sizes the box to them.
+    function p:Sync()
+        local r, t, st = Rec(), Tm(), self._st
+        if not (r and t and self._row and self._row:IsVisible()) or r ~= self._rec then
+            self:Close()
+            return
+        end
+        local on = Get(t.on) == true
+        local unit = t.unit and Get(t.unit) or "sec"
+        title:SetText(string.upper(ET.StateWord(r, st) or st.label) .. ": WHEN IT STARTS")
+        w1:SetText("Right away (" .. t.whole .. ")")
+        w2b:SetText(t.left)
+        r1:SetOn(not on)
+        r2:SetOn(on and unit == "sec")
+        r3:SetOn(on and unit == "pct")
+        b2sync()
+        blsync()
+        b3sync()
+        s4sync()
+        local note = on and ET.TimedGroupNote(r) or nil
+        w5:SetText(note or "")
+        local inner = math.max(Measure(title) + 8 + 16, 22 + Measure(w1),
+            22 + Measure(w2a) + 6 + 30 + 6 + Measure(w2b), note and Measure(w5) or 0)
+        local lines = { l1, l2 }
+        local showLen = t.len ~= nil and on and unit == "sec"
+        if showLen then lines[#lines + 1] = l2l end
+        l2l:SetShown(showLen)
+        if t.unit then
+            lines[#lines + 1] = l3
+            inner = math.max(inner, 22 + Measure(w3a) + 6 + 30 + 6 + Measure(w3b))
+        end
+        l3:SetShown(t.unit ~= nil)
+        local w = math.max(POP_W, inner + 2 * POP_PAD)
+        local y = POP_PAD + 16 + POP_GAP
+        for _, l in ipairs(lines) do
+            l:ClearAllPoints()
+            l:SetPoint("TOPLEFT", POP_PAD, -y)
+            l:SetWidth(w - 2 * POP_PAD)
+            y = y + 18 + POP_GAP
+        end
+        div:SetShown(on)
+        l4:SetShown(on)
+        if on then
+            local px = AT.Hairline(p)
+            div:ClearAllPoints()
+            div:SetPoint("TOPLEFT", POP_PAD, -y)
+            div:SetSize(w - 2 * POP_PAD, px)
+            y = y + 6
+            l4:ClearAllPoints()
+            l4:SetPoint("TOPLEFT", POP_PAD, -y)
+            l4:SetWidth(w - 2 * POP_PAD)
+            y = y + 18 + POP_GAP
+        end
+        l5:SetShown(note ~= nil)
+        if note then
+            l5:ClearAllPoints()
+            l5:SetPoint("TOPLEFT", POP_PAD, -y)
+            l5:SetWidth(w - 2 * POP_PAD)
+            y = y + 16 + POP_GAP
+        end
+        self:SetSize(w, y - POP_GAP + POP_PAD)
+    end
+
+    function p:Open(row, st, clock, ctx, relay)
+        self._row, self._st, self._clock, self._ctx, self._relay = row, st, clock, ctx, relay
+        self._rec = ctx()
+        self:ClearAllPoints()
+        self:SetPoint("TOPLEFT", clock, "BOTTOMLEFT", 0, -10)
+        self:SetFrameLevel(row:GetFrameLevel() + 50)
+        self:Show()
+        self:Sync()
+    end
+
+    function p:Close()
+        self._row, self._st, self._clock, self._rec = nil, nil, nil, nil
+        self:Hide()
+    end
+
+    -- a click anywhere else shuts it (its clock toggles it itself)
+    p:SetScript("OnShow", function(self) self:RegisterEvent("GLOBAL_MOUSE_DOWN") end)
+    p:SetScript("OnHide", function(self) self:UnregisterEvent("GLOBAL_MOUSE_DOWN") end)
+    p:SetScript("OnEvent", function(self, _, button)
+        if button ~= "LeftButton" and button ~= "RightButton" then return end
+        if self:IsMouseOver() or (self._clock and self._clock:IsMouseOver()) then return end
+        local dd = AT.openDropdown
+        if dd and dd:IsShown() and dd:IsMouseOver() then return end
+        self:Close()
+    end)
+    return p
+end
+
 local function StateRow(pg, T, ctx, vis, kind, st, owner)
     local lbl
     -- a row with a base pick carries it on a second line under its words
@@ -1669,24 +2065,6 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
         if r then Store.SetOverride(r, section, field, v) end
     end
     local function Relay() AT.LayoutPage(pg) end
-
-    -- the look it copies until it has its own (Recharging: Depleted, or
-    -- Ready with Wait for no charges), one pick for the two
-    if tall then
-        local section, field = st.base[1], st.base[2]
-        local bdef = Def(section, field)
-        local dd = AT.MakeDropdown(owner or pg, row, nil,
-            function()
-                return { { value = false, text = "Like Depleted" }, { value = true, text = "Like Ready" } }
-            end,
-            function() return Get(section, field) == true end,
-            function(v) Put(section, field, v == true) end,
-            function() Relay() end)
-        dd:SetPoint("TOPLEFT", 12, -27)
-        Tip(dd, (bdef and bdef.label) or field,
-            "Until it has looks of its own: like Depleted (dim from the first charge spent) or like Ready (until the last one).")
-        row._adBase = dd
-    end
 
     for _, c in ipairs(COLS) do
         local spec = st[c]
@@ -1738,6 +2116,32 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
                 Tip(s, lab, body)
                 Tip(box, lab, body)
                 C.slider, C.box, C.refresh = s, box, refresh
+                if st.timed then
+                    -- the clock: when this opacity starts (ET.TimePop)
+                    local ck = CreateFrame("Button", nil, cell, "BackdropTemplate")
+                    ck:SetSize(40, 18)
+                    ck:SetPoint("LEFT", box, "RIGHT", 6, 0)
+                    AT.Skin(ck, COL.well, COL.line2)
+                    ck._adGlyph = ET.Glyph(ck, "clock")
+                    ck._adWord = ck:CreateFontString(nil, "OVERLAY")
+                    ck._adWord:SetFont(AT.FONT, 11, "")
+                    ck:SetScript("OnClick", function()
+                        AT.CloseDropdown()
+                        local pop = ET.TimePop(T)
+                        if pop:IsShown() and pop._row == row then
+                            pop:Close()
+                        else
+                            pop:Open(row, st, ck, Rec, Relay)
+                        end
+                    end)
+                    Tip(ck, "When it starts", function()
+                        local word = ET.TimedWord(Rec(), st)
+                        if not word then return "Right away. Click to make it wait for the last seconds." end
+                        if not ET.TimedLive(Rec(), st) then return "Seconds need the aura's length: click to set it." end
+                        return "With " .. word .. " left. Click to change it."
+                    end)
+                    C.clock = ck
+                end
             elseif c == "grey" then
                 local cb = AT.MakeCheckbox(cell)
                 cb:SetPoint("LEFT", 0, 0)
@@ -1901,12 +2305,21 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
                 end
                 C.enabled = ok
             end
+            if C.clock then
+                local t = st.timed
+                local on = has and t.ok(r) == true and Applies(r, t[1], t.on)
+                C.clock:SetShown(on)
+                if on then PaintClock(C.clock, r, st) end
+            end
         end
-        if row._adBase then
-            row._adBase:SetShown(Applies(r, st.base[1], st.base[2]))
-            row._adBase.Refresh()
-        end
+        -- an open popover follows the record, or shuts with its row
+        local pop = T.pop
+        if pop and pop._row == row and pop:IsShown() then pop:Sync() end
     end
+    row:HookScript("OnHide", function()
+        local pop = T.pop
+        if pop and pop._row == row then pop:Close() end
+    end)
 
     -- every cell's option, for the search (the base pick's too)
     row._adSearch = function()
@@ -1918,6 +2331,9 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
             if st[c] then specs[#specs + 1] = st[c] end
         end
         if st.base then specs[#specs + 1] = st.base end
+        if st.timed and st.timed.ok(r) == true then
+            for _, f in ipairs(st.timed.fields) do specs[#specs + 1] = { st.timed[1], f } end
+        end
         for _, spec in ipairs(specs) do
             for _, f in ipairs({ spec.on or false, spec[2] }) do
                 if f and Applies(r, spec[1], f) then
@@ -1936,7 +2352,7 @@ end
 -- with its editor row under it. It joins the section open on pg and spans
 -- its width; vis gates the whole table. owner: the window a dropdown opens over.
 function ET.StateTable(pg, ctx, vis, owner)
-    local T = { rows = {}, editors = {} }
+    local T = { rows = {}, editors = {}, owner = owner }
     local head = AT.AddRow(pg, 36, function()
         return vis() and ET.StatesFor(ctx()) ~= nil
     end)
@@ -1971,22 +2387,24 @@ function ET.StateTable(pg, ctx, vis, owner)
     head._sync = function()
         local r = ctx()
         local lw = Measure(heads[1])
-        local hasOn = false
+        local hasOn, hasClock = false, false
         local has = {}
         for _, row in ipairs(T.rows) do
             if row._visibleFn() then
                 lw = math.max(lw, Measure(row._adLabel))
-                -- a base pick sits under the words, two to the left of them
-                if row._adBase then lw = math.max(lw, (row._adBase:GetWidth() or 0) - 2) end
                 local a = row._adStateRow.alpha
                 if a and a.on then hasOn = true end
+                -- a clock after the opacity widens the column by itself and a gap
+                local tm = row._adStateRow.timed
+                if tm and r and tm.ok(r) == true and Applies(r, tm[1], tm.on) then hasClock = true end
                 if r then
                     for _, f in ipairs(ET.FxFor(r, row._adStateRow)) do has[f.kind] = true end
                 end
             end
         end
         if not r then return end
-        local w1 = math.max((hasOn and 24 or 0) + SLIDER_W + 6 + VALUE_W, Measure(heads[2]))
+        local w1 = math.max((hasOn and 24 or 0) + SLIDER_W + 6 + VALUE_W + (hasClock and (6 + 40) or 0),
+            Measure(heads[2]))
         local w2 = math.max(18, Measure(heads[3]))
         local w3 = math.max(24 + 30, Measure(heads[4]))
         T.c1 = 14 + lw + 18

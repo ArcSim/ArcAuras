@@ -229,7 +229,7 @@ end
 function TL.Unregister(b, st)
     for i = #st.reg, 1, -1 do
         local t = st.reg[i]
-        b:RemoveDispelTypeTexture(t)
+        NS.RemoveDispelTexture(b, t)
         t:Hide()
         st.reg[i] = nil
     end

@@ -1,5 +1,34 @@
 # Arc Auras
 
+## 2.5.0
+
+A Defaults page, resource bar states, a texture update and icons that wait for the end of a cooldown or aura.
+
+### New Features
+
+- **Defaults page** - Every kind of item's defaults in one place (sidebar > Defaults).
+- **Resource bar states** - Color the bar, mark costs and glow by spell, aura or power under Conditions > By State.
+- **Opacity near the end** - Hide or fade a cooldown until its last seconds, or an aura until its pandemic window.
+- **Textures** - Stack pictures, ring fills, time left looks and texts, animations, tiling and a full art search.
+- **Item level on tooltips** - Modules > Tooltip IDs.
+
+### Improvements
+
+- **Arc Procs** - Special Auras are now Arc Procs everywhere.
+- **Import / Export** - Two clear tabs: what you share, and what an import holds and where it goes.
+- **Recharging** - Its own look on charge spells, with its own preview loop.
+- **Weapon enchants** - A No weapon state and an option to load only with a weapon in hand.
+- **Resource bars** - Fold in half on any power, and druid form conditions.
+- **Pet autocast** - Counts as toggled on.
+- **Options window** - A loading bar, draggable scroll bars and clearer tabs.
+
+### Bug Fixes
+
+- **Centred groups** - No longer shift by a pixel.
+- **Aura icons** - Max stacks color, dispel borders and target swaps fixed.
+- **Comparison tooltips** - The IDs show every time.
+- **Save as Default** - No longer copies an icon's own picture onto its whole kind.
+
 ## 2.4.0
 
 Themes, glows on every bar and talents for any class and spec.

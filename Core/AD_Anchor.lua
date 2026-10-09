@@ -520,6 +520,7 @@ local function SnapAnchored(rec, frame, target)
     local src, dst = R(rec, "anchorSrcPoint") or DEFAULT_SRC, R(rec, "anchorDstPoint") or DEFAULT_DST
     local x, y = R(rec, "anchorOffsetX") or 0, R(rec, "anchorOffsetY") or 0
     frame:SetPoint(src, target, dst, x, y)
+    frame._adSnapDX = nil
     local left, bottom = Plain(frame:GetLeft()), Plain(frame:GetBottom())
     local s = Plain(frame:GetEffectiveScale())
     local _, physH = GetPhysicalScreenSize()
@@ -530,6 +531,11 @@ local function SnapAnchored(rec, frame, target)
     local dx = left - math.floor(left / px + 0.5 - TIE) * px
     local dy = bottom - math.floor(bottom / px + 0.5 + TIE) * px
     if dx ~= 0 or dy ~= 0 then frame:SetPoint(src, target, dst, x - dx, y - dy) end
+    -- the shift, as the engine's SnapPlacement keeps it: a dynamic group's
+    -- centred rows add it back (the engine's onSnap places them again)
+    frame._adSnapDX, frame._adSnapDY = dx, dy
+    frame._adSnapW, frame._adSnapH = Plain(frame:GetWidth()), Plain(frame:GetHeight())
+    if Anchor.onSnap then Anchor.onSnap(rec, frame) end
 end
 
 -- A match follows its target live (a group grows with its auras, a pips bar

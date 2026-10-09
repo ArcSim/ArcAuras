@@ -21,10 +21,12 @@ MOD.LINE = "Extra features for the whole addon. Switch one on to use it; its set
 -- unavailable, moved, switch }. glyph: bars for DrawGlyph, or a function(box).
 -- unavailable: the card's line while available() says no. moved: where its rows
 -- used to live, shown while the card wears its mark. switch: the setting key of the
--- page's first row. The page reads the list once as the window builds, so a
--- module registers at load.
+-- page's first row. foreverOnly: a module retail has no use for never registers
+-- there. The page reads the list once as the window builds, so a module
+-- registers at load.
 function MOD.Register(spec)
     if type(spec) ~= "table" or not spec.key or MOD.byKey[spec.key] then return end
+    if spec.foreverOnly and NS.IsForever ~= true then return end
     MOD.list[#MOD.list + 1] = spec
     MOD.byKey[spec.key] = spec
 end
@@ -526,6 +528,21 @@ function MOD.TooltipRows(pg, m)
             m.isOn, p[3])
         MOD.Stamp(row, m, key, "bool")
     end
+    -- Core\AD_TooltipIDs.lua: off unless picked
+    row = AT.RowDropdown(pg, MOD.win, "Item level",
+        function() return Store.GetSetting("tooltipItemLevel") or "off" end,
+        function(v) Store.SetSetting("tooltipItemLevel", (v ~= "off") and v or nil) end,
+        function()
+            return {
+                { value = "off", text = "Off" },
+                { value = "name", text = "After the name" },
+                { value = "under", text = "Under the name" },
+                { value = "block", text = "In the IDs block" },
+            }
+        end,
+        m.isOn)
+    AT.Tooltip(row, "Item level", "Your gear's item level, as each game reports it. After the name reads Name (34); under the name adds an Item Level line.")
+    MOD.Stamp(row, m, "tooltipItemLevel", "enum")
     row = AT.RowToggle(pg, "Only while holding Shift",
         function() return Store.GetSetting("tooltipIDsShift") == true end,
         function(v) Store.SetSetting("tooltipIDsShift", v and true or nil) end,
@@ -613,6 +630,7 @@ MOD.Register({
     name = "Auto-rank Action Bars",
     desc = "When you learn a new rank, your action bar buttons move up to it, out of combat.",
     unavailable = "Spell ranks only exist on WoW Forever.",
+    foreverOnly = true,
     moved = "from QOL",
     glyph = function(box)
         MOD.DrawGlyph(box, { { 3, 17, 14, 2 }, { 5, 10, 2, 6 }, { 9, 7, 2, 9 }, { 13, 10, 2, 6 } })

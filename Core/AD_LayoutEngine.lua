@@ -78,6 +78,7 @@ Engine.Snap, Engine.FloorPx, Engine.PixRound = Snap, FloorPx, PixRound
 local function SnapPlacement(f, container, x, y)
     f:ClearAllPoints()
     f:SetPoint("CENTER", container, "CENTER", x, y)
+    f._adSnapDX = nil
     local left, bottom = f:GetLeft(), f:GetBottom()
     if not (left and bottom) then return end
     -- A secret rect (a bar that was on a nameplate) gets no snap math.
@@ -91,6 +92,19 @@ local function SnapPlacement(f, container, x, y)
     if dx ~= 0 or dy ~= 0 then
         f:SetPoint("CENTER", container, "CENTER", x - dx, y - dy)
     end
+    -- the shift taken and the size it was taken at (CenterLean)
+    f._adSnapDX, f._adSnapDY, f._adSnapW, f._adSnapH = dx, dy, f:GetWidth(), f:GetHeight()
+end
+
+-- How far a group frame's snap moved it off the spot it was meant for, while
+-- that snap was taken at w x h (else nil). A centred row inside adds it back,
+-- or the frame's half-pixel lean and the row's own add up to a whole pixel
+-- whenever the frame is an odd number of pixels across.
+local function CenterLean(f, w, h)
+    local sw, sh = f._adSnapW, f._adSnapH
+    if not (f._adSnapDX and sw and sh) then return nil end
+    if math.abs(sw - w) > 0.01 or math.abs(sh - h) > 0.01 then return nil end
+    return f._adSnapDX, f._adSnapDY
 end
 
 local moveMode = false
@@ -433,7 +447,9 @@ end
 
 -- Packs items along one visual row, left to right, against the aligned edge or
 -- centered. A full row lands on the static cells, so Dynamic never nudges it.
--- Corners, as CellXY; centred, an odd leftover pixel goes right.
+-- Corners, as CellXY; centred, a block lands where a frame its size centred
+-- on the group's spot would (ctx.leanX / leanY, CenterLean): a spare pixel
+-- falls right and below, as SnapPlacement's.
 local function PackRow(ctx, items, align, vr, out)
     local n = #items
     if n == 0 then return end
@@ -444,7 +460,9 @@ local function PackRow(ctx, items, align, vr, out)
     elseif align == "right" then
         x0 = ctx.contentW - ctx.pad - span
     else
-        x0 = FloorPx((ctx.contentW - span) / 2)
+        local px = UIPx()
+        local v = (ctx.contentW - span) / 2 + (ctx.leanX or 0)
+        x0 = px and PixRoundLeft(v, px) or FloorPx((ctx.contentW - span) / 2)
     end
     local _, y = CellXY(ctx, vr, 0)
     for i, it in ipairs(items) do
@@ -462,7 +480,10 @@ local function PackCol(ctx, items, align, vc, out)
     elseif align == "bottom" then
         y0 = ctx.contentH - ctx.pad - span
     else
-        y0 = FloorPx((ctx.contentH - span) / 2)
+        -- measured from the bottom, where the lean is: the frame's sat dy low
+        local px = UIPx()
+        local rest = ctx.contentH - span
+        y0 = px and (rest - PixRound(rest / 2 + (ctx.leanY or 0), px)) or FloorPx(rest / 2)
     end
     local x = CellXY(ctx, 0, vc)
     for i, it in ipairs(items) do
@@ -594,6 +615,12 @@ end
 -- container's size changed, so the caller can re-anchor what is pinned to it.
 local function DynApply(group, gf, ctx)
     local align, shape = Engine.EffectiveAlignment(group, ctx.needRows, ctx.cols)
+    -- the full grid's lean: off the frame when it was last snapped at full
+    -- size (the rebuild's snap, an anchored group's own); a shrunk box keeps
+    -- the one its first pass read
+    local lx, ly = CenterLean(gf, math.max(ctx.contentW, Snap(4)), math.max(ctx.contentH, Snap(4)))
+    if lx then ctx.leanX, ctx.leanY = lx, ly end
+    ctx.usedLeanX, ctx.usedLeanY = ctx.leanX or 0, ctx.leanY or 0
     local targets = DynTargets(group, ctx, align, shape)
     -- the box's top-left corner on the full grid, and its size
     local bx, by, w, h = 0, 0, ctx.contentW, ctx.contentH
@@ -644,6 +671,20 @@ local function DynApply(group, gf, ctx)
         end
     end
     return sizeChanged
+end
+
+-- An anchored group's frame snaps after its icons were placed (the anchors
+-- post-pass, a target that resized): a new lean places them again at once,
+-- so nothing shifts a pixel on the next state edge.
+if NS.Anchor then
+    NS.Anchor.onSnap = function(rec, frame)
+        local ctx = rec and rec.type == "group" and dynCtx[rec.id]
+        if not ctx or editMode or groupFrames[rec.id] ~= frame or not frame:IsShown() then return end
+        local lx, ly = CenterLean(frame, math.max(ctx.contentW, Snap(4)), math.max(ctx.contentH, Snap(4)))
+        if lx and (math.abs(lx - (ctx.usedLeanX or 0)) > 0.001 or math.abs(ly - (ctx.usedLeanY or 0)) > 0.001) then
+            DynApply(rec, frame, ctx)
+        end
+    end
 end
 
 local function EnsureLayoutFrame(rec)
@@ -2164,6 +2205,12 @@ function Engine.Init()
         end)
     end)
     Events.On("PLAYER_EQUIPMENT_CHANGED", "adeng", function()
+        -- an enchant icon that loads only with a weapon in its hand
+        local armed = false
+        Store.EachRecord(function(_, r)
+            if r.kind == "enchant" and r.driver and r.driver.onlyArmed == true then armed = true end
+        end)
+        if armed then Engine.QueueRebuild() end
         Events.Coalesce("ad_equip_restyle", function()
             for iconId, f in pairs(Factory.frames) do
                 local rec = Store.Get(iconId)

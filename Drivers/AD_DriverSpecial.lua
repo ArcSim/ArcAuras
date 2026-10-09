@@ -1,4 +1,4 @@
--- AD_DriverSpecial: the Special Auras engine, ProcTracker's trackers as one Arc Auras driver: the registry, the shared event surface, the resets, the reload persistence, the deck bars' proc marks and the attach front door.
+-- AD_DriverSpecial: the Arc Procs engine (internally "Special"), ProcTracker's trackers as one Arc Auras driver: the registry, the shared event surface, the resets, the reload persistence, the deck bars' proc marks and the attach front door.
 -- Tracker files register at load (SP.Register); a record attaches through SP.Attach with a sink that receives every Read() on change; nothing here draws.
 -- Every value a tracker compares stays plain in combat: your own casts, SPELL_UPDATE_COOLDOWN spell IDs, by-spell-ID aura presence and hook firings; a secret payload is dropped before any compare.
 local ADDON, NS = ...

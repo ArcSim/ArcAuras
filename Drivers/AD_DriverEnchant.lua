@@ -16,8 +16,8 @@ NS.DriverEnchant = DE
 
 -- slot = Enum.WeaponSlot, inv = the inventory slot for art and tooltips
 DE.HANDS = {
-    main = { slot = 0, inv = 16, text = "Main Hand" },
-    off  = { slot = 1, inv = 17, text = "Off Hand" },
+    main = { slot = 0, inv = 16, text = "Main Hand", slotName = "MAINHANDSLOT" },
+    off  = { slot = 1, inv = 17, text = "Off Hand", slotName = "SECONDARYHANDSLOT" },
 }
 DE.EVENTS = { "WEAPON_ENCHANT_CHANGED", "WEAPON_SLOT_CHANGED", "PLAYER_EQUIPMENT_CHANGED",
     "UNIT_INVENTORY_CHANGED" }
@@ -29,6 +29,13 @@ function DE.Hand(rec)
 end
 
 function DE.InvSlot(rec) return DE.Hand(rec).inv end
+
+-- the character sheet's empty slot picture for the hand, shown while it is bare
+function DE.SlotArt(rec)
+    if not GetInventorySlotInfo then return nil end
+    local _, tex = GetInventorySlotInfo(DE.Hand(rec).slotName)
+    return tex
+end
 
 local function Plain(...)
     if not issecretvalue then return true end
@@ -230,16 +237,20 @@ function DE.Feed(a)
         f.stackText:SetText("")
     end
     f.icon:SetTexture(Factory.GetTexture(rec))
-    -- a sound on a real change only, never on the first read
+    -- no weapon in the hand: the icon's No weapon state
+    local bare = DE.WeaponIn(rec.driver and rec.driver.hand) == nil
+    -- a sound on a real change only, never on the first read; the weapon
+    -- leaving the hand is not the enchant running out
     local D = NS.DriverCooldown
     if D and D.PlayAlert and a.lastOn ~= nil and a.lastOn ~= on then
         if on then
             D.PlayAlert(rec, "readySoundEnabled", "readySound")
-        else
+        elseif not bare then
             D.PlayAlert(rec, "cooldownSoundEnabled", "cooldownSound")
         end
     end
     a.lastOn = on
+    f._adNoWeapon = bare or nil
     Factory.SetState(f, rec, not on, not on)
 end
 

@@ -1,5 +1,6 @@
 -- AD_OptionsLoader: the options window's first build, run a slice per frame
--- behind a small loading bar, so opening the panel never stalls the game.
+-- behind a small loading bar, so opening the panel never stalls the game; then
+-- the editors' panes, built in the background in small slices (Options.Prebuild).
 -- AD_Options hands its build to Loader.Start and pauses through Options.BuildYield
 -- and Options.BuildStep; Loader.Then queues what waits for the window.
 local ADDON, NS = ...
@@ -10,8 +11,11 @@ local COL = AT.COL
 local Loader = {}
 Options.Loader = Loader
 
--- Build time per frame; the rest of the frame stays the game's.
+-- Build time per frame; the rest of the frame stays the game's. A build the
+-- player waits on takes SLICE_MS, a background one BG_MS, which the frame
+-- rate does not feel.
 local SLICE_MS = 12
+local BG_MS = 3
 local VIEW_W, VIEW_H = 300, 84
 
 local step, co              -- the build while it runs: the resumer and its thread
@@ -19,9 +23,14 @@ local stepping = false      -- still set on the next frame = the last slice rais
 local sliceStart = 0
 local after = {}            -- work that waits for the window
 local driver, view
+local bg, hurried = false, false   -- a background build, and a pick waiting on it
 
-function Options.BuildYield()
-    if co and coroutine.running() == co and debugprofilestop() - sliceStart >= SLICE_MS then
+-- force: end the slice now (a background build yields after each pane, so a
+-- pick waiting on that pane opens on the next frame)
+function Options.BuildYield(force)
+    if not (co and coroutine.running() == co) then return end
+    local limit = (bg and not hurried) and BG_MS or SLICE_MS
+    if force or debugprofilestop() - sliceStart >= limit then
         coroutine.yield()
     end
 end
@@ -37,7 +46,8 @@ local function EnsureView()
     view = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
     view:SetSize(VIEW_W, VIEW_H)
     view:SetPoint("CENTER", 0, 40)
-    view:SetFrameStrata("DIALOG")
+    -- above the options window (DIALOG, raised on every click), never behind it
+    view:SetFrameStrata("FULLSCREEN_DIALOG")
     AT.Skin(view, COL.bg, COL.line2)
     local title = view:CreateFontString(nil, "OVERLAY")
     title:SetFont(AT.FONT, 14, "")
@@ -74,6 +84,7 @@ function Loader.Stop()
     if driver then driver:SetScript("OnUpdate", nil) end
     if view then view:Hide() end
     step, co = nil, nil
+    bg, hurried = false, false
 end
 
 local function Tick()
@@ -84,6 +95,8 @@ local function Tick()
         Loader.Stop()
         return
     end
+    -- a background build waits out combat (the window is shut in combat)
+    if bg and InCombatLockdown() then return end
     stepping = true
     sliceStart = debugprofilestop()
     local finished = step()
@@ -94,30 +107,43 @@ local function Tick()
         after = {}
         for _, fn in ipairs(run) do fn() end
     end
+    -- outside the build: the picks whose pane now exists open
+    if Loader.OnSlice then Loader.OnSlice() end
 end
 
 -- Starts `build` as a coroutine resumed once per frame. coroutine.wrap lets an
 -- error in the build reach the normal error handler, nothing catches it.
--- quiet: a pane built after the first open, a few frames at most, so no bar.
-function Loader.Start(build, quiet)
+-- quiet: a pane built after the first open, so no bar. background: small
+-- slices until Hurry (a pick waits on it).
+function Loader.Start(build, quiet, background)
     if step then return end
     step = coroutine.wrap(function()
         co = coroutine.running()
         build()
         return true
     end)
+    bg, hurried = background == true, false
     Loader.quiet = quiet == true
-    Options.ApplySavedScale()
-    EnsureView()
-    view:SetScale(AT.FitScale(VIEW_W, VIEW_H))
-    Loader.Paint(0, 1)
-    view:SetShown(not Loader.quiet)
+    -- the bar is the first open's only; a quiet build leaves it as it was
+    if not Loader.quiet then
+        Options.ApplySavedScale()
+        EnsureView()
+        view:SetScale(AT.FitScale(VIEW_W, VIEW_H))
+        Loader.Paint(0, 1)
+        view:Show()
+    elseif view then
+        view:Hide()
+    end
     driver = driver or CreateFrame("Frame")
     driver:SetScript("OnUpdate", Tick)
 end
 
 function Loader.Busy() return step ~= nil end
 function Loader.InBuild() return co ~= nil and coroutine.running() == co end
+function Loader.Background() return step ~= nil and bg end
+-- a pick waits on the background build: full slices until it opens
+function Loader.Hurry() if bg then hurried = true end end
+function Loader.Calm() hurried = false end
 
 function Loader.Then(fn)
     after[#after + 1] = fn
@@ -130,4 +156,5 @@ end
 function Loader.Cancel()
     after = {}
     if view then view:Hide() end
+    if Loader.OnCancel then Loader.OnCancel() end
 end

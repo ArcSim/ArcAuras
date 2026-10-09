@@ -31,13 +31,15 @@ function Bars.PreBuildAura()
     Bars.loadWindow = true
     Store.EachRecord(function(id, rec)
         -- a text element reading an aura's time or stacks draws through a slot
-        -- too, and so does a texture driven by an aura, and a bar glow set to
-        -- an aura (Bars\AD_BarGlow.lua)
-        local T, TP, BG = NS.TextElements, NS.TextureElements, Bars.Glow
+        -- too, and so does a texture driven by an aura, a bar glow set to an
+        -- aura (Bars\AD_BarGlow.lua) and a resource bar's aura colour rule
+        -- (Bars\AD_ResColors.lua)
+        local T, TP, BG, RCm = NS.TextElements, NS.TextureElements, Bars.Glow, Bars.ResColor
         if rec.type == "bar" and (rec.barKind == "aura"
             or (rec.barKind == "text" and T and (T.SlotSource or T.AuraSource)(rec))
             or (rec.barKind == "texture" and TP and TP.Source(rec) == "aura")
-            or (BG and BG.WantsLanes(rec))) and Loads(rec) then
+            or (BG and BG.WantsLanes(rec))
+            or (RCm and RCm.WantsLanes(rec))) and Loads(rec) then
             local h = holders[id]
             if not h then
                 h = CreateFrame("Frame", nil, UIParent)

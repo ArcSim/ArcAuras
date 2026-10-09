@@ -29,12 +29,64 @@ local function Suf(k) return (k > 1) and tostring(k) or "" end
 local function GR(rec, section, field, k) return Store.Resolve(rec, section, field .. Suf(k)) end
 
 function G.Slots() return (NS.Schema and NS.Schema.BAR_GLOW_SLOTS) or 3 end
+
+-- A kind whose glows are its state rows (the kind table's rows: resource
+-- bars, Bars\AD_ResColors.lua): glow k is the k-th row that carries a glow,
+-- its trigger the row's own state, its look the row's glow.
+function G.FromRows(rec)
+    local d = rec and G.KINDS[rec.barKind]
+    return d ~= nil and d.rows == true
+end
+
+-- glow k's row and its place in the list, or nil
+function G.Row(rec, k)
+    local CRm = Bars.ResColor
+    local idx = CRm and CRm.GlowRows(rec)
+    local i = idx and idx[k]
+    if not i then return nil end
+    return CRm.RowsOf(rec)[i], i
+end
+
+-- a row's glow as a look, each unset key at the bar glows' default
+function G.RowLook(r)
+    local g = r and r.glow
+    if type(g) ~= "table" then return nil end
+    local S = NS.Schema
+    local gf = S.bar.glows.fields
+    local function V(key)
+        local v = g[key]
+        if v == nil then v = gf[S.RES_GLOW_KEYS[key]].d end
+        return v
+    end
+    local c = type(g.color) == "table" and g.color or gf.barGlowColor.d
+    return {
+        when = r.when,
+        style = (g.style == "autocast") and "autocast" or "pixel",
+        r = c[1] or 1, g = c[2] or 1, b = c[3] or 1, a = (c[4] or 1) * V("intensity"),
+        combat = g.combat == true,
+        speed = math.max(0.05, V("speed")),
+        lines = math.max(1, math.floor(V("lines"))),
+        th = math.max(1, math.floor(V("th"))),
+        len = V("len"),
+        parts = math.max(1, math.floor(V("parts"))),
+        scale = V("scale"),
+        xo = math.floor(V("xo") + 0.5),
+        yo = math.floor(V("yo") + 0.5),
+    }
+end
+
 function G.Count(rec)
+    if G.FromRows(rec) then
+        local CRm = Bars.ResColor
+        local idx = CRm and CRm.GlowRows(rec)
+        return idx and #idx or 0
+    end
     local n = tonumber(Store.Resolve(rec, "glows", "barGlowCount")) or 1
     if n < 1 then n = 1 end
     return math.min(G.Slots(), math.floor(n))
 end
 function G.On(rec, k)
+    if G.FromRows(rec) then return G.Row(rec, k) ~= nil end
     return G.KINDS[rec.barKind] ~= nil and k <= G.Count(rec) and GR(rec, "glows", "barGlow", k) == true
 end
 
@@ -47,7 +99,15 @@ function G.OwnFamily(rec)
     return d.own
 end
 
-function G.When(rec, k) return GR(rec, "glows", "barGlowWhen", k) or "up" end
+-- a row glow's state other than an aura's is judged by the rows ("row")
+function G.When(rec, k)
+    if G.FromRows(rec) then
+        local r = G.Row(rec, k)
+        local w = r and r.when
+        return (w == "up" or w == "missing") and w or "row"
+    end
+    return GR(rec, "glows", "barGlowWhen", k) or "up"
+end
 
 -- What glow k tracks, read off its Glow when: "aura" (up, missing) or "spell"
 -- (ready, recharging, on cooldown). Saved glows need no Track field of their own.
@@ -56,9 +116,11 @@ function G.Family(rec, k)
 end
 
 -- What drives glow k: "up" / "miss" (an aura lane), "cd" (a spell's cooldown
--- states), or nil when its trigger cannot run here.
+-- states), "row" (a state row the rows judge), or nil when its trigger
+-- cannot run here.
 function G.Kind(rec, k)
     local when = G.When(rec, k)
+    if when == "row" then return "row" end
     local S = NS.Schema
     if not S then return nil end
     if G.CD_WHEN[when] then return S.BarGlowCdOK(rec) and "cd" or nil end
@@ -167,6 +229,7 @@ function G.SetTrack(rec, k, v)
 end
 
 function G.Look(rec, k)
+    if G.FromRows(rec) then return G.RowLook((G.Row(rec, k))) end
     local c = GR(rec, "glows", "barGlowColor", k) or { 0.95, 0.95, 0.32, 1 }
     return {
         when = GR(rec, "glows", "barGlowWhen", k) or "up",
@@ -188,6 +251,7 @@ end
 -- The aura glow k watches, in the aura icons' shape: an aura bar's own aura
 -- unless "Another aura" was picked, else the glow's own record.
 function G.Shape(rec, k)
+    if G.FromRows(rec) then return (G.Row(rec, k)) or {} end
     if G.AuraOwn(rec, k) then return rec.driver or {} end
     return G.GlowRec(rec, k, false) or {}
 end
@@ -299,7 +363,7 @@ end
 local function State(id)
     local st = G.state[id]
     if not st then
-        st = { cd = {}, up = {}, miss = {}, retired = {}, gen = 0 }
+        st = { cd = {}, row = {}, up = {}, miss = {}, retired = {}, gen = 0 }
         G.state[id] = st
     end
     return st
@@ -589,6 +653,53 @@ function G.CdShow(st, k)
     end
 end
 
+-- A state row's glow (any row but an aura's): a plain frame of ours over the
+-- bar, shown while its row holds (Bars\AD_ResColors.lua judges it, e.crRows).
+function G.SlotRow(st, e, k, look, row)
+    local host = st.row[k]
+    if not look then
+        if host then
+            G.Unpaint(host)
+            host:Hide()
+            host._adRow = nil
+        end
+        return
+    end
+    if not host then
+        host = CreateFrame("Frame", nil, e.shell)
+        host:EnableMouse(false)
+        host:Hide()
+        st.row[k] = host
+    end
+    if host:GetParent() ~= e.shell then host:SetParent(e.shell) end
+    host:SetFrameLevel((st.base or 1) + Bars.LADDER.glow)
+    local gm = G.Geom(e, look)
+    G.Place(host, e.shell, gm)
+    G.Paint(host, look, gm)
+    host._adRow, host._adCombat = row, look.combat
+    G.RowShow(st, k)
+end
+
+function G.RowShow(st, k)
+    local host = st.row[k]
+    if not host then return end
+    local e = st.entry
+    local rr = e and e.crRows and host._adRow and e.crRows[host._adRow]
+    local want = (rr ~= nil and rr.hold == true) and (not host._adCombat or G.ForCombat())
+    want = want and true or false
+    if want ~= (host:IsShown() == true) then
+        host:SetShown(want)
+        if want then G.Wake(host) end
+    end
+end
+
+-- The rows' word that a row's state moved: its glow follows.
+function G.RowsHeld(e)
+    local st = G.state[e.rec and e.rec.id]
+    if not (st and st.entry == e) then return end
+    for k in pairs(st.row) do G.RowShow(st, k) end
+end
+
 -- The live pass, at the end of every EnsureBar (and a pips bar's resize).
 function G.Styled(e)
     if e.isPreview then return end
@@ -628,6 +739,7 @@ function G.Styled(e)
         if look and look.combat then st.combat = true end
         G.SlotCd(st, e, k, (kind == "cd") and look or nil)
         if kind == "cd" then st.hasCd = true end
+        G.SlotRow(st, e, k, (kind == "row") and look or nil, (kind == "row") and select(2, G.Row(rec, k)) or nil)
         G.SlotLane(st, e, k, "up", (kind == "up") and look or nil)
         G.SlotLane(st, e, k, "miss", (kind == "miss") and look or nil)
     end
@@ -657,7 +769,7 @@ end
 
 -- 12.1.0 shows an unfiltered aura on such a lane: it stays out.
 function G.Blind(lane)
-    if not NS.OldAuraEngine then return false end
+    if not NS.AuraEngine1210 then return false end
     local DA = NS.DriverAura
     local st = lane.st
     return DA ~= nil and DA.LaneBlindFor ~= nil and st.rec ~= nil
@@ -708,6 +820,7 @@ function G.Visible(e)
         end
     end
     for k in pairs(st.cd) do G.CdShow(st, k) end
+    for k in pairs(st.row) do G.RowShow(st, k) end
 end
 
 -- The bar's cooldown states, from its two hidden cooldowns (CooldownPushState),
@@ -753,6 +866,11 @@ function G.Release(e)
         host._adWhen = nil
         -- a spell watch goes with the bar: no events left behind for it
         G.Unwatch(st, k)
+    end
+    for _, host in pairs(st.row) do
+        G.Unpaint(host)
+        host:Hide()
+        host._adRow = nil
     end
     G.SyncEvents()
 end
@@ -842,9 +960,13 @@ function G.Preview(e)
     e.pvGlow = e.pvGlow or {}
     local lvl = e.shell.fill:GetFrameLevel()
     lvl = (type(lvl) == "number") and lvl or 1
+    -- a bar whose glows are its rows shows the glow of the row its table has open
+    local rows = rec and G.FromRows(rec)
+    local sel = rows and Bars.ResColor and Bars.ResColor.previewSel
     for k = 1, G.Slots() do
         local host = e.pvGlow[k]
         local look = (open and rec and G.On(rec, k) and G.Kind(rec, k)) and G.Look(rec, k) or nil
+        if look and rows and select(2, G.Row(rec, k)) ~= sel then look = nil end
         if look then
             if not host then
                 host = CreateFrame("Frame", nil, e.shell)

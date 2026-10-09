@@ -89,7 +89,7 @@ end
 -- The game's throttle for a rule, where the client knows the field (WoW Forever
 -- and retail past 12.1.0); it takes five seconds at most.
 function SN.Throttle(r)
-    if NS.OldAuraEngine == true then return nil end
+    if NS.AuraEngine1210 == true then return nil end
     return math.min(SN.QuietOf(r), SN.THROTTLE_MAX)
 end
 

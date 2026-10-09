@@ -1,4 +1,4 @@
--- AD_SpecialIcon: the Special Aura icon kind, a tracker of the Special hub drawn as an ordinary icon (retail only).
+-- AD_SpecialIcon: the Arc Proc icon kind (internally "special"), a tracker of the Special hub drawn as an ordinary icon (retail only).
 -- Owns the attach to NS.Special, the templates on the stack text and labels, their state colours, the spent state and a timer's swipe; the cooldown driver hands it frames, the Factory asks it for art, tooltips and a repaint after a restyle.
 -- Everything it paints is a plain number the tracker's Read() hands over; nothing here reads the game.
 local ADDON, NS = ...
@@ -46,7 +46,7 @@ end
 
 function SI.Status(rec)
     local def = SI.Def(rec)
-    if not def then return "unknown tracker" end
+    if not def then return "unknown Arc Proc" end
     if def.Status then return def.Status() or "" end
     return ""
 end
@@ -227,15 +227,25 @@ local function PlayAlert(rec, enKey, soundKey)
     if D and D.PlayAlert then D.PlayAlert(rec, enKey, soundKey) end
 end
 
+-- The stack text and the labels, their templates expanded.
+local function PaintTexts(f, rec, read, def)
+    if f.stackText and NS.Store.Resolve(rec, "text", "stackText") ~= false then
+        f.stackText:SetText(SI.Expand(SI.StackTemplate(rec, def), read, rec, def))
+    end
+    for i = 1, #SUFFIX do PaintLabel(f, i, rec, read, def) end
+end
+
+-- What the editor's preview reads before its tracker has: mid-deck numbers,
+-- so a text shows a value, never a raw {token}.
+SI.SAMPLE = { pos = 3, left = 7, drawn = 3, size = 10, procs = 2, procsLeft = 8, max = 10,
+    chance = 35, viol = 0, count = 2 }
+
 function SI.Paint(e)
     local rec, f, read = e.rec, e.f, e.read
     if not (rec and f and read) then return end
     local Store, Factory = NS.Store, NS.Factory
     local def = SI.Def(rec)
-    if f.stackText and Store.Resolve(rec, "text", "stackText") ~= false then
-        f.stackText:SetText(SI.Expand(SI.StackTemplate(rec, def), read, rec, def))
-    end
-    for i = 1, #SUFFIX do PaintLabel(f, i, rec, read, def) end
+    PaintTexts(f, rec, read, def)
     PaintSwipe(e, read, def)
     PaintWarn(f, rec, read.cdmWarn == true)
     local spent = SI.Spent(read, def)
@@ -297,8 +307,13 @@ function SI.Refeed(id)
 end
 
 -- ApplyStyle writes the raw templates back onto the labels; paint them again.
+-- The editor's preview takes the live icon's read, else the sample.
 function SI.Restyle(f, rec)
     local e = SI.live[rec.id]
+    if f._adPreview then
+        PaintTexts(f, rec, (e and e.read) or SI.SAMPLE, SI.Def(rec))
+        return
+    end
     if e and e.f == f and e.read then SI.Paint(e) end
 end
 
@@ -348,7 +363,7 @@ end
 
 function SI.Tooltip(rec)
     local def = SI.Def(rec)
-    GameTooltip:SetText(def and def.name or rec.name or "Special Aura")
+    GameTooltip:SetText(def and def.name or rec.name or "Arc Proc")
     local status = SI.Status(rec)
     if status ~= "" then GameTooltip:AddLine(status, 0.7, 0.7, 0.7) end
     local line = SI.Readout(rec)
@@ -358,5 +373,5 @@ end
 -- The sidebar's and cards' one line for a special icon.
 function SI.Words(rec)
     local def = SI.Def(rec)
-    return "special: " .. (def and def.name or tostring(SI.TrackerID(rec) or "unknown"))
+    return "Arc Proc: " .. (def and def.name or tostring(SI.TrackerID(rec) or "unknown"))
 end

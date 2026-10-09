@@ -82,6 +82,46 @@ function LK.Value(rec, lk, section, field)
     return nil
 end
 
+-- A look's own state rows (set.resColors, Conditions > By State): the look in
+-- play's list, else nil and the bar's own rows apply. An empty list is a look
+-- with no states.
+function LK.Rows(rec)
+    local lk = rec and rec.looks
+    local by = lk and lk.by
+    local sets = by and lk[by]
+    if not sets then return nil end
+    local key = LK.Key(rec, lk)
+    if key == nil or key == LK.BASE then return nil end
+    local set = sets[key]
+    return set and set.resColors or nil
+end
+
+-- The rows the editor writes while one of the bar's looks is edited: the
+-- look's own, made from a copy of the bar's on the first edit (make). nil
+-- while the bar's own settings are edited.
+function LK.EditRows(rec, make)
+    local lk = rec and rec.looks
+    local by = lk and lk.by
+    local key = rec and LK.editing[rec.id]
+    if not (by and key ~= nil and key ~= LK.BASE) then return nil end
+    local set = lk[by] and lk[by][key]
+    if set and set.resColors then return set.resColors end
+    if not make then return nil end
+    lk[by] = lk[by] or {}
+    set = lk[by][key] or {}
+    lk[by][key] = set
+    local rows = {}
+    local function Copy(v)
+        if type(v) ~= "table" then return v end
+        local t = {}
+        for k, x in pairs(v) do t[k] = Copy(x) end
+        return t
+    end
+    for i, r in ipairs((rec.driver and rec.driver.resColors) or {}) do rows[i] = Copy(r) end
+    set.resColors = rows
+    return rows
+end
+
 -- A write while a look is edited: kept only where it differs from what the bar
 -- reads without it. False when no look of this bar is being edited.
 function LK.Set(rec, section, field, value)

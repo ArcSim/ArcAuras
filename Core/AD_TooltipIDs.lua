@@ -1,6 +1,7 @@
 -- Adds an ID block to tooltips built from game data (spells, auras, items,
 -- toys, mounts, currencies, achievements, quests; our own icons included),
--- with icon and Cooldown Manager IDs, and node IDs on talent buttons.
+-- with icon and Cooldown Manager IDs, node IDs on talent buttons, and (when
+-- picked) a piece of gear's item level.
 -- Taint: post-calls only, and the hovered frame is only ever read.
 local ADDON, NS = ...
 
@@ -323,15 +324,118 @@ local function NodeIDsFromOwner(owner)
     end
 end
 
-function T.Append(tooltip, data)
-    if not Enabled() then return end
-    -- "Only while holding Shift": read as the tooltip builds
-    if NS.Store.GetSetting("tooltipIDsShift") == true
-        and not (IsShiftKeyDown and IsShiftKeyDown()) then
+local function ClearBuild(tooltip)
+    tooltip._adIDDone = nil
+    tooltip._adIDGeneric = nil
+    tooltip._adIDSecretLine = nil
+    if T._pending then T._pending[tooltip] = nil end
+end
+
+-- Every tooltip the block lands on drops its once-per-build mark when it is
+-- cleared or hidden; a mark that never drops (the comparison tooltips) would
+-- hide the block on every later build of the same item.
+local function WatchClear(tooltip)
+    if tooltip._adIDWatched or not tooltip.HookScript then return end
+    tooltip._adIDWatched = true
+    tooltip:HookScript("OnHide", ClearBuild)
+    if tooltip.HasScript and tooltip:HasScript("OnTooltipCleared") then
+        tooltip:HookScript("OnTooltipCleared", ClearBuild)
+    end
+end
+
+-- Where an item's level shows (Modules > Tooltip IDs): nil = nowhere.
+local ILVL_PLACES = { name = true, under = true, block = true }
+local function ItemLevelPlace()
+    local v = NS.Store.GetSetting("tooltipItemLevel")
+    return ILVL_PLACES[v] and v or nil
+end
+
+-- A piece of gear's level as its own game reports it (Forever's and retail's
+-- differ): the level a listing carries (the Auction House's), else the
+-- hovered item's own. nil for anything secret, unknown or not gear.
+local function ItemLevelOf(data)
+    if not (data and Enum and Enum.TooltipDataType and data.type == Enum.TooltipDataType.Item) then return nil end
+    local CI = C_Item
+    if not (CI and CI.GetDetailedItemLevelInfo) then return nil end
+    local link = data.hyperlink
+    if IsSecret(link) or type(link) ~= "string" or link == "" then link = nil end
+    local item = link or data.id
+    if item == nil or IsSecret(item) then return nil end
+    if CI.IsEquippableItem then
+        local eq = CI.IsEquippableItem(item)
+        if IsSecret(eq) or eq ~= true then return nil end
+    end
+    local over = data.overrideItemLevel
+    if type(over) == "number" and not IsSecret(over) and over > 0 then return over end
+    local lvl = CI.GetDetailedItemLevelInfo(item)
+    if IsSecret(lvl) or type(lvl) ~= "number" or lvl <= 0 then return nil end
+    return lvl
+end
+
+-- The tooltip line that holds the item's name (its link's name), else the
+-- first; returns the line's font string, its text and its index.
+local function NameLine(tooltip, data)
+    local tname = tooltip.GetName and tooltip:GetName()
+    if not tname then return nil end
+    local link = data.hyperlink
+    local want = (type(link) == "string" and not IsSecret(link)) and link:match("|h%[(.-)%]|h") or nil
+    for i = 1, 3 do
+        local fs = _G[tname .. "TextLeft" .. i]
+        local t = fs and fs.GetText and fs:GetText()
+        if type(t) == "string" and not IsSecret(t) and (t == want or (want == nil and i == 1)) then
+            return fs, t, i
+        end
+    end
+    return nil
+end
+
+-- "Name (34)": the name keeps its colour, the level reads in white.
+local function TagName(tooltip, data, ilvl)
+    local fs, t = NameLine(tooltip, data)
+    if fs then fs:SetText(t .. " |cffffffff(" .. ilvl .. ")|r") end
+end
+
+-- An "Item Level 34" line right under the name, where retail prints its own,
+-- in the game's own words and gold. A tooltip only appends lines, so the line
+-- under the name gains a first row. A tooltip that shows one already (retail)
+-- gets none.
+local function UnderName(tooltip, data, ilvl)
+    local tname = tooltip.GetName and tooltip:GetName()
+    local fmt = (type(ITEM_LEVEL) == "string" and ITEM_LEVEL:find("%d", 1, true)) and ITEM_LEVEL or "Item Level %d"
+    if not tname then return end
+    local prefix = fmt:match("^(.-)%%d")
+    local n = tooltip:NumLines()
+    for i = 1, math.min(n, 6) do
+        local fs = _G[tname .. "TextLeft" .. i]
+        local t = fs and fs.GetText and fs:GetText()
+        if type(t) == "string" and not IsSecret(t) and prefix and prefix ~= ""
+            and t:find(prefix, 1, true) == 1 then
+            return
+        end
+    end
+    local text = "|cffffd100" .. fmt:format(ilvl) .. "|r"
+    local _, _, idx = NameLine(tooltip, data)
+    idx = idx or 1
+    if idx + 1 <= n then
+        local fs = _G[tname .. "TextLeft" .. (idx + 1)]
+        local t = fs and fs.GetText and fs:GetText()
+        if type(t) == "string" and not IsSecret(t) then fs:SetText(text .. "\n" .. t) end
         return
     end
+    tooltip:AddLine(text)
+end
+
+function T.Append(tooltip, data)
+    if not Enabled() then return end
     if not tooltip or not tooltip.GetOwner then return end
     if tooltip.IsForbidden and tooltip:IsForbidden() then return end
+    WatchClear(tooltip)
+    -- "Only while holding Shift" (read as the tooltip builds) gates the block;
+    -- an item level by the name shows either way
+    local shiftOK = not (NS.Store.GetSetting("tooltipIDsShift") == true
+        and not (IsShiftKeyDown and IsShiftKeyDown()))
+    local place = ItemLevelPlace()
+    if not shiftOK and place ~= "name" and place ~= "under" then return end
     BuildLabels()
     local label = LABELS and data and LABELS[data.type]
     local id = data and data.id
@@ -349,12 +453,21 @@ function T.Append(tooltip, data)
     if tooltip._adIDDone and tooltip._adIDGeneric == dedup then return end
     tooltip._adIDGeneric = dedup
     tooltip._adIDDone = true
+    local ilvl = place and ItemLevelOf(data)
+    if ilvl then ilvl = math.floor(ilvl) end
+    if ilvl and place == "name" then
+        TagName(tooltip, data, ilvl)
+    elseif ilvl and place == "under" then
+        UnderName(tooltip, data, ilvl)
+    end
+    if not shiftOK then return end
     local out, idIndex = {}, nil
     if label and hasID and Part("Data") and not idSecret then
         Push(out, label, Val(id))
         idIndex = #out
         if data.type == Enum.TooltipDataType.Item then PushEnchants(out, tooltip, owner) end
     end
+    if ilvl and place == "block" then Push(out, "Item level", tostring(ilvl)) end
     -- A secret id goes in as nil; the combat-drop recheck adds its lines.
     AddExtras(out, data and data.type, (label and hasID and not idSecret) and id or nil,
         owner, label ~= nil and idSecret)
@@ -379,13 +492,6 @@ function T.Append(tooltip, data)
         T._pending[tooltip] = true
     end
     tooltip:Show()
-end
-
-local function ClearBuild(tooltip)
-    tooltip._adIDDone = nil
-    tooltip._adIDGeneric = nil
-    tooltip._adIDSecretLine = nil
-    if T._pending then T._pending[tooltip] = nil end
 end
 
 -- Re-reads the id through the tooltip's stored C_TooltipInfo getter: a value
@@ -483,13 +589,9 @@ function T.Install()
             end)
         end
     end
-    if GameTooltip and GameTooltip.HookScript then
-        -- reset the per-build guard so the next hover prints again
-        GameTooltip:HookScript("OnHide", ClearBuild)
-        if GameTooltip.HasScript and GameTooltip:HasScript("OnTooltipCleared") then
-            GameTooltip:HookScript("OnTooltipCleared", ClearBuild)
-        end
-    end
+    -- reset the per-build guard so the next hover prints again (every other
+    -- tooltip gets the same hooks the first time the block lands on it)
+    if GameTooltip then WatchClear(GameTooltip) end
     -- A table reload or a spec change (new category sets) drops the Cooldown
     -- Manager map for the next tooltip to rebuild. Missing events are skipped.
     local cdEv = CreateFrame("Frame")

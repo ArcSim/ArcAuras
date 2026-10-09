@@ -1,6 +1,8 @@
 -- AD_TextureLibrary: the pictures a texture offers (UI/AD_TextureOptions.lua's
--- picker), by group. Every entry is a game FileDataID, so it loads on any client;
--- a picture of your own is typed as an ID or a file path instead.
+-- picker), by group. Every picture is a game FileDataID, so it loads on any client;
+-- a picture of your own is typed as an ID or a file path instead. A group with
+-- glow = true is spell-effect art on black, made for the Glow blend: there its
+-- black adds nothing and disappears, so picking one sets that blend.
 local ADDON, NS = ...
 local Options = NS.Options
 if not Options then return end
@@ -94,7 +96,7 @@ Options.TEXTURE_LIBRARY = {
         { id = 6160020, name = "Arcane Soul" },
         { id = 6160021, name = "Hyperthermia" },
     } },
-    { name = "Icons", pictures = {
+    { name = "Icons", glow = true, pictures = {
         { id = 165558, name = "Paw" },
         { id = 165605, name = "Feathers" },
         { id = 165607, name = "Lion" },
@@ -124,7 +126,7 @@ Options.TEXTURE_LIBRARY = {
         { id = 240972, name = "Poison Skull" },
         { id = 241049, name = "Star" },
     } },
-    { name = "Runes", pictures = {
+    { name = "Runes", glow = true, pictures = {
         { id = 165630, name = "Ringed Aura Rune" },
         { id = 165631, name = "Square Aura Rune" },
         { id = 165633, name = "Tri-Circle Aura Rune" },
@@ -152,7 +154,7 @@ Options.TEXTURE_LIBRARY = {
         { id = 241004, name = "Octagonal Skulls" },
         { id = 241005, name = "Dense Circular Rune" },
     } },
-    { name = "Beams", pictures = {
+    { name = "Beams", glow = true, pictures = {
         { id = 167096, name = "Gold Chain" },
         { id = 167097, name = "Iron Chain" },
         { id = 167098, name = "Green Fire Beam" },
@@ -183,13 +185,51 @@ Options.TEXTURE_LIBRARY = {
         { id = 369749, name = "Straight Purple Beam" },
         { id = 369750, name = "Shadow Beam" },
     } },
-    { name = "Sparks", pictures = {
+    { name = "Sparks", glow = true, pictures = {
         { id = 130877, name = "Blizzard Spark" },
     } },
 }
 
--- id -> name, for the picker's current value
-Options.TEXTURE_NAMES = {}
+-- id -> name, for the picker's current value; id -> true for glow art
+Options.TEXTURE_NAMES, Options.TEXTURE_GLOW = {}, {}
 for _, g in ipairs(Options.TEXTURE_LIBRARY) do
-    for _, p in ipairs(g.pictures) do Options.TEXTURE_NAMES[p.id] = p.name end
+    for _, p in ipairs(g.pictures) do
+        Options.TEXTURE_NAMES[p.id] = p.name
+        if g.glow then Options.TEXTURE_GLOW[p.id] = true end
+    end
 end
+
+-- The game's own animated sheets: an atlas and its grid of frames. A client
+-- shows the ones it has (the picker asks C_Texture); picking one switches
+-- the picture to its animation.
+Options.TEXTURE_SHEETS = {
+    { atlas = "UI-HUD-ActionBar-Proc-Loop-Flipbook", name = "Spell alert loop", rows = 6, cols = 5, frames = 30, time = 1 },
+    { atlas = "UI-HUD-ActionBar-Proc-Start-Flipbook", name = "Spell alert burst", rows = 6, cols = 5, frames = 30, time = 0.7 },
+    { atlas = "UI-HUD-ActionBar-GCD-Flipbook", name = "Cooldown flash", rows = 11, cols = 2, frames = 22, time = 0.75 },
+    { atlas = "VisualAlert_Ants_Flipbook", name = "Marching ants", rows = 6, cols = 5, frames = 30, time = 1 },
+    { atlas = "rotationhelper_ants_flipbook", name = "Marching ants, blue", rows = 6, cols = 5, frames = 30, time = 1 },
+    { atlas = "groupfinder-eye-flipbook-searching", name = "Searching eye", rows = 8, cols = 11, frames = 80, time = 2 },
+    { atlas = "groupfinder-eye-flipbook-found-loop", name = "Watching eye", rows = 4, cols = 11, frames = 41, time = 1.5 },
+    { atlas = "UI-HUD-UnitFrame-Player-Rest-Flipbook", name = "Resting", rows = 7, cols = 6, frames = 42, time = 1.5 },
+    { atlas = "UF-SoulShards-Flipbook-Soul", name = "Soul wisp", rows = 3, cols = 7, frames = 18, time = 0.6 },
+    { atlas = "Fyrakk_Flame_FX", name = "Flame", rows = 8, cols = 6, frames = 44, time = 1.33 },
+    { atlas = "UF-Arcane-ShockFX", name = "Arcane shock", rows = 5, cols = 6, frames = 28, time = 1 },
+    { atlas = "UF-HolyPower-DepleteRune1", name = "Holy rune burst", rows = 5, cols = 6, frames = 26, time = 0.87 },
+    { atlas = "UF-DKRunes-BloodDeplete", name = "Blood rune burst", rows = 4, cols = 6, frames = 23, time = 1 },
+    { atlas = "UF-DruidCP-Slash", name = "Claw slash", rows = 3, cols = 8, frames = 20, time = 1 },
+    { atlas = "uf-roguecp-slash-red", name = "Red slash", rows = 3, cols = 6, frames = 17, time = 0.57 },
+    { atlas = "uf-roguecp-slash-blue", name = "Blue slash", rows = 3, cols = 6, frames = 17, time = 0.57 },
+    { atlas = "uf-chi-windfx", name = "Wind swirl", rows = 3, cols = 6, frames = 17, time = 0.57 },
+    { atlas = "lootroll-animdiceglow", name = "Dice glow", rows = 10, cols = 5, frames = 50, time = 1.67 },
+    { atlas = "rolls100-sparks1-anim", name = "Sparks", rows = 5, cols = 6, frames = 30, time = 1 },
+    { atlas = "rolls100-sparks2-anim", name = "Sparks 2", rows = 6, cols = 5, frames = 30, time = 0.97 },
+    { atlas = "shop-loading-sparkle-flipbook", name = "Sparkle", rows = 5, cols = 4, frames = 20, time = 0.8 },
+    { atlas = "activities-complete-diamond-sparkles", name = "Diamond sparkles", rows = 2, cols = 7, frames = 14, time = 0.5 },
+    { atlas = "housing-item-toast-sparkles-flipbook", name = "Sparkle shower", rows = 10, cols = 5, frames = 50, time = 3 },
+    { atlas = "hearthsteel-icon-lg-fx-flipbook", name = "Shimmer", rows = 10, cols = 6, frames = 60, time = 1.5, glow = true },
+    { atlas = "perks-frost-FX", name = "Frost", rows = 3, cols = 5, frames = 13, time = 1 },
+    { atlas = "timerunning-fx-cornerswoop-flipbook", name = "Corner swoop", rows = 7, cols = 9, frames = 63, time = 2, glow = true },
+}
+-- atlas -> its sheet
+Options.TEXTURE_SHEET_OF = {}
+for _, s in ipairs(Options.TEXTURE_SHEETS) do Options.TEXTURE_SHEET_OF[s.atlas] = s end

@@ -429,10 +429,12 @@ local function ArmTargetSwapRefresh()
         -- the bar glows' lanes on that unit (Bars\AD_BarGlow.lua)
         local BG = NS.Bars and NS.Bars.Glow
         if BG and BG.SyncUnit then BG.SyncUnit(unit) end
+        local RCm = NS.Bars and NS.Bars.ResColor
+        if RCm and RCm.SyncUnit then RCm.SyncUnit(unit) end
     end
     OnIfValid("PLAYER_TARGET_CHANGED", "adaura_swap", function() Refresh("target") end)
     OnIfValid("PLAYER_FOCUS_CHANGED", "adaura_swap", function() Refresh("focus") end)
-    if NS.OldAuraEngine then
+    if NS.AuraEngine1210 then
         -- 12.1.0 containers never re-read a side change (a duel, mind control) themselves
         local function Turned(_, unit)
             if unit == "target" or unit == "focus" then Refresh(unit) end
@@ -568,11 +570,13 @@ local function AnchorButton(b, holder, lift)
     -- A plain copy for the glow host's level: a read off the button can be
     -- secret inside the create window.
     b._adLevel = lvl
-    local S = Factory.BUTTON_STACK
+    -- the low stack while a Before that copy is on (Factory.ButtonStack)
+    local S = Factory.ButtonStack(b)
     if b._adSwipe then b._adSwipe:SetFrameLevel(lvl + S.swipe) end
     if b._adEdgeHost then b._adEdgeHost:SetFrameLevel(lvl + S.edge) end
     if b.TextOverlay then b.TextOverlay:SetFrameLevel(lvl + S.text) end
     if b._adTimeGate then b._adTimeGate:SetFrameLevel(lvl + S.gate) end
+    if b._adBeforeCopy then b._adBeforeCopy:SetFrameLevel(lvl + Factory.BUTTON_STACK_LOW.copy) end
 end
 -- Exported: the editor preview's stand-in button takes the same ladder.
 Driver.AnchorButton = AnchorButton
@@ -827,7 +831,7 @@ Driver.IsAccessible = IsAccessible
 -- nothing there). Such a target or focus lane stays hidden until the unit turns.
 -- d: the aura shape the lane tracks (a bar glow's own, Bars\AD_BarGlow.lua).
 function Driver.LaneBlindFor(unit, harmful, d)
-    if not NS.OldAuraEngine or (unit ~= "target" and unit ~= "focus") then return false end
+    if not NS.AuraEngine1210 or (unit ~= "target" and unit ~= "focus") then return false end
     if not (UnitExists and UnitCanAssist) then return false end
     local on = UnitExists(unit)
     if (issecretvalue and issecretvalue(on)) or on ~= true then return false end
@@ -886,7 +890,7 @@ end
 
 -- A target or focus swap, or its side turning, on 12.1.0: re-judge its lanes.
 function Driver.SyncUnitAlpha(unit)
-    if not NS.OldAuraEngine then return end
+    if not NS.AuraEngine1210 then return end
     for _, entry in pairs(entries) do
         if entry.holder and not entry.off then
             for _, sub in ipairs(entry.subs) do

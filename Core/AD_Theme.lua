@@ -8,7 +8,7 @@ local AT = {}
 -- Other addons carry copies of this file, generated from it by the
 -- arc-theme-sync tool, which compares this number to find stale copies.
 -- Bump it on every change and never edit a copy.
-AT.VERSION = 23
+AT.VERSION = 28
 
 -- The addon this copy loads in: a palette's font file sits in its folder.
 local THEME_ADDON = ...
@@ -788,6 +788,83 @@ end
 
 -- Window chrome
 
+-- Scroll bar width, a pick read when windows are built. Thin is the original
+-- bar; a wider one grows inward, so pages and lists keep that much more room
+-- on their right (AT.ScrollExtra).
+AT.SCROLL_SIZES = { thin = 5, normal = 7, wide = 10 }
+AT.ScrollW = AT.SCROLL_SIZES.normal
+function AT.UseScrollWidth(key)
+    AT.ScrollW = AT.SCROLL_SIZES[key] or AT.SCROLL_SIZES.normal
+end
+function AT.ScrollExtra() return AT.ScrollW - AT.SCROLL_SIZES.thin end
+
+-- Mouse drag for a scroll bar, shared by MakeScroll and MakeScrollable. geo()
+-- returns the numbers the last paint drew with (max offset, thumb travel,
+-- thumb height, offset); scrollTo(off) is the scroll's own setter, so all that
+-- follows the wheel follows a drag too. The strip is a click target 7 wider than
+-- the track (padL / padR past its edges) and draws nothing.
+local function WireScrollDrag(track, thumb, padL, padR, geo, scrollTo, wheel)
+    local hit = CreateFrame("Frame", nil, track)
+    hit:SetPoint("TOPLEFT", track, "TOPLEFT", -padL, 0)
+    hit:SetPoint("BOTTOMRIGHT", track, "BOTTOMRIGHT", padR, 0)
+    hit:EnableMouse(true)
+    -- A mouse-enabled strip may swallow the wheel: hand it to the scroll.
+    hit:EnableMouseWheel(true)
+    hit:SetScript("OnMouseWheel", function(_, d) wheel(d) end)
+    local hover, dragging, top, es, grab = false, false, 0, 1, 0
+    local function Paint()
+        local c, a = COL.fill, 0.8
+        if hover or dragging then c, a = COL.arc, 1 end
+        thumb:SetVertexColor(c[1], c[2], c[3], a)
+    end
+    local function Stop()
+        if not dragging then return end
+        dragging = false
+        hit:SetScript("OnUpdate", nil)
+        Paint()
+    end
+    -- The thumb's top goes to the cursor less the grab point. The offset is
+    -- snapped to whole device pixels so the content rests crisp after a drag;
+    -- scrollTo clamps it to the ends.
+    local function Follow()
+        local over, travel = geo()
+        if over <= 0 or travel <= 0 then return Stop() end
+        local _, cy = GetCursorPosition()
+        local px = AT.Px(track)
+        scrollTo(math.floor((top - cy / es - grab) / travel * over / px + 0.5) * px)
+    end
+    -- Polled only while a drag runs: a release outside the strip or the
+    -- window still ends it.
+    local function Tick()
+        if not IsMouseButtonDown("LeftButton") then return Stop() end
+        Follow()
+    end
+    hit:SetScript("OnMouseDown", function(_, button)
+        if button ~= "LeftButton" then return end
+        AT.CloseDropdown()
+        local over, travel, th, off = geo()
+        es, top = track:GetEffectiveScale(), track:GetTop()
+        if over <= 0 or travel <= 0 or not (es and es > 0 and top) then return end
+        local _, cy = GetCursorPosition()
+        grab = top - cy / es - travel * (off / over)
+        dragging = true
+        -- Off the thumb: its middle jumps to the click and drags from there.
+        if grab < 0 or grab > th then
+            grab = th / 2
+            Follow()
+        end
+        Paint()
+        hit:SetScript("OnUpdate", Tick)
+    end)
+    hit:SetScript("OnMouseUp", function(_, button)
+        if button == "LeftButton" then Stop() end
+    end)
+    hit:SetScript("OnEnter", function() hover = true; Paint() end)
+    hit:SetScript("OnLeave", function() hover = false; Paint() end)
+    hit:SetScript("OnHide", function() hover = false; Stop(); Paint() end)
+    return hit
+end
+
 -- Scroll region: a plain ScrollFrame with a thin track and a thumb shown only
 -- on overflow. Returns host, content: set the content's height after laying
 -- out its children, then call host:UpdateScroll(). Pass an existing region (a
@@ -798,7 +875,7 @@ function AT.MakeScroll(parent, child)
     if not child then content:SetSize(1, 1) end
     host:SetScrollChild(content)
     local track = CreateFrame("Frame", nil, host, "BackdropTemplate")
-    track:SetWidth(5)
+    track:SetWidth(AT.ScrollW)
     track:SetPoint("TOPRIGHT", host, "TOPRIGHT", 2, 0)
     track:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT", 2, 0)
     Skin(track, COL.well, COL.well)
@@ -808,6 +885,25 @@ function AT.MakeScroll(parent, child)
     thumb:SetPoint("TOPLEFT", 0, 0)
     thumb:SetPoint("TOPRIGHT", 0, 0)
     track:Hide()
+    -- One way to move it: the wheel and the bar's drag both land here.
+    local function ScrollTo(cur)
+        local over = (content:GetHeight() or 0) - (host:GetHeight() or 0)
+        if over <= 0 then return end
+        if cur < 0 then cur = 0 elseif cur > over then cur = over end
+        host:SetVerticalScroll(cur)
+        host:UpdateScroll()
+        AT.CloseDropdown()
+    end
+    local function Wheel(delta)
+        ScrollTo((host:GetVerticalScroll() or 0) - delta * 32)
+    end
+    -- what the last paint drew, for the drag
+    local sb = { over = 0, travel = 0, th = 0 }
+    -- centred on the track: a ScrollFrame clips only its scroll child
+    local hit = WireScrollDrag(track, thumb, 3.5, 3.5,
+        function() return sb.over, sb.travel, sb.th, host:GetVerticalScroll() or 0 end,
+        ScrollTo, Wheel)
+    host._atScroll = { track = track, thumb = thumb, hit = hit }
     function host:UpdateScroll()
         local viewH = host:GetHeight() or 0
         local contentH = content:GetHeight() or 0
@@ -815,29 +911,23 @@ function AT.MakeScroll(parent, child)
         if over <= 1 or viewH <= 0 then
             host:SetVerticalScroll(0)
             track:Hide()
+            sb.over = 0
             return
         end
         track:Show()
+        hit:SetFrameLevel(track:GetFrameLevel() + 1)
         local cur = math.min(host:GetVerticalScroll() or 0, over)
         if cur < 0 then cur = 0 end
         host:SetVerticalScroll(cur)
         local thumbH = math.max(20, viewH * (viewH / contentH))
+        sb.over, sb.travel, sb.th = over, viewH - thumbH, thumbH
         thumb:SetHeight(thumbH)
         thumb:ClearAllPoints()
         thumb:SetPoint("TOPLEFT", 0, -(viewH - thumbH) * (cur / over))
         thumb:SetPoint("TOPRIGHT", 0, -(viewH - thumbH) * (cur / over))
     end
     host:EnableMouseWheel(true)
-    host:SetScript("OnMouseWheel", function(_, delta)
-        local viewH = host:GetHeight() or 0
-        local over = ((content:GetHeight() or 0)) - viewH
-        if over <= 0 then return end
-        local cur = (host:GetVerticalScroll() or 0) - delta * 32
-        if cur < 0 then cur = 0 elseif cur > over then cur = over end
-        host:SetVerticalScroll(cur)
-        host:UpdateScroll()
-        AT.CloseDropdown()
-    end)
+    host:SetScript("OnMouseWheel", function(_, delta) Wheel(delta) end)
     host:SetScript("OnSizeChanged", function() host:UpdateScroll() end)
     return host, content
 end
@@ -990,8 +1080,12 @@ function AT.AddTabs(p, tabs, pages, y)
                     e.top:SetHeight(2)
                     if pages[name].Refresh then pages[name]:Refresh() end
                 else
-                    Skin(d.chip, { 0, 0, 0, 0 }, COL.line2)
-                    for _, t in pairs(d.chip._atEdges) do t:Hide() end
+                    -- a closed tab set back: the well's fill, line2 edges,
+                    -- its foot the line's colour
+                    Skin(d.chip, COL.well, COL.line2)
+                    local e = d.chip._atEdges
+                    for _, t in pairs(e) do t:Show() end
+                    e.bottom:SetVertexColor(COL.line2[1], COL.line2[2], COL.line2[3], 1)
                 end
             elseif sel then
                 Skin(d.chip, COL.panel, COL.arc)
@@ -1013,19 +1107,27 @@ function AT.AddTabs(p, tabs, pages, y)
         tb:SetWidth(math.max(70, (fs:GetStringWidth() or 40) + 22))
         tb:SetPoint("TOPLEFT", x, y); x = x + tb:GetWidth() + 3
         tb:SetScript("OnClick", function() AT.CloseDropdown(); select(name) end)
+        -- a closed folder tab lifts under the mouse; its foot stays the line
+        local function Hover(on)
+            local e = tb._atEdges
+            if folder and e then
+                local f, c = on and COL.head or COL.well, on and COL.steel or COL.line2
+                tb:SetBackdropColor(f[1], f[2], f[3], 1)
+                for _, t in ipairs({ e.top, e.left, e.right }) do t:SetVertexColor(c[1], c[2], c[3], 1) end
+            elseif not under then
+                local c = on and COL.focus or COL.line
+                tb:SetBackdropBorderColor(c[1], c[2], c[3], 1)
+            end
+        end
         tb:SetScript("OnEnter", function()
             if p._activeTab ~= name then
-                if not under then
-                    tb:SetBackdropBorderColor(COL.focus[1], COL.focus[2], COL.focus[3], 1)
-                end
+                Hover(true)
                 fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
             end
         end)
         tb:SetScript("OnLeave", function()
             if p._activeTab ~= name then
-                if not under then
-                    tb:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1)
-                end
+                Hover(false)
                 fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
             end
         end)
@@ -1164,9 +1266,34 @@ function AT.TabRow(parent)
         tb.ul:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
         tb.ul:SetShown(on)
     end
+    -- Folder tabs: an idle tab is a closed tab set back behind the page, so
+    -- it reads as something to pick and never as the page itself: the well's
+    -- darker fill (the open tab wears the page's), a line2 top and sides, and
+    -- the strip's line, drawn over it, closes its foot. Under the mouse it
+    -- comes forward: the header band's fill, steel edges, ink words.
+    local function FolderIdle(tb, hot)
+        if tb.ul then tb.ul:Hide() end
+        local f = hot and COL.head or COL.well
+        tb.bg:SetVertexColor(f[1], f[2], f[3], 1)
+        tb.bg:Show()
+        local hw = AT.Hairline(tb)
+        tb.eL:SetWidth(hw); tb.eR:SetWidth(hw); tb.eT:SetHeight(hw)
+        local e = hot and COL.steel or COL.line2
+        for _, x in ipairs({ tb.eL, tb.eT, tb.eR }) do
+            x:SetVertexColor(e[1], e[2], e[3], 1)
+            x:Show()
+        end
+        tb.eB:Hide()
+        local c = hot and COL.ink or COL.dim
+        tb.fs:SetTextColor(c[1], c[2], c[3])
+    end
     local function PaintIdle(tb)
         if tb._active then return end
-        if AT.LOOK.tabs == "underline" or AT.LOOK.tabs == "folder" then
+        if AT.LOOK.tabs == "folder" then
+            FolderIdle(tb, false)
+            return
+        end
+        if AT.LOOK.tabs == "underline" then
             Bare(tb, false)
             tb.fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
             return
@@ -1295,7 +1422,9 @@ function AT.TabRow(parent)
                         if onClick then onClick(name) end
                     end)
                     tb:SetScript("OnEnter", function(s)
-                        if not s._active then
+                        if not s._active and AT.LOOK.tabs == "folder" then
+                            FolderIdle(s, true)
+                        elseif not s._active then
                             if AT.LOOK.tabs == "chip" then
                                 for _, e in ipairs({ s.eL, s.eT, s.eR, s.eB }) do
                                     e:SetVertexColor(COL.focus[1], COL.focus[2], COL.focus[3], 1)
@@ -1472,7 +1601,7 @@ function AT.MakeScrollable(pg)
     pg:EnableMouseWheel(true)
     pg._scrollOff = 0
     local track = CreateFrame("Frame", nil, pg, "BackdropTemplate")
-    track:SetWidth(5)
+    track:SetWidth(AT.ScrollW)
     track:SetPoint("TOPRIGHT", -1, -3)
     track:SetPoint("BOTTOMRIGHT", -1, 3)
     Skin(track, COL.well, COL.well)
@@ -1486,36 +1615,50 @@ function AT.MakeScrollable(pg)
         local viewH = pg:GetHeight() or 0
         return math.max(0, (pg._contentH or 0) - viewH), viewH
     end
-    pg._scroll = {
-        track = track,
-        overflow = overflow,
-        paint = function()
-            local over, viewH = overflow()
-            if over <= 1 or viewH <= 0 then track:Hide() return end
-            -- Set on every paint: a re-parented page takes a new base level,
-            -- and a level fixed at build time would sink under the rows.
-            track:SetFrameLevel(pg:GetFrameLevel() + 30)
-            track:Show()
-            local th = math.max(20, viewH * (viewH / (pg._contentH or viewH)))
-            local travel = math.max(0, viewH - th - 6)
-            local t = -travel * ((pg._scrollOff or 0) / over)
-            thumb:SetHeight(th)
-            thumb:ClearAllPoints()
-            thumb:SetPoint("TOPLEFT", 0, t)
-            thumb:SetPoint("TOPRIGHT", 0, t)
-        end,
-    }
-    pg:SetScript("OnMouseWheel", function(_, delta)
+    -- One way to move the page: the wheel and the bar's drag both land here.
+    local function ScrollTo(cur)
         local over = overflow()
-        -- A page left scrolled past a shorter end still turns back.
-        if over <= 0 and (pg._scrollOff or 0) <= 0 then return end
-        local cur = (pg._scrollOff or 0) - delta * 36
         if cur < 0 then cur = 0 elseif cur > over then cur = over end
         if cur == pg._scrollOff then return end
         pg._scrollOff = cur
         AT.CloseDropdown()
         AT.LayoutPage(pg)
-    end)
+    end
+    local function Wheel(delta)
+        -- A page left scrolled past a shorter end still turns back.
+        if overflow() <= 0 and (pg._scrollOff or 0) <= 0 then return end
+        ScrollTo((pg._scrollOff or 0) - delta * 36)
+    end
+    pg:SetScript("OnMouseWheel", function(_, delta) Wheel(delta) end)
+    -- what the last paint drew, for the drag
+    local sc = { track = track, thumb = thumb, overflow = overflow, over = 0, travel = 0, th = 0 }
+    -- The page clips its children, so the strip ends at the page's edge
+    -- and reaches left instead: all of it takes clicks.
+    sc.hit = WireScrollDrag(track, thumb, 6, 1,
+        function() return sc.over, sc.travel, sc.th, pg._scrollOff or 0 end,
+        ScrollTo, Wheel)
+    sc.paint = function()
+        local over, viewH = overflow()
+        if over <= 1 or viewH <= 0 then
+            sc.over = 0
+            track:Hide()
+            return
+        end
+        -- Set on every paint: a re-parented page takes a new base level,
+        -- and a level fixed at build time would sink under the rows.
+        track:SetFrameLevel(pg:GetFrameLevel() + 30)
+        sc.hit:SetFrameLevel(pg:GetFrameLevel() + 31)
+        track:Show()
+        local th = math.max(20, viewH * (viewH / (pg._contentH or viewH)))
+        local travel = math.max(0, viewH - th - 6)
+        local t = -travel * ((pg._scrollOff or 0) / over)
+        sc.over, sc.travel, sc.th = over, travel, th
+        thumb:SetHeight(th)
+        thumb:ClearAllPoints()
+        thumb:SetPoint("TOPLEFT", 0, t)
+        thumb:SetPoint("TOPRIGHT", 0, t)
+    end
+    pg._scroll = sc
     return pg
 end
 
@@ -1655,7 +1798,7 @@ function AT.LayoutCards(pg, run, y)
         pg._sizeUnresolved = true
         pw = LAY.cardMax + 12
     end
-    local avail = pw - 12
+    local avail = pw - 12 - (pg._scroll and AT.ScrollExtra() or 0)
     local need = LAY.cardMin
     for _, sec in ipairs(shown) do
         local n = AT.CardNeed(sec)
@@ -1708,11 +1851,13 @@ function AT.LayoutPage(pg)
         pg._startY = -4 + off
     end
     local y = pg._startY or -4
+    -- a wider scroll bar keeps the page's right edge clear of it
+    local extra = pg._scroll and AT.ScrollExtra() or 0
     for _, row in ipairs(pg._rows) do
         if row._sync then row._sync() end
         if (not row._visibleFn) or row._visibleFn() then
             row:ClearAllPoints()
-            row:SetPoint("TOPLEFT", 2, y); row:SetPoint("TOPRIGHT", -2, y)
+            row:SetPoint("TOPLEFT", 2, y); row:SetPoint("TOPRIGHT", -2 - extra, y)
             row:Show(); y = y - row._h
         else row:Hide() end
     end
@@ -1763,9 +1908,9 @@ function AT.LayoutPage(pg)
                 if side == "L" then
                     f:SetPoint("TOPLEFT", 6, top); f:SetPoint("TOPRIGHT", pg, "TOP", -6, top)
                 elseif side == "R" then
-                    f:SetPoint("TOPLEFT", pg, "TOP", 6, top); f:SetPoint("TOPRIGHT", -6, top)
+                    f:SetPoint("TOPLEFT", pg, "TOP", 6, top); f:SetPoint("TOPRIGHT", -6 - extra, top)
                 else
-                    f:SetPoint("TOPLEFT", 6, top); f:SetPoint("TOPRIGHT", -6, top)
+                    f:SetPoint("TOPLEFT", 6, top); f:SetPoint("TOPRIGHT", -6 - extra, top)
                 end
             end
             if sec.hit then
@@ -1970,6 +2115,13 @@ function AT.RowToggle(pg, label, get, set, visibleFn, desc)
     return row
 end
 
+-- A box's text set from code, cursor at the start: a box filled before it has
+-- a size otherwise keeps the text scrolled out of sight until it changes.
+function AT.BoxText(box, s)
+    box:SetText(s)
+    box:SetCursorPosition(0)
+end
+
 -- desc and hint may be strings or functions. hint is dim placeholder text
 -- shown while the box is empty: it shows what is in effect without
 -- pre-filling, which would save a value the user never set. live = true
@@ -1983,7 +2135,7 @@ function AT.RowInput(pg, label, get, set, visibleFn, desc, hint, live)
     box:SetSize(160, 18); box:SetPoint("LEFT", row._ctrlX, 0); Skin(box, COL.well)
     box:SetFont(AT.FONT, 11, ""); box:SetTextInsets(6, 6, 0, 0)
     box:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3]); box:SetAutoFocus(false)
-    box:SetText(get() or "")
+    AT.BoxText(box, get() or "")
     local hintFS
     if hint then
         hintFS = box:CreateFontString(nil, "OVERLAY")
@@ -2004,14 +2156,14 @@ function AT.RowInput(pg, label, get, set, visibleFn, desc, hint, live)
     end)
     -- The box takes the mouse too, so the tooltip is hooked on it as well.
     if desc then AT.Tooltip(row, label, desc); AT.Tooltip(box, label, desc) end
-    local function commit() set(box:GetText() or ""); box:SetText(get() or ""); syncHint() end
+    local function commit() set(box:GetText() or ""); AT.BoxText(box, get() or ""); syncHint() end
     box:SetScript("OnEnterPressed", function() box:ClearFocus() end)
-    box:SetScript("OnEscapePressed", function() box:SetText(get() or ""); box:ClearFocus() end)
+    box:SetScript("OnEscapePressed", function() AT.BoxText(box, get() or ""); box:ClearFocus() end)
     box:SetScript("OnEditFocusGained", function() box:SetBackdropBorderColor(COL.focus[1], COL.focus[2], COL.focus[3], 1) end)
     box:SetScript("OnEditFocusLost", function() commit(); box:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1) end)
     row._colLabel, row._colCtrl = lbl, box
     row._sync = function()
-        if not box:HasFocus() then box:SetText(get() or "") end
+        if not box:HasFocus() then AT.BoxText(box, get() or "") end
         syncHint()
     end
     return row
@@ -2126,7 +2278,7 @@ function AT.RowSlider(pg, label, get, set, minV, maxV, step, isPct, visibleFn)
         local lo, hi = bounds()
         s:SetMinMaxValues(lo, hi)
         s:SetValue(math.max(lo, math.min(hi, get() or 0)))
-        if not box:HasFocus() then box:SetText(fmt(get() or 0)) end
+        if not box:HasFocus() then AT.BoxText(box, fmt(get() or 0)) end
         settingUp = false
     end
     local function setVal(v) set(clamp(v)); refresh() end
@@ -2169,7 +2321,7 @@ function AT.RowSlider(pg, label, get, set, minV, maxV, step, isPct, visibleFn)
     s:SetScript("OnValueChanged", function(_, v)
         if settingUp then return end
         if step >= 1 then v = math.floor(v + 0.5) end
-        if not box:HasFocus() then box:SetText(fmt(v)) end
+        if not box:HasFocus() then AT.BoxText(box, fmt(v)) end
         set(v)
     end)
     refresh()

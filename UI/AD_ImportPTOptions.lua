@@ -269,7 +269,9 @@ loginEv:SetScript("OnEvent", function(self)
     C_Timer.After(3, PW.OfferOnLogin)
 end)
 
--- The card's picture: a deck card handing its icon to an Arc Auras square.
+-- The card's picture: ProcTracker's own icon handing its icons to an Arc
+-- Auras square.
+PW.ICON = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\ProcTracker_Icon_128"
 function PW.DrawCard(stage)
     local AT, COL = NS.AT, NS.AT.COL
     local NL = NS.NewLayout
@@ -287,7 +289,7 @@ function PW.DrawCard(stage)
         end
         return f
     end
-    Box(W / 2 - 66, (H - 44) / 2, 34, 44, COL.dim, 3)
+    NL.SourceIcon(stage, PW.ICON)
     Box(W / 2 + 22, (H - 36) / 2, 44, 36, COL.arc, 1)
     local head = AT.MakeChevron(stage)
     head:SetDir("right")

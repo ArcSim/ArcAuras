@@ -169,25 +169,9 @@ function Options.SoundThumb() return SO.THUMB end
 
 function SO.IsAura(r) return r ~= nil and SO.AURA[r.when] == true end
 
--- the conditions a rule can turn on: by category, your class's rows only (and
--- the one already picked, even if it is another's)
+-- the conditions a rule can turn on (the Custom editor's list)
 function SO.CondItems(r)
-    local C, CU = NS.Conditions, NS.DriverCustom
-    local out = { { value = "", text = "Pick a condition" } }
-    if not (C and C.VOCAB and C.CATEGORIES and CU and CU.CondOK) then return out end
-    local cur = r and r.cond
-    local class = NS.Store.ClassTag and NS.Store.ClassTag()
-    local seen = false
-    for _, c in ipairs(C.CATEGORIES) do
-        for _, d in ipairs(C.VOCAB) do
-            if d.cat == c.id and CU.CondOK(d.key) and (not d.class or d.class == class or d.key == cur) then
-                if d.key == cur then seen = true end
-                out[#out + 1] = { value = d.key, text = c.text .. ": " .. d.text }
-            end
-        end
-    end
-    if cur and not seen then out[#out + 1] = { value = cur, text = tostring(cur) .. " (not on this client)" } end
-    return out
+    return Options.Custom.CondItems(r)
 end
 
 function SO.UnitItems()
@@ -212,19 +196,10 @@ function SO.SoundItems(r)
     return NS.Sounds.Items(SO.IsAura(r))
 end
 
--- under the trigger: the condition, or the aura's unit and ids
+-- under the trigger: the aura's unit and ids (the condition row is the shared editor's)
 function SO.TriggerRows(pg, i, api, owner)
     local AT = NS.AT
-    local condVis = api.Is("when", "cond_on", "cond_off")
     local auraVis = api.Is("when", "aura_gain", "aura_stack", "aura_lost")
-    local cond = AT.RowDropdown(pg, owner, "Condition",
-        function()
-            local r = api.Rule()
-            return (r and r.cond) or ""
-        end,
-        function(v) api.Set("cond", (type(v) == "string" and v ~= "") and v or nil) end,
-        function() return SO.CondItems(api.Rule()) end,
-        condVis)
     local unit = AT.RowDropdown(pg, owner, "Whose aura",
         function()
             local r = api.Rule()
@@ -250,7 +225,6 @@ function SO.TriggerRows(pg, i, api, owner)
         auraVis, "The aura's spell IDs, comma separated. Any caster's copy counts.", "e.g. 16870")
     AT.RowDesc(pg, "The game plays it, in combat too; Load When and the gap between cues don't apply.", 20, auraVis)
     if i == 1 then
-        api.Stamp(cond, "ruleCond", "Condition")
         api.Stamp(unit, "ruleAuraUnit", "Whose aura")
         api.Stamp(ids, "ruleAuraIDs", "Aura IDs")
     end

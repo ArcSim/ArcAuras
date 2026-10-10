@@ -2,10 +2,10 @@
 ## Title: |cff3fc9f2Arc|r Auras
 ## Notes: Icons, icon groups and bars for your cooldowns, auras and resources, all set up from one panel. /arcauras or /arcui2
 ## Author: Arc
-## Version: 2.5.0
+## Version: 2.6.0
 ## IconTexture: Interface\AddOns\ArcAuras\Textures\ArcAuras_Icon_256
 ## SavedVariables: ArcAurasDB
-## OptionalDeps: ArcUI
+## OptionalDeps: ArcUI, Masque
 ## X-Curse-Project-ID: 1713362
 ## X-Wago-ID: ZKxOZv6k
 
@@ -34,6 +34,7 @@ Core\AD_TooltipIDs.lua
 Core\AD_CDMMirror.lua
 QOL\AD_AutoRank.lua
 QOL\AD_ImbueTooltip.lua
+Core\AD_Skins.lua
 Core\AD_Factory.lua
 Core\AD_PressHighlight.lua
 Drivers\AD_DriverCooldown.lua
@@ -41,6 +42,7 @@ Drivers\AD_DriverTotem.lua
 Drivers\AD_DriverEnchant.lua
 Drivers\AD_DriverWarn.lua
 Drivers\AD_DriverToggle.lua
+Drivers\AD_DriverAssist.lua
 Drivers\AD_DriverStance.lua
 Drivers\AD_DriverCustom.lua
 Drivers\AD_DriverRange.lua
@@ -74,6 +76,7 @@ Bars\AD_Wheel.lua
 Bars\AD_SoundItem.lua
 Bars\AD_AuraBarPrebuild.lua
 Core\AD_LayoutEngine.lua
+Core\AD_Pins.lua
 Drivers\AD_DriverReminders.lua
 Drivers\AD_DriverSpecial.lua
 Drivers\Special\AD_SpecialMSW.lua
@@ -91,19 +94,23 @@ Drivers\AD_DriverUnitAuras.lua
 Drivers\AD_TypeLooks.lua
 Drivers\AD_DriverAuraRows.lua
 UI\AD_Options.lua
+UI\AD_WindowFold.lua
 UI\AD_DefaultsOptions.lua
 UI\AD_ThemeOptions.lua
 UI\AD_LayoutFollow.lua
 UI\AD_Modules.lua
 UI\AD_EditorTabs.lua
 UI\AD_FramePicker.lua
+UI\AD_PinOptions.lua
 UI\AD_TextPinOptions.lua
 UI\AD_LooksOptions.lua
 UI\AD_NewLayout.lua
 UI\AD_LayoutPreview.lua
+UI\AD_SpotlightIndex.lua
 UI\AD_Spotlight.lua
 UI\AD_Home.lua
 UI\AD_CDMMirrorOptions.lua
+UI\AD_MirrorCheck.lua
 UI\AD_BarImport.lua
 UI\AD_ImportPTOptions.lua
 UI\AD_RangeOptions.lua

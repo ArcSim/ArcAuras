@@ -33,9 +33,11 @@ DT.PULSE_EVERY = NS.IsForever == true and {
 -- for hints only: a slot is a slot, whatever the game puts in it.
 DT.ELEMENTS = { "Fire", "Earth", "Water", "Air" }
 
-DT.slot = {}       -- [slot] = { name = totem name or nil, litAt = GetTime() }
+DT.slot = {}       -- [slot] = { name = totem name or nil, id = its spell ID or nil,
+                   --   castId = the cast that put it down or nil, litAt = GetTime() }
 DT.pending = {}    -- [slot] = when it lit with no cast to name it yet
-DT.cast = nil      -- { name, at }: a totem cast still waiting for its slot
+DT.waiting = {}    -- [slot] = when it lit, named, with no cast paired yet
+DT.cast = nil      -- { name, id, at }: a totem cast still waiting for its slot
 DT.shadow = {}     -- [slot] = hidden Cooldown whose IsShown() says a totem is down
 DT.recs = {}       -- [iconId] = rec, the attached totem icons
 DT.tracked = {}    -- [spell name] = true, the totems icons follow by spell
@@ -76,8 +78,27 @@ end
 
 function DT.IsTotemName(name)
     if not name then return false end
-    return DT.Known()[name] == true or DT.tracked[name] == true or DT.PulseByName()[name] ~= nil
+    if DT.Known()[name] == true or DT.tracked[name] == true or DT.PulseByName()[name] ~= nil then return true end
+    local bar = DT.BarSpellNames()
+    return bar ~= nil and bar[name] == true
 end
+
+-- The totem spells the client lists for its elements (Forever's totem bar
+-- flyouts), by name so every rank counts; nil where it has no such list.
+function DT.BarSpellNames()
+    if type(GetMultiCastTotemSpells) ~= "function" then return nil end
+    local out = {}
+    for slot = 1, DT.SLOTS do
+        local list = { GetMultiCastTotemSpells(slot) }
+        for i = 1, #list do
+            local nm = DT.SpellName(list[i]) -- raw-id: the client's own totem list
+            if nm then out[nm] = true end
+        end
+    end
+    return out
+end
+
+
 
 function DT.Shadow(slot)
     local w = DT.shadow[slot]
@@ -102,14 +123,16 @@ function DT.Active(slot)
     return w:IsShown() == true
 end
 
--- The slot's totem name when the game lets it be read, false for a plain empty
--- slot, nil when the answer is secret.
+-- The slot's totem name and spell ID when the game lets them be read, false
+-- for a plain empty slot, nil when the answer is secret. A guardian's name is
+-- not its spell's, so its spell ID is what a spell is matched by.
 function DT.ReadSlot(slot)
     if not GetTotemInfo then return nil end
-    local have, name = GetTotemInfo(slot)
+    local have, name, _, _, _, _, sid = GetTotemInfo(slot)
     if issecretvalue and (issecretvalue(have) or issecretvalue(name)) then return nil end
     if have ~= true or type(name) ~= "string" or name == "" then return false end
-    return name
+    if issecretvalue and issecretvalue(sid) then sid = nil end
+    return name, (type(sid) == "number" and sid > 0) and sid or nil
 end
 
 function DT.Changed()
@@ -126,12 +149,13 @@ function DT.ReadAll()
         local s = DT.slot[slot] or {}
         DT.slot[slot] = s
         if not DT.Active(slot) then
-            s.name, s.litAt = nil, nil
-            DT.pending[slot] = nil
+            s.name, s.id, s.castId, s.litAt = nil, nil, nil, nil
+            DT.pending[slot], DT.waiting[slot] = nil, nil
         else
-            local name = DT.ReadSlot(slot)
+            local name, sid = DT.ReadSlot(slot)
             if name then
-                s.name = name
+                if s.name ~= name then s.castId = nil end
+                s.name, s.id = name, sid
                 DT.Known()[name] = true
                 DT.pending[slot] = nil
                 local _, _, start = GetTotemInfo(slot)
@@ -152,26 +176,38 @@ function DT.OnSlotUpdate(slot)
     local s = DT.slot[slot] or {}
     DT.slot[slot] = s
     if not DT.Active(slot) then
-        s.name, s.litAt = nil, nil
-        DT.pending[slot] = nil
+        s.name, s.id, s.castId, s.litAt = nil, nil, nil, nil
+        DT.pending[slot], DT.waiting[slot] = nil, nil
         DT.Changed()
         return
     end
     s.litAt = now
-    local name = DT.ReadSlot(slot)
+    local name, sid = DT.ReadSlot(slot)
+    local c = DT.cast
+    local paired = c ~= nil and now - c.at <= DT.PAIR_WINDOW
     if name then
-        s.name = name
+        -- plain: its name and spell, and the cast that put it down (a
+        -- guardian's slot need not carry the spell you cast), now or next
+        if s.name ~= name then s.castId = nil end
+        s.name, s.id = name, sid
         DT.Known()[name] = true
         DT.pending[slot] = nil
+        if paired then
+            s.castId = c.id
+            DT.cast = nil
+            DT.waiting[slot] = nil
+        else
+            DT.waiting[slot] = now
+        end
     else
         -- secret: the cast that just landed names it, or the next one does
-        local c = DT.cast
-        if c and now - c.at <= DT.PAIR_WINDOW then
-            s.name = c.name
+        DT.waiting[slot] = nil
+        if paired then
+            s.name, s.id, s.castId = c.name, c.id, c.id
             DT.cast = nil
             DT.pending[slot] = nil
         else
-            s.name = nil
+            s.name, s.id, s.castId = nil, nil, nil
             DT.pending[slot] = now
         end
     end
@@ -188,13 +224,38 @@ function DT.OnCast(spellID)
         DT.pending[slot] = nil
         if now - t <= DT.PAIR_WINDOW then
             local s = DT.slot[slot]
-            if s then s.name = name end
+            if s then s.name, s.id, s.castId = name, spellID, spellID end
             DT.cast = nil
             DT.Changed()
             return
         end
     end
-    DT.cast = { name = name, at = now }
+    -- a slot that lit named, still waiting for the cast that put it down
+    for slot, t in pairs(DT.waiting) do
+        DT.waiting[slot] = nil
+        if now - t <= DT.PAIR_WINDOW then
+            local s = DT.slot[slot]
+            if s then s.castId = spellID end
+            DT.cast = nil
+            DT.Changed()
+            return
+        end
+    end
+    DT.cast = { name = name, id = spellID, at = now }
+end
+
+-- A slot's spell (its own, or the cast that put it down) against the icon's:
+-- the icon's spell in any form, or one it lists (the Cooldown Manager's
+-- linked spells, which it matches a slot by too).
+function DT.IdMatch(d, sid, id)
+    if not id then return false end
+    if Store.SpellMatch(sid, id) then return true end
+    if type(d.spellIDs) == "table" then
+        for _, v in ipairs(d.spellIDs) do
+            if v == id then return true end -- raw-id: the Cooldown Manager's own list, matched as it matches
+        end
+    end
+    return false
 end
 
 -- The slot an icon shows: a spell-tracked icon follows its totem into
@@ -202,11 +263,15 @@ end
 function DT.SlotFor(rec)
     local d = (rec and rec.driver) or {}
     -- the totem the icon's spell drops now (an override drops its own)
-    local want = d.spellID and DT.SpellName(Store.RecordSpellID(d))
+    local sid = d.spellID and Store.RecordSpellID(d)
+    local want = sid and DT.SpellName(sid)
     if not want then return d.slot or 1, false end
     for slot = 1, DT.SLOTS do
         local s = DT.slot[slot]
-        if s and s.name == want then return slot, true end
+        -- its spell first, as the Cooldown Manager matches; else its name
+        if s and (DT.IdMatch(d, sid, s.id) or DT.IdMatch(d, sid, s.castId) or s.name == want) then
+            return slot, true
+        end
     end
     return nil, true
 end

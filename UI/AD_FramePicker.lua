@@ -1,6 +1,6 @@
 -- AD_FramePicker: Pick Frame for the anchor rows: hover any frame on screen, a game frame or an Arc Auras item, and click it to anchor to it.
 -- Owns pick mode (a click catcher, a readout on the cursor, a box on the frame), the common-frames list and a spell pin's Spell row;
--- Options.AnchorPickRows calls FramePickRows. Pick mode runs out of combat only and offers what Anchor.FrameProblem
+-- each anchor row's crosshair calls FP.PickSlot, Options.AnchorPickRows calls AnchorSpellRows. Pick mode runs out of combat only and offers what Anchor.FrameProblem
 -- passes, the Arc Auras items Anchor.PickFrames maps for the record being edited, and for a bar the action buttons and
 -- Cooldown Manager icons that hold a spell (Core\AD_SpellAnchor.lua PickMap).
 local ADDON, NS = ...
@@ -417,25 +417,42 @@ function FP.Stop()
     end
 end
 
+-- Pick mode for one anchor slot (the crosshair on its row). A game frame
+-- makes the slot a Named frame with that name; an Arc Auras item puts that
+-- item in it. Only the first slot pins to an action button or a Cooldown
+-- Manager icon by spell; a later one takes a button by its frame name. done
+-- runs after a pick. False in combat.
+function FP.PickSlot(rec, s, done)
+    local A, Store = NS.Anchor, NS.Store
+    if not (rec and A) then return false end
+    local id = rec.id
+    return FP.Start(function(name, item)
+        local r = Store.Get(id)
+        if not r then return end
+        if item and item.spec and s > 1 then
+            name, item = item.frameName, nil
+        end
+        if item then
+            if A.SlotSet(r, s, item.value) and item.spec then
+                Store.SetOverride(r, "anchor", "anchorTargetFrame", item.spec)
+            end
+        elseif type(name) == "string" and name ~= "" then
+            A.SlotSet(r, s, "frame", name)
+        end
+        if done then done() end
+    end, rec)
+end
+
 local Options = NS.Options
 if not Options then return end
 
--- Two rows under Frame name: Common frames, then the Pick Frame button. vis:
--- when Common frames shows (a Named frame pick); pickVis: when Pick Frame
--- shows (every anchor pick; vis when nil). owner: the window the dropdown
--- opens on. A pick of a game frame makes the anchor a Named frame with that
--- name; a pick of an Arc Auras item anchors to that item, as Anchor to would.
-function Options.FramePickRows(pg, ctx, vis, owner, pickVis)
+-- A spell pin's rows under the first anchor (an action bar button or a
+-- Cooldown Manager icon): its spell, kept as ids in the anchor's frame field,
+-- and a Cooldown Manager icon's exact cooldown ID.
+function Options.AnchorSpellRows(pg, ctx, vis)
     local AT, Store = NS.AT, NS.Store
-    local function SetName(r, name)
-        if r and type(name) == "string" and name ~= "" then
-            Store.SetOverride(r, "anchor", "anchorTargetFrame", name)
-        end
-    end
-    -- a spell pin (an action bar button or a Cooldown Manager icon): its
-    -- spell, kept as ids in the anchor's frame field
     local spellVis = function()
-        return (pickVis or vis)() and NS.Anchor ~= nil and NS.Anchor.IsSpellPick(ctx())
+        return vis() and NS.Anchor ~= nil and NS.Anchor.IsSpellPick(ctx())
     end
     AT.RowInput(pg, "Anchor spell",
         function()
@@ -450,8 +467,7 @@ function Options.FramePickRows(pg, ctx, vis, owner, pickVis)
         spellVis,
         "The spell whose button or icon it rides: a spell ID, a link or the name of a spell you know. Several ranks' IDs may be listed. Enter applies it.",
         "e.g. 17364")
-    -- a Cooldown Manager icon by its exact entry: a spell's cooldown icon and
-    -- its buff icon share the spell, never the cooldown ID
+    -- a spell's cooldown icon and its buff icon share the spell, never the cooldown ID
     AT.RowInput(pg, "Cooldown ID",
         function()
             local r = ctx()
@@ -465,41 +481,6 @@ function Options.FramePickRows(pg, ctx, vis, owner, pickVis)
             local r = ctx()
             return spellVis() and r ~= nil and Store.Resolve(r, "anchor", "anchorTargetKind") == "cdm"
         end,
-        "The icon's cooldown ID, its exact entry in the Cooldown Manager: Pick Frame on an icon fills it. Empty uses the spell above.",
+        "The icon's cooldown ID, its exact entry in the Cooldown Manager: the crosshair on an icon fills it. Empty uses the spell above.",
         "e.g. 12821")
-    AT.RowDropdown(pg, owner, "Common frames",
-        function()
-            local r = ctx()
-            local n = r and Store.Resolve(r, "anchor", "anchorTargetFrame") or ""
-            return FP.IsCommon(n) and n or ""
-        end,
-        function(v) SetName(ctx(), v) end,
-        FP.CommonItems, vis,
-        function() AT.LayoutPage(pg) end)
-    local row
-    row = AT.RowButton(pg, "Pick Frame", function()
-        local r = ctx()
-        if not r then return end
-        local id = r.id
-        local ok = FP.Start(function(name, item)
-            local A, rec = NS.Anchor, Store.Get(id)
-            if not (A and rec) then return end
-            if item then
-                A.PickSet(rec, item.value)
-                if item.spec then Store.SetOverride(rec, "anchor", "anchorTargetFrame", item.spec) end
-            else
-                A.PickSet(rec, "frame")
-                SetName(rec, name)
-            end
-            AT.LayoutPage(pg)
-        end, r)
-        if not ok then
-            row.button.fs:SetText("Not in combat")
-            C_Timer.After(2, function() row.button.fs:SetText("Pick Frame") end)
-        end
-    end, pickVis or vis, 110, "Pick it on screen")
-    AT.Tooltip(row.button, "Pick Frame",
-        "Hover a game frame, one of your Arc Auras items, or for a bar an action button or Cooldown Manager icon, and left-click it. A button is followed by its spell, an icon by its cooldown ID; Shift-click keeps that one button. Right-click or Esc cancels.")
-    -- pick mode ends with the page that started it
-    pg:HookScript("OnHide", function() FP.Stop() end)
 end

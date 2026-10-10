@@ -13,6 +13,8 @@
 -- Order Time left: one flow per unit holds every member's spells and the
 -- game sorts it, so the order holds in combat with no duration read
 -- (AR.PlaceFlows).
+-- A member that shows its totem first cannot keep a spot in the game's packed
+-- rows: its totem shows in a row of ours over the group (AR.PlaceTotems).
 local ADDON, NS = ...
 local Store, Events = NS.Store, NS.Events
 local AR = {
@@ -24,6 +26,8 @@ local AR = {
     spool = { player = {}, target = {}, pet = {} },  -- the same, born in a stage
     lpool = { player = {}, target = {}, pet = {} },  -- glow lanes no group uses
     placed = {},     -- [groupId] = its group frame while the engine draws it
+    -- [groupId] = { slots = { [recId] = frame }, list = { { rec, s, w, h } }, gf, grid, align }
+    totems = {},
     pending = false, -- a piece, a filter or a restyle waits for the settle edge
     loadWindowOver = false,
 }
@@ -617,11 +621,18 @@ function AR.PaintLook(p, rec, w, h)
     local hide = R("appearance", "forceHideIcon") == true
     local art = look.art
     art:SetTexture(F.GetTexture(rec))
-    art:SetTexCoord(F.IconTexCoords(rec))
     local pad = (R("appearance", "padding") or 0) * kS
+    art:SetTexCoord(F.IconTexCoords(rec, (w or 0) - 2 * pad, (h or 0) - 2 * pad))
     art:ClearAllPoints()
     art:SetPoint("TOPLEFT", st, "TOPLEFT", pad, -pad)
     art:SetPoint("BOTTOMRIGHT", st, "BOTTOMRIGHT", -pad, pad)
+    if F.ShapeTex then F.ShapeTex(art, F.MaskOf(rec)) end
+    -- a Masque skin's picture and layers (the border below stands aside)
+    if F.SkinArt then
+        local plan = F.SkinPlan(rec)
+        F.SkinArt(art, rec, plan, st, w, h)
+        F.SkinLayers(plan, st, st, st, art, w, h, ma, hide)
+    end
     art:SetDesaturated(R("auraMissing", "missingDesaturate") ~= false)
     art:SetAlpha(ma)
     art:SetShown(not hide)
@@ -744,6 +755,7 @@ function AR.Place(g, gf, editMode)
     rt.lanes = rt.lanes or {}
     rt.flows = rt.flows or {}
     AR.runtimes[g.id] = rt
+    AR.PlaceTotems(g, gf, grid)
     if AR.TimeLeft(g) then
         AR.PlaceFlows(g, gf, rt, grid)
         AR.Mirror(g, rt, gf)
@@ -1013,9 +1025,107 @@ function AR.PlaceFlows(g, gf, rt, grid)
     end
 end
 
+-- Totems over the group. Each member that shows its totem first gets a
+-- frame of ours on the group frame with its totem button on it
+-- (Drivers\AD_DriverPhase.lua); the ones with a totem down line up in screen
+-- order, aligned as the group's rows, one row spacing above it. Plain frames
+-- of ours, so they move in combat; the group frame's fades reach them.
+function AR.TotemCells(grid)
+    local out = {}
+    for _, cell in ipairs(grid.cells) do
+        local d = cell.rec.driver
+        if type(d) == "table" and d.totem == true then out[#out + 1] = cell end
+    end
+    table.sort(out, function(a, b) return a.row < b.row or (a.row == b.row and a.col < b.col) end)
+    return out
+end
+
+function AR.PlaceTotems(g, gf, grid)
+    local PH = NS.DriverPhase
+    local t = AR.totems[g.id] or { slots = {}, list = {} }
+    AR.totems[g.id] = t
+    local axis, align = AR.Pack(g)
+    t.gf, t.grid, t.align = gf, grid, (axis == "horizontal") and align or "center"
+    local keep, list = {}, {}
+    for _, cell in ipairs(AR.TotemCells(grid)) do
+        local rec = cell.rec
+        local s = t.slots[rec.id]
+        if not s then
+            s = CreateFrame("Frame", nil, gf)
+            t.slots[rec.id] = s
+        end
+        if s:GetParent() ~= gf then s:SetParent(gf) end
+        local w, h = AR.Dims(rec, grid)
+        s:SetSize(w, h)
+        s:Show()
+        keep[rec.id] = true
+        list[#list + 1] = { rec = rec, s = s, w = w, h = h }
+        if PH then PH.Attach(rec, s) end
+    end
+    for id, s in pairs(t.slots) do
+        if not keep[id] then AR.DropTotem(id, s) end
+    end
+    t.list = list
+    AR.PackTotems(g.id)
+end
+
+-- A totem slot let go: its button leaves with it, unless the icon has moved
+-- on to a holder of its own.
+function AR.DropTotem(id, s)
+    local PH = NS.DriverPhase
+    local e = PH and PH.entries[id]
+    if e and e.holder == s then PH.Detach(id) end
+    s:Hide()
+end
+
+-- The slots whose totem is down, lined up from the alignment's edge on whole
+-- pixels (a centred line on the floored middle, as the rows above).
+function AR.PackTotems(gid)
+    local t = AR.totems[gid]
+    local PH = NS.DriverPhase
+    if not (t and t.gf and PH) then return end
+    local grid = t.grid
+    local up, span = {}, 0
+    for _, e in ipairs(t.list) do
+        local b = PH.buttons[e.rec.id]
+        if b and b:IsShown() then
+            up[#up + 1] = e
+            span = span + e.w
+        end
+    end
+    if #up == 0 then return end
+    span = span + grid.sx * (#up - 1)
+    local x
+    if t.align == "left" then
+        x = grid.pad
+    elseif t.align == "right" then
+        x = grid.boxW - grid.pad - span
+    else
+        x = AR.FloorPx((grid.boxW - span) / 2)
+    end
+    for _, e in ipairs(up) do
+        e.s:ClearAllPoints()
+        e.s:SetPoint("BOTTOMLEFT", t.gf, "TOPLEFT", x, grid.sy)
+        x = x + e.w + grid.sx
+    end
+end
+
+-- Every totem row, after the totem driver's slots change.
+function AR.PackAllTotems()
+    for gid in pairs(AR.totems) do AR.PackTotems(gid) end
+end
+
+function AR.ReleaseTotems(gid)
+    local t = AR.totems[gid]
+    if not t then return end
+    for id, s in pairs(t.slots) do AR.DropTotem(id, s) end
+    t.list, t.gf = {}, nil
+end
+
 function AR.Release(g)
     local gid = g.id
     AR.placed[gid] = nil
+    AR.ReleaseTotems(gid)
     local rt = AR.runtimes[gid]
     if not rt then return end
     for id, p in pairs(rt.pieces) do

@@ -52,6 +52,108 @@ function Options.CustomWhat(rec)
     return "custom icon, " .. words
 end
 
+-- Ready-made Custom Bars (WoW Forever): picked in the Add window, made with
+-- their rules. Every class sees every template, so players know they exist;
+-- the tooltip names the class. Rule spells are rank 1; every rank matches by
+-- name there.
+CO.TEMPLATES_FOREVER = {
+    -- The debuff on you can't be tracked by spell ID, so the casts count it:
+    -- each adds a stack (4 at most) and restarts its 8 s; the time running
+    -- out, casting any other spell, or dying clears them all.
+    { key = "arcaneblast", class = "Mage", name = "Arcane Blast", art = 400574, mode = "stack",
+      tip = "Your Arcane Blast stacks: up to 4, each cast restarts their 8 seconds; any other spell or dying clears them.",
+      driver = { duration = 8, maxStacks = 4, clearOnEnd = true, showWhile = "stacks", rules = {
+          { when = "cast", spellID = 400574, act = "add", restartToo = true, secs = 8 },
+          { when = "cast_except", spellID = 400574, act = "reset" },
+          { when = "cond_on", cond = "dead", act = "reset" },
+      } } },
+}
+
+-- the templates this client gets
+function CO.Templates()
+    if NS.IsForever ~= true then return {} end
+    return CO.TEMPLATES_FOREVER
+end
+
+function CO.Template(key)
+    for _, t in ipairs(CO.Templates()) do
+        if t.key == key then return t end
+    end
+    return nil
+end
+
+-- a template picked into the Add window's state: its name, art and mode fill
+-- the form
+function CO.Pick(addState, key)
+    local t = CO.Template(key)
+    if not t then return false end
+    addState.customTemplate = t.key
+    addState.customName, addState.customArt = t.name, tostring(t.art)
+    addState.barMode = t.mode
+    return true
+end
+
+function CO.Copy(t)
+    local c = {}
+    for k, v in pairs(t) do c[k] = (type(v) == "table") and CO.Copy(v) or v end
+    return c
+end
+
+CO.CELL, CO.PITCH = 32, 36
+
+-- One square per template, on the label margin: a click picks it (name, art
+-- and mode filled in, the pick cyan), a second click lets it go.
+function CO.TemplateRow(pg, addState, vis)
+    local AT, COL = NS.AT, NS.AT.COL
+    local list = CO.Templates()
+    if #list == 0 then return nil end
+    local row = AT.AddRow(pg, CO.PITCH + 8, vis)
+    local cells = {}
+    for i, t in ipairs(list) do
+        local b = CreateFrame("Button", nil, row, "BackdropTemplate")
+        b:SetSize(CO.CELL, CO.CELL)
+        b:SetPoint("LEFT", row, "LEFT", 10 + (i - 1) * CO.PITCH, 0)
+        AT.Skin(b, COL.well, COL.line)
+        b.tex = b:CreateTexture(nil, "ARTWORK")
+        b.tex:SetPoint("TOPLEFT", 2, -2)
+        b.tex:SetPoint("BOTTOMRIGHT", -2, 2)
+        b.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        b.tex:SetTexture(C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(t.art) or 134400) -- raw-id: a template's own art
+        function b.Edge(hot)
+            local c = (addState.customTemplate == t.key and COL.arc) or (hot and COL.focus) or COL.line
+            b:SetBackdropBorderColor(c[1], c[2], c[3], 1)
+        end
+        b:SetScript("OnEnter", function()
+            b.Edge(true)
+            GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
+            GameTooltip:SetText(t.name, COL.ink[1], COL.ink[2], COL.ink[3])
+            if t.class then GameTooltip:AddLine(t.class .. " template", COL.arc[1], COL.arc[2], COL.arc[3]) end
+            GameTooltip:AddLine(t.tip, COL.dim[1], COL.dim[2], COL.dim[3], true)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function()
+            b.Edge(false)
+            if GameTooltip:IsOwned(b) then GameTooltip:Hide() end
+        end)
+        b:SetScript("OnClick", function()
+            AT.CloseDropdown()
+            if addState.customTemplate == t.key then
+                addState.customTemplate = nil
+            else
+                CO.Pick(addState, t.key)
+            end
+            AT.LayoutPage(pg)
+        end)
+        b._adTemplate = t.key
+        cells[i] = b
+    end
+    row._cells = cells
+    row._sync = function()
+        for _, b in ipairs(cells) do b.Edge(false) end
+    end
+    return row
+end
+
 -- The Add window's rows for a Custom Icon (which = "Icon") or a Custom Bar
 -- ("Bar"): a name and an optional art spell. The rules come after, on the
 -- item's Triggers tab.
@@ -66,6 +168,7 @@ function Options.CustomAddRows(pg, owner, addState, which)
         end
     end
     AT.RowDesc(pg, "Its rules (the Triggers tab) start its timer and count its stacks from events you pick.", 20, vis)
+    if which == "Bar" then CO.TemplateRow(pg, addState, vis) end
     AT.RowInput(pg, "Name",
         function() return addState.customName or "" end,
         function(v) addState.customName = v end,
@@ -89,8 +192,17 @@ function Options.CustomCreate(addState, dest, layoutId)
     return NS.Store.NewIcon("timer", { spellID = art, rules = {} }, dest, layoutId, name)
 end
 
+-- a picked template's rules and settings, its art unless another was typed;
+-- the pick is used once
 function Options.CustomBarDriver(addState)
     local name, art = CO.AddFields(addState, "Bar")
+    local t = addState.customTemplate and CO.Template(addState.customTemplate)
+    addState.customTemplate = nil
+    if t then
+        local d = CO.Copy(t.driver)
+        d.spellID = art or t.art
+        return d, name
+    end
     return { spellID = art, rules = {} }, name
 end
 
@@ -116,6 +228,7 @@ function CO.TrackRows(pg, Rec, vis, owner, isBar)
                 local r = Rec()
                 if not r or r.barMode == v then return end
                 r.barMode = v
+                if Store.StackModeTicks then Store.StackModeTicks(r, v == "stack") end
                 Store.Dirty("tree", r.id)
             end,
             function() return {
@@ -197,9 +310,10 @@ function CO.TrackRows(pg, Rec, vis, owner, isBar)
         function(v)
             local n = tonumber(v)
             if v == "" then Set("duration", nil) return end
-            if n and n > 0 then Set("duration", math.min(3600, n)) end
+            if n and n > 0 then Set("duration", math.min(S.CUSTOM_MAX_SECONDS or 7200, n)) end
         end,
-        vis, "How long the timer runs when a rule starts it with no seconds of its own. Enter applies it.", "Set per rule")
+        vis, "How long the timer runs, and each stack when stacks run out on their own, when a rule gives no seconds. Enter applies it.",
+        "Set per rule")
     AT.RowInput(pg, "Max stacks",
         function()
             local r = Rec()
@@ -213,6 +327,26 @@ function CO.TrackRows(pg, Rec, vis, owner, isBar)
         end,
         vis, isBar and "Stacks never pass this; in stack mode the bar is full here. Empty = no cap. Enter applies it."
             or "Stacks never pass this. Empty = no cap. Enter applies it.", "No cap")
+    AT.RowToggle(pg, "Each stack runs out on its own",
+        function()
+            local r = Rec()
+            return r ~= nil and r.driver.stackTimers == true
+        end,
+        function(v) Set("stackTimers", v or nil) end,
+        vis, "Every stack added runs its own timer (the rule's seconds, else Default seconds) and drops off when it ends.")
+    AT.RowInput(pg, "Full pool while idle",
+        function()
+            local r = Rec()
+            local m = r and tonumber(r.driver.idleCount)
+            return m and tostring(m) or ""
+        end,
+        function(v)
+            local n = tonumber(v)
+            if v == "" then Set("idleCount", nil) return end
+            if n and n >= 1 then Set("idleCount", math.floor(math.min(999, n))) end
+        end,
+        vis, "While the timer is idle at 0 stacks, the count shows this many: a pool reads full before its first use. Empty = off.",
+        "Off")
     AT.RowToggle(pg, "Clear stacks when the timer ends",
         function()
             local r = Rec()
@@ -242,6 +376,34 @@ function CO.ChainItems(self)
         end
     end
     return out
+end
+
+-- The conditions a rule's edge can name: by category, your class's rows only
+-- (and the one already picked, even if it is another's).
+function CO.CondItems(r)
+    local C, CU = NS.Conditions, NS.DriverCustom
+    local out = { { value = "", text = "Pick a condition" } }
+    if not (C and C.VOCAB and C.CATEGORIES and CU and CU.CondOK) then return out end
+    local cur = r and r.cond
+    local class = NS.Store.ClassTag and NS.Store.ClassTag()
+    local seen = false
+    for _, c in ipairs(C.CATEGORIES) do
+        for _, d in ipairs(C.VOCAB) do
+            if d.cat == c.id and CU.CondOK(d.key) and (not d.class or d.class == class or d.key == cur) then
+                if d.key == cur then seen = true end
+                out[#out + 1] = { value = d.key, text = c.text .. ": " .. d.text }
+            end
+        end
+    end
+    if cur and not seen then out[#out + 1] = { value = cur, text = tostring(cur) .. " (not on this client)" } end
+    return out
+end
+
+-- A rule's spells as typed: its one, or its list.
+function CO.RuleSpells(r)
+    if not r then return {} end
+    if type(r.spellIDs) == "table" and #r.spellIDs > 0 then return r.spellIDs end
+    return r.spellID and { r.spellID } or {}
 end
 
 -- A choice node (two or more options, retail): its rule can name one.
@@ -419,17 +581,32 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
             local r, E = Rule(i), CU()
             return vis() and r ~= nil and E ~= nil and E.SPELL_TRIGGERS[r.when] == true
         end
-        local idRow = AT.RowInput(pg, "Spell ID",
+        if Options.BuildYield then Options.BuildYield() end
+        local idRow = AT.RowInput(pg, "Spell IDs",
             function()
-                local r = Rule(i)
-                return (r and r.spellID) and tostring(r.spellID) or ""
+                local t = {}
+                for _, v in ipairs(CO.RuleSpells(Rule(i))) do t[#t + 1] = tostring(v) end
+                return table.concat(t, ", ")
             end,
             function(v)
-                local id = CO.ParseSpell(v)
-                if v ~= "" and not id then return end
-                Set("spellID", id)
+                local ids, seen = {}, {}
+                for part in tostring(v or ""):gmatch("[^,]+") do
+                    if Trim(part) ~= "" then
+                        local id = CO.ParseSpell(part)
+                        -- an entry that names no spell changes nothing
+                        if not id then return end
+                        if not seen[id] and #ids < (S.CUSTOM_RULE_MAX_SPELLS or 13) then
+                            seen[id] = true
+                            ids[#ids + 1] = id
+                        end
+                    end
+                end
+                Edit(function(E, r)
+                    E.SetRule(r, i, "spellID", ids[1])
+                    E.SetRule(r, i, "spellIDs", (#ids > 1) and ids or nil)
+                end)
             end,
-            spellVis, "The spell this trigger watches: a spell ID, a link, or the name of a spell you know. Any rank matches.",
+            spellVis, "The spells it watches (any spell but these: the ones it skips), comma separated: IDs, links or names. Any rank.",
             "e.g. 6572")
         local nameFS = idRow:CreateFontString(nil, "OVERLAY")
         nameFS:SetFont(NS.AT.FONT, 11, "")
@@ -442,7 +619,10 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
         idRow._sync = function()
             idSync()
             local r = Rule(i)
-            nameFS:SetText(r and CO.SpellName(r.spellID) or "")
+            local nm = r and CO.SpellName(r.spellID) or ""
+            local n = #CO.RuleSpells(r)
+            if n > 1 then nm = nm .. ((nm ~= "") and " " or "") .. ("+ %d more"):format(n - 1) end
+            nameFS:SetText(nm)
         end
         AT.RowDesc(pg, "Fires each time the game updates this spell's cooldown, and for some buffs as they come and go.",
             20, Is("when", "spell_update"))
@@ -461,6 +641,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
             function(v) Set("ignoreCooldown", v or nil) end,
             Is("when", "usable_on", "usable_off"),
             "On: the spell's own requirement decides (a dodge, a proc, enough mana), even while it is still cooling down. Off: only when it can be cast now, usable and off cooldown.")
+        if Options.BuildYield then Options.BuildYield() end
         AT.RowDropdown(pg, owner, "Totem slot",
             function()
                 local r = Rule(i)
@@ -484,9 +665,18 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
                 return CO.ChainItems(r and r.id)
             end,
             Is("when", "chain"))
+        local condRow = AT.RowDropdown(pg, owner, "Condition",
+            function()
+                local r = Rule(i)
+                return (r and r.cond) or ""
+            end,
+            function(v) Set("cond", (type(v) == "string" and v ~= "") and v or nil) end,
+            function() return CO.CondItems(Rule(i)) end,
+            Is("when", "cond_on", "cond_off"))
         if opts.triggerRows then opts.triggerRows(pg, i, api) end
 
         -- the guards, behind one switch: off drops them all
+        if Options.BuildYield then Options.BuildYield() end
         local ifRow = AT.RowToggle(pg, "Only if",
             Gated,
             function(v)
@@ -548,6 +738,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
                 end,
             }
         end, gv, "Opens the talent tree: click a talent for this rule, again for Not taken.")
+        if Options.BuildYield then Options.BuildYield() end
         AT.RowDropdown(pg, owner, "Talent is",
             function()
                 local r = Rule(i)
@@ -582,6 +773,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
             end,
             gv, "The rule fires only while this spell is off its cooldown (the GCD never counts). Empty = no such condition.",
             "Any spell ID")
+        if Options.BuildYield then Options.BuildYield() end
         AT.RowInput(pg, "Stacks at least",
             function()
                 local r = Rule(i)
@@ -640,6 +832,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
             function(v) Set("timer", (v ~= "any") and v or nil) end,
             Items(S.CUSTOM_TIMER_STATES, S.CUSTOM_TIMER_STATE_LABELS), gtv)
 
+        if Options.BuildYield then Options.BuildYield() end
         local thenRow = AT.RowDropdown(pg, owner, "Then",
             function()
                 local r = Rule(i)
@@ -655,13 +848,16 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
             end,
             function(v)
                 local n = tonumber(v)
-                if n and n >= 0 then Set("secs", (n > 0) and math.min(3600, n) or nil) end
+                if n and n >= 0 then Set("secs", (n > 0) and math.min(S.CUSTOM_MAX_SECONDS or 7200, n) or nil) end
             end,
             function()
-                local r = Rule(i)
-                return rv() and (r.act == "start" or (r.act == "add" and r.restartToo == true))
+                local r, rec = Rule(i), Rec()
+                if not (rv() and r) then return false end
+                local timed = rec ~= nil and rec.driver.stackTimers == true
+                return r.act == "start" or (r.act == "add" and (r.restartToo == true or timed))
+                    or (r.act == "set" and timed)
             end,
-            "How long the timer runs; 0 takes the item's Default seconds. Decimals work (1.5). Enter applies it.")
+            "How long the timer runs, or an added stack lasts; 0 takes the item's Default seconds. Decimals work (1.5). Enter applies it.")
         AT.RowDropdown(pg, owner, "Start mode",
             function()
                 local r = Rule(i)
@@ -688,6 +884,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
                 end
             end,
             Is("act", "add", "remove", "set"), "Stacks to add, remove or set (set takes 0). Enter applies it.")
+        if Options.BuildYield then Options.BuildYield() end
         AT.RowToggle(pg, "Restart the timer too",
             function()
                 local r = Rule(i)
@@ -716,6 +913,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
             NS.Sounds.Preview(r.sound, E.Channel(Rec()))
         end)
         AT.Tooltip(play, "Play", "Hear the chosen sound once.")
+        if Options.BuildYield then Options.BuildYield() end
         local trow = AT.RowInput(pg, "Text",
             function()
                 local r = Rule(i)
@@ -750,6 +948,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
             Stamp(whenRow, "ruleWhen", "When")
             Stamp(cdRow, "ruleUsableCd", "Fire even while on cooldown")
             Stamp(ifRow, "ruleIf", "Only if")
+            Stamp(condRow, "ruleCond", "Condition")
             Stamp(thenRow, "ruleThen", "Then")
         end
     end

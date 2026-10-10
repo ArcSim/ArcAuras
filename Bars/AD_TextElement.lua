@@ -747,14 +747,17 @@ function TX.PaintCustom(e)
     local left = st.endAt and (st.endAt - GetTime()) or nil
     if left and left <= 0 then left = nil end
     local leftText = left and TX.Countdown(e, left) or nil
+    -- the item's count as it shows it (a full pool while idle, when set)
+    local CU = NS.DriverCustom
+    local n = (CU and CU.ShownCount) and CU.ShownCount(st) or (st.stacks or 0)
     if show == "left" then
         TX.Write(e, leftText, false)
     elseif show == "both" then
-        local words = TX.CountText(e, st.stacks or 0)
+        local words = TX.CountText(e, n)
         if leftText then words = (words ~= "" and (words .. " ") or "") .. "(" .. leftText .. ")" end
         TX.Write(e, words, false)
     else
-        TX.Number(e, st.stacks or 0)
+        TX.Number(e, n)
     end
 end
 

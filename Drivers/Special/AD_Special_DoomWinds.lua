@@ -264,7 +264,10 @@ local function OnOverrideUpdated()
     RehookDWCDMFrame()
 end
 
+-- the Cooldown Manager's icon only while the game's Cooldown Manager is on
 local function ForceCDM()
+    local A = NS.Anchor
+    if A and A.CDMOff and A.CDMOff() then return false end
     return SP.Flag("dw", "forceCDM")
 end
 

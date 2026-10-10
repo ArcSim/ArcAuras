@@ -152,6 +152,54 @@ function UB.Translate(rec)
             end
         end
     end
+    -- every checked one at once: a hide per joint of their brackets. A key it
+    -- cannot read drops the whole list (dropping it alone would hide the click
+    -- area under a shown bar); Always holds anyway and joins nothing.
+    local function NeverAll(set)
+        local keys = Keys(set)
+        if #keys == 0 then return end
+        local list, rest = nil, {}
+        for _, k in ipairs(keys) do
+            if k ~= "always" then rest[#rest + 1] = k end
+        end
+        if #rest == 0 then
+            always = true
+            followed[#followed + 1] = "always"
+            return
+        end
+        for _, k in ipairs(rest) do
+            local r = UB.Rule(k, forms)
+            if not r then
+                list = false
+                break
+            end
+            if not list then
+                list = {}
+                for _, b in ipairs(r.pos) do list[#list + 1] = b end
+            else
+                local joined = {}
+                for _, a in ipairs(list) do
+                    for _, b in ipairs(r.pos) do
+                        local j = UB.Join(a, b)
+                        if not j then
+                            joined = nil
+                            break
+                        end
+                        joined[#joined + 1] = j
+                    end
+                    if not joined then break end
+                end
+                list = joined or false
+                if not list then break end
+            end
+        end
+        if not list then
+            for _, k in ipairs(keys) do dropped[#dropped + 1] = k end
+            return
+        end
+        for _, b in ipairs(list) do hides[#hides + 1] = b end
+        for _, k in ipairs(keys) do followed[#followed + 1] = k end
+    end
     local function When(set, all)
         local keys = Keys(set)
         if #keys == 0 then return end
@@ -201,7 +249,9 @@ function UB.Translate(rec)
     end
     local fadeZero = not (C and C.GetFade) or C.GetFade(rec, "fadeAlpha") <= 0
     Never(c.loadNever)
-    if fadeZero then Never(c.fadeWhen) end
+    if fadeZero then
+        if c.fadeWhenAll == true then NeverAll(c.fadeWhen) else Never(c.fadeWhen) end
+    end
     When(c.loadWhen, c.loadWhenAll == true)
     if fadeZero then When(c.showWhen, c.showWhenAll == true) end
     -- the target range rule has no conditional

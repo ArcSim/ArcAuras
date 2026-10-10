@@ -161,8 +161,9 @@ function DW.Apply(f, rec)
     end
     local R = function(k) return DW.R(rec, k) end
     local c = R("warnGlowColor") or { 1, 0.3, 0.2, 1 }
+    local inten = R("warnGlowIntensity") or 1
     local p = {
-        color = { c[1], c[2], c[3], (c[4] or 1) * (R("warnGlowIntensity") or 1) },
+        color = { c[1], c[2], c[3], (c[4] or 1) * inten },
         speed = R("warnGlowSpeed") or 0.25,
         lines = R("warnGlowLines") or 8,
         thickness = R("warnGlowThickness") or 2,
@@ -176,7 +177,8 @@ function DW.Apply(f, rec)
         mx = R("warnGlowMoveX") or 0,
         my = R("warnGlowMoveY") or 0,
     }
-    local gtype = NS.Factory.DrawnGlowStyle(R("warnGlowType") or "flash")
+    local gtype = NS.Factory.DrawnGlowStyle(R("warnGlowType") or "flash", rec)
+    local look = NS.Factory.LaneLook(rec, "states", "warnGlow", gtype, p, inten)
     local g = DW.Gate(f)
     -- the icon's size and level are in the key: ants and flash bake the size in
     local w, h = f:GetSize()
@@ -186,7 +188,7 @@ function DW.Apply(f, rec)
     local sig = table.concat({ gtype, p.color[1], p.color[2], p.color[3], p.color[4],
         p.speed, p.lines, p.thickness, p.particles, p.scale, p.xo, p.yo, p.level,
         p.strata, p.length, p.mx, p.my, lv or -1,
-        string.format("%.2fx%.2f", w or 0, h or 0) }, ":")
+        string.format("%.2fx%.2f", w or 0, h or 0) }, ":") .. look
     if f._adWarnSig ~= sig then
         NS.Factory.StopGlowLane(g.hp, DW.LANE)
         g:Show()

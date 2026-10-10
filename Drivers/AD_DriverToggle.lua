@@ -1,6 +1,7 @@
 -- Toggled on: a spell icon's state while its toggle is on, as the action bar
 -- shows it: Shoot or Auto Shot repeating, melee Attack swinging, a pet spell
--- on autocast. Its glow is drawn here; its alpha, grey and tint by
+-- on autocast, a next-swing ability queued (WoW Forever; its row reads
+-- Queued). Its glow and checkmark are drawn here; its alpha, grey and tint by
 -- Factory.SetState (f._adToggled).
 -- Factory.ApplyStyle hands every styled icon to Sync, Factory.Release to Drop.
 -- The auto attack conditions read the same state through Use.
@@ -33,6 +34,14 @@ DT.petArmed = false
 DT.petCan = {}
 DT.bar = {}      -- the pet bar's autocast spells, { id, on }, read once a frame
 DT.barAt = nil
+-- Next-swing abilities, every rank by name: Heroic Strike, Cleave, Maul,
+-- Raptor Strike. Queued until the swing lands; retail casts them at once.
+DT.QUEUE_BASE = { 78, 845, 6807, 2973 }
+DT.queueNames = nil
+-- a queued ability changes the current spell, with its own event
+DT.QUEUE_EVENTS = { "CURRENT_SPELL_CAST_CHANGED" }
+DT.queueArmed = false
+DT.queued = nil   -- the queued ability's spell ID, read on each change
 
 function DT.R(rec, k)
     return Store.Resolve(rec, "states", k)
@@ -46,10 +55,54 @@ end
 -- A spell icon's spell ID, or nil for any other icon.
 function DT.SpellID(rec)
     if not (rec and rec.kind == "spell" and type(rec.driver) == "table") then return nil end
-    return tonumber(rec.driver.spellID)
+    -- the one it shows, on an icon with several spells
+    return tonumber(Store.ShownSpell(rec.driver))
 end
 
--- "attack", "repeat", "autocast" or nil: which toggle a spell icon's spell is.
+-- The next-swing abilities' names, read once (WoW Forever only).
+function DT.QueueNames()
+    if DT.queueNames then return DT.queueNames end
+    local names = {}
+    if NS.IsForever and C_Spell and C_Spell.GetSpellName then
+        for _, id in ipairs(DT.QUEUE_BASE) do
+            local nm = C_Spell.GetSpellName(id) -- raw-id: a next-swing ability's name, every rank shares it
+            if type(nm) == "string" and nm ~= "" and not (issecretvalue and issecretvalue(nm)) then names[nm] = id end
+        end
+    end
+    DT.queueNames = names
+    return names
+end
+
+-- The base ID of the next-swing ability a spell is, or nil.
+function DT.QueueBase(sid)
+    if not (sid and C_Spell and C_Spell.GetSpellName) then return nil end
+    local nm = C_Spell.GetSpellName(sid) -- raw-id: the icon's spell, matched by name across ranks
+    if type(nm) ~= "string" or (issecretvalue and issecretvalue(nm)) then return nil end
+    return DT.QueueNames()[nm]
+end
+
+-- The spell IDs whose queue counts for an ability: every rank in the
+-- spellbook (the swing bar's list), else the one given.
+function DT.QueueIDs(base, sid)
+    local SA = NS.Bars and NS.Bars.SwingAbil
+    local ids = SA and SA.QueueIDs and SA.QueueIDs(base, 0)
+    if type(ids) ~= "table" or #ids == 0 then ids = { sid or base } end
+    return ids
+end
+
+-- The queued next-swing ability's spell ID, or nil. IsCurrentSpell is plain
+-- on WoW Forever; a secret answer counts as not queued.
+function DT.ReadQueued()
+    if not (C_Spell and C_Spell.IsCurrentSpell) then return nil end
+    for _, base in pairs(DT.QueueNames()) do
+        for _, id in ipairs(DT.QueueIDs(base)) do
+            if DT.Yes(C_Spell.IsCurrentSpell(id)) then return id end -- raw-id: the spellbook's ranks of an ability
+        end
+    end
+    return nil
+end
+
+-- "attack", "repeat", "autocast", "queue" or nil: which toggle a spell icon's spell is.
 function DT.Kind(rec)
     local sid = DT.SpellID(rec)
     if not sid then return nil end
@@ -57,6 +110,7 @@ function DT.Kind(rec)
     if DT.REPEAT[sid] then return "repeat" end
     -- the game is asked about the spell the icon reads (rank, override)
     local eff = Store.RecordSpellID(rec.driver)
+    if DT.QueueBase(eff or sid) or DT.QueueBase(sid) then return "queue" end
     if eff and C_Spell and C_Spell.IsAutoRepeatSpell and DT.Yes(C_Spell.IsAutoRepeatSpell(eff)) then return "repeat" end
     if DT.petCan[sid] or DT.Auto(sid, eff) then
         DT.petCan[sid] = true
@@ -123,19 +177,52 @@ end
 -- the toggled-on row on Conditions changes something
 function DT.StateSet(rec)
     return DT.R(rec, "toggleAlphaEnabled") == true or DT.R(rec, "toggleDesaturate") == true
-        or DT.R(rec, "toggleTintEnabled") == true
+        or DT.R(rec, "toggleTintEnabled") == true or DT.R(rec, "queueShort") == true
 end
 
 -- A set toggle look is followed on a toggle spell, and on a spell that may be
 -- a pet's (its rows were set while the pet was out).
 function DT.Wanted(rec)
-    if not (DT.R(rec, "toggleGlow") == true or DT.StateSet(rec)) then return false end
+    if not (DT.R(rec, "toggleGlow") == true or DT.StateSet(rec) or DT.R(rec, "queueCheck") == true) then
+        return false
+    end
     return DT.IsToggle(rec) or DT.MaybePet(rec)
+end
+
+-- The action bar's checkmark over a queued ability's icon, under its glows
+-- and texts; the options preview shows it while it picks the toggle lane.
+function DT.PaintCheck(f, rec, on)
+    local want = DT.R(rec, "queueCheck") == true and DT.Kind(rec) == "queue"
+        and (on or f._adGlowLaneOnly == "toggle")
+        and Store.Resolve(rec, "appearance", "forceHideIcon") ~= true
+    local host = f._adQueueCheck
+    if not want then
+        if host then host:Hide() end
+        return
+    end
+    if not host then
+        host = CreateFrame("Frame", nil, f)
+        host:SetAllPoints(f)
+        host:EnableMouse(false)
+        local t = host:CreateTexture(nil, "OVERLAY")
+        t:SetTexture("Interface\\Buttons\\CheckButtonHilight")
+        t:SetBlendMode("ADD")
+        t:SetAllPoints(f.icon)
+        host._adTex = t
+        f._adQueueCheck = host
+    end
+    -- a shaped icon's check keeps to its shape (Factory.ApplyStyle sets the key)
+    NS.Factory.ShapeTex(host._adTex, f._adMaskKey, f.icon)
+    NS.Factory.SkinMaskOver(host._adTex, f)
+    local lv = f:GetFrameLevel()
+    if type(lv) == "number" and not (issecretvalue and issecretvalue(lv)) then host:SetFrameLevel(lv + 2) end
+    host:Show()
 end
 
 -- The state on the frame: repainted when it flips and the look depends on it.
 function DT.Paint(f, rec)
     local on = DT.Wanted(rec) and DT.On(rec) or nil
+    DT.PaintCheck(f, rec, on)
     if f._adToggled == on then return end
     f._adToggled = on
     if DT.StateSet(rec) then
@@ -147,6 +234,10 @@ function DT.On(rec)
     local k = DT.Kind(rec)
     if k == "attack" then return DT.attacking end
     if k == "repeat" then return DT.repeating end
+    if k == "queue" then
+        local mine = DT.QueueBase(Store.RecordSpellID(rec.driver) or DT.SpellID(rec)) or DT.QueueBase(DT.SpellID(rec))
+        return DT.queued ~= nil and DT.QueueBase(DT.queued) == mine
+    end
     if k == "autocast" then
         local _, on = DT.Auto(DT.SpellID(rec), Store.RecordSpellID(rec.driver))
         return on
@@ -174,8 +265,9 @@ function DT.Apply(f, rec)
     end
     local R = function(k) return DT.R(rec, k) end
     local c = R("toggleGlowColor") or { 1, 1, 1, 1 }
+    local inten = R("toggleGlowIntensity") or 1
     local p = {
-        color = { c[1], c[2], c[3], (c[4] or 1) * (R("toggleGlowIntensity") or 1) },
+        color = { c[1], c[2], c[3], (c[4] or 1) * inten },
         speed = R("toggleGlowSpeed") or 0.25,
         lines = R("toggleGlowLines") or 8,
         thickness = R("toggleGlowThickness") or 2,
@@ -189,7 +281,8 @@ function DT.Apply(f, rec)
         mx = R("toggleGlowMoveX") or 0,
         my = R("toggleGlowMoveY") or 0,
     }
-    local gtype = NS.Factory.DrawnGlowStyle(R("toggleGlowType") or "redflash")
+    local gtype = NS.Factory.DrawnGlowStyle(R("toggleGlowType") or "redflash", rec)
+    local look = NS.Factory.LaneLook(rec, "states", "toggleGlow", gtype, p, inten)
     -- the icon's size and level are in the key: our flashes and ants bake the size in
     local w, h = f:GetSize()
     if issecretvalue and (issecretvalue(w) or issecretvalue(h)) then w, h = 0, 0 end
@@ -198,7 +291,7 @@ function DT.Apply(f, rec)
     local sig = table.concat({ gtype, p.color[1], p.color[2], p.color[3], p.color[4],
         p.speed, p.lines, p.thickness, p.particles, p.scale, p.xo, p.yo, p.level,
         p.strata, p.length, p.mx, p.my, lv or -1,
-        string.format("%.2fx%.2f", w or 0, h or 0) }, ":")
+        string.format("%.2fx%.2f", w or 0, h or 0) }, ":") .. look
     if f._adToggleSig ~= sig then
         NS.Factory.StopGlowLane(f, DT.LANE)
         NS.Factory.StartGlowLane(f, DT.LANE, gtype, p)
@@ -247,6 +340,14 @@ function DT.OnPet(event, unit)
     DT.ApplyAll()
 end
 
+-- The current spell changed: a next-swing ability queued, or its swing landed.
+function DT.OnQueue()
+    local q = DT.ReadQueued()
+    if q == DT.queued then return end
+    DT.queued = q
+    DT.ApplyAll()
+end
+
 function DT.Listen(list, on, fn)
     for _, e in ipairs(list) do
         if on then
@@ -261,13 +362,24 @@ end
 -- swing and repeat events for their icons and the readers, the pet bar's for
 -- the pet spells' icons.
 function DT.Arm()
-    local swing, pet = next(DT.users) ~= nil, false
+    local swing, pet, queue = next(DT.users) ~= nil, false, false
     for _, rec in pairs(DT.frames) do
-        if DT.PetIcon(rec) then pet = true else swing = true end
+        if DT.PetIcon(rec) then
+            pet = true
+        elseif DT.Kind(rec) == "queue" then
+            queue = true
+        else
+            swing = true
+        end
     end
     if pet ~= DT.petArmed then
         DT.petArmed = pet
         DT.Listen(DT.PET_EVENTS, pet, DT.OnPet)
+    end
+    if queue ~= DT.queueArmed then
+        DT.queueArmed = queue
+        DT.Listen(DT.QUEUE_EVENTS, queue, DT.OnQueue)
+        DT.queued = queue and DT.ReadQueued() or nil
     end
     if swing == DT.armed then return end
     DT.armed = swing
@@ -292,6 +404,7 @@ end
 function DT.Drop(f)
     DT.frames[f] = nil
     f._adToggled = nil
+    if f._adQueueCheck then f._adQueueCheck:Hide() end
     DT.Stop(f)
     DT.Arm()
 end

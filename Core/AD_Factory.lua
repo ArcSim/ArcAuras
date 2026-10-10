@@ -177,6 +177,15 @@ function Factory.AuraActiveTexture(rec)
     return OverrideFor(rec, "appearance", "customIcon")
 end
 
+-- The Cooldown Manager's own picture for each item category it lists
+-- (CooldownViewerItemData.lua spellCategoryMetadataLookup).
+Factory.CATEGORY_ART = {
+    [4] = "Interface/ICONS/INV_POTION_114",
+    [30] = "Interface/ICONS/INV_POTION_54",
+    [1711] = "Interface/ICONS/Warlock_ Healthstone",
+    [2566] = "Interface/ICONS/Warlock_ Bloodstone",
+}
+
 -- A spell icon's own art: the spell its driver reads (Auto rank's rank, then
 -- the override unless the icon pins the base spell). GetSpellTexture gives
 -- (icon, originalIcon); on Forever neither moves for a toggle, so active art
@@ -211,6 +220,9 @@ local function KindTexture(rec)
         local tex = d.slotID and GetInventoryItemTexture("player", d.slotID)
         return tex or QUESTION_MARK
     elseif kind == "item" then
+        -- an item by its category wears the category's picture
+        local cat = d.category and Factory.CATEGORY_ART[d.category]
+        if cat then return cat end
         -- an icon with several items wears the one it shows
         local DC = NS.DriverCooldown
         local iid = (DC and DC.LiveItem and DC.LiveItem(rec)) or d.itemID
@@ -312,6 +324,10 @@ end
 -- The preview's stand-in engine button takes this as the engine's art.
 Factory.KindTexture = KindTexture
 
+-- Bands in percent of the duration: a bound copy of the countdown (the Pct
+-- functions below StyleCountdownText).
+local Pct = {}
+
 local function BuildFrame(rec)
     local f = CreateFrame("Frame", nil, UIParent)
     f:SetSize(36, 36)
@@ -360,6 +376,15 @@ local function BuildFrame(rec)
     -- Numbers draw only above this total duration; the default hides a 2 s
     -- cooldown. 1600 ms sits between Forever's 1.5 s GCD and a 2 s cooldown.
     if f.cooldown.SetMinimumCountdownDuration then f.cooldown:SetMinimumCountdownDuration(1600) end
+    -- Bands in percent: the bound copy follows every duration this cooldown
+    -- takes; only an icon with them holds a binding.
+    if hooksecurefunc then
+        hooksecurefunc(f.cooldown, "SetCooldownFromDurationObject", function(_, d)
+            if f._adPctBind and d then f._adPctBind:SetDuration(d) end
+        end)
+        hooksecurefunc(f.cooldown, "SetCooldown", function(_, start, dur) Pct.Plain(f, start, dur) end)
+        hooksecurefunc(f.cooldown, "Clear", function() Pct.Plain(f, 0, 0) end)
+    end
 
     -- Texts live on a child frame so they draw above the swipe.
     f.textHost = CreateFrame("Frame", nil, f)
@@ -447,19 +472,22 @@ end
 -- decTo = decimal threshold in seconds (0 = none). bands = list of
 -- { t = seconds, c = {r,g,b} }, baked in as color escapes since aura durations
 -- can't be read; above the top band the fontstring's own color shows.
--- roundMode: "up" | "down" | nil (the Settings choice).
-function Factory.GetCountdownFormatter(decTo, bands, abbrev, roundMode)
+-- roundMode: "up" | "down" | nil (the Settings choice). below =
+-- seconds from which the text prints a blank (0 = always shown).
+function Factory.GetCountdownFormatter(decTo, bands, abbrev, roundMode, below)
     decTo = tonumber(decTo) or 0
     if decTo > 60 then decTo = 60 end
     abbrev = tonumber(abbrev) or 0
     if abbrev <= 60 then abbrev = 0 end
+    below = tonumber(below) or 0
+    if below < 0 then below = 0 end
     local nBands = (type(bands) == "table") and #bands or 0
-    if decTo <= 0 and nBands == 0 and abbrev == 0 then return nil end
+    if decTo <= 0 and nBands == 0 and abbrev == 0 and below == 0 then return nil end
     if not (C_StringUtil and C_StringUtil.CreateNumericRuleFormatter) then return nil end
     local CN = GetLocale and GetLocale() == "zhCN"
     if CN then decTo = 0 end   -- decimal refreshes can crash the zhCN client
     local mode = roundMode or Factory.TimerRounding()
-    local parts = { tostring(decTo), tostring(abbrev), mode }
+    local parts = { tostring(decTo), tostring(abbrev), mode, tostring(below) }
     for i = 1, nBands do
         local b = bands[i]
         parts[#parts + 1] = string.format("%g:%.2f,%.2f,%.2f",
@@ -474,13 +502,17 @@ function Factory.GetCountdownFormatter(decTo, bands, abbrev, roundMode)
 
     -- Breakpoints: 0, 60, 3600, the decimal and M:SS thresholds, band edges.
     local edgeSet = { [0] = true, [60] = true, [3600] = true }
+    if below > 0 then edgeSet[below] = true end
     if decTo > 0 and decTo < 60 then edgeSet[decTo] = true end
     if abbrev > 60 and abbrev < 3600 then edgeSet[abbrev] = true end
     for _, b in ipairs(sorted) do
         if b.t > 0 and b.t < 3600 then edgeSet[b.t] = true end
     end
     local edges = {}
-    for v in pairs(edgeSet) do edges[#edges + 1] = v end
+    for v in pairs(edgeSet) do
+        -- nothing above the Show under line needs a rule of its own
+        if below == 0 or v <= below then edges[#edges + 1] = v end
+    end
     table.sort(edges)
 
     local Up = Enum.NumericRuleFormatRounding and Enum.NumericRuleFormatRounding.Up
@@ -499,7 +531,10 @@ function Factory.GetCountdownFormatter(decTo, bands, abbrev, roundMode)
         end
         local Down = Enum.NumericRuleFormatRounding and Enum.NumericRuleFormatRounding.Down
         local fmt, comps, step
-        if lo >= 3600 then
+        if below > 0 and lo >= below then
+            -- a space keeps the font string's height while it waits
+            fmt, esc = " ", nil
+        elseif lo >= 3600 then
             fmt, comps, step = "%d h", { { div = 3600 } }, 3600
         elseif lo >= 60 then
             if abbrev > 60 and lo < abbrev then
@@ -576,8 +611,8 @@ end
 -- The formatter for any countdown text: the options one for decimals, colour
 -- bands or M:SS, else a plain one when the stock text rounds the other way.
 -- stock: "up" (a Cooldown widget) or "down" (aura engine). nil = keep stock.
-function Factory.TimerFormatter(decTo, bands, abbrev, stock, roundMode)
-    local fmt = Factory.GetCountdownFormatter(decTo, bands, abbrev, roundMode)
+function Factory.TimerFormatter(decTo, bands, abbrev, stock, roundMode, below)
+    local fmt = Factory.GetCountdownFormatter(decTo, bands, abbrev, roundMode, below)
     if fmt then return fmt end
     local mode = roundMode or Factory.TimerRounding()
     stock = stock or "up"
@@ -622,10 +657,11 @@ local function CountdownFormatterFor(rec)
     if R("text", "durationDecimals") == true then
         decTo = R("text", "durationDecimalThreshold") or 10
     end
-    if R("text", "durationColorBands") == true then
+    -- bands in percent colour a bound copy instead (Pct)
+    if R("text", "durationColorBands") == true and R("text", "durationBandsPercent") ~= true then
         bands = {}
         -- only the bands in play ("+ Add band"); 0 seconds is still off
-        local count = math.max(1, math.min(3, math.floor(tonumber(R("text", "durBandCount")) or 1)))
+        local count = math.max(1, math.min(5, math.floor(tonumber(R("text", "durBandCount")) or 1)))
         for i = 1, count do
             local secs = R("text", "durBand" .. i .. "Sec") or 0
             if secs > 0 then
@@ -639,14 +675,15 @@ local function CountdownFormatterFor(rec)
     end
     -- Rounding is in the signature, so changing it re-pushes the formatter.
     local mode = Factory.IconRounding(rec)
-    local sig = tostring(decTo) .. "/" .. tostring(abbrev) .. "/" .. mode
+    local below = R("text", "durationShowBelow") or 0
+    local sig = tostring(decTo) .. "/" .. tostring(abbrev) .. "/" .. mode .. "/" .. tostring(below)
     if bands then
         for _, b in ipairs(bands) do
             sig = sig .. "|" .. b.t .. ":"
                 .. (b.c[1] or 1) .. "," .. (b.c[2] or 1) .. "," .. (b.c[3] or 1)
         end
     end
-    return Factory.TimerFormatter(decTo, bands, abbrev, nil, mode), sig
+    return Factory.TimerFormatter(decTo, bands, abbrev, nil, mode, below), sig
 end
 
 -- Aura stack formatter: the engine prints a count only above 1 unless handed a
@@ -672,7 +709,7 @@ function Factory.GetStackFormatter(rec, off)
     if R("text", "stackColorBands") == true then
         bands = {}
         -- only the bands in play ("+ Add band")
-        local count = math.max(1, math.min(3, math.floor(tonumber(R("text", "stkBandCount")) or 1)))
+        local count = math.max(1, math.min(6, math.floor(tonumber(R("text", "stkBandCount")) or 1)))
         for i = 1, count do
             local m = R("text", "stkBand" .. i .. "Min") or 0
             if m > 0 then
@@ -728,6 +765,7 @@ function Factory.Release(id)
         f._adStateSig = nil   -- the lanes just stopped: the next feed repaints
         if NS.DriverWarn then NS.DriverWarn.Drop(f) end
         if NS.DriverToggle then NS.DriverToggle.Drop(f) end
+        if NS.DriverAssist then NS.DriverAssist.Drop(f) end
         -- pinned texts come home, their carriers hidden with the icon
         if NS.TextAnchor then NS.TextAnchor.Release(f) end
         f._adPureGCD = nil   -- pooled frames must not carry GCD presentation
@@ -820,6 +858,17 @@ end
 
 -- The one writer for every dim (cooldown, aura missing, out of stock). Each
 -- caller resolves preserveText from its own option.
+-- a skin's pictures on the art's own frame (Factory.SkinLayers' back side)
+local SKIN_BACK_KEYS = { "_adSkinBackdrop", "_adSkinShadow", "_adSkinNormal", "_adSkinGloss" }
+-- and on its top frame; each picture dims itself, as the art does
+local function DimSkin(f, a)
+    for _, host in ipairs({ f.icon and f.icon:GetParent(), f._adSkinTop }) do
+        for _, k in ipairs(SKIN_BACK_KEYS) do
+            if host[k] then host[k]:SetAlpha(a) end
+        end
+    end
+end
+
 local function ApplyStateAlpha(f, a, preserveText)
     -- f._adStateAlpha keeps the real value for the dynamic-group signature;
     -- the shown one has the editing floor. Later writers on the same art
@@ -832,9 +881,11 @@ local function ApplyStateAlpha(f, a, preserveText)
     if f._adShadow then f._adShadow:SetAlpha(a) end
     ApplySwipeAlpha(f)
     if f._adBorderHost then f._adBorderHost:SetAlpha(a) end
+    DimSkin(f, a)
     -- A fully hidden icon hides its texts too, whatever preserveText says.
     local ta = (a > 0 and preserveText) and 1 or a
     if f.textHost then f.textHost:SetAlpha(ta) end
+    if f._adLabelHost then f._adLabelHost:SetAlpha(f._adLabelsBright and (a > 0 and 1 or 0) or ta) end
     -- Labels kept to the aura's absence live under the button, not on the host.
     if f._adMissClip then f._adMissClip:SetAlpha(ta) end
     if f._adMissGlow then f._adMissGlow:SetAlpha(a) end
@@ -868,10 +919,14 @@ local function TimedPaint(f)
     f.icon:SetVertexColor(tc[1], tc[2], tc[3], a)
     if f._adShadow then f._adShadow:SetAlpha(a) end
     if f._adBorderHost then f._adBorderHost:SetAlpha(a) end
+    DimSkin(f, a)
     if f._adMissGlow then f._adMissGlow:SetAlpha(a) end
     ApplySwipeAlpha(f)
     local ta = TimedValue(f, T.tLate, T.tBefore)
     if f.textHost then f.textHost:SetAlpha(ta) end
+    if f._adLabelHost then
+        f._adLabelHost:SetAlpha(f._adLabelsBright and TimedValue(f, T.late > 0 and 1 or 0, T.before > 0 and 1 or 0) or ta)
+    end
     if f._adMissClip then f._adMissClip:SetAlpha(ta) end
     if f._adLowText then f._adLowText:SetAlpha(ta) end
     if f.stackText then TimedText(f, f.stackText, T) end
@@ -917,15 +972,387 @@ local function SetTimed(f, T)
 end
 Factory.SetTimed = SetTimed
 
+-- Shapes an icon can be cut to (appearance.iconMask, or its group's
+-- arrangement.iconMask), each three pictures in Textures\Shapes: its
+-- silhouette (the art's mask, a shaped swipe, a border ring's outside), its
+-- hole (white outside the shape: the ring's inside edge) and its halo (a soft
+-- rim outside it: shaped glows and shadow), the shape in the halo's middle
+-- 1 / SHAPE_HALO.
+Factory.SHAPES = { rounded = true, circle = true, diamond = true, hexagon = true }
+Factory.SHAPE_HALO = 1.6
+-- shapes whose swipe keeps its edge line: it runs round a circle the size of
+-- the icon, which a diamond's or hexagon's sides cut inside of
+Factory.SHAPE_EDGE = { rounded = true, circle = true }
+-- a ring's inset per unit of thickness, so a slanted side reads as thick as a straight one
+Factory.SHAPE_RING = { rounded = 1, circle = 1, diamond = 1.41, hexagon = 1 }
+local SHAPE_DIR = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Shapes\\AD_Shape"
+
+function Factory.ShapeFile(key, part)
+    return SHAPE_DIR .. part .. "_" .. key
+end
+
+-- The Masque skin plan a record wears (Core\AD_Skins.lua), or nil.
+function Factory.SkinPlan(rec)
+    local S = NS.Skins
+    return (S ~= nil and S.PlanFor ~= nil) and S.PlanFor(rec) or nil
+end
+
+-- The icon's shape key, or nil for square: its own, else its group's. A
+-- Masque skin draws its own shape, so ours stands aside under one.
+function Factory.MaskOf(rec)
+    if not rec then return nil end
+    if Factory.SkinPlan(rec) then return nil end
+    local k = Store.Resolve(rec, "appearance", "iconMask")
+    if Factory.SHAPES[k] then return k end
+    local g = rec.groupId and Store.Get(rec.groupId)
+    k = g and Store.Resolve(g, "arrangement", "iconMask")
+    return Factory.SHAPES[k] and k or nil
+end
+
+-- Cuts `tex` to the shape over `box` (default its own rect); nil uncuts it.
+-- The mask is made on the texture's frame: a mask clips only its own frame's
+-- textures.
+local function ShapeTex(tex, key, box)
+    if not tex then return end
+    local m = tex._adShapeM
+    if not key then
+        if m and tex._adShapeOn then
+            tex:RemoveMaskTexture(m)
+            tex._adShapeOn = nil
+        end
+        return
+    end
+    if not m then
+        m = tex:GetParent():CreateMaskTexture()
+        tex._adShapeM = m
+    end
+    if m._adKey ~= key then
+        m:SetTexture(Factory.ShapeFile(key, "Mask"), "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+        m._adKey = key
+    end
+    m:ClearAllPoints()
+    m:SetAllPoints(box or tex)
+    if not tex._adShapeOn then
+        tex:AddMaskTexture(m)
+        tex._adShapeOn = true
+    end
+end
+Factory.ShapeTex = ShapeTex
+
+-- Masque skins, painted by us (no frame of ours is handed to Masque): sizes
+-- are the skin's units of a 36px button times the box and the group's scale,
+-- offsets as the skin gives them (Masque's own rule); both snap to whole pixels.
+local MASQUE_TEX = "Interface\\AddOns\\Masque\\Textures\\"
+local SKIN_SWIPE = MASQUE_TEX .. "Square\\Mask"
+local SKIN_SWIPE_ROUND = MASQUE_TEX .. "Circle\\Mask"
+local SKIN_BACKDROP = MASQUE_TEX .. "Backdrop\\Action"
+local SKIN_NORMAL = "Interface\\Buttons\\UI-Quickslot2"
+local SKIN_WRAP = "CLAMPTOBLACKADDITIVE"
+-- each layer's place in Masque's stack when the skin names none, and which
+-- side of the picture (Masque's sits at BACKGROUND 0) a stack place puts it
+Factory.SKIN_LAYERS = { { "Backdrop", "BACKGROUND", -1 }, { "Shadow", "ARTWORK", -1 },
+    { "Normal", "ARTWORK", 0 }, { "Gloss", "OVERLAY", 1 } }
+local DRAW_RANK = { BACKGROUND = 1, BORDER = 2, ARTWORK = 3, OVERLAY = 4, HIGHLIGHT = 5 }
+local SKIN_ICON_RANK = 16
+
+local skinAtlas = {}
+local function SkinAtlasOK(name)
+    local v = skinAtlas[name]
+    if v == nil then
+        v = C_Texture ~= nil and C_Texture.GetAtlasInfo ~= nil and C_Texture.GetAtlasInfo(name) ~= nil
+        skinAtlas[name] = v
+    end
+    return v
+end
+
+-- whole pixels on `frame`'s grid; a secret scale falls back to UIParent's
+local function SkinSnap(frame, v, floor)
+    if not (PixelUtil and PixelUtil.GetNearestPixelSize) then return v end
+    local es = frame and frame.GetEffectiveScale and frame:GetEffectiveScale()
+    if es == nil or (issecretvalue and issecretvalue(es)) then es = UIParent:GetEffectiveScale() end
+    return PixelUtil.GetNearestPixelSize(v, es, floor)
+end
+
+local function SkinCoords(c)
+    if type(c) == "table" then return c[1] or 0, c[2] or 1, c[3] or 0, c[4] or 1 end
+    return 0, 1, 0, 1
+end
+
+-- A region's size and place from a skin entry, on `anchor` (a frame, w x h,
+-- whose pixel grid it snaps to); an entry anchored to "Icon" sits on `art`,
+-- and `on` places it on another region (a mask on its picture).
+local function SkinPlace(region, e, plan, anchor, art, w, h, on)
+    local to = on or (e and e.Anchor == "Icon" and art) or anchor
+    region:ClearAllPoints()
+    if e and e.SetAllPoints then
+        region:SetAllPoints(to)
+        return
+    end
+    local k = (plan.scale or 1) / 36
+    if not (e and e.Atlas and e.UseAtlasSize) then
+        region:SetSize(SkinSnap(anchor, ((e and e.Width) or 36) * (w or 36) * k, 1),
+            SkinSnap(anchor, ((e and e.Height) or 36) * (h or 36) * k, 1))
+    end
+    region:SetPoint((e and e.Point) or "CENTER", to, (e and e.RelPoint) or "CENTER",
+        SkinSnap(anchor, (e and e.OffsetX) or 0, 0), SkinSnap(anchor, (e and e.OffsetY) or 0, 0))
+end
+Factory.SkinPlace = SkinPlace
+
+-- The picture's box in a skin on a w x h button.
+local function SkinBox(plan, w, h)
+    local e = plan.icon
+    if e.SetAllPoints then return w, h end
+    local k = (plan.scale or 1) / 36
+    return (e.Width or 36) * w * k, (e.Height or 36) * h * k
+end
+
+-- The skin's crop; a box that is not square crops further at the icon's part
+-- (its crop to shape, else a hand aspect ratio), so the picture never stretches.
+function Factory.SkinTexCoords(rec, plan, bw, bh)
+    local L, Rt, T, B = SkinCoords(plan.icon.TexCoords)
+    local target
+    if Factory.CropsToShape(rec) and type(bw) == "number" and type(bh) == "number" and bw > 0 and bh > 0 then
+        target = bw / bh
+    else
+        local ar = Store.Resolve(rec, "appearance", "aspectRatio") or 1
+        if ar ~= 1 and ar > 0 then target = ar end
+    end
+    local ww, wh = Rt - L, B - T
+    if target and ww > 0 and wh > 0 then
+        local focus = Factory.CropFocus(rec)
+        if ww / wh > target then
+            local keep = wh * target
+            L = L + ww * Factory.FocusStart(focus, keep / ww)
+            Rt = L + keep
+        elseif ww / wh < target then
+            local keep = ww / target
+            T = T + wh * Factory.FocusStart(focus, keep / wh)
+            B = T + keep
+        end
+    end
+    return L, Rt, T, B
+end
+
+-- The skin's mask on the picture: the icon entry's own, else the button's
+-- when the entry uses it. Made on the picture's frame; nil plan takes it off.
+local function SkinMask(tex, plan, owner, w, h)
+    local ie = plan and plan.icon
+    local def, rel
+    if ie and ie.Mask then
+        def, rel = ie.Mask, tex
+    elseif ie and ie.UseMask and plan.mask then
+        def, rel = plan.mask, owner
+    end
+    local m = tex._adSkinM
+    -- an atlas this client lacks would blank the picture: its file, else no mask
+    if type(def) == "table" and not ((def.Atlas and SkinAtlasOK(def.Atlas)) or def.Texture) then def = nil end
+    if not def then
+        if m and tex._adSkinMOn then
+            tex:RemoveMaskTexture(m)
+            tex._adSkinMOn = nil
+        end
+        return
+    end
+    if not m then
+        m = tex:GetParent():CreateMaskTexture()
+        tex._adSkinM = m
+    end
+    if type(def) == "string" then
+        m:SetTexture(def, SKIN_WRAP, SKIN_WRAP)
+        m:ClearAllPoints()
+        m:SetAllPoints(tex)
+    else
+        if def.Atlas and SkinAtlasOK(def.Atlas) then
+            m:SetAtlas(def.Atlas, def.UseAtlasSize)
+        else
+            m:SetTexture(def.Texture, def.WrapH or SKIN_WRAP, def.WrapV or SKIN_WRAP)
+        end
+        -- a picture's own mask sits on the picture, the button's on the button
+        SkinPlace(m, def, plan, owner, tex, w, h, rel)
+    end
+    if not tex._adSkinMOn then
+        tex:AddMaskTexture(m)
+        tex._adSkinMOn = true
+    end
+end
+
+-- A piece drawn over a holder's art box (the checkmark, the press look, a
+-- warning tint) takes the skin's mask the art wears (ApplyStyle keeps the plan).
+function Factory.SkinMaskOver(tex, f)
+    if not (tex and f) then return end
+    local w, h = f:GetSize()
+    if type(w) ~= "number" or type(h) ~= "number" or (issecretvalue and (issecretvalue(w) or issecretvalue(h))) then
+        w, h = 36, 36
+    end
+    SkinMask(tex, f._adSkinPlan, f, w, h)
+end
+
+-- The skin's picture on `owner` (the frame it is on, w x h): its box, crop
+-- and mask, in place of our padding, zoom and shape. No plan: its mask off
+-- (the caller places the picture its own way).
+function Factory.SkinArt(tex, rec, plan, owner, w, h)
+    if not tex then return end
+    if not plan then
+        SkinMask(tex, nil)
+        return
+    end
+    w, h = w or 36, h or 36
+    SkinPlace(tex, plan.icon, plan, owner, nil, w, h)
+    tex:SetTexCoord(Factory.SkinTexCoords(rec, plan, SkinBox(plan, w, h)))
+    SkinMask(tex, plan, owner, w, h)
+end
+
+-- One layer's picture, colour and blend.
+local function SkinPaint(t, e, color, defTex)
+    local c = color or e.Color
+    if e.UseColor then
+        t:SetTexture(nil)
+        t:SetVertexColor(1, 1, 1, 1)
+        t:SetColorTexture(c and c[1] or 0, c and c[2] or 0, c and c[3] or 0, c and c[4] or 0.5)
+    else
+        if e.Atlas and SkinAtlasOK(e.Atlas) then
+            t:SetAtlas(e.Atlas, e.UseAtlasSize)
+        else
+            t:SetTexture(e.Texture or defTex)
+            t:SetTexCoord(SkinCoords(e.TexCoords))
+        end
+        t:SetVertexColor(c and c[1] or 1, c and c[2] or 1, c and c[3] or 1, c and c[4] or 1)
+    end
+    t:SetBlendMode(e.BlendMode or "BLEND")
+end
+
+-- The skin's layers round the picture: the ones its stack puts under the
+-- picture on `back` (the picture's own frame), the rest on `top` (a frame over
+-- it), each side in the skin's order. No plan or hide: all hidden. alpha: each
+-- picture's own (a host that dims as a whole passes 1). Returns the pictures shown.
+function Factory.SkinLayers(plan, back, top, anchor, art, w, h, alpha, hide)
+    local shown = {}
+    local sides = { back = {}, top = {} }
+    if plan and not hide then
+        for _, L in ipairs(Factory.SKIN_LAYERS) do
+            local name = L[1]
+            local e = plan[name:lower()]
+            if e then
+                local rank = (DRAW_RANK[e.DrawLayer or L[2]] or 3) * 16 + (e.DrawLevel or L[3])
+                local side = (name == "Backdrop" or rank < SKIN_ICON_RANK) and "back" or "top"
+                local list = sides[side]
+                list[#list + 1] = { name = name, e = e, rank = rank }
+            end
+        end
+    end
+    -- one pass per side; a host's pictures the skin does not draw now hide
+    -- after both (the two sides may share a frame)
+    local on = {}
+    local function Side(host, list, layer, base)
+        table.sort(list, function(x, y) return x.rank < y.rank end)
+        for i, it in ipairs(list) do
+            local key = "_adSkin" .. it.name
+            local t = host[key]
+            if not t then
+                t = host:CreateTexture(nil, layer, nil, 0)
+                host[key] = t
+            end
+            local def = (it.name == "Backdrop" and SKIN_BACKDROP) or (it.name == "Normal" and SKIN_NORMAL) or nil
+            SkinPaint(t, it.e, plan.colors[it.name], def)
+            t:SetDrawLayer(layer, base + i - 1)
+            SkinPlace(t, it.e, plan, anchor, art, w, h)
+            t:SetAlpha(alpha or 1)
+            t:Show()
+            on[t] = true
+            shown[#shown + 1] = t
+        end
+    end
+    -- under the picture as deep as the back allows; over it under the texts
+    Side(back, sides.back, "BACKGROUND", -1 - math.max(0, #sides.back - 1))
+    Side(top, sides.top, "OVERLAY", 0)
+    for _, host in ipairs({ back, top }) do
+        for _, L in ipairs(Factory.SKIN_LAYERS) do
+            local t = host["_adSkin" .. L[1]]
+            if t and not on[t] then t:Hide() end
+        end
+    end
+    return shown
+end
+
+-- The skin's shape as one of our glow outlines, or nil (a square skin keeps
+-- the picked glow).
+function Factory.SkinGlowShape(rec)
+    local plan = Factory.SkinPlan(rec)
+    local sh = plan and plan.shape
+    if sh == "Circle" then return "circle" end
+    if sh == "Hexagon" or sh == "Hexagon-Rotated" then return "hexagon" end
+    return nil
+end
+
+-- The swipe's picture: a Masque skin's (plan), a shape's silhouette (key),
+-- else back to the flat white one Lua-made cooldowns need; a round picture
+-- runs a round edge (drawn only on SHAPE_EDGE shapes, where the draw flags
+-- are set).
+local function ShapeSwipe(cd, key, plan)
+    if not cd then return end
+    local tex, round
+    if plan then
+        tex = plan.cooldown.Texture or (plan.round and SKIN_SWIPE_ROUND or SKIN_SWIPE)
+        round = plan.round == true
+    elseif key then
+        tex, round = Factory.ShapeFile(key, "Mask"), true
+    end
+    if tex then
+        if cd._adSwipeTex ~= tex then
+            cd:SetSwipeTexture(tex, 1, 1, 1, 1)
+            cd._adSwipeTex = tex
+        end
+        if cd._adRoundEdge ~= round then
+            if cd.SetUseCircularEdge then cd:SetUseCircularEdge(round) end
+            cd._adRoundEdge = round
+        end
+    elseif cd._adSwipeTex then
+        cd:SetSwipeTexture(WHITE, 1, 1, 1, 1)
+        cd._adSwipeTex = nil
+        if cd.SetUseCircularEdge then cd:SetUseCircularEdge(false) end
+        cd._adRoundEdge = nil
+    end
+end
+Factory.ShapeSwipe = ShapeSwipe
+
+-- A shaped border's ring on the strips' frame: the silhouette from the offset
+-- line, its inside cut by the hole mask one thickness in. Geometry only; the
+-- caller colours it.
+local function ShapeRing(edges, anchor, key, off, th)
+    local ring = edges._adRing
+    if not ring then
+        local host = edges.top:GetParent()
+        local layer, sub = edges.top:GetDrawLayer()
+        ring = host:CreateTexture(nil, layer or "OVERLAY", nil, sub or 7)
+        ring._adHole = host:CreateMaskTexture()
+        ring:AddMaskTexture(ring._adHole)
+        edges._adRing = ring
+    end
+    if ring._adKey ~= key then
+        ring:SetTexture(Factory.ShapeFile(key, "Mask"))
+        ring._adHole:SetTexture(Factory.ShapeFile(key, "Hole"), "CLAMPTOWHITE", "CLAMPTOWHITE")
+        ring._adKey = key
+    end
+    ring:ClearAllPoints()
+    ring:SetPoint("TOPLEFT", anchor, "TOPLEFT", off, -off)
+    ring:SetPoint("BOTTOMRIGHT", anchor, "BOTTOMRIGHT", -off, off)
+    local inner = off + th * (Factory.SHAPE_RING[key] or 1)
+    local hole = ring._adHole
+    hole:ClearAllPoints()
+    hole:SetPoint("TOPLEFT", anchor, "TOPLEFT", inner, -inner)
+    hole:SetPoint("BOTTOMRIGHT", anchor, "BOTTOMRIGHT", -inner, inner)
+    return ring
+end
+
 -- Border geometry: four strips on `edges` around `anchor`, shared by the
 -- holder and the live aura button so an aura icon's two borders match. They
 -- grow inward from the offset line (negative = outside); thickness snaps to
 -- whole pixels with a 1px floor, the offset with none. A secret scale would
 -- throw inside PixelUtil, so UIParent's stands in. A scaled preview snaps on
 -- its _adPxRef's grid, as the live icon does, floored at one own pixel.
-local function PaintBorderEdges(edges, anchor, rec, alpha, geometryOnly)
+local function PaintBorderEdges(edges, anchor, rec, alpha, geometryOnly, grey)
     local R = function(section, field) return Store.Resolve(rec, section, field) end
-    local c = R("appearance", "borderColor") or { 0, 0, 0, 1 }
+    local c = Factory.BorderColor(rec, grey)
     local th = R("appearance", "borderThickness") or 2
     local off = R("appearance", "borderInset") or -3
     if PixelUtil and PixelUtil.GetNearestPixelSize then
@@ -941,6 +1368,24 @@ local function PaintBorderEdges(edges, anchor, rec, alpha, geometryOnly)
             if th < own then th = own end
         end
     end
+    -- a Masque skin's border replaces ours: the caller paints its layers
+    if not geometryOnly and Factory.SkinPlan(rec) then
+        for _, k in ipairs(BORDER_KEYS) do edges[k]:Hide() end
+        if edges._adRing then edges._adRing:Hide() end
+        return 0
+    end
+    -- a shaped icon's border is one ring of the same reach in the strips' place
+    local key = Factory.MaskOf(rec)
+    if key then
+        local ring = ShapeRing(edges, anchor, key, off, th)
+        if geometryOnly then return off + th end
+        local a = (c[4] or 1) * (alpha or 1)
+        for _, k in ipairs(BORDER_KEYS) do edges[k]:Hide() end
+        ring:SetVertexColor(c[1], c[2], c[3], a)
+        ring:Show()
+        return off + th
+    end
+    if edges._adRing then edges._adRing:Hide() end
     edges.top:ClearAllPoints()
     edges.top:SetPoint("TOPLEFT", anchor, "TOPLEFT", off, -off)
     edges.top:SetPoint("TOPRIGHT", anchor, "TOPRIGHT", -off, -off)
@@ -969,6 +1414,35 @@ end
 -- Exported: a group buff's combat layers wear the icon's border.
 Factory.PaintBorderEdges = PaintBorderEdges
 
+-- The border's colour: its own or the player's class colour (the alpha its
+-- own), turned grey while the art is (grey) when it follows the art.
+function Factory.BorderColor(rec, grey)
+    local c = Store.Resolve(rec, "appearance", "borderColor") or { 0, 0, 0, 1 }
+    if Store.Resolve(rec, "appearance", "borderClassColor") == true and UnitClass then
+        local _, tag = UnitClass("player")
+        local cc = tag and RAID_CLASS_COLORS and RAID_CLASS_COLORS[tag]
+        if cc then c = { cc.r, cc.g, cc.b, c[4] or 1 } end
+    end
+    if grey and Store.Resolve(rec, "appearance", "borderFollowsGrey") == true then
+        local l = 0.299 * c[1] + 0.587 * c[2] + 0.114 * c[3]
+        c = { l, l, l, c[4] or 1 }
+    end
+    return c
+end
+
+-- A border that follows the art: repainted to the art's grey (the strips'
+-- geometry stays). f.borderEdges: the holder's own.
+function Factory.BorderGrey(f, rec, grey)
+    grey = grey and true or false
+    if (f._adBorderGrey or false) == grey then return end
+    f._adBorderGrey = grey
+    local edges = f.borderEdges
+    if not (edges and Store.Resolve(rec, "appearance", "borderFollowsGrey") == true) then return end
+    local c = Factory.BorderColor(rec, grey)
+    for _, k in ipairs(BORDER_KEYS) do edges[k]:SetVertexColor(c[1], c[2], c[3], c[4] or 1) end
+    if edges._adRing then edges._adRing:SetVertexColor(c[1], c[2], c[3], c[4] or 1) end
+end
+
 -- The live aura button's own border, on the engine button so it shows and
 -- hides with the aura and never carries the missing alpha (the button has no
 -- border; CustomAuraButtonSharedMixin exposes only widget slots). OVERLAY 6
@@ -987,7 +1461,7 @@ local function ApplyAuraButtonBorder(b, rec, show, alpha)
             end
             b._adBtnEdges = edges
         end
-        PaintBorderEdges(edges, b, rec, alpha)
+        PaintBorderEdges(edges, b, rec, alpha, nil, Store.Resolve(rec, "auraActive", "activeDesaturate") == true)
     elseif edges then
         for _, t in pairs(edges) do t:Hide() end
     end
@@ -1004,15 +1478,58 @@ local function ApplyAuraButtonDispel(b, rec, on, alpha)
     local canEngine = not NS.OldAuraEngine and b.AddDispelTypeTexture ~= nil and b.RemoveDispelTypeTexture ~= nil
         and styles ~= nil and styles.PreserveAsset ~= nil
     local edges = b._adDispelEdges
+    -- the textures the engine holds now: the four strips, or a shaped icon's ring
+    local held = b._adDispelHeld
     if not (on and canEngine) then
-        if edges and b._adDispelSig then
-            for _, k in ipairs(BORDER_KEYS) do
-                NS.RemoveDispelTexture(b, edges[k])
-                edges[k]:Hide()
+        if held and b._adDispelSig then
+            for _, t in ipairs(held) do
+                NS.RemoveDispelTexture(b, t)
+                t:Hide()
             end
             b._adDispelSig = nil
+            b._adDispelHeld = nil
         end
         return false
+    end
+    -- the game's own debuff border art, one texture on a sixth of the short
+    -- side round the button; the engine picks the art by the aura's type
+    if R("appearance", "dispelBorderStyle") == "game" and styles.Border ~= nil then
+        local art = b._adDispelArt
+        if not art then
+            local host = b._adEdgeHost or b.TextOverlay or b
+            art = host:CreateTexture(nil, "OVERLAY", nil, 6)
+            b._adDispelArt = art
+        end
+        local bw, bh = b:GetSize()
+        if type(bw) ~= "number" or (issecretvalue and issecretvalue(bw)) then bw = 36 end
+        if type(bh) ~= "number" or (issecretvalue and issecretvalue(bh)) then bh = bw end
+        local grow = math.min(bw, bh) * Factory.PANDEMIC_GROW
+        if PixelUtil and PixelUtil.GetNearestPixelSize then
+            grow = PixelUtil.GetNearestPixelSize(grow, UIParent:GetEffectiveScale(), 0)
+        end
+        art:ClearAllPoints()
+        art:SetPoint("TOPLEFT", b, "TOPLEFT", -grow, grow)
+        art:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", grow, -grow)
+        art:SetAlpha(alpha or 1)
+        local h = false
+        if NS.DriverAura and NS.DriverAura.ShapeOf then
+            local _, hh = NS.DriverAura.ShapeOf(rec.driver)
+            h = hh == true
+        end
+        local gsig = "game|" .. (h and "h" or "b") .. "|" .. grow
+        if b._adDispelSig ~= gsig then
+            if held then
+                for _, t in ipairs(held) do
+                    NS.RemoveDispelTexture(b, t)
+                    if t ~= art then t:Hide() end
+                end
+            end
+            b:AddDispelTypeTexture(art, { showWhenHarmful = h, showWhenHelpful = not h,
+                showWithoutDispelType = false, style = styles.Border })
+            b._adDispelSig = gsig
+            b._adDispelHeld = { art }
+        end
+        return true
     end
     if not edges then
         -- the border's layer: under the button's glows like the plain border
@@ -1027,7 +1544,10 @@ local function ApplyAuraButtonDispel(b, rec, on, alpha)
     end
     -- geometry only: the engine owns their colour and whether they show
     PaintBorderEdges(edges, b, rec, 1, true)
-    for _, k in ipairs(BORDER_KEYS) do edges[k]:SetAlpha(alpha or 1) end
+    local key = Factory.MaskOf(rec)
+    local list = key and { edges._adRing }
+        or { edges.top, edges.bottom, edges.left, edges.right }
+    for _, t in ipairs(list) do t:SetAlpha(alpha or 1) end
     local harmful = false
     if NS.DriverAura and NS.DriverAura.ShapeOf then
         local _, h = NS.DriverAura.ShapeOf(rec.driver)
@@ -1035,11 +1555,17 @@ local function ApplyAuraButtonDispel(b, rec, on, alpha)
     end
     local borderOn = R("appearance", "borderEnabled") == true
     local c = R("appearance", "borderColor") or { 0, 0, 0, 1 }
-    local sig = (harmful and "h" or "b") .. (borderOn and
+    local sig = (harmful and "h" or "b") .. (key or "") .. (borderOn and
         ("|" .. c[1] .. "," .. c[2] .. "," .. c[3] .. "," .. (c[4] or 1)) or "|none")
     if b._adDispelSig ~= sig then
-        if b._adDispelSig then
-            for _, k in ipairs(BORDER_KEYS) do NS.RemoveDispelTexture(b, edges[k]) end
+        if b._adDispelSig and held then
+            -- a texture leaving the engine's hands stays hidden; one handed back keeps its look
+            local keep = {}
+            for _, t in ipairs(list) do keep[t] = true end
+            for _, t in ipairs(held) do
+                NS.RemoveDispelTexture(b, t)
+                if not keep[t] then t:Hide() end
+            end
         end
         local opts = {
             showWhenHarmful = harmful,
@@ -1050,10 +1576,48 @@ local function ApplyAuraButtonDispel(b, rec, on, alpha)
         if borderOn and CreateColor then
             opts.customDispelColorMap = { None = CreateColor(c[1], c[2], c[3], c[4] or 1) }
         end
-        for _, k in ipairs(BORDER_KEYS) do b:AddDispelTypeTexture(edges[k], opts) end
+        for _, t in ipairs(list) do b:AddDispelTypeTexture(t, opts) end
         b._adDispelSig = sig
+        b._adDispelHeld = list
     end
     return true
+end
+
+-- The out-of-range shadow: the Cooldown Manager's overlay on the art at half
+-- opacity (times the art's), grown iconW * (size - 1) / 2 per side on whole
+-- pixels; shown while the spell's target is out of range.
+local OOR_ATLAS = "UI-CooldownManager-OORshadow"
+local oorAtlasOK
+function Factory.RangeShadow(f, rec, out, va)
+    local t = f._adRangeShadow
+    if oorAtlasOK == nil then
+        oorAtlasOK = C_Texture ~= nil and C_Texture.GetAtlasInfo ~= nil and C_Texture.GetAtlasInfo(OOR_ATLAS) ~= nil
+    end
+    local on = out and rec.kind == "spell" and Store.Resolve(rec, "states", "rangeShadow") == true
+        and oorAtlasOK and Store.Resolve(rec, "appearance", "forceHideIcon") ~= true
+    if not on then
+        if t then t:Hide() end
+        return
+    end
+    if not t then
+        t = f:CreateTexture(nil, "OVERLAY", nil, 1)
+        t:SetAtlas(OOR_ATLAS)
+        f._adRangeShadow = t
+    end
+    local art = f.icon
+    local w = art:GetWidth()
+    if type(w) ~= "number" or (issecretvalue and issecretvalue(w)) then w = 36 end
+    local grow = w * ((Store.Resolve(rec, "states", "rangeShadowSize") or 1) - 1) / 2
+    if PixelUtil and PixelUtil.GetNearestPixelSize then
+        local es = f:GetEffectiveScale()
+        if type(es) ~= "number" or (issecretvalue and issecretvalue(es)) then es = UIParent:GetEffectiveScale() end
+        grow = PixelUtil.GetNearestPixelSize(grow, es, 0)
+    end
+    t:ClearAllPoints()
+    t:SetPoint("TOPLEFT", art, "TOPLEFT", -grow, grow)
+    t:SetPoint("BOTTOMRIGHT", art, "BOTTOMRIGHT", grow, -grow)
+    t:SetVertexColor(1, 1, 1, 0.5 * (va or 1))
+    t:Show()
 end
 
 -- Icon shadow: the Cooldown Manager's shadow atlas around the art, grown by
@@ -1063,6 +1627,7 @@ local SHADOW_ATLAS = "UI-HUD-CoolDownManager-IconOverlay"
 local shadowAtlasOK
 local function ApplyShadow(host, key, art, rec, w, h, alpha, show)
     local t = host[key]
+    if show and Factory.SkinPlan(rec) then show = false end
     if shadowAtlasOK == nil then
         shadowAtlasOK = C_Texture ~= nil and C_Texture.GetAtlasInfo ~= nil
             and C_Texture.GetAtlasInfo(SHADOW_ATLAS) ~= nil
@@ -1078,6 +1643,24 @@ local function ApplyShadow(host, key, art, rec, w, h, alpha, show)
     end
     local size = Store.Resolve(rec, "appearance", "shadowSize") or 1
     local ox, oy = (w or 36) * 0.18 * size, (h or 36) * 0.16 * size
+    -- a shaped icon's shadow is its halo in black, fixed to the shape: size
+    -- under 1 fades it (vertex alpha, under the dims' SetAlpha) rather than
+    -- shrink it off the outline
+    local shape = Factory.MaskOf(rec)
+    if t._adShape ~= shape then
+        if shape then
+            t:SetTexture(Factory.ShapeFile(shape, "Halo"))
+        else
+            t:SetAtlas(SHADOW_ATLAS)
+            t:SetVertexColor(1, 1, 1, 1)
+        end
+        t._adShape = shape
+    end
+    if shape then
+        local k = (Factory.SHAPE_HALO - 1) / 2
+        ox, oy = (w or 36) * k, (h or 36) * k
+        t:SetVertexColor(0, 0, 0, math.min(1, size))
+    end
     if PixelUtil and PixelUtil.GetNearestPixelSize then
         -- A secret scale falls back to UIParent's; a preview snaps like the
         -- live icon (PaintBorderEdges).
@@ -1164,7 +1747,7 @@ function Factory.ApplyBorder(f, rec, bump, forceHide)
         if type(lvl) == "number" then
             f._adBorderHost:SetFrameLevel(lvl + (bump or 1))
         end
-        local inner = PaintBorderEdges(edges, f, rec, 1)
+        local inner = PaintBorderEdges(edges, f, rec, 1, nil, f._adBorderGrey)
         if inner > 0 then f._adBorderInner = inner end
     elseif edges then
         for _, t in pairs(edges) do t:Hide() end
@@ -1192,6 +1775,8 @@ local function ApplyCdPresentation(f, rec)
             if de and R("swipe", "edgeWaitForNoCharges") == true then de = false end
         end
     end
+    -- a diamond or hexagon draws no edge line: it would cross their sides
+    if de and f._adMaskKey and not Factory.SHAPE_EDGE[f._adMaskKey] then de = false end
     f.cooldown:SetDrawSwipe(ds)
     f.cooldown:SetDrawEdge(de)
     f.cooldown:SetDrawBling(db)
@@ -1200,17 +1785,52 @@ local function ApplyCdPresentation(f, rec)
 end
 
 -- Texcoords: aspect crop first, then zoom, centered.
-local function IconTexCoords(rec)
+-- The picture keeps its shape: its own switch, or its group's while it uses
+-- the group's size.
+function Factory.CropsToShape(rec)
+    if not rec then return false end
+    if Store.Resolve(rec, "appearance", "cropToShape") == true then return true end
+    local g = rec.groupId and Store.Get(rec.groupId)
+    return g ~= nil and Store.Resolve(rec, "position", "useGroupScale") ~= false
+        and Store.Resolve(g, "arrangement", "cropIcons") == true
+end
+
+-- The part a crop keeps ("start", "middle", "end"): the icon's own, or its
+-- group's while it crops with the group.
+function Factory.CropFocus(rec)
+    if Store.Resolve(rec, "appearance", "cropToShape") == true or not Factory.CropsToShape(rec) then
+        return Store.Resolve(rec, "appearance", "cropFocus") or "middle"
+    end
+    local g = rec.groupId and Store.Get(rec.groupId)
+    return (g and Store.Resolve(g, "arrangement", "cropFocus")) or "middle"
+end
+
+-- the start of a kept span of length `keep` along 0..1
+local function FocusStart(focus, keep)
+    if focus == "start" then return 0 end
+    if focus == "end" then return 1 - keep end
+    return (1 - keep) / 2
+end
+Factory.FocusStart = FocusStart
+
+-- w, h: the box the picture fills; with the crop on, its shape is the crop,
+-- else the hand-set aspect ratio is.
+local function IconTexCoords(rec, w, h)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
     local zoom = R("appearance", "zoom") or 0.08
     local ar = R("appearance", "aspectRatio") or 1
+    if type(w) == "number" and type(h) == "number" and w > 0 and h > 0
+        and not (issecretvalue and (issecretvalue(w) or issecretvalue(h))) and Factory.CropsToShape(rec) then
+        ar = w / h
+    end
     local L, Rt, T, B = 0, 1, 0, 1
     if ar > 1 then
-        local off = (1 - 1 / ar) / 2
-        T, B = off, 1 - off
+        local keep = 1 / ar
+        T = FocusStart(Factory.CropFocus(rec), keep)
+        B = T + keep
     elseif ar < 1 then
-        local off = (1 - ar) / 2
-        L, Rt = off, 1 - off
+        L = FocusStart(Factory.CropFocus(rec), ar)
+        Rt = L + ar
     end
     if zoom > 0 then
         local w = (Rt - L) * (1 - zoom * 2)
@@ -1223,6 +1843,14 @@ local function IconTexCoords(rec)
 end
 -- Exported: a group buff's combat layers crop their art the same way.
 Factory.IconTexCoords = IconTexCoords
+
+-- The crop for art filling `frame` inset by `pad`, read off the frame's plain size.
+function Factory.BoxTexCoords(rec, frame, pad)
+    local w, h = frame:GetSize()
+    if issecretvalue and (issecretvalue(w) or issecretvalue(h)) then w, h = nil, nil end
+    if type(w) ~= "number" or type(h) ~= "number" then return IconTexCoords(rec) end
+    return IconTexCoords(rec, w - 2 * (pad or 0), h - 2 * (pad or 0))
+end
 
 -- Countdown and stack text styling for the holder and the aura button. kS =
 -- the base-36 scale factor from a plain size; anchorTo = the text's anchor.
@@ -1238,8 +1866,147 @@ local function StyleCountdownText(cfs, rec, kS, anchorTo, fontPath)
     cfs:ClearAllPoints()
     cfs:SetPoint(dan, anchorTo, dan,
         (R("text", "durationX") or 0) * kS, (R("text", "durationY") or 0) * kS)
-    cfs:SetShadowColor(0, 0, 0, R("text", "durationShadow") == true and 1 or 0)
-    cfs:SetShadowOffset(1, -1)
+    local dsc = R("text", "durationShadowColor") or { 0, 0, 0, 1 }
+    cfs:SetShadowColor(dsc[1], dsc[2], dsc[3], R("text", "durationShadow") == true and (dsc[4] or 1) or 0)
+    cfs:SetShadowOffset(R("text", "durationShadowX") or 1, R("text", "durationShadowY") or -1)
+end
+
+-- The bands in percent: a step curve over the time left's share (0 = done,
+-- 1 = full), each band colouring the shares under its own and the text's
+-- colour above the top one; steps carry epsilon gaps, as curves interpolate.
+local pctCurves = {}
+function Pct.Curve(rec)
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    if R("text", "durationText") == false or R("text", "durationColorBands") ~= true
+        or R("text", "durationBandsPercent") ~= true then
+        return nil
+    end
+    if not (C_CurveUtil and C_CurveUtil.CreateColorCurve and CreateColor and C_DurationUtil
+        and C_DurationUtil.CreateDurationTextBinding and Enum.DurationTextBindingProperty) then
+        return nil
+    end
+    local count = math.max(1, math.min(5, math.floor(tonumber(R("text", "durBandCount")) or 1)))
+    local bands = {}
+    for i = 1, count do
+        local p = R("text", "durBand" .. i .. "Pct") or 0
+        if p > 0 then bands[#bands + 1] = { p = p, c = R("text", "durBand" .. i .. "Color") or { 1, 1, 1, 1 } } end
+    end
+    if #bands == 0 then return nil end
+    table.sort(bands, function(a, b) return a.p < b.p end)
+    local base = R("text", "durationColor") or { 1, 1, 1, 1 }
+    local parts = {}
+    for _, b in ipairs(bands) do
+        parts[#parts + 1] = string.format("%g:%.3f,%.3f,%.3f,%.3f", b.p, b.c[1] or 1, b.c[2] or 1, b.c[3] or 1, b.c[4] or 1)
+    end
+    parts[#parts + 1] = string.format("%.3f,%.3f,%.3f,%.3f", base[1] or 1, base[2] or 1, base[3] or 1, base[4] or 1)
+    local sig = table.concat(parts, "|")
+    local curve = pctCurves[sig]
+    if curve then return curve, sig end
+    local function Col(c) return CreateColor(c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1) end
+    local EPS = 0.0001
+    curve = C_CurveUtil.CreateColorCurve()
+    curve:AddPoint(0, Col(bands[1].c))
+    for i, b in ipairs(bands) do
+        local x = b.p / 100
+        local nextC = bands[i + 1] and bands[i + 1].c or base
+        if x > EPS then curve:AddPoint(x - EPS, Col(b.c)) end
+        curve:AddPoint(x, Col(nextC))
+    end
+    curve:AddPoint(1, Col(base))
+    pctCurves[sig] = curve
+    return curve, sig
+end
+
+-- A plain start and length (or none) into the bound copy's duration.
+function Pct.Plain(f, start, dur)
+    local bnd = f._adPctBind
+    if not bnd then return end
+    if issecretvalue and (issecretvalue(start) or issecretvalue(dur)) then return end
+    local d = f._adPctDur
+    if not d then
+        d = C_DurationUtil.CreateDuration()
+        f._adPctDur = d
+    end
+    if type(start) == "number" and type(dur) == "number" and dur > 0 then
+        d:SetTimeFromStart(start, dur)
+    else
+        d:Reset()
+    end
+    bnd:SetDuration(d)
+end
+
+-- Shown while the bands are on, the duration text shows, and no GCD-only spin
+-- runs (the cooldown's own numbers skip those under its minimum).
+function Pct.Show(f)
+    local fs = f._adPctText
+    if fs then fs:SetShown(f._adPctOn == true and not f._adDurHidden and not f._adPureGCD) end
+end
+
+-- The holder's bound copy: our binding on a text of the text host, styled as
+-- the countdown; the cooldown's own numbers step aside (ApplyDurationVis).
+function Pct.Apply(f, rec, kS)
+    local curve = Pct.Curve(rec)
+    if not curve then
+        if f._adPctBind then f._adPctBind:SetEnabled(false) end
+        f._adPctOn = nil
+        Pct.Show(f)
+        return
+    end
+    local fs = f._adPctText
+    if not fs then
+        fs = f.textHost:CreateFontString(nil, "OVERLAY")
+        fs:SetDrawLayer("OVERLAY", 7)
+        f._adPctText = fs
+    end
+    local bnd = f._adPctBind
+    if not bnd then
+        bnd = C_DurationUtil.CreateDurationTextBinding()
+        bnd:SetFontString(fs)
+        if bnd.SetZeroDurationText then bnd:SetZeroDurationText("") end
+        if bnd.SetExpiredText then bnd:SetExpiredText("") end
+        f._adPctBind = bnd
+    end
+    local fmt = CountdownFormatterFor(rec)
+    fmt = fmt or PlainTimerFormatter(Factory.IconRounding(rec), false)
+    if fmt then bnd:SetFormatter(fmt) end
+    bnd:SetTextColorCurve(curve, Enum.DurationTextBindingProperty.RemainingPercent)
+    bnd:SetEnabled(true)
+    f._adPctOn = true
+    StyleCountdownText(fs, rec, kS, f, STANDARD_TEXT_FONT)
+end
+
+-- An aura button's bound copy: the engine's own binding (SetDurationText) with
+-- the curve; the swipe's numbers step aside. Accessible passes only.
+function Pct.Button(b, rec, kS, sw, textA)
+    local curve = b.SetDurationText and Pct.Curve(rec)
+    if not curve then
+        if b._adPctSig then
+            if b.ClearDurationText then b:ClearDurationText() end
+            b._adPctSig = nil
+        end
+        if b._adPctText then b._adPctText:Hide() end
+        return false
+    end
+    local fs = b._adPctText
+    if not fs then
+        fs = (b.TextOverlay or b):CreateFontString(nil, "OVERLAY")
+        fs:SetDrawLayer("OVERLAY", 7)
+        b._adPctText = fs
+    end
+    local fmt, fsig = CountdownFormatterFor(rec)
+    fmt = fmt or PlainTimerFormatter(Factory.IconRounding(rec), true)
+    local _, csig = Pct.Curve(rec)
+    local sig = tostring(fsig) .. "|" .. tostring(csig)
+    if b._adPctSig ~= sig then
+        b._adPctSig = sig
+        b:SetDurationText(fs, { textFormatter = fmt, textColor = { curve = curve,
+            property = Enum.DurationTextBindingProperty.RemainingPercent } })
+    end
+    sw:SetHideCountdownNumbers(true)
+    StyleCountdownText(fs, rec, kS, b, STANDARD_TEXT_FONT)
+    fs:SetAlpha(textA or 1)
+    fs:Show()
+    return true
 end
 
 -- pinOwner: the holder, whose own texts may ride another frame (Core\AD_TextAnchor.lua);
@@ -1261,8 +2028,9 @@ local function StyleStackText(fs, rec, kS, anchorTo, pinOwner)
         fs:ClearAllPoints()
         fs:SetPoint(anch, anchorTo, anch, x, y)
     end
-    fs:SetShadowColor(0, 0, 0, R("text", "stackShadow") == true and 1 or 0)
-    fs:SetShadowOffset(1, -1)
+    local ssc = R("text", "stackShadowColor") or { 0, 0, 0, 1 }
+    fs:SetShadowColor(ssc[1], ssc[2], ssc[3], R("text", "stackShadow") == true and (ssc[4] or 1) or 0)
+    fs:SetShadowOffset(R("text", "stackShadowX") or 1, R("text", "stackShadowY") or -1)
 end
 
 -- The equipped ammo count, or nil with the slot empty. It has no secrecy
@@ -1301,6 +2069,8 @@ end
 function Factory.KeybindEnabled(rec)
     if not NS.Schema.Applies(nil, NS.Schema.icon.keybind, rec.kind) then return false end
     if Store.Resolve(rec, "keybind", "keybindEnabled") == true then return true end
+    -- an item, trinket or totem: its own switch only
+    if rec.kind == "item" or rec.kind == "trinket" or rec.kind == "totem" then return false end
     local g = rec.groupId and Store.Get(rec.groupId)
     return g ~= nil and g.type == "group"
         and Store.Resolve(g, "keybind", "showKeybinds") == true
@@ -1329,6 +2099,13 @@ function Factory.ApplyFrameAlpha(f, rec)
     f:SetAlpha(a)
 end
 
+-- Every custom text's outline ("" for none).
+function Factory.LabelOutline(rec)
+    local o = Store.Resolve(rec, "label", "labelOutline") or "OUTLINE"
+    if o == "NONE" then return "" end
+    return o
+end
+
 -- A custom text's font: its own, else custom text 1's.
 function Factory.LabelFont(rec, suf)
     local f = (suf ~= "") and Store.Resolve(rec, "label", "labelFont" .. suf) or nil
@@ -1342,7 +2119,7 @@ end
 local function StyleLabel(fs, rec, suf, kS, anchorTo, pinOwner)
     local R = function(section, field) return Store.Resolve(rec, section, field) end
     fs:SetFont(IconFont(Factory.LabelFont(rec, suf)),
-        math.max(6, math.floor((R("label", "labelSize" .. suf) or 12) * kS + 0.5)), "OUTLINE")
+        math.max(6, math.floor((R("label", "labelSize" .. suf) or 12) * kS + 0.5)), Factory.LabelOutline(rec))
     local lc = R("label", "labelColor" .. suf) or { 1, 1, 1, 1 }
     fs:SetTextColor(lc[1], lc[2], lc[3], lc[4] or 1)
     local an = R("label", "labelAnchor" .. suf) or "CENTER"
@@ -1463,11 +2240,44 @@ function Factory.ApplyStyle(f, rec)
     else
         f.icon:SetAllPoints()
     end
+    -- cropped to the icon's shape: the art's box is known from here
+    if fwS and fhS and Factory.CropsToShape(rec) then
+        f.icon:SetTexCoord(IconTexCoords(rec, fwS - 2 * padPx, fhS - 2 * padPx))
+    end
+    -- cut to its shape: the art here, and what draws over the art's box reads
+    -- f._adMaskKey (the swipe below, the glows, the checkmark, the press look)
+    local mask = Factory.MaskOf(rec)
+    f._adMaskKey = mask
+    ShapeTex(f.icon, mask)
+    -- a Masque skin: the picture in its box with its crop and mask, its
+    -- layers round it (the top ones on a frame at the border's level, under
+    -- the swipe), and below, the swipe in its box
+    local plan = Factory.SkinPlan(rec)
+    f._adSkinPlan = plan
+    local top = f._adSkinTop
+    if plan and not top then
+        top = CreateFrame("Frame", nil, f._adStage or f)
+        top:SetAllPoints(f)
+        top:EnableMouse(false)
+        f._adSkinTop = top
+    end
+    if top and plainLvl then
+        top:SetFrameLevel(hostLvl + (rec.kind == "aura" and Factory.AURA_LADDER.border or 1))
+    end
+    if plan then
+        Factory.SkinArt(f.icon, rec, plan, f, fwS or 36, fhS or 36)
+    else
+        Factory.SkinArt(f.icon, rec, nil)
+    end
+    local back = f.icon:GetParent()
+    Factory.SkinLayers(plan, back, top or back, f, f.icon, fwS or 36, fhS or 36,
+        f._adShownAlpha or f._adStateAlpha or 1, forceHide)
 
     local hasSwipe = NS.Schema.Applies(nil, NS.Schema.icon.swipe, rec.kind)
     if hasSwipe then
         ApplyCdPresentation(f, rec)
         f.cooldown:SetReverse(R("swipe", "reverse") == true)
+        ShapeSwipe(f.cooldown, mask, plan)
         -- Cached for the state dim; ApplySwipeAlpha writes them scaled.
         local sc = R("swipe", "swipeColor") or { 0, 0, 0, 0.8 }
         f._adSwipeColor = sc
@@ -1500,6 +2310,8 @@ function Factory.ApplyStyle(f, rec)
         f.cooldown:ClearAllPoints()
         f.cooldown:SetPoint("TOPLEFT", f, "TOPLEFT", ix, -iy)
         f.cooldown:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -ix, iy)
+        -- a skin's swipe box instead of the insets
+        if plan then SkinPlace(f.cooldown, plan.cooldown, plan, f, f.icon, fwS or 36, fhS or 36) end
     end
     -- Pushed only when the recipe changes; nil restores the stock format.
     if f.cooldown.SetCountdownFormatter then
@@ -1510,6 +2322,7 @@ function Factory.ApplyStyle(f, rec)
         end
     end
     -- the hide after the formatter: handing one over shows the numbers
+    Pct.Apply(f, rec, kS)
     Factory.ApplyDurationVis(f, rec)
     if f.cooldown.GetCountdownFontString then
         local cfs = f.cooldown:GetCountdownFontString()
@@ -1580,11 +2393,28 @@ function Factory.ApplyStyle(f, rec)
     end
     -- under the time gate the button and the missing look carry every label
     local split = rec.kind == "aura" and Factory.TimeGateFrac(rec) ~= nil
+    -- custom texts out of the state dim ride a host of their own at the text
+    -- host's level, which SetState keeps bright (states.labelsFullOpacity)
+    local bright = rec.kind ~= "aura" and R("states", "labelsFullOpacity") == true
+    if bright and not f._adLabelHost then
+        f._adLabelHost = CreateFrame("Frame", nil, f)
+        f._adLabelHost:SetAllPoints()
+        f._adLabelHost:EnableMouse(false)
+    end
+    if f._adLabelHost then
+        local tl = f.textHost:GetFrameLevel()
+        if type(tl) == "number" and not (issecretvalue and issecretvalue(tl)) then f._adLabelHost:SetFrameLevel(tl) end
+    end
+    local labelParent = bright and f._adLabelHost or f.textHost
     for i, suf in ipairs(sufs) do
         local fs = labelFS[i]
         local st = f._adLabels[i] or {}
         f._adLabels[i] = st
         st.fs = fs
+        -- a pinned text rides its carrier; the rest move between the two hosts
+        if fs and fs:GetParent() ~= labelParent and not (NS.TextAnchor and NS.TextAnchor.live[fs]) then
+            fs:SetParent(labelParent)
+        end
         st.ready = R("label", "labelShowReady" .. suf) ~= false
         st.cd = R("label", "labelShowCooldown" .. suf) ~= false
         st.activeOnly = rec.kind == "aura" and R("label", "labelActiveOnly" .. suf) == true
@@ -1608,8 +2438,10 @@ function Factory.ApplyStyle(f, rec)
     -- Keybind text style; the cooldown driver sets the text.
     local kbOn = Factory.KeybindEnabled(rec)
     if kbOn then
+        local kol = R("keybind", "keybindOutline") or "OUTLINE"
+        if kol == "NONE" then kol = "" end
         f.keybindText:SetFont(IconFont(R("keybind", "keybindFont")),
-            math.max(6, math.floor((R("keybind", "keybindSize") or 12) * kS + 0.5)), "OUTLINE")
+            math.max(6, math.floor((R("keybind", "keybindSize") or 12) * kS + 0.5)), kol)
         local kc = R("keybind", "keybindColor") or { 1, 1, 1, 1 }
         f.keybindText:SetTextColor(kc[1], kc[2], kc[3], kc[4] or 1)
         local kan = R("keybind", "keybindAnchor") or "TOPLEFT"
@@ -1632,6 +2464,8 @@ function Factory.ApplyStyle(f, rec)
     if NS.DriverWarn then NS.DriverWarn.Sync(f, rec) end
     -- the toggle glow follows Shoot, Auto Shot or Attack being on
     if NS.DriverToggle then NS.DriverToggle.Sync(f, rec) end
+    -- the suggested glow follows the game's Assisted Highlight
+    if NS.DriverAssist then NS.DriverAssist.Sync(f, rec) end
     -- a special icon's texts are its templates expanded, so it paints again
     if rec.kind == "special" and NS.SpecialIcon then NS.SpecialIcon.Restyle(f, rec) end
 end
@@ -1694,7 +2528,7 @@ function Factory.ApplyMissingLabels(f, rec, kS)
                 clip._fs[i] = fs
             end
             fs:SetFont(IconFont(Factory.LabelFont(rec, suf)),
-                math.max(6, math.floor((R("label", "labelSize" .. suf) or 12) * kS + 0.5)), "OUTLINE")
+                math.max(6, math.floor((R("label", "labelSize" .. suf) or 12) * kS + 0.5)), Factory.LabelOutline(rec))
             local lc = R("label", "labelColor" .. suf) or { 1, 1, 1, 1 }
             fs:SetTextColor(lc[1], lc[2], lc[3], lc[4] or 1)
             local an = R("label", "labelAnchor" .. suf) or "CENTER"
@@ -1883,7 +2717,7 @@ local function ApplyBeforeCopy(b, rec, on, alpha, w, h, padPx)
     if base then c:SetFrameLevel(base + Factory.BUTTON_STACK_LOW.copy) end
     local art = c._adArt
     art:SetTexture(Factory.AuraLiveTexture(rec))
-    art:SetTexCoord(IconTexCoords(rec))
+    art:SetTexCoord(IconTexCoords(rec, (w or 0) - 2 * padPx, (h or 0) - 2 * padPx))
     art:ClearAllPoints()
     if padPx > 0 then
         art:SetPoint("TOPLEFT", b, "TOPLEFT", padPx, -padPx)
@@ -1891,6 +2725,11 @@ local function ApplyBeforeCopy(b, rec, on, alpha, w, h, padPx)
     else
         art:SetAllPoints(b)
     end
+    ShapeTex(art, Factory.MaskOf(rec))
+    -- a Masque skin's picture and layers, cut to the gate's fill with the rest
+    local plan = Factory.SkinPlan(rec)
+    Factory.SkinArt(art, rec, plan, c, w or 36, h or 36)
+    local skinned = Factory.SkinLayers(plan, c, c, c, art, w or 36, h or 36, alpha)
     art:SetDesaturated(R("auraActive", "activeDesaturate") == true)
     local tint = R("auraActive", "activeTintEnabled") == true and (R("auraActive", "activeTintColor") or { 1, 1, 1, 1 })
         or { 1, 1, 1, 1 }
@@ -1905,6 +2744,7 @@ local function ApplyBeforeCopy(b, rec, on, alpha, w, h, padPx)
     SetGated(art, m)
     for _, t in pairs(c._adEdges) do SetGated(t, m) end
     if c._adShadow then SetGated(c._adShadow, m) end
+    for _, t in ipairs(skinned) do SetGated(t, m) end
     c:Show()
 end
 
@@ -1993,6 +2833,9 @@ function Factory.StyleAuraButton(b, rec, px, opts)
         keep = R("states", "preserveDurationText") ~= false
     end
     local textA = (forceHide or (aA > 0 and keep)) and 1 or aA
+    -- custom texts out of the active dim (a hidden active look still hides them)
+    local lb = (rec.kind == "aura") and R("auraActive", "activeLabelsBright") or R("states", "labelsFullOpacity")
+    local labelA = (aA > 0 and lb == true) and 1 or textA
     -- Active alpha goes on the pieces, so the button stays at 1.
     b:SetAlpha(1)
     -- a Before that above 0 lays the low stack (the gate under the swipe and texts)
@@ -2004,6 +2847,11 @@ function Factory.StyleAuraButton(b, rec, px, opts)
     end
     StackOwnLevel(b)
     local padPx = (R("appearance", "padding") or 0) * kS
+    -- the icon's shape: its art, plate and swipe here; border and glows read it too
+    local mask = Factory.MaskOf(rec)
+    -- a Masque skin: the same, from the skin's boxes on the button
+    local plan = Factory.SkinPlan(rec)
+    local bw0, bh0 = opts.w or px or 36, opts.h or px or 36
     -- Art override: the engine only ever calls SetTexture on b._adIcon, so an
     -- override is our own texture drawn in its place. Being on the button, it
     -- shows exactly while the aura is up, in combat too.
@@ -2024,7 +2872,8 @@ function Factory.StyleAuraButton(b, rec, px, opts)
         if ic then ic:Show() end
     end
     if ic then
-        local L, Rt, T, B = IconTexCoords(rec)
+        local bw, bh = (opts.w or px or 0) - 2 * padPx, (opts.h or px or 0) - 2 * padPx
+        local L, Rt, T, B = IconTexCoords(rec, bw, bh)
         ic:SetTexCoord(L, Rt, T, B)
         ic:ClearAllPoints()
         if padPx > 0 then
@@ -2043,6 +2892,14 @@ function Factory.StyleAuraButton(b, rec, px, opts)
         else
             ic:SetVertexColor(1, 1, 1, artA)
         end
+    end
+    ShapeTex(b._adIcon, mask)
+    ShapeTex(b._adIconOv, mask)
+    if plan and ic then
+        Factory.SkinArt(ic, rec, plan, b, bw0, bh0)
+    else
+        Factory.SkinArt(b._adIcon, rec, nil)
+        Factory.SkinArt(b._adIconOv, rec, nil)
     end
     -- Shown with opts.erase, as far as the missing look reaches.
     local er = b._adEraser
@@ -2069,6 +2926,13 @@ function Factory.StyleAuraButton(b, rec, px, opts)
             plate:SetAllPoints(b)
         end
         plate:SetShown(artA > 0 and opts.ghost == true and opts.erase ~= true)
+        ShapeTex(plate, mask)
+        -- under a skin the plate is the picture's box and mask
+        if plan and ic then
+            plate:ClearAllPoints()
+            plate:SetAllPoints(ic)
+        end
+        SkinMask(plate, plan, b, bw0, bh0)
     end
     local sw = b._adSwipe
     if sw then
@@ -2085,7 +2949,39 @@ function Factory.StyleAuraButton(b, rec, px, opts)
         end
         sw:SetDrawSwipe(R("auraSwipe", "swipeShow") ~= false and not forceHide)
         sw:SetReverse(rev)
-        sw:SetDrawEdge(R("auraSwipe", "swipeEdge") == true and not forceHide)
+        ShapeSwipe(sw, mask, plan)
+        -- a skin's swipe box; back to the whole button without one
+        if plan then
+            SkinPlace(sw, plan.cooldown, plan, b, ic, bw0, bh0)
+            sw._adSkinBox = true
+        else
+            -- the aura swipe's own insets (positive shrinks), on whole pixels
+            local ix, iy
+            if R("auraSwipe", "separateInsets") == true then
+                ix, iy = R("auraSwipe", "swipeInsetX") or 0, R("auraSwipe", "swipeInsetY") or 0
+            else
+                ix = R("auraSwipe", "swipeInset") or 0
+                iy = ix
+            end
+            ix, iy = ix * kS, iy * kS
+            if PixelUtil and PixelUtil.GetNearestPixelSize then
+                local es = UIParent:GetEffectiveScale()
+                ix, iy = PixelUtil.GetNearestPixelSize(ix, es, 0), PixelUtil.GetNearestPixelSize(iy, es, 0)
+            end
+            if ix ~= 0 or iy ~= 0 then
+                sw:ClearAllPoints()
+                sw:SetPoint("TOPLEFT", b, "TOPLEFT", ix, -iy)
+                sw:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", -ix, iy)
+                sw._adInsetBox = true
+            elseif sw._adSkinBox or sw._adInsetBox then
+                sw:ClearAllPoints()
+                sw:SetAllPoints(b)
+                sw._adInsetBox = nil
+            end
+            sw._adSkinBox = nil
+        end
+        sw:SetDrawEdge(R("auraSwipe", "swipeEdge") == true and not forceHide
+            and (mask == nil or Factory.SHAPE_EDGE[mask] == true))
         sw:SetDrawBling(R("auraSwipe", "swipeBling") == true and not forceHide)
         sw:SetSwipeColor(sc[1], sc[2], sc[3], (sc[4] or 0.8) * aA)
         -- Edge colour and length as on the cooldown swipe (template art, no
@@ -2105,6 +3001,7 @@ function Factory.StyleAuraButton(b, rec, px, opts)
             end
         end
         sw:SetHideCountdownNumbers(R("text", "durationText") == false)
+        Pct.Button(b, rec, kS, sw, textA)
         local cfs = sw.GetCountdownFontString and sw:GetCountdownFontString()
         if cfs then
             StyleCountdownText(cfs, rec, kS, b, STANDARD_TEXT_FONT)
@@ -2137,6 +3034,8 @@ function Factory.StyleAuraButton(b, rec, px, opts)
         rec.kind == "aura" and not forceHide and R("appearance", "dispelBorder") == true, aA)
     -- The live icon's own border; the holder carries the ghost copy.
     ApplyAuraButtonBorder(b, rec, R("appearance", "borderEnabled") and not forceHide and not dispelOn, aA)
+    -- a skin's layers: the back ones on the button under the art, the rest on its border's layer
+    Factory.SkinLayers(plan, b, b._adEdgeHost or b, b, ic or b, bw0, bh0, artA, forceHide)
     -- Labels kept to the aura's time ride the button, which the game shows
     -- exactly while the aura is up; the holder's copies stand down (SetState).
     b._adLabelFS = b._adLabelFS or {}
@@ -2151,9 +3050,9 @@ function Factory.StyleAuraButton(b, rec, px, opts)
                 b._adLabelFS[i] = fs
             end
             fs:SetFont(IconFont(R("label", "labelFont")),
-                math.max(6, math.floor((R("label", "labelSize" .. suf) or 12) * kS + 0.5)), "OUTLINE")
+                math.max(6, math.floor((R("label", "labelSize" .. suf) or 12) * kS + 0.5)), Factory.LabelOutline(rec))
             local lc = R("label", "labelColor" .. suf) or { 1, 1, 1, 1 }
-            fs:SetTextColor(lc[1], lc[2], lc[3], (lc[4] or 1) * textA)
+            fs:SetTextColor(lc[1], lc[2], lc[3], (lc[4] or 1) * labelA)
             local an = R("label", "labelAnchor" .. suf) or "CENTER"
             fs:ClearAllPoints()
             fs:SetPoint(an, b, an, (R("label", "labelX" .. suf) or 0) * kS,
@@ -2224,10 +3123,18 @@ local DASH_AUTO = 4
 -- on Forever. A client missing one draws the button style (DrawnGlowStyle).
 local ANTS_ATLAS = "rotationhelper_ants_flipbook"
 local FLASH_ATLAS = "UI-CooldownManager-VisualAlert-Glow"
--- The action bar's attack flash: retail's atlas, the classic bars' file
--- elsewhere (Forever runs the classic bars).
+-- The action bar's attack flash as it shipped: retail's atlas, the old full red
+-- file elsewhere. Forever's bars draw the atlas frames (barattack below).
 local RED_FLASH_ATLAS = "UI-HUD-ActionBar-IconFrame-Flash"
 local RED_FLASH_FILE = "Interface\\Buttons\\UI-QuickslotRed"
+-- The bars' checked look and attack blink as the client draws them (Forever
+-- runs these bars too): the gold frame added over a 45 px button at 46 x 45,
+-- the red frame shown and hidden every 0.4 s (ATTACK_BUTTON_FLASH_TIME); the
+-- old files where a client lacks the atlas.
+local BAR_CHECK_ATLAS = "UI-HUD-ActionBar-IconFrame-Mouseover"
+local BAR_CHECK_FILE = "Interface\\Buttons\\CheckButtonHilight"
+local BAR_W = 46 / 45
+local BAR_BLINK = 0.4
 local BLIZZ_RATIO = 66 / 45
 local atlasOK = {}
 local function AtlasOK(name)
@@ -2242,11 +3149,25 @@ end
 -- the style a glow really draws: a known style, else button; ants / flash
 -- fall back to button where the client lacks their art
 local GLOW_STYLES_KNOWN = { pixel = true, autocast = true, button = true, proc = true,
-    procloop = true, ants = true, flash = true, redflash = true }
-local function DrawnGlowStyle(gtype)
+    procloop = true, ants = true, flash = true, redflash = true, barcheck = true, barattack = true, pandemic = true }
+local PANDEMIC_BORDER = "UI-CooldownManager-PandemicBorder"
+local PANDEMIC_MASK = "UI-CooldownManager-PandemicBorder-Mask"
+local PANDEMIC_FX = { "UI-CooldownManager-PandemicFX-Icon01", "UI-CooldownManager-PandemicFX-Icon02",
+    "UI-CooldownManager-PandemicFX-Icon03" }
+-- the pandemic box: the icon plus a sixth of its short side all round
+Factory.PANDEMIC_GROW = 6 / 36
+-- On a shaped icon (rec) every style draws the shape's soft outline, "shape:<key>",
+-- and the red flash, which covers the icon itself, its filled silhouette:
+-- rectangle styles would stand off the outline.
+local function DrawnGlowStyle(gtype, rec)
+    local key = rec and (Factory.MaskOf(rec) or Factory.SkinGlowShape(rec))
+    if key then
+        return ((gtype == "redflash" or gtype == "barattack") and "shapefill:" or "shape:") .. key
+    end
     if not GLOW_STYLES_KNOWN[gtype] then return "button" end
     if gtype == "ants" and not AtlasOK(ANTS_ATLAS) then return "button" end
     if gtype == "flash" and not AtlasOK(FLASH_ATLAS) then return "button" end
+    if gtype == "pandemic" and not AtlasOK(PANDEMIC_BORDER) then return "button" end
     return gtype
 end
 Factory.DrawnGlowStyle = DrawnGlowStyle
@@ -2281,7 +3202,8 @@ end
 
 -- Set every build: whether children follow a parent's level is undocumented.
 local function LevelStyleFrames(host, L)
-    for _, k in ipairs({ "_adBtn", "_adProc", "_adAnts", "_adFlash", "_adRedFlash" }) do
+    for _, k in ipairs({ "_adBtn", "_adProc", "_adAnts", "_adFlash", "_adRedFlash", "_adShape", "_adShapeFill",
+        "_adBarCheck", "_adBarRed", "_adPand" }) do
         local fr = host[k]
         if fr then fr:SetFrameLevel(L + 1) end
     end
@@ -2294,6 +3216,9 @@ local function HideGlowParts(host, keep)
             e.ag:Stop()
             e.strip:Hide()
         end
+    end
+    if keep ~= "pixel" and host._adPixBack then
+        for _, t in ipairs(host._adPixBack) do t:Hide() end
     end
     if keep ~= "autocast" and host._adSpk then
         for _, it in ipairs(host._adSpk) do
@@ -2322,11 +3247,39 @@ local function HideGlowParts(host, keep)
         host._adRedFlash.ag:Stop()
         host._adRedFlash:Hide()
     end
+    if keep ~= "shape" and host._adShape then
+        host._adShape.ag:Stop()
+        host._adShape:Hide()
+    end
+    if keep ~= "barcheck" and keep ~= "barattack" and host._adBarCheck then
+        host._adBarCheck:Hide()
+    end
+    if keep ~= "barattack" and host._adBarRed then
+        host._adBarRed.ag:Stop()
+        host._adBarRed:Hide()
+    end
+    if keep ~= "pandemic" and host._adPand then
+        host._adPand.ag:Stop()
+        host._adPand:Hide()
+    end
+    if keep ~= "shapefill" and host._adShapeFill then
+        host._adShapeFill.ag:Stop()
+        host._adShapeFill:Hide()
+    end
 end
+
+-- "shape:circle" -> "shape", "circle"; any other style alone
+local function ShapeStyle(gtype)
+    local st, key = string.match(gtype or "", "^(%a+):(%a+)$")
+    if st then return st, key end
+    return gtype, nil
+end
+Factory.ShapeStyle = ShapeStyle
 
 -- Pixel: n dashes around a W x H rect, th thick, a lap per period seconds;
 -- len = dash length in pixels (0 or nil = automatic), met by the nearest band.
-local function GlowPixel(host, W, H, n, th, period, r, g, bl, a, len)
+-- back = { w, a }: a dark backing ring w wide under the dashes, or nil.
+local function GlowPixel(host, W, H, n, th, period, r, g, bl, a, len, back)
     local list = host._adPix
     if not list then
         list = {}
@@ -2405,6 +3358,42 @@ local function GlowPixel(host, W, H, n, th, period, r, g, bl, a, len)
         e.tr:SetDuration(dur)
         e.strip:Show()
         e.ag:Play()
+    end
+    -- top and bottom span the width and the sides fill between, so no corner
+    -- is darkened twice
+    local bk = host._adPixBack
+    if back then
+        if not bk then
+            bk = {}
+            for i = 1, 4 do
+                local t = host:CreateTexture(nil, "OVERLAY", nil, 6)
+                t:SetColorTexture(0.1, 0.1, 0.1, 1)
+                bk[i] = t
+            end
+            host._adPixBack = bk
+        end
+        local b = math.min(back.w, W / 2, H / 2)
+        local side = math.max(0, H - 2 * b)
+        for i, t in ipairs(bk) do
+            t:ClearAllPoints()
+            if i == 1 then
+                t:SetPoint("TOPLEFT", host, "TOPLEFT", 0, 0)
+                t:SetSize(W, b)
+            elseif i == 2 then
+                t:SetPoint("BOTTOMLEFT", host, "BOTTOMLEFT", 0, 0)
+                t:SetSize(W, b)
+            elseif i == 3 then
+                t:SetPoint("TOPLEFT", host, "TOPLEFT", 0, -b)
+                t:SetSize(b, side)
+            else
+                t:SetPoint("TOPRIGHT", host, "TOPRIGHT", 0, -b)
+                t:SetSize(b, side)
+            end
+            t:SetAlpha(back.a or 0.8)
+            if side > 0 or i < 3 then t:Show() else t:Hide() end
+        end
+    elseif bk then
+        for _, t in ipairs(bk) do t:Hide() end
     end
 end
 
@@ -2496,7 +3485,7 @@ Factory.GlowArt = { pixel = GlowPixel, autocast = GlowSparkle, hide = HideGlowPa
 -- Button: the button glow at rest, its outer ring and ants on a
 -- (1.4 w + 2 xo) x (1.4 h + 2 yo) frame, as the cooldown lanes lay it.
 -- Desaturated so the colour tints the gold art.
-local function GlowButton(host, fw, fh, r, g, bl, a, speed)
+local function GlowButton(host, fw, fh, r, g, bl, a, speed, native)
     local bt = host._adBtn
     if not bt then
         bt = CreateFrame("Frame", nil, host, host._adOptIn)
@@ -2525,6 +3514,9 @@ local function GlowButton(host, fw, fh, r, g, bl, a, speed)
         host._adBtn = bt
     end
     bt.antsAG:Stop()
+    -- the game's own colour keeps the gold art as it is
+    if bt.outer.SetDesaturated then bt.outer:SetDesaturated(not native) end
+    if bt.ants.SetDesaturated then bt.ants:SetDesaturated(not native) end
     bt:SetSize(fw, fh)
     bt.outer:SetSize(fw, fh)
     bt.ants:SetSize(fw * 0.85, fh * 0.85)
@@ -2556,7 +3548,7 @@ end
 
 -- Proc: Blizzard's proc loop on a (1.4 w + 2 xo) x (1.4 h + 2 yo) frame. With
 -- no opening burst, proc and procloop draw the same loop on an aura button.
-local function GlowProc(host, fw, fh, r, g, bl, a)
+local function GlowProc(host, fw, fh, r, g, bl, a, native)
     local pr = host._adProc
     if not pr then
         pr = CreateFrame("Frame", nil, host, host._adOptIn)
@@ -2574,6 +3566,7 @@ local function GlowProc(host, fw, fh, r, g, bl, a)
         host._adProc = pr
     end
     pr.loopAG:Stop()
+    if pr.loop.SetDesaturated then pr.loop:SetDesaturated(not native) end
     pr:SetSize(fw, fh)
     pr.loop:SetVertexColor(r, g, bl, 0)
     pr.loopLit:SetFromAlpha(a)
@@ -2686,6 +3679,209 @@ local function GlowRedFlash(host, fw, fh, r, g, bl, a, speed)
     fl.ag:Play()
 end
 
+-- The bars' gold frame while a button is on, steady; fw x fh = the icon's box.
+local function GlowBarCheck(host, fw, fh, r, g, bl, a)
+    local fl = host._adBarCheck
+    if not fl then
+        fl = CreateFrame("Frame", nil, host, host._adOptIn)
+        fl:SetPoint("CENTER", host, "CENTER", 0, 0)
+        fl.tex = fl:CreateTexture(nil, "OVERLAY", nil, 6)
+        if AtlasOK(BAR_CHECK_ATLAS) then
+            fl.tex:SetAtlas(BAR_CHECK_ATLAS)
+        else
+            fl.tex:SetTexture(BAR_CHECK_FILE)
+        end
+        fl.tex:SetBlendMode("ADD")
+        fl.tex:SetAllPoints(fl)
+        host._adBarCheck = fl
+    end
+    fl:SetSize(fw * BAR_W, fh)
+    fl.tex:SetVertexColor(r, g, bl, a)
+    fl:Show()
+end
+
+-- Attack and Auto Shot on the bars: the gold frame, and the red frame over it
+-- shown and hidden every 0.4 s (the bars' fixed pace).
+local function GlowBarAttack(host, fw, fh, r, g, bl, a)
+    GlowBarCheck(host, fw, fh, r, g, bl, a)
+    local fl = host._adBarRed
+    if not fl then
+        fl = CreateFrame("Frame", nil, host, host._adOptIn)
+        fl:SetPoint("CENTER", host, "CENTER", 0, 0)
+        fl.tex = fl:CreateTexture(nil, "OVERLAY", nil, 7)
+        if AtlasOK(RED_FLASH_ATLAS) then
+            fl.tex:SetAtlas(RED_FLASH_ATLAS)
+        else
+            fl.tex:SetTexture(RED_FLASH_FILE)
+        end
+        fl.tex:SetAllPoints(fl)
+        local ag = fl:CreateAnimationGroup()
+        ag:SetLooping("REPEAT")
+        fl.on = ag:CreateAnimation("Alpha")
+        fl.on:SetFromAlpha(1)
+        fl.on:SetToAlpha(1)
+        fl.on:SetDuration(BAR_BLINK)
+        fl.on:SetOrder(1)
+        fl.off = ag:CreateAnimation("Alpha")
+        fl.off:SetFromAlpha(0)
+        fl.off:SetToAlpha(0)
+        fl.off:SetDuration(BAR_BLINK)
+        fl.off:SetOrder(2)
+        fl.ag = ag
+        host._adBarRed = fl
+    end
+    fl.ag:Stop()
+    fl:SetSize(fw * BAR_W, fh)
+    fl.tex:SetVertexColor(r, g, bl, a)
+    fl:Show()
+    fl.ag:Play()
+end
+
+-- Pandemic border: the Cooldown Manager's pandemic art on the fw x fh box,
+-- its three sparks swelling through the border's mask in turn, as the game's
+-- loop runs them. Tinted like the others, or untinted (native).
+local function GlowPandemic(host, fw, fh, r, g, bl, a, native)
+    local pd = host._adPand
+    if not pd then
+        pd = CreateFrame("Frame", nil, host, host._adOptIn)
+        pd:SetPoint("CENTER", host, "CENTER", 0, 0)
+        pd.border = pd:CreateTexture(nil, "OVERLAY", nil, 6)
+        pd.border:SetAtlas(PANDEMIC_BORDER)
+        pd.border:SetAllPoints(pd)
+        pd.fx = CreateFrame("Frame", nil, pd, host._adOptIn)
+        pd.fx:SetAllPoints(pd)
+        pd.mask = pd.fx:CreateMaskTexture()
+        pd.mask:SetAtlas(PANDEMIC_MASK, false, nil, nil, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+        pd.mask:SetAllPoints(pd.fx)
+        pd.sparks = {}
+        local ag = pd.fx:CreateAnimationGroup()
+        ag:SetLooping("REPEAT")
+        for i, atlas in ipairs(PANDEMIC_FX) do
+            local t = pd.fx:CreateTexture(nil, "OVERLAY", nil, 7)
+            t:SetAtlas(atlas)
+            t:SetAllPoints(pd.fx)
+            t:AddMaskTexture(pd.mask)
+            t:SetAlpha(0)
+            pd.sparks[i] = t
+            local d0 = (i - 1) * 1.5
+            local sc = ag:CreateAnimation("Scale")
+            sc:SetTarget(t)
+            sc:SetScaleFrom(0.25, 0.25)
+            sc:SetScaleTo(1.5, 1.5)
+            sc:SetDuration(2)
+            sc:SetStartDelay(d0)
+            sc:SetSmoothing("IN_OUT")
+            sc:SetOrder(1)
+            for _, step in ipairs({ { 0, 1, 0.5, 0 }, { 1, 1, 1, 0.5 }, { 1, 0, 0.5, 1.5 } }) do
+                local al = ag:CreateAnimation("Alpha")
+                al:SetTarget(t)
+                al:SetFromAlpha(step[1])
+                al:SetToAlpha(step[2])
+                al:SetDuration(step[3])
+                al:SetStartDelay(d0 + step[4])
+                al:SetSmoothing("IN_OUT")
+                al:SetOrder(1)
+            end
+        end
+        pd.ag = ag
+        host._adPand = pd
+    end
+    pd.ag:Stop()
+    pd:SetSize(fw, fh)
+    local tint = not native
+    local cr, cg, cb = r, g, bl
+    if native then cr, cg, cb = 1, 1, 1 end
+    pd.border:SetDesaturated(tint)
+    pd.border:SetVertexColor(cr, cg, cb, a)
+    for _, t in ipairs(pd.sparks) do
+        t:SetDesaturated(tint)
+        t:SetVertexColor(cr, cg, cb, 1)
+    end
+    -- the sparks' alpha is the loop's; the intensity rides their frame
+    pd.fx:SetAlpha(a)
+    pd:Show()
+    pd.ag:Play()
+end
+
+-- A shaped icon's glow: the shape's halo, added light, pulsing 40% to 100% at
+-- the flash's pace. fw, fh = the halo's box (the icon times SHAPE_HALO).
+local function GlowShape(host, fw, fh, r, g, bl, a, speed, key)
+    local fl = host._adShape
+    if not fl then
+        fl = CreateFrame("Frame", nil, host, host._adOptIn)
+        fl:SetPoint("CENTER", host, "CENTER", 0, 0)
+        fl.tex = fl:CreateTexture(nil, "OVERLAY", nil, 7)
+        fl.tex:SetBlendMode("ADD")
+        fl.tex:SetAllPoints(fl)
+        local ag = fl:CreateAnimationGroup()
+        ag:SetLooping("REPEAT")
+        fl.up = ag:CreateAnimation("Alpha")
+        fl.up:SetFromAlpha(0.4)
+        fl.up:SetToAlpha(1)
+        fl.up:SetOrder(1)
+        if fl.up.SetSmoothing then fl.up:SetSmoothing("IN_OUT") end
+        fl.down = ag:CreateAnimation("Alpha")
+        fl.down:SetFromAlpha(1)
+        fl.down:SetToAlpha(0.4)
+        fl.down:SetOrder(2)
+        if fl.down.SetSmoothing then fl.down:SetSmoothing("IN_OUT") end
+        fl.ag = ag
+        host._adShape = fl
+    end
+    fl.ag:Stop()
+    if fl._adKey ~= key then
+        fl.tex:SetTexture(Factory.ShapeFile(key, "Halo"))
+        fl._adKey = key
+    end
+    fl:SetSize(fw, fh)
+    fl.tex:SetVertexColor(r, g, bl, a)
+    local half = 0.125 / math.max(0.05, speed or 0.25)
+    if half < 0.05 then half = 0.05 elseif half > 5 then half = 5 end
+    fl.up:SetDuration(half)
+    fl.down:SetDuration(half)
+    fl:Show()
+    fl.ag:Play()
+end
+
+-- The red flash on a shaped icon: its filled silhouette in the red art's
+-- shade (times the glow colour, as the art is), on and off at its pace.
+local SHAPE_FILL_TINT = { 1, 0.12, 0.12, 0.55 }
+local function GlowShapeFill(host, fw, fh, r, g, bl, a, speed, key)
+    local fl = host._adShapeFill
+    if not fl then
+        fl = CreateFrame("Frame", nil, host, host._adOptIn)
+        fl:SetPoint("CENTER", host, "CENTER", 0, 0)
+        fl.tex = fl:CreateTexture(nil, "OVERLAY", nil, 7)
+        fl.tex:SetAllPoints(fl)
+        local ag = fl:CreateAnimationGroup()
+        ag:SetLooping("REPEAT")
+        fl.on = ag:CreateAnimation("Alpha")
+        fl.on:SetFromAlpha(1)
+        fl.on:SetToAlpha(1)
+        fl.on:SetOrder(1)
+        fl.off = ag:CreateAnimation("Alpha")
+        fl.off:SetFromAlpha(0)
+        fl.off:SetToAlpha(0)
+        fl.off:SetOrder(2)
+        fl.ag = ag
+        host._adShapeFill = fl
+    end
+    fl.ag:Stop()
+    if fl._adKey ~= key then
+        fl.tex:SetTexture(Factory.ShapeFile(key, "Mask"))
+        fl._adKey = key
+    end
+    fl:SetSize(fw, fh)
+    local k = SHAPE_FILL_TINT
+    fl.tex:SetVertexColor(r * k[1], g * k[2], bl * k[3], a * k[4])
+    local t = 0.1 / math.max(0.05, speed or 0.25)
+    if t < 0.05 then t = 0.05 elseif t > 5 then t = 5 end
+    fl.on:SetDuration(t)
+    fl.off:SetDuration(t)
+    fl:Show()
+    fl.ag:Play()
+end
+
 -- Glow timing (auraActive.activeGlowWhen), all engine-driven:
 --   always    while the aura is up: the host is the button's child
 --   pandemic  the last 30%: Forever keeps no leftover time on a refresh, so
@@ -2700,6 +3896,7 @@ end
 local function GlowTextures(host)
     local out = {}
     for _, e in ipairs(host._adPix or {}) do out[#out + 1] = { e.strip, host } end
+    for _, t in ipairs(host._adPixBack or {}) do out[#out + 1] = { t, host } end
     for _, it in ipairs(host._adSpk or {}) do out[#out + 1] = { it.tex, host } end
     local bt = host._adBtn
     if bt then
@@ -2714,6 +3911,19 @@ local function GlowTextures(host)
     if fl then out[#out + 1] = { fl.tex, fl } end
     local rf = host._adRedFlash
     if rf then out[#out + 1] = { rf.tex, rf } end
+    local sh = host._adShape
+    if sh then out[#out + 1] = { sh.tex, sh } end
+    local sf = host._adShapeFill
+    if sf then out[#out + 1] = { sf.tex, sf } end
+    local bc = host._adBarCheck
+    if bc then out[#out + 1] = { bc.tex, bc } end
+    local br = host._adBarRed
+    if br then out[#out + 1] = { br.tex, br } end
+    local pd = host._adPand
+    if pd then
+        out[#out + 1] = { pd.border, pd }
+        for _, t in ipairs(pd.sparks) do out[#out + 1] = { t, pd.fx } end
+    end
     return out
 end
 
@@ -2782,9 +3992,13 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
     local R = function(s, k) return Store.Resolve(rec, s, k .. suf) end
     w = (w and w > 0) and w or 36
     h = (h and h > 0) and h or w
-    local gtype = DrawnGlowStyle(R("auraActive", "activeGlowType") or "button")
+    local gtype = DrawnGlowStyle(R("auraActive", "activeGlowType") or "button", rec)
     local c = R("auraActive", "activeGlowColor") or { 0.95, 0.95, 0.32, 1 }
-    local a = (c[4] or 1) * (R("auraActive", "activeGlowIntensity") or 1) * (alphaMul or 1)
+    -- the game's own colour: the gold art untinted, the intensity its alpha
+    local Sch = NS.Schema
+    local native = Sch ~= nil and Sch.GLOW_NATIVE_STYLES[gtype] == true and R("auraActive", "activeGlowNative") == true
+    local backing = gtype == "pixel" and R("auraActive", "activeGlowBacking") == true
+    local a = (native and 1 or (c[4] or 1)) * (R("auraActive", "activeGlowIntensity") or 1) * (alphaMul or 1)
     local speed = math.max(0.05, R("auraActive", "activeGlowSpeed") or 0.25)
     local xo = R("auraActive", "activeGlowXOffset") or 0
     local yo = R("auraActive", "activeGlowYOffset") or 0
@@ -2822,7 +4036,7 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
     local base = ButtonBase(b)
     local sig = table.concat({ gtype, w, h, c[1], c[2], c[3], a, speed, xo, yo,
         lines, th, parts, scale, lvl, strata, base or -1,
-        frac or -1, dash, mx, my, levelTo or -1 }, ":")
+        frac or -1, dash, mx, my, levelTo or -1, native and 1 or 0, backing and 1 or 0 }, ":")
     if not host then
         -- b._adOptIn: a template b was made with (a Dynamic row's stage), which
         -- every frame anchored to it needs too
@@ -2847,7 +4061,20 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
         host:SetSize(w, h)
         local k = (gtype == "ants" or gtype == "flash") and BLIZZ_RATIO or 1.4
         if gtype == "redflash" then k = 1 end
+        -- a shaped icon's outline lays its halo box, its fill the icon itself
+        local st = ShapeStyle(gtype)
+        if st == "shape" then k = Factory.SHAPE_HALO elseif st == "shapefill" then k = 1 end
+        -- the bars' frames sit on the icon's own box
+        if gtype == "barcheck" or gtype == "barattack" then k = 1 end
+        -- a button or proc glow's size grows its box
+        if gtype == "button" or gtype == "proc" or gtype == "procloop" then
+            k = k * math.min(2, math.max(0.5, tonumber(scale) or 1))
+        end
         W, H = w * k + 2 * xo, h * k + 2 * yo
+        if gtype == "pandemic" then
+            local grow = math.min(w, h) * Factory.PANDEMIC_GROW
+            W, H = w + 2 * grow + 2 * xo, h + 2 * grow + 2 * yo
+        end
     end
     if W < 1 then W = 1 end
     if H < 1 then H = 1 end
@@ -2863,27 +4090,42 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
         end
         host._adStrata = nil
     end
-    HideGlowParts(host, gtype)
+    local style, shape = ShapeStyle(gtype)
+    HideGlowParts(host, style)
     local r, g, bl = c[1], c[2], c[3]
-    if gtype == "pixel" then
+    if native then r, g, bl = 1, 1, 1 end
+    if style == "shape" then
+        GlowShape(host, W, H, r, g, bl, a, speed, shape)
+    elseif style == "shapefill" then
+        GlowShapeFill(host, W, H, r, g, bl, a, speed, shape)
+    elseif gtype == "barcheck" then
+        GlowBarCheck(host, W, H, r, g, bl, a)
+    elseif gtype == "barattack" then
+        GlowBarAttack(host, W, H, r, g, bl, a)
+    elseif gtype == "pixel" then
         -- Whole physical pixels; the buttons scale with UIParent.
-        local tpx = th
+        local tpx, bpx = th, th + 1
         if PixelUtil and PixelUtil.GetNearestPixelSize then
             tpx = PixelUtil.GetNearestPixelSize(th, UIParent:GetEffectiveScale(), 1)
+            bpx = tpx + PixelUtil.GetNearestPixelSize(1, UIParent:GetEffectiveScale(), 1)
         end
-        GlowPixel(host, W, H, lines, tpx, 1 / speed, r, g, bl, a, dash)
+        -- the backing dims with the aura's opacity, as the cooldown lanes' does with the icon
+        GlowPixel(host, W, H, lines, tpx, 1 / speed, r, g, bl, a, dash,
+            backing and { w = bpx, a = 0.8 * (alphaMul or 1) } or nil)
     elseif gtype == "autocast" then
         GlowSparkle(host, W, H, parts, scale, 1 / speed, r, g, bl, a)
     elseif gtype == "proc" or gtype == "procloop" then
-        GlowProc(host, W, H, r, g, bl, a)
+        GlowProc(host, W, H, r, g, bl, a, native)
     elseif gtype == "ants" then
         GlowAnts(host, W, H, r, g, bl, a)
     elseif gtype == "flash" then
         GlowFlash(host, W, H, r, g, bl, a, speed)
     elseif gtype == "redflash" then
         GlowRedFlash(host, W, H, r, g, bl, a, speed)
+    elseif gtype == "pandemic" then
+        GlowPandemic(host, W, H, r, g, bl, a, native)
     else
-        GlowButton(host, W, H, r, g, bl, a, speed)
+        GlowButton(host, W, H, r, g, bl, a, speed, native)
     end
     -- an exact level holds the style frames on it too, so nothing of the glow
     -- reaches the next rung; otherwise they sit one over the host
@@ -3086,6 +4328,16 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         end
         ApplyStateAlpha(f, a, R("auraMissing", "missingPreserveText") ~= false)
         f.icon:SetDesaturated(desat)
+        Factory.BorderGrey(f, rec, desat)
+        -- the missing look's own tint; the vertex alpha carries the dim
+        local va = f._adShownAlpha or a
+        local mt = onCooldown and R("auraMissing", "missingTintEnabled") == true
+            and (R("auraMissing", "missingTintColor") or { 0.5, 0.5, 0.5, 1 }) or nil
+        if mt then
+            f.icon:SetVertexColor(mt[1], mt[2], mt[3], va)
+        else
+            f.icon:SetVertexColor(1, 1, 1, va)
+        end
         -- The live holder only takes the missing art (the button carries the
         -- active); the editor preview flips both, so its Active icon shows too.
         if onCooldown then
@@ -3100,6 +4352,18 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     -- (the driver's flag). Castable: ready, or recharging with that charge.
     local recharging = f._adRecharging == true
     local castable = not onCooldown or recharging
+    -- the usability looks: while it can be cast, or only while ready when they wait for it
+    local usabOK = castable
+    if recharging and R("states", "usabilityReadyOnly") == true then usabOK = false end
+    -- "always" / "ready" / "cooldown": which state a rule covers (recharging is on cooldown)
+    local function StateWhen(v)
+        if v == "ready" then return not onCooldown end
+        if v == "cooldown" then return onCooldown and true or false end
+        return true
+    end
+    local procLift = f._adProcLit and R("states", "procOverride") == true
+        and StateWhen(R("states", "procOverrideWhen"))
+    local keepText = R("states", "preserveDurationText") ~= false and StateWhen(R("states", "preserveTextWhen"))
     if keepBright then
         f._adStateAlpha = 1
     else
@@ -3112,12 +4376,16 @@ function Factory.SetState(f, rec, onCooldown, desatState)
             f._adStateAlpha = R("states", "readyAlpha") or 1
         end
         -- Usability dim: an unusable, no-resource or out-of-range castable
-        -- spell takes the lower of the two alphas (out of range at full by default).
-        local ucode = castable and f._adUsability or nil
+        -- spell takes the lower of the two alphas (out of range at full by
+        -- default), or can't use and no resource set it outright.
+        local ucode = usabOK and f._adUsability or nil
+        local replace = R("states", "usabilityAlphaReplaces") == true
         if ucode == "unusable" then
-            f._adStateAlpha = math.min(f._adStateAlpha, R("states", "unusableAlpha") or 1)
+            local ua = R("states", "unusableAlpha") or 1
+            f._adStateAlpha = replace and ua or math.min(f._adStateAlpha, ua)
         elseif ucode == "nomana" then
-            f._adStateAlpha = math.min(f._adStateAlpha, R("states", "resourceAlpha") or 1)
+            local ra = R("states", "resourceAlpha") or 1
+            f._adStateAlpha = replace and ra or math.min(f._adStateAlpha, ra)
         elseif ucode == "range" then
             f._adStateAlpha = math.min(f._adStateAlpha, R("states", "rangeAlpha") or 1)
         end
@@ -3132,7 +4400,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     -- A weapon enchant whose hand holds no weapon: its No weapon state.
     if rec.kind == "enchant" and f._adNoWeapon then f._adStateAlpha = R("states", "noWeaponAlpha") or 0 end
     -- procOverride: a lit proc forces full opacity, over the usability dim too.
-    if f._adProcLit and R("states", "procOverride") == true then
+    if procLift then
         f._adStateAlpha = 1
     end
     -- usableOverride: full opacity while ready and usable (range is usable,
@@ -3151,12 +4419,11 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     if rec.kind == "spell" and onCooldown and not recharging and not keepBright
         and f._adTimedDur ~= nil
         and not (f._adToggled and R("states", "toggleAlphaEnabled") == true)
-        and not (f._adProcLit and R("states", "procOverride") == true)
+        and not procLift
         and R("states", "cooldownAlphaTimed") == true
         and C_CurveUtil ~= nil and C_CurveUtil.CreateCurve ~= nil then
         local before = R("states", "cooldownAlphaBefore") or 0
         if before < 0 then before = 0 elseif before > 1 then before = 1 end
-        local keepText = R("states", "preserveDurationText") ~= false
         local late, early = EditFloor(cdA), EditFloor(before)
         T = { sec = R("states", "cooldownAlphaSec") or 3, late = late, before = early,
             tLate = (late > 0 and keepText) and 1 or late, tBefore = (early > 0 and keepText) and 1 or early }
@@ -3164,21 +4431,24 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     end
     SetTimed(f, T)
     -- preserveDurationText (on by default) keeps the texts out of the dim.
-    ApplyStateAlpha(f, f._adStateAlpha,
-        R("states", "preserveDurationText") ~= false)
+    f._adLabelsBright = R("states", "labelsFullOpacity") == true
+    ApplyStateAlpha(f, f._adStateAlpha, keepText)
     local desatOK = not keepBright or R("appearance", "keepBrightAllowDesat") == true
     f.icon:SetDesaturated(desatOK and f._adDesatState
         and R("states", "cooldownDesaturate") == true or false)
     -- The ready look (a Custom Icon's Active) has its own grey out; a
     -- recharging spell has its own, below.
-    if desatOK and not onCooldown and R("states", "readyDesaturate") == true then
+    if desatOK and not onCooldown and R("states", "readyDesaturate") == true
+        and not (R("states", "readyGreyUsable") == true and f._adUsability ~= nil) then
         f.icon:SetDesaturated(true)
     end
-    if desatOK and recharging and R("states", "rechargeDesaturate") == true then
+    -- Grey only while usable holds Recharging's grey back the same way
+    if desatOK and recharging and R("states", "rechargeDesaturate") == true
+        and not (R("states", "readyGreyUsable") == true and f._adUsability ~= nil) then
         f.icon:SetDesaturated(true)
     end
     -- No-resource, unusable or out of range can grey a castable icon apart from the cooldown desat.
-    if castable and desatOK then
+    if usabOK and desatOK then
         local ucode = f._adUsability
         if (ucode == "nomana" and R("states", "resourceDesaturate") == true)
             or (ucode == "unusable" and R("states", "unusableDesaturate") == true)
@@ -3197,11 +4467,17 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         f.icon:SetDesaturated(true)
     end
     -- Tint priority, as Blizzard's: range red, usability, state tints, white.
-    -- The usability tints show while it can be cast (a charge left counts).
+    -- The usability tints show while it can be cast (a charge left counts),
+    -- or on a cooling spell too as the game's buttons do.
     local tc
-    local code = castable and f._adUsability or nil
+    local code = usabOK and f._adUsability or nil
+    if code == nil and onCooldown and R("states", "usabilityOnCooldown") == true then code = f._adUsability end
     if code == "range" and R("states", "rangeTint") ~= false then
         tc = R("states", "rangeTintColor") or { 0.85, 0.2, 0.2, 1 }
+    elseif code == "nomana" and f._adToggled and R("states", "queueShort") == true
+        and NS.DriverToggle ~= nil and NS.DriverToggle.Kind(rec) == "queue" then
+        -- queued without the cost: this swing lands plain
+        tc = R("states", "queueShortColor") or { 1, 0.1, 0.1, 1 }
     elseif code == "nomana" and R("states", "resourceTintEnabled") ~= false then
         tc = R("states", "resourceTintColor") or { 0.35, 0.45, 1, 1 }
     elseif code == "unusable" and R("states", "unusableTintEnabled") ~= false then
@@ -3226,6 +4502,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     else
         f.icon:SetVertexColor(1, 1, 1, va)
     end
+    Factory.RangeShadow(f, rec, f._adUsability == "range", va)
     if T then
         T.tint = tc
         TimedPaint(f)
@@ -3241,8 +4518,11 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         end
         if R("outOfStock", "outAlphaEnabled") == true then
             -- preserveDurationText applies: items and ammo have a States tab.
-            ApplyStateAlpha(f, R("outOfStock", "outAlpha") or 0.4,
-                R("states", "preserveDurationText") ~= false)
+            ApplyStateAlpha(f, R("outOfStock", "outAlpha") or 0.4, keepText)
+        end
+        if R("outOfStock", "outTintEnabled") == true then
+            local oc = R("outOfStock", "outTintColor") or { 0.5, 0.5, 0.5, 1 }
+            f.icon:SetVertexColor(oc[1], oc[2], oc[3], f._adShownAlpha or f._adStateAlpha or 1)
         end
     end
     -- Dynamic groups re-place from here, so every icon kind moves them. Fired
@@ -3264,6 +4544,8 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     Factory.UpdateRangeGlow(f, rec)
     Factory.UpdateRechargeGlow(f, rec)
     if f._adProcLit ~= nil then Factory.SetProcGlow(f, rec, f._adProcLit) end
+    -- the border follows the art's final grey (our own texture: a plain read)
+    Factory.BorderGrey(f, rec, f.icon.IsDesaturated ~= nil and f.icon:IsDesaturated() == true)
 end
 
 -- usability code from the driver: "range" | "nomana" | "unusable" | nil
@@ -3300,7 +4582,8 @@ end
 -- flashes the icon size their box is baked from (library frames follow anchors).
 local function LaneExt(f, gtype, len, mx, my)
     local s = (len or 0) .. ":" .. (mx or 0) .. ":" .. (my or 0)
-    if gtype == "ants" or gtype == "flash" or gtype == "redflash" then
+    if gtype == "ants" or gtype == "flash" or gtype == "redflash" or gtype == "barcheck" or gtype == "barattack"
+        or gtype == "pandemic" or ShapeStyle(gtype) ~= gtype then
         local w, h = f:GetSize()
         if type(w) ~= "number" or type(h) ~= "number"
             or (issecretvalue and (issecretvalue(w) or issecretvalue(h))) then
@@ -3323,6 +4606,11 @@ local function StopLane(f, key)
     end
     local LCG = GetLCG()
     if not LCG then return end
+    -- a sized button or proc glow goes back to the library's shared pool unscaled
+    for _, fld in ipairs({ "_ButtonGlow", "_ProcGlow" }) do
+        local g = f[fld .. key]
+        if g and g.SetScale then g:SetScale(1) end
+    end
     LCG.PixelGlow_Stop(f, key)
     LCG.AutoCastGlow_Stop(f, key)
     LCG.ButtonGlow_Stop(f, key)
@@ -3414,13 +4702,30 @@ local function TexLaneStart(f, key, gtype, p)
         host:SetFrameStrata(f:GetFrameStrata() or "MEDIUM")
         host._adStrataOverride = nil
     end
-    HideGlowParts(host, gtype)
-    -- the red flash covers the icon itself, the others their template's box
-    local k = (gtype == "redflash") and 1 or BLIZZ_RATIO
+    local style, shape = ShapeStyle(gtype)
+    HideGlowParts(host, style)
+    -- the red flash covers the icon itself, the others their template's box;
+    -- a shaped outline its halo's, a shaped fill the icon
+    local k = (gtype == "redflash" or gtype == "barcheck" or gtype == "barattack") and 1 or BLIZZ_RATIO
+    if style == "shape" then k = Factory.SHAPE_HALO elseif style == "shapefill" then k = 1 end
     local W = math.max(1, w * k + 2 * (p.xo or 0))
     local H = math.max(1, h * k + 2 * (p.yo or 0))
+    if gtype == "pandemic" then
+        local grow = math.min(w, h) * Factory.PANDEMIC_GROW
+        W, H = math.max(1, w + 2 * grow + 2 * (p.xo or 0)), math.max(1, h + 2 * grow + 2 * (p.yo or 0))
+    end
     local c = p.color
-    if gtype == "ants" then
+    if gtype == "pandemic" then
+        GlowPandemic(host, W, H, c[1], c[2], c[3], p.native and (p.inten or 1) or (c[4] or 1), p.native)
+    elseif style == "shape" then
+        GlowShape(host, W, H, c[1], c[2], c[3], c[4] or 1, p.speed, shape)
+    elseif style == "shapefill" then
+        GlowShapeFill(host, W, H, c[1], c[2], c[3], c[4] or 1, p.speed, shape)
+    elseif gtype == "barcheck" then
+        GlowBarCheck(host, W, H, c[1], c[2], c[3], c[4] or 1)
+    elseif gtype == "barattack" then
+        GlowBarAttack(host, W, H, c[1], c[2], c[3], c[4] or 1)
+    elseif gtype == "ants" then
         GlowAnts(host, W, H, c[1], c[2], c[3], c[4] or 1)
     elseif gtype == "redflash" then
         GlowRedFlash(host, W, H, c[1], c[2], c[3], c[4] or 1, p.speed)
@@ -3437,37 +4742,68 @@ local LCG_FIELD = { pixel = "_PixelGlow", autocast = "_AutoCastGlow",
     button = "_ButtonGlow", proc = "_ProcGlow", procloop = "_ProcGlow" }
 
 local function StartLane(f, key, gtype, p)
-    if gtype == "ants" or gtype == "flash" or gtype == "redflash" then
+    local style = ShapeStyle(gtype)
+    if gtype == "ants" or gtype == "flash" or gtype == "redflash" or gtype == "barcheck" or gtype == "barattack"
+        or gtype == "pandemic" or style == "shape" or style == "shapefill" then
         TexLaneStart(f, key, gtype, p)
         return
     end
     local LCG = GetLCG()
     if not LCG then return end
     local lvl = p.level or GLOW_LEVEL
+    -- the game's own colour: no colour handed in, so the gold art stays untinted
+    local color = p.color
+    if p.native then color = nil end
     if gtype == "pixel" then
         -- the dash length: 0 = the library's automatic length
         local len = (type(p.length) == "number" and p.length > 0) and p.length or nil
         LCG.PixelGlow_Start(f, p.color, p.lines, p.speed, len, p.thickness,
-            p.xo, p.yo, false, key, lvl)
+            p.xo, p.yo, p.border == true, key, lvl)
     elseif gtype == "autocast" then
         LCG.AutoCastGlow_Start(f, p.color, p.particles, p.speed, p.scale,
             p.xo, p.yo, key, lvl)
     elseif (gtype == "proc" or gtype == "procloop") and LCG.ProcGlow_Start then
         -- procloop = the proc glow without its opening burst
-        LCG.ProcGlow_Start(f, { color = p.color, key = key,
+        LCG.ProcGlow_Start(f, { color = color, key = key,
             frameLevel = lvl, xOffset = p.xo, yOffset = p.yo,
             startAnim = gtype == "proc" })
     else
-        LCG.ButtonGlow_Start(f, p.color, p.speed, lvl, key, p.xo, p.yo)
+        LCG.ButtonGlow_Start(f, color, p.speed, lvl, key, p.xo, p.yo)
         gtype = "button"
     end
     ApplyStrata(f, key, p.strata)
-    ShiftGlow(f[LCG_FIELD[gtype] .. key], p.mx, p.my)
+    local g = f[LCG_FIELD[gtype] .. key]
+    -- untinted art has no colour alpha to carry the intensity, so it dims the
+    -- frame; any other start returns a recycled frame to full
+    if g and g.SetAlpha then g:SetAlpha(p.native and (p.inten or 1) or 1) end
+    -- a button or proc glow's size scales it whole (set on every start: the
+    -- library's frames are pooled); its move stays in the icon's units, as a
+    -- scaled frame's offsets scale with it
+    local sc = 1
+    if g and g.SetScale and (gtype == "button" or gtype == "proc" or gtype == "procloop") then
+        sc = tonumber(p.scale) or 1
+        if sc < 0.5 then sc = 0.5 elseif sc > 2 then sc = 2 end
+        g:SetScale(sc)
+    end
+    ShiftGlow(g, (p.mx or 0) / sc, (p.my or 0) / sc)
 end
 -- Any frame of ours can wear a lane under its own key (the Reminder group's
 -- pulses: Drivers\AD_DriverReminders.lua), every style included.
 Factory.StartGlowLane = StartLane
 Factory.StopGlowLane = StopLane
+
+-- A lane's look switches into its recipe p: the game's own colour on a button
+-- or proc glow, and the pixel glow's dark backing line. inten = the lane's
+-- intensity (the untinted art's frame alpha). Returns the signature part.
+local function LaneLook(rec, sec, glowPrefix, gtype, p, inten)
+    local Sch = NS.Schema
+    p.native = Sch ~= nil and Sch.GLOW_NATIVE_STYLES[gtype] == true
+        and Store.Resolve(rec, sec, glowPrefix .. "Native") == true
+    p.border = gtype == "pixel" and Store.Resolve(rec, sec, glowPrefix .. "Backing") == true
+    p.inten = inten or 1
+    return (p.native and (":n" .. p.inten) or "") .. (p.border and ":b" or "")
+end
+Factory.LaneLook = LaneLook
 
 -- Proc glow (SPELL_ACTIVATION_OVERLAY), with the other lanes' options.
 function Factory.SetProcGlow(f, rec, on)
@@ -3505,10 +4841,10 @@ function Factory.SetProcGlow(f, rec, on)
     }
     p.level = (R("states", "procGlowLevel") or GLOW_LEVEL) + Factory.Rise(rec)
     p.strata = R("states", "procGlowStrata") or "inherit"
-    local gtype = DrawnGlowStyle(R("states", "procGlowType") or "proc")
+    local gtype = DrawnGlowStyle(R("states", "procGlowType") or "proc", rec)
     local sig = GlowSig(f, gtype, p.color, p.speed, p.lines, p.thickness,
         p.particles, p.scale, p.xo, p.yo, p.level, p.strata,
-        LaneExt(f, gtype, p.length, p.mx, p.my))
+        LaneExt(f, gtype, p.length, p.mx, p.my) .. LaneLook(rec, "states", "procGlow", gtype, p, inten))
     if f._adProcOn and f._adProcSig == sig then return end
     Factory.StopProcGlow(f)
     StartLane(f, "adproc", gtype, p)
@@ -3654,7 +4990,7 @@ function Factory.UpdateGlow(f, rec, ready)
     -- Intensity rides the color's alpha.
     local inten = R("states", "readyGlowIntensity") or 1
     local color = { c[1], c[2], c[3], (c[4] or 1) * inten }
-    local gtype = DrawnGlowStyle(R("states", "readyGlowType") or "button")
+    local gtype = DrawnGlowStyle(R("states", "readyGlowType") or "button", rec)
     local speed = R("states", "readyGlowSpeed") or 0.25
     local xo = R("states", "readyGlowXOffset") or 0
     local yo = R("states", "readyGlowYOffset") or 0
@@ -3667,13 +5003,14 @@ function Factory.UpdateGlow(f, rec, ready)
     local len = R("states", "readyGlowLength") or 0
     local mx = R("states", "readyGlowMoveX") or 0
     local my = R("states", "readyGlowMoveY") or 0
+    local p = { color = color, speed = speed, lines = lines,
+        thickness = th, particles = parts, scale = scale, xo = xo, yo = yo,
+        level = lvl, strata = strata, length = len, mx = mx, my = my }
     local sig = GlowSig(f, gtype, color, speed, lines, th, parts, scale, xo, yo, lvl, strata,
-        LaneExt(f, gtype, len, mx, my))
+        LaneExt(f, gtype, len, mx, my) .. LaneLook(rec, "states", "readyGlow", gtype, p, inten))
     if f._adGlowOn and f._adGlowSig == sig then return end
     Factory.StopReadyGlow(f)
-    StartLane(f, "ad", gtype, { color = color, speed = speed, lines = lines,
-        thickness = th, particles = parts, scale = scale, xo = xo, yo = yo,
-        level = lvl, strata = strata, length = len, mx = mx, my = my })
+    StartLane(f, "ad", gtype, p)
     f._adGlowOn = true
     f._adGlowSig = sig
 end
@@ -3693,8 +5030,8 @@ function Factory.UpdateUsableGlow(f, rec)
     local LCG = GetLCG()
     if not LCG then return end
     local R = function(s, k) return Store.Resolve(rec, s, k) end
-    -- castable: ready, or recharging with a charge left
-    local want = rec.kind == "spell"
+    -- castable: ready, or recharging with a charge left; an item in stock
+    local want = (rec.kind == "spell" or (rec.kind == "item" and not f._adItemEmpty))
         and R("states", "usableGlow") == true
         and f._adUsability == nil
         and (not f._adOnCooldown or f._adRecharging == true)
@@ -3711,7 +5048,7 @@ function Factory.UpdateUsableGlow(f, rec)
     local c = R("states", "usableGlowColor") or { 0.48, 0.85, 0.56, 1 }
     local inten = R("states", "usableGlowIntensity") or 1
     local color = { c[1], c[2], c[3], (c[4] or 1) * inten }
-    local gtype = DrawnGlowStyle(R("states", "usableGlowType") or "button")
+    local gtype = DrawnGlowStyle(R("states", "usableGlowType") or "button", rec)
     local speed = R("states", "usableGlowSpeed") or 0.25
     local xo = R("states", "usableGlowXOffset") or 0
     local yo = R("states", "usableGlowYOffset") or 0
@@ -3724,13 +5061,14 @@ function Factory.UpdateUsableGlow(f, rec)
     local len = R("states", "usableGlowLength") or 0
     local mx = R("states", "usableGlowMoveX") or 0
     local my = R("states", "usableGlowMoveY") or 0
+    local p = { color = color, speed = speed, lines = lines,
+        thickness = th, particles = parts, scale = scale, xo = xo, yo = yo,
+        level = lvl, strata = strata, length = len, mx = mx, my = my }
     local sig = GlowSig(f, gtype, color, speed, lines, th, parts, scale, xo, yo, lvl, strata,
-        LaneExt(f, gtype, len, mx, my))
+        LaneExt(f, gtype, len, mx, my) .. LaneLook(rec, "states", "usableGlow", gtype, p, inten))
     if f._adUsableOn and f._adUsableSig == sig then return end
     Factory.StopUsableGlow(f)
-    StartLane(f, "adu", gtype, { color = color, speed = speed, lines = lines,
-        thickness = th, particles = parts, scale = scale, xo = xo, yo = yo,
-        level = lvl, strata = strata, length = len, mx = mx, my = my })
+    StartLane(f, "adu", gtype, p)
     f._adUsableOn = true
     f._adUsableSig = sig
 end
@@ -3764,7 +5102,7 @@ function Factory.UpdateRechargeGlow(f, rec)
     local c = R("states", "rechargeGlowColor") or { 1, 0.85, 0.4, 1 }
     local inten = R("states", "rechargeGlowIntensity") or 1
     local color = { c[1], c[2], c[3], (c[4] or 1) * inten }
-    local gtype = DrawnGlowStyle(R("states", "rechargeGlowType") or "button")
+    local gtype = DrawnGlowStyle(R("states", "rechargeGlowType") or "button", rec)
     local speed = R("states", "rechargeGlowSpeed") or 0.25
     local xo = R("states", "rechargeGlowXOffset") or 0
     local yo = R("states", "rechargeGlowYOffset") or 0
@@ -3777,13 +5115,14 @@ function Factory.UpdateRechargeGlow(f, rec)
     local len = R("states", "rechargeGlowLength") or 0
     local mx = R("states", "rechargeGlowMoveX") or 0
     local my = R("states", "rechargeGlowMoveY") or 0
+    local p = { color = color, speed = speed, lines = lines,
+        thickness = th, particles = parts, scale = scale, xo = xo, yo = yo,
+        level = lvl, strata = strata, length = len, mx = mx, my = my }
     local sig = GlowSig(f, gtype, color, speed, lines, th, parts, scale, xo, yo, lvl, strata,
-        LaneExt(f, gtype, len, mx, my))
+        LaneExt(f, gtype, len, mx, my) .. LaneLook(rec, "states", "rechargeGlow", gtype, p, inten))
     if f._adRechargeOn and f._adRechargeSig == sig then return end
     Factory.StopRechargeGlow(f)
-    StartLane(f, "adrc", gtype, { color = color, speed = speed, lines = lines,
-        thickness = th, particles = parts, scale = scale, xo = xo, yo = yo,
-        level = lvl, strata = strata, length = len, mx = mx, my = my })
+    StartLane(f, "adrc", gtype, p)
     f._adRechargeOn = true
     f._adRechargeSig = sig
 end
@@ -3817,7 +5156,7 @@ function Factory.UpdateRangeGlow(f, rec)
     local c = R("states", "rangeGlowColor") or { 0.85, 0.2, 0.2, 1 }
     local inten = R("states", "rangeGlowIntensity") or 1
     local color = { c[1], c[2], c[3], (c[4] or 1) * inten }
-    local gtype = DrawnGlowStyle(R("states", "rangeGlowType") or "button")
+    local gtype = DrawnGlowStyle(R("states", "rangeGlowType") or "button", rec)
     local speed = R("states", "rangeGlowSpeed") or 0.25
     local xo = R("states", "rangeGlowXOffset") or 0
     local yo = R("states", "rangeGlowYOffset") or 0
@@ -3830,13 +5169,14 @@ function Factory.UpdateRangeGlow(f, rec)
     local len = R("states", "rangeGlowLength") or 0
     local mx = R("states", "rangeGlowMoveX") or 0
     local my = R("states", "rangeGlowMoveY") or 0
+    local p = { color = color, speed = speed, lines = lines,
+        thickness = th, particles = parts, scale = scale, xo = xo, yo = yo,
+        level = lvl, strata = strata, length = len, mx = mx, my = my }
     local sig = GlowSig(f, gtype, color, speed, lines, th, parts, scale, xo, yo, lvl, strata,
-        LaneExt(f, gtype, len, mx, my))
+        LaneExt(f, gtype, len, mx, my) .. LaneLook(rec, "states", "rangeGlow", gtype, p, inten))
     if f._adRangeOn and f._adRangeSig == sig then return end
     Factory.StopRangeGlow(f)
-    StartLane(f, "adr", gtype, { color = color, speed = speed, lines = lines,
-        thickness = th, particles = parts, scale = scale, xo = xo, yo = yo,
-        level = lvl, strata = strata, length = len, mx = mx, my = my })
+    StartLane(f, "adr", gtype, p)
     f._adRangeOn = true
     f._adRangeSig = sig
 end
@@ -3871,7 +5211,7 @@ function Factory.UpdateCooldownGlow(f, rec)
     local c = R("states", "cooldownGlowColor") or { 0.95, 0.95, 0.32, 1 }
     local inten = R("states", "cooldownGlowIntensity") or 1
     local color = { c[1], c[2], c[3], (c[4] or 1) * inten }
-    local gtype = DrawnGlowStyle(R("states", "cooldownGlowType") or "button")
+    local gtype = DrawnGlowStyle(R("states", "cooldownGlowType") or "button", rec)
     local speed = R("states", "cooldownGlowSpeed") or 0.25
     local xo = R("states", "cooldownGlowXOffset") or 0
     local yo = R("states", "cooldownGlowYOffset") or 0
@@ -3884,13 +5224,14 @@ function Factory.UpdateCooldownGlow(f, rec)
     local len = R("states", "cooldownGlowLength") or 0
     local mx = R("states", "cooldownGlowMoveX") or 0
     local my = R("states", "cooldownGlowMoveY") or 0
+    local p = { color = color, speed = speed, lines = lines,
+        thickness = th, particles = parts, scale = scale, xo = xo, yo = yo,
+        level = lvl, strata = strata, length = len, mx = mx, my = my }
     local sig = GlowSig(f, gtype, color, speed, lines, th, parts, scale, xo, yo, lvl, strata,
-        LaneExt(f, gtype, len, mx, my))
+        LaneExt(f, gtype, len, mx, my) .. LaneLook(rec, "states", "cooldownGlow", gtype, p, inten))
     if f._adCdGlowOn and f._adCdGlowSig == sig then return end
     Factory.StopCooldownGlow(f)
-    StartLane(f, "adcdg", gtype, { color = color, speed = speed, lines = lines,
-        thickness = th, particles = parts, scale = scale, xo = xo, yo = yo,
-        level = lvl, strata = strata, length = len, mx = mx, my = my })
+    StartLane(f, "adcdg", gtype, p)
     f._adCdGlowOn = true
     f._adCdGlowSig = sig
 end
@@ -3918,7 +5259,71 @@ function Factory.ApplyDurationVis(f, rec)
         and R("text", "hideDurWithCharges") == true then
         hide = true
     end
-    f.cooldown:SetHideCountdownNumbers(hide)
+    f._adDurHidden = hide
+    -- the bands in percent: the bound copy shows the numbers instead
+    f.cooldown:SetHideCountdownNumbers(hide or f._adPctOn == true)
+    Pct.Show(f)
+end
+
+-- A key's words as the icon writes them: its replacements (FIND=REPL, on the
+-- key's own words), then lower case ("ALT-CTRL-SHIFT-1" -> "acs1", m4, mwu,
+-- n1, sp) or upper case with S, C, A first (SCA1, M4, WU, N1, PU, SP); four
+-- letters at most either way.
+local function KeyReplace(raw, list)
+    if type(list) ~= "string" or not list:find("=", 1, true) then return raw end
+    local text = raw:upper()
+    for pair in list:gmatch("[^,]+") do
+        local from, to = pair:match("^%s*(.-)%s*=%s*(.-)%s*$")
+        if from and from ~= "" then
+            from = from:upper():gsub("(%W)", "%%%1")
+            to = (to or ""):gsub("%%", "%%%%")
+            text = text:gsub(from .. "[%-+]", to):gsub(from, to)
+        end
+    end
+    return text
+end
+
+local function LowerKey(key)
+    key = key:gsub("ALT%-", "a"):gsub("CTRL%-", "c"):gsub("SHIFT%-", "s")
+        :gsub("MOUSEWHEELUP", "mwu"):gsub("MOUSEWHEELDOWN", "mwd")
+        :gsub("BUTTON", "m"):gsub("NUMPAD", "n"):gsub("SPACE", "sp")
+    if key == "" then return nil end
+    return #key > 4 and key:sub(1, 4) or key
+end
+
+local UPPER_KEYS = {
+    { "MOUSEWHEELUP", "WU" }, { "MOUSEWHEELDOWN", "WD" },
+    { "NUMPADPLUS", "N+" }, { "NUMPADMINUS", "N-" }, { "NUMPADMULTIPLY", "N*" }, { "NUMPADDIVIDE", "N/" },
+    { "NUMPADPERIOD", "N." }, { "NUMPADENTER", "NE" }, { "PAGEUP", "PU" }, { "PAGEDOWN", "PD" },
+    { "INSERT", "INS" }, { "DELETE", "DEL" }, { "UPARROW", "UP" }, { "DOWNARROW", "DN" },
+    { "LEFTARROW", "LT" }, { "RIGHTARROW", "RT" }, { "BACKSPACE", "BS" }, { "CAPSLOCK", "CAP" },
+}
+local UPPER_WHOLE = { HOME = "HM", END = "EN", SPACE = "SP", ESCAPE = "ESC", TAB = "TB", MIDDLEMOUSE = "M3",
+    MINUS = "-", PLUS = "=", ["+"] = "=", EQUALS = "=" }
+
+local function UpperKey(text)
+    text = text:upper():gsub("[%c]", "")
+    local mods = ""
+    if text:find("SHIFT[%-+]") or text:find("^S[%-+]") then mods = mods .. "S" end
+    if text:find("CTRL[%-+]") or text:find("^C[%-+]") then mods = mods .. "C" end
+    if text:find("ALT[%-+]") or text:find("^A[%-+]") then mods = mods .. "A" end
+    local key = text:gsub("SHIFT[%-+]", ""):gsub("CTRL[%-+]", ""):gsub("ALT[%-+]", "")
+        :gsub("^S[%-+]", ""):gsub("^C[%-+]", ""):gsub("^A[%-+]", ""):gsub("%s+", "")
+    key = key:gsub("^BUTTON(%d+)$", "M%1"):gsub("^MOUSEBUTTON(%d+)$", "M%1")
+    for _, p in ipairs(UPPER_KEYS) do key = key:gsub(p[1], p[2]) end
+    key = key:gsub("^NUMPAD(%d)", "N%1")
+    key = UPPER_WHOLE[key] or key
+    if key == "" then return nil end
+    local out = (mods .. key):gsub("[^%w%-%+=%.%*/]", "")
+    if out == "" or out:match("^%.+$") then return nil end
+    return #out > 4 and out:sub(1, 4) or out
+end
+
+function Factory.KeyText(rec, raw)
+    if type(raw) ~= "string" or raw == "" then return nil end
+    local key = KeyReplace(raw, rec and Store.Resolve(rec, "keybind", "keybindReplace"))
+    if rec and Store.Resolve(rec, "keybind", "keybindStyle") == "upper" then return UpperKey(key) end
+    return LowerKey(key)
 end
 
 -- Keybind text setter; the cooldown driver resolves the binding.
@@ -3942,6 +5347,7 @@ function Factory.SetGCDPresentation(f, rec, pure, recharging, wand)
     f._adPureGCD = pure
     f._adRecharging = recharging
     f._adPureWand = wand
+    Pct.Show(f)
     ApplyCdPresentation(f, rec)
 end
 

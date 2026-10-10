@@ -156,8 +156,8 @@ function Perf.ModuleTables(skip)
     return list
 end
 
-function Perf.WrapModules()
-    local list = Perf.ModuleTables(Perf.SKIP)
+function Perf.WrapModules(skip)
+    local list = Perf.ModuleTables(skip or Perf.SKIP)
     for _, m in ipairs(list) do
         for k, v in pairs(m.t) do
             if type(v) == "function" then
@@ -189,10 +189,10 @@ function Perf.Reset()
     Perf.endedAt = nil
 end
 
-function Perf.On()
+function Perf.On(skip)
     if Perf.on then return end
     Perf.Reset()
-    Perf.WrapModules()
+    Perf.WrapModules(skip)
     Perf.on = true
     Perf.Sampling(true)
 end
@@ -467,6 +467,7 @@ end
 -- deep view when it has numbers.
 function Perf.Lines()
     local out = {}
+    for _, line in ipairs(Perf.openLines or {}) do out[#out + 1] = line end
     -- a report reads the game's numbers before its own work (Perf.Report)
     if Perf.snap then
         for _, line in ipairs(Perf.snap) do out[#out + 1] = line end
@@ -504,7 +505,11 @@ end
 
 function Perf.Status()
     local s = "Off."
-    if Perf.fightArmed and not Perf.on then
+    if Perf.openArmed and not Perf.openRec then
+        s = "Armed: open the options panel now."
+    elseif Perf.openRec then
+        s = "Recording the options open."
+    elseif Perf.fightArmed and not Perf.on then
         s = "Armed: the next fight is recorded."
     elseif Perf.on then
         s = "Recording."
@@ -534,7 +539,7 @@ end
 function Perf.Tick(on)
     if on and not Perf.ticker and C_Timer and C_Timer.NewTicker then
         Perf.ticker = C_Timer.NewTicker(Perf.REFRESH, function()
-            if Perf.on then Perf.Refresh() end
+            if Perf.on and not Perf.openRec then Perf.Refresh() end
         end)
     elseif not on and Perf.ticker then
         Perf.ticker:Cancel()
@@ -637,9 +642,286 @@ function Perf.EndFight()
     Perf.Refresh()
 end
 
+-- The open probe (/arcperf open): from the moment the options window starts
+-- to load (or shows), every frame for OPEN_SECS seconds: the frame's time,
+-- this addon's time in it (the game's own count), the options build's slice
+-- and the pane it was on, the page layouts and window refreshes that ran, and
+-- Lua memory; the module table runs beside it, the Edit chips included. The
+-- report says whether a slow frame was this addon's work or the game's.
+Perf.OPEN_SECS = 3
+Perf.OPEN_WORST = 25
+-- traced for the probe beyond the usual modules: the Edit chips and the
+-- New Layout page's helpers; the options window and the theme stay out (their
+-- builders pause mid-call)
+Perf.OPEN_SKIP = {}
+for k, v in pairs(Perf.SKIP) do Perf.OPEN_SKIP[k] = v end
+Perf.OPEN_SKIP.IconScreen, Perf.OPEN_SKIP.LayoutPreview, Perf.OPEN_SKIP.Spotlight = nil, nil, nil
+
+function Perf.OpenNote(kind, ms)
+    local r = Perf.openRec
+    if not r then return end
+    r[kind .. "N"] = r[kind .. "N"] + 1
+    r[kind .. "Ms"] = r[kind .. "Ms"] + ms
+end
+
+local function OptionsStarted()
+    local O = NS.Options
+    local L = O and O.Loader
+    if L and L.Busy and L.Busy() then return true end
+    local w = _G.ArcUIv2Options
+    return w ~= nil and w:IsShown() == true
+end
+
+-- The step list: what ran, in order, with its time, from arming until a few
+-- seconds into the recording (the open's first frames). Frame ends are marked
+-- by the probe's own per-frame script.
+Perf.MARK_SECS = 3
+Perf.MARK_MAX = 600
+function Perf.Mark(label)
+    local m = Perf.marks
+    if not m or #m >= Perf.MARK_MAX then return end
+    m[#m + 1] = { label, clock(), collectgarbage("count") }
+end
+
+-- the calls that open the window, marked on their way in and out
+local OPEN_CALLS = { "Toggle", "Open" }
+function Perf.MarkOpenCalls(on)
+    local O = NS.Options
+    if not O then return end
+    Perf.openCalls = Perf.openCalls or {}
+    for _, k in ipairs(OPEN_CALLS) do
+        if on and not Perf.openCalls[k] and type(O[k]) == "function" then
+            local base = O[k]
+            Perf.openCalls[k] = base
+            O[k] = function(...)
+                Perf.Mark("Options." .. k .. " starts")
+                local ret = pack(base(...))
+                Perf.Mark("Options." .. k .. " returns")
+                return unpack(ret, 1, ret.n)
+            end
+        elseif not on and Perf.openCalls[k] then
+            O[k] = Perf.openCalls[k]
+            Perf.openCalls[k] = nil
+        end
+    end
+end
+
+function Perf.ArmOpen()
+    Perf.Off()
+    Perf.openArmed, Perf.openRec, Perf.openLines = true, nil, nil
+    -- every wrap made now, so the open's own frames carry none of it
+    Perf.On(Perf.OPEN_SKIP)
+    Perf.marks, Perf.marking = {}, true
+    Perf.MarkOpenCalls(true)
+    Perf.openDriver = Perf.openDriver or CreateFrame("Frame")
+    Perf.openDriver:SetScript("OnUpdate", Perf.OpenTick)
+end
+
+function Perf.OpenStart()
+    Perf.openArmed = false
+    -- the table counts the open from here: what ran while armed is cleared
+    Perf.Reset()
+    Perf.Mark("probe: the load started, recording")
+    local r = { start = GetTime(), frames = {}, mem = collectgarbage("count"),
+        lpN = 0, lpMs = 0, rfN = 0, rfMs = 0 }
+    Perf.openRec = r
+    -- every page layout, timed (its callers read AT.LayoutPage at call time)
+    local AT = NS.AT
+    if AT and AT.LayoutPage and not Perf.openLayout then
+        local base = AT.LayoutPage
+        Perf.openLayout = base
+        AT.LayoutPage = function(...)
+            local t0 = clock()
+            local ret = pack(base(...))
+            Perf.OpenNote("lp", clock() - t0)
+            return unpack(ret, 1, ret.n)
+        end
+    end
+    -- the report window waits for the end: it would sit over the options window
+    if Perf.win then Perf.win:Hide() end
+end
+
+function Perf.OpenTick(_, elapsed)
+    if Perf.openArmed and not Perf.openRec then
+        if not OptionsStarted() then return end
+        Perf.OpenStart()
+        return
+    end
+    local r = Perf.openRec
+    if not r then return end
+    local now = GetTime()
+    if Perf.marking then
+        Perf.Mark(("frame ends (%.0f ms)"):format((elapsed or 0) * 1000))
+        if now - r.start >= Perf.MARK_SECS then Perf.marking = false end
+    end
+    local Pf, M = Profiler()
+    local addon = Pf and M.LastTime and Pf.GetAddOnMetric(ADDON, M.LastTime)
+    local O = NS.Options
+    local L = O and O.Loader
+    local w = _G.ArcUIv2Options
+    local mem = collectgarbage("count")
+    r.frames[#r.frames + 1] = {
+        t = now - r.start, dt = (elapsed or 0) * 1000,
+        addon = type(addon) == "number" and addon or nil,
+        slice = L and L.sliceMs, bg = L and L.sliceBg, pane = O and O.buildingPane,
+        lpN = r.lpN, lpMs = r.lpMs, rfN = r.rfN, rfMs = r.rfMs,
+        mem = mem - r.mem, shown = w ~= nil and w:IsShown() == true,
+    }
+    if L then L.sliceMs, L.sliceBg = nil, nil end
+    r.lpN, r.lpMs, r.rfN, r.rfMs, r.mem = 0, 0, 0, 0, mem
+    if not r.shownAt and w and w:IsShown() then r.shownAt = now - r.start end
+    if now - r.start >= Perf.OPEN_SECS then Perf.OpenStop() end
+end
+
+function Perf.OpenStop()
+    if Perf.openDriver then Perf.openDriver:SetScript("OnUpdate", nil) end
+    Perf.marking = false
+    Perf.MarkOpenCalls(false)
+    local AT = NS.AT
+    if Perf.openLayout and AT then AT.LayoutPage = Perf.openLayout end
+    Perf.openLayout = nil
+    local r = Perf.openRec
+    Perf.openRec = nil
+    if r then Perf.openLines = Perf.OpenLines(r) end
+    Perf.endedAt = GetTime()
+    Perf.Report()
+    Perf.Off()
+    Perf.Refresh()
+end
+
+local function F1(v) return v and ("%.1f"):format(v) or "-" end
+
+function Perf.OpenLines(r)
+    local out, fr = {}, r.frames
+    local n = #fr
+    if n == 0 then return { "Options open probe: no frames recorded." } end
+    local total, worst, over33, over100 = 0, 0, 0, 0
+    local addonAll, addonSlow, slowAll, build, buildBg = 0, 0, 0, 0, 0
+    local lpN, lpMs, rfN, rfMs, grow, gcSteps = 0, 0, 0, 0, 0, 0
+    local haveAddon = false
+    for _, f in ipairs(fr) do
+        total = total + f.dt
+        if f.dt > worst then worst = f.dt end
+        if f.dt > 33.4 then over33 = over33 + 1 end
+        if f.dt > 100 then over100 = over100 + 1 end
+        if f.addon then
+            haveAddon = true
+            addonAll = addonAll + f.addon
+            if f.dt > 33.4 then addonSlow, slowAll = addonSlow + f.addon, slowAll + f.dt end
+        end
+        if f.slice then
+            if f.bg then buildBg = buildBg + f.slice else build = build + f.slice end
+        end
+        lpN, lpMs, rfN, rfMs = lpN + f.lpN, lpMs + f.lpMs, rfN + f.rfN, rfMs + f.rfMs
+        if f.mem > 0 then grow = grow + f.mem end
+        if f.mem < -1024 then gcSteps = gcSteps + 1 end
+    end
+    local secs = math.max(fr[n].t, 0.001)
+    out[#out + 1] = ("Options open probe: %.1f s from the first load, %d frames, the window showed after %s s."):format(
+        secs, n, r.shownAt and ("%.2f"):format(r.shownAt) or "-")
+    out[#out + 1] = ("  Frames: %.0f fps on average, the slowest %.0f ms; %d over 33 ms (under 30 fps), %d over 100 ms."):format(
+        n / math.max(total / 1000, 0.001), worst, over33, over100)
+    if haveAddon then
+        out[#out + 1] = ("  This addon, as the game counts it: %.0f ms in all; in the frames over 33 ms it was %.0f%% of their time."):format(
+            addonAll, slowAll > 0 and (100 * addonSlow / slowAll) or 0)
+    else
+        out[#out + 1] = "  This addon, as the game counts it: not available (the game's addon profiler is off)."
+    end
+    out[#out + 1] = ("  The options build: %.0f ms while it loaded, %.0f ms in the background."):format(build, buildBg)
+    out[#out + 1] = ("  Page layouts: %d, %.0f ms. Window refreshes: %d, %.0f ms."):format(lpN, lpMs, rfN, rfMs)
+    out[#out + 1] = ("  Lua memory: +%.1f MB made, %d frames where a garbage collection freed over 1 MB."):format(
+        grow / 1024, gcSteps)
+    -- each second: fps, this addon's ms, the build's ms
+    out[#out + 1] = ""
+    out[#out + 1] = "Each second (fps / this addon ms / build ms):"
+    local line, sec = {}, 0
+    local cnt, sAddon, sBuild, sDt = 0, 0, 0, 0
+    local function Flush()
+        if cnt > 0 then
+            line[#line + 1] = ("%ds %d/%s/%.0f"):format(sec, math.floor(cnt / math.max(sDt / 1000, 0.001) + 0.5),
+                haveAddon and ("%.0f"):format(sAddon) or "-", sBuild)
+        end
+        if #line >= 6 then
+            out[#out + 1] = "  " .. table.concat(line, "   ")
+            line = {}
+        end
+    end
+    for _, f in ipairs(fr) do
+        local s = math.floor(f.t)
+        if s ~= sec then
+            Flush()
+            sec, cnt, sAddon, sBuild, sDt = s, 0, 0, 0, 0
+        end
+        cnt, sDt = cnt + 1, sDt + f.dt
+        sAddon = sAddon + (f.addon or 0)
+        sBuild = sBuild + (f.slice or 0)
+    end
+    Flush()
+    if #line > 0 then out[#out + 1] = "  " .. table.concat(line, "   ") end
+    -- the slowest frames
+    local order = {}
+    for i = 1, n do order[i] = i end
+    table.sort(order, function(a, b) return fr[a].dt > fr[b].dt end)
+    out[#out + 1] = ""
+    out[#out + 1] = ("The %d slowest frames (second, frame ms, this addon ms, build ms [pane], layouts n/ms, refreshes n/ms, memory KB, window):"):format(
+        math.min(Perf.OPEN_WORST, n))
+    for i = 1, math.min(Perf.OPEN_WORST, n) do
+        local f = fr[order[i]]
+        out[#out + 1] = ("  %5.2f  %6.1f  %6s  %6s %-10s %d/%s  %d/%s  %+.0f  %s"):format(
+            f.t, f.dt, F1(f.addon), F1(f.slice), f.slice and ("[" .. tostring(f.pane or (f.bg and "bg" or "open")) .. "]") or "",
+            f.lpN, F1(f.lpMs), f.rfN, F1(f.rfMs), f.mem, f.shown and "shown" or "loading")
+    end
+    -- the open's steps: each with the time since the one before and the Lua
+    -- memory it made; a long gap is work no step names (another script, the
+    -- game's own work, a garbage collection)
+    local m = Perf.marks or {}
+    if #m > 0 then
+        out[#out + 1] = ""
+        out[#out + 1] = "The open, step by step (ms since the step before, ms since the open call, memory KB):"
+        local t0 = m[1][2]
+        for i, e in ipairs(m) do
+            local gap = (i > 1) and (e[2] - m[i - 1][2]) or 0
+            local mem = (i > 1) and (e[3] - m[i - 1][3]) or 0
+            out[#out + 1] = ("  %8.1f  %8.1f  %+7.0f  %s%s"):format(gap, e[2] - t0, mem, e[1],
+                gap >= 50 and "   <<" or "")
+        end
+    end
+    out[#out + 1] = ""
+    return out
+end
+
+-- Only the first open after a reload builds the window, so a probe asked for
+-- once it exists reloads the UI and arms itself for the next one (a saved flag
+-- carries it over).
+function Perf.AskOpen()
+    local S = NS.Store
+    if _G.ArcUIv2Options and S and S.SetSetting and ReloadUI then
+        S.SetSetting("perfOpenArm", true)
+        ReloadUI()
+        return
+    end
+    Perf.ArmOpen()
+    Perf.Report()
+end
+
+if NS.Events and NS.Events.On then
+    NS.Events.On("PLAYER_ENTERING_WORLD", "adperf_open", function()
+        NS.Events.Off("PLAYER_ENTERING_WORLD", "adperf_open")
+        local S = NS.Store
+        if not (S and S.GetSetting and S.GetSetting("perfOpenArm")) then return end
+        S.SetSetting("perfOpenArm", nil)
+        Perf.ArmOpen()
+        Perf.Report()
+    end)
+end
+
 SLASH_ARCPERF1 = "/arcperf"
 SlashCmdList.ARCPERF = function(msg)
     local cmd = (msg or ""):lower():match("^%s*(%S*)")
+    if cmd == "open" then
+        Perf.AskOpen()
+        return
+    end
     if cmd == "on" then
         Perf.On()
     elseif cmd == "off" then

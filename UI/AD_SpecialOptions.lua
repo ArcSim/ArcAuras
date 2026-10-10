@@ -414,6 +414,7 @@ function Options.SpecialIconRows(pg, ctx, trackVis, owner)
     local dwVis = function()
         local def = Def()
         return vis() and def ~= nil and def.CanSkipCDM ~= nil
+            and not (NS.Anchor and NS.Anchor.CDMOff and NS.Anchor.CDMOff())
     end
     local cdm = AT.RowToggle(pg, "Use the Cooldown Manager instead of the wolf",
         function()
@@ -594,11 +595,12 @@ function Options.SpecialTextTabs(api)
         return t ~= nil and t ~= ""
     end
     local STACK_LOOK = { "stackFont", "stackSize", "stackColor", "stackOutline", "stackShadow",
-        "stackAnchor", "stackX", "stackY" }
+        "stackShadowColor", "stackShadowX", "stackShadowY", "stackAnchor", "stackX", "stackY" }
     local function StackWords(word)
         return { stackText = word, stackFont = word .. " font", stackSize = word .. " size",
             stackColor = word .. " color", stackOutline = word .. " outline", stackShadow = word .. " shadow",
-            stackAnchor = word .. " anchor", stackX = word .. " X", stackY = word .. " Y" }
+            stackShadowColor = word .. " shadow color", stackShadowX = word .. " shadow X",
+            stackShadowY = word .. " shadow Y", stackAnchor = word .. " anchor", stackX = word .. " X", stackY = word .. " Y" }
     end
     local function LabelLook(suf)
         return { "labelFont" .. suf, "labelSize" .. suf, "labelColor" .. suf, "labelAnchor" .. suf,

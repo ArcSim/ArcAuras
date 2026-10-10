@@ -971,13 +971,14 @@ function Options.TextureTrackRows(pg, ctx, trackVis, owner)
     -- count, a cooldown while ready, on cooldown or at a charge count. The
     -- count is one row: a comparison and typed counts, never a slider.
     local function Gated(r)
-        if Source(r) == "aura" then return (Store.Resolve(r, "texstate", "stackShow") or "any") ~= "any" end
-        return Source(r) == "spellCd" and r.driver.cdActive == "charges"
+        local s = Source(r)
+        if s == "aura" or s == "rules" then return (Store.Resolve(r, "texstate", "stackShow") or "any") ~= "any" end
+        return s == "spellCd" and r.driver.cdActive == "charges"
     end
     local whenVis = function()
         local r = Rec()
         local s = r and Source(r)
-        return vis() and (s == "aura" or s == "spellCd")
+        return vis() and (s == "aura" or s == "spellCd" or s == "rules")
     end
     AT.Section(pg, "When it shows", { visibleFn = whenVis })
     local showRow = AT.RowDropdown(pg, owner, "Picture shows",
@@ -1014,7 +1015,7 @@ function Options.TextureTrackRows(pg, ctx, trackVis, owner)
                 end
                 return out
             end
-            out[1] = { value = "up", text = "While the aura is up" }
+            out[1] = { value = "up", text = (Source(r) == "rules") and "While it is active" or "While the aura is up" }
             if r and (S.TexStackGate(r) or Gated(r)) then out[2] = { value = "count", text = "At a stack count" } end
             return out
         end,

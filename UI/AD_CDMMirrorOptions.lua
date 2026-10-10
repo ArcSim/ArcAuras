@@ -93,12 +93,68 @@ function MO.Say(text)
 end
 
 function MO.Pick()
-    local rec, why = NS.CDMMirror.Build()
-    if rec then
-        NS.Options.OpenLayout(rec)
+    local why = NS.CDMMirror.Check()
+    if why then
+        MO.Say(MO.SAY[why] or MO.SAY.read)
         return
     end
-    MO.Say(MO.SAY[why] or MO.SAY.read)
+    MO.AskLook(function(look)
+        local rec, why2 = NS.CDMMirror.Build(look)
+        if rec then
+            NS.Options.OpenLayout(rec)
+            MO.OfferOff()
+            return
+        end
+        MO.Say(MO.SAY[why2] or MO.SAY.read)
+    end)
+end
+
+-- Before a build: the Cooldown Manager's look or ours, off unless picked. Two
+-- buttons and no Escape: a popup's Escape answers as its second button.
+MO.LOOK_POPUP = "ARCAURAS_CDM_LOOK"
+MO.LOOK_TEXT = "Give the new icons the Cooldown Manager's look: its rounded corners, border and shadow?\n\n"
+    .. "Any icon's Appearance > Look switches it later."
+function MO.AskLook(onPick)
+    if not (StaticPopupDialogs and StaticPopup_Show) then
+        onPick(false)
+        return
+    end
+    local d = StaticPopupDialogs[MO.LOOK_POPUP] or {
+        button1 = "Its look", button2 = "Arc Auras look", timeout = 0, whileDead = true, hideOnEscape = false,
+        preferredIndex = 3,
+    }
+    StaticPopupDialogs[MO.LOOK_POPUP] = d
+    d.text = MO.LOOK_TEXT
+    -- the next frame, so the next question can take a popup of its own
+    d.OnAccept = function() C_Timer.After(0, function() onPick(true) end) end
+    d.OnCancel = function(_, _, reason)
+        if reason == "clicked" then C_Timer.After(0, function() onPick(false) end) end
+    end
+    StaticPopup_Show(MO.LOOK_POPUP)
+end
+
+-- After a build, while the game's own Cooldown Manager is on: one question,
+-- turn it off now? Yes is Settings > Cooldown Manager's own switch.
+MO.OFF_POPUP = "ARCAURAS_CDM_OFF"
+MO.OFF_TEXT = "Your Cooldown Manager layout is ready. Turn off the game's own Cooldown Manager now?\n\n"
+    .. "Settings > Cooldown Manager turns it back on."
+function MO.CDMOn()
+    local v = C_CVar and C_CVar.GetCVar and C_CVar.GetCVar("cooldownViewerEnabled")
+    return v ~= nil and v ~= "0"
+end
+function MO.OfferOff()
+    if not (MO.CDMOn() and StaticPopupDialogs and StaticPopup_Show) then return end
+    local d = StaticPopupDialogs[MO.OFF_POPUP] or {
+        button1 = "Turn it off", button2 = "Keep it", timeout = 0, whileDead = true, hideOnEscape = true,
+        preferredIndex = 3,
+    }
+    StaticPopupDialogs[MO.OFF_POPUP] = d
+    d.text = MO.OFF_TEXT
+    d.OnAccept = function()
+        C_CVar.SetCVar("cooldownViewerEnabled", "0")
+        if NS.LayoutEngine and NS.LayoutEngine.QueueRebuild then NS.LayoutEngine.QueueRebuild() end
+    end
+    StaticPopup_Show(MO.OFF_POPUP)
 end
 
 MO.entry = {
@@ -107,5 +163,7 @@ MO.entry = {
     draw = function(stage) MO.Draw(stage) end,
     pick = function() MO.Pick() end,
     avail = function() return NS.CDMMirror ~= nil and NS.CDMMirror.Available() end,
+    -- right after the templates, ahead of Empty and Import
+    lead = true,
 }
 NS.NewLayout.AddOwnCard(MO.entry)

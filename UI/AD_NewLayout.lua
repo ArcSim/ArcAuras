@@ -41,8 +41,9 @@ function NL.AddSpotlight(t)
     NL.SPOTLIGHT[#NL.SPOTLIGHT + 1] = t
 end
 
--- Cards other files add under "Start blank or import" (an importer): the card
--- entry plus an `avail` test, read once when the window builds.
+-- Cards other files add to the start row (an importer): the card entry plus an
+-- `avail` test, read once when the window builds; `lead` puts one right after
+-- the templates, the rest go after Import.
 NL.EXTRA = {}
 
 function NL.AddOwnCard(entry)
@@ -148,6 +149,16 @@ function NL.DrawImport(stage)
     Bar(44, 2, cx - 22, 48, COL.dim)
     Bar(2, 10, cx - 22, 38, COL.dim)
     Bar(2, 10, cx + 20, 38, COL.dim)
+end
+
+-- An importer's source on the left of its card's picture: that addon's own
+-- icon, in the place the drawn source box takes on other cards.
+function NL.SourceIcon(stage, path)
+    local t = stage:CreateTexture(nil, "ARTWORK")
+    t:SetTexture(path)
+    t:SetSize(44, 44)
+    t:SetPoint("TOPLEFT", stage, "TOPLEFT", NL.STAGE_W / 2 - 66, -(NL.STAGE_H - 44) / 2)
+    return t
 end
 
 -- Rest and hover looks: the theme's cyan edge only under the mouse.
@@ -268,7 +279,9 @@ function NL.MakeCard(parent, entry)
     c.title:SetPoint("TOPLEFT", box, "BOTTOMLEFT", 2, -9)
     c.title:SetPoint("TOPRIGHT", box, "BOTTOMRIGHT", -2, -9)
     c.title:SetJustifyH("LEFT")
-    c.title:SetWordWrap(false)
+    -- a long title wraps onto a second line rather than being cut off; the
+    -- description follows it down
+    c.title:SetWordWrap(true)
     c.title:SetText(entry.title)
     c.desc = c:CreateFontString(nil, "OVERLAY")
     c.desc:SetFont(NS.AT.FONT, 11, "")
@@ -403,28 +416,34 @@ function NL.Fill(pane)
     pg:Show()
     NL.pg = pg
     -- the packs the player has, and their updates, are on Home (UI\AD_Home.lua)
+    -- Every way to start, in one row on top: the templates, a card another file
+    -- puts first (lead: the Cooldown Manager's), an empty layout, an import, then
+    -- the other importers. The packs follow, in a fold the player can shut.
     AT.Section(pg, "Start from a template")
-    NL.tplRow = NL.CardRow(pg, NL.Cards(NL.TEMPLATES))
+    local start = NL.Cards(NL.TEMPLATES)
+    local rest = {}
+    for _, e in ipairs(NL.EXTRA) do
+        if not e.avail or e.avail() then
+            if e.lead then start[#start + 1] = e else rest[#rest + 1] = e end
+        end
+    end
+    start[#start + 1] = { title = "Empty Layout", desc = "A blank layout. Add your own groups, icons and bars.",
+        draw = NL.DrawEmpty, pick = function() O.OpenLayout(S.NewLayout()) end }
+    start[#start + 1] = { title = "Import a Layout", desc = "Paste a layout someone shared with you.",
+        draw = NL.DrawImport, pick = function() O.Select("ie") end }
+    for _, e in ipairs(rest) do start[#start + 1] = e end
+    NL.tplRow = NL.CardRow(pg, start)
+    -- the other files' cards look for themselves here
+    NL.ownRow = NL.tplRow
     local spot = NL.Cards(NL.SPOTLIGHT)
     NL.spotRow = nil
-    AT.Section(pg, "Layout Packs")
+    AT.Section(pg, "Layout Packs", { collapsible = true, store = S.UI() })
     if #spot > 0 then
         NL.spotRow = NL.CardRow(pg, spot)
     else
         -- no packs for this game yet (retail): the invite
         AT.RowDesc(pg, "No layout packs here yet. Made a layout others would like? Post it with a screenshot on the Arc UI Discord to be featured here.", 34)
     end
-    AT.Section(pg, "Start blank or import")
-    local own = {
-        { title = "Empty Layout", desc = "A blank layout. Add your own groups, icons and bars.",
-          draw = NL.DrawEmpty, pick = function() O.OpenLayout(S.NewLayout()) end },
-        { title = "Import a Layout", desc = "Paste a layout someone shared with you.",
-          draw = NL.DrawImport, pick = function() O.Select("ie") end },
-    }
-    for _, e in ipairs(NL.EXTRA) do
-        if not e.avail or e.avail() then own[#own + 1] = e end
-    end
-    NL.ownRow = NL.CardRow(pg, own)
     AT.LayoutPage(pg)
 end
 

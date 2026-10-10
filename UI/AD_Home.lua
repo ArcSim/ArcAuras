@@ -1737,12 +1737,15 @@ function HM.Fill(pane, header)
     HM.pg = pg
     HM.state = HM.Read()
     HM.HeroRow(pg)
+if Options.BuildYield then Options.BuildYield() end
     HM.TilesRow(pg)
+if Options.BuildYield then Options.BuildYield() end
     HM.MainRow(pg)
     -- an edit anywhere redraws the layout pictures the next time Home shows
     if NS.Events and NS.Events.OnMessage then
         NS.Events.OnMessage("AD_DIRTY", "adhome", function() HM.gen = HM.gen + 1 end)
     end
+if Options.BuildYield then Options.BuildYield() end
     AT.LayoutPage(pg)
 end
 

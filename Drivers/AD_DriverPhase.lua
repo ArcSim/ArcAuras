@@ -20,10 +20,20 @@ PH.buttons = {}   -- [iconId] = the icon's button, kept across a re-attach
 PH.armed = false
 
 -- the overlay table and its source when it is not the aura's, else nil
+-- (spell, item and trinket icons); an aura with its totem over it
+-- (overlay.totem: the aura driver runs the aura) runs the totem here, and an
+-- aura icon that shows its totem first (driver.totem) does too. A totem
+-- before any aura is the Cooldown Manager's order.
 function PH.Source(rec)
-    local ov = rec and rec.kind == "spell" and rec.driver and rec.driver.overlay
+    if rec and rec.kind == "aura" then
+        if type(rec.driver) == "table" and rec.driver.totem == true then return "totem", rec.driver end
+        return nil
+    end
+    local ok = rec and (rec.kind == "spell" or rec.kind == "item" or rec.kind == "trinket")
+    local ov = ok and rec.driver and rec.driver.overlay
     if not (type(ov) == "table" and ov.on == true) then return nil end
     if ov.source == "totem" or ov.source == "cast" then return ov.source, ov end
+    if ov.totem == true then return "totem", ov end
     return nil
 end
 
@@ -33,16 +43,36 @@ local function Num(v)
     return nil
 end
 
+-- The spell an icon stands for: a spell icon's own, an item's or a trinket's
+-- use spell (the item it shows, the trinket worn now). Item reads are plain.
+function PH.OwnSpell(rec)
+    local d = rec and rec.driver
+    if not d then return nil end
+    if rec.kind == "spell" then return Num(d.spellID) end
+    if rec.kind == "aura" then return Num(d.spellID) end
+    local iid
+    if rec.kind == "item" then
+        local DC = NS.DriverCooldown
+        iid = (DC and DC.LiveItem and DC.LiveItem(rec)) or Num(d.itemID)
+    elseif rec.kind == "trinket" and GetInventoryItemID then
+        iid = GetInventoryItemID("player", d.slotID or 13)
+    end
+    if not (iid and C_Item and C_Item.GetItemSpell) or (issecretvalue and issecretvalue(iid)) then return nil end
+    local _, sid = C_Item.GetItemSpell(iid)
+    if issecretvalue and issecretvalue(sid) then return nil end
+    return Num(sid)
+end
+
 -- The spell whose cast or totem drives the phase: its own pick, else the icon's.
 function PH.SpellOf(rec, ov)
     local list = type(ov.spells) == "table" and ov.spells or nil
-    return Num(list and list[1]) or Num(rec.driver and rec.driver.spellID)
+    return Num(list and list[1]) or PH.OwnSpell(rec)
 end
 
 -- The spells that start the set duration: its own list, else the icon's.
 function PH.StartSpells(rec, ov)
     if type(ov.spells) == "table" and #ov.spells > 0 then return ov.spells end
-    return { rec.driver and rec.driver.spellID }
+    return { PH.OwnSpell(rec) }
 end
 
 function PH.EndSpells(ov)
@@ -82,9 +112,22 @@ function PH.Style(e)
     if not (b and e.holder) then return end
     local _, ov = PH.Source(e.rec)
     if not ov then return end
-    NS.DriverAura.AnchorButton(b, e.holder, 1)
-    local id = Store.RecordSpellID(e.rec.driver, PH.SpellOf(e.rec, ov))
-    local tex = id and C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(id)
+    -- one rung over the aura's buttons when they share the icon (a spell's ride
+    -- one up, a two-unit icon lifts its top one), still under the texts
+    local DA = NS.DriverAura
+    local lift = 1
+    if DA.ShapeFor and DA.ShapeFor(e.rec) then
+        lift = ((e.rec.kind ~= "aura") and 2 or 1) + ((DA.Rise and DA.Rise(e.rec)) or 0)
+    end
+    DA.AnchorButton(b, e.holder, lift)
+    -- a spell's art from the spell it follows; an item or trinket keeps its own
+    local tex
+    if e.rec.kind == "spell" then
+        local id = Store.RecordSpellID(e.rec.driver, PH.SpellOf(e.rec, ov))
+        tex = id and C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(id)
+    else
+        tex = Factory.GetTexture(e.rec)
+    end
     if tex then b._adIcon:SetTexture(tex) end
     local w, h = e.holder:GetSize()
     if type(w) ~= "number" or (issecretvalue and issecretvalue(w)) or w <= 0 then w = 36 end
@@ -185,9 +228,14 @@ function PH.TrackTotem(e)
     local DT = NS.DriverTotem
     if not (sid and DT) then return end
     local key = "adphase" .. tostring(e.rec.id)
-    if e.pseudo and e.pseudo.driver.spellID == sid then return end -- raw-id: the same pick, not a match
+    -- its own spell brings the icon's listed ones, as a slot may carry a linked spell
+    local list = not (type(ov.spells) == "table" and #ov.spells > 0) and type(ov.spellIDs) == "table" and ov.spellIDs or nil
+    if e.pseudo and e.pseudo.driver.spellID == sid then -- raw-id: the same pick, not a match
+        e.pseudo.driver.spellIDs = list
+        return
+    end
     -- re-pointed under the same key: no detach, so the slots are not re-read
-    e.pseudo = { id = key, driver = { spellID = sid } }
+    e.pseudo = { id = key, driver = { spellID = sid, spellIDs = list } }
     DT.Attach(e.pseudo)
 end
 
@@ -215,6 +263,9 @@ function PH.OnTotems()
     for _, e in pairs(PH.entries) do
         if e.src == "totem" then PH.FeedTotem(e) end
     end
+    -- a Dynamic aura group's totem row lines up what is down (Drivers\AD_DriverAuraRows.lua)
+    local AR = NS.DriverAuraRows
+    if AR and AR.PackAllTotems then AR.PackAllTotems() end
 end
 
 -- Attach

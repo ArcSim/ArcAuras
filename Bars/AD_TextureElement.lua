@@ -52,7 +52,39 @@ function TP.FillMode(rec)
 end
 
 function TP.ByStacks(rec)
-    return TP.FillMode(rec) and TP.Source(rec) == "aura" and R(rec, "texlook", "fillBy") == "stacks"
+    local s = TP.Source(rec)
+    return TP.FillMode(rec) and (s == "aura" or s == "rules") and R(rec, "texlook", "fillBy") == "stacks"
+end
+
+-- A custom item's stacks, plain: the count, and a stack fill's top (Full at,
+-- else its Max stacks, else the count).
+function TP.RuleStacks(e)
+    local CU = NS.DriverCustom
+    local st = CU and CU.Get and CU.Get(e.rec.id)
+    local n = (st and CU.ShownCount) and CU.ShownCount(st) or 0
+    local top = math.floor(tonumber(R(e.rec, "texlook", "fillMax")) or 0)
+    if top <= 0 then top = math.floor(tonumber(e.rec.driver and e.rec.driver.maxStacks) or 0) end
+    if top <= 0 then top = math.max(n, 1) end
+    return n, top
+end
+
+-- The stack picture a custom item's count has reached (the whole picture):
+-- each from its count on, the main one below the first. Dressed on a change.
+function TP.RuleBand(e, n, edit)
+    local rec = e.rec
+    local k, best = 0, 0
+    if TP.Mode(rec) == "show" and not edit then
+        local bands = math.max(0, math.min(4, math.floor(tonumber(R(rec, "texstate", "stackBands")) or 0)))
+        for i = 1, bands do
+            local f = math.max(1, math.floor(tonumber(R(rec, "texstate", "sb" .. i .. "From")) or (i + 1)))
+            if n >= f and f > best then best, k = f, i end
+        end
+    end
+    if e.tpBandK == k then return end
+    e.tpBandK = k
+    local w, h = TP.FrameSize(e)
+    local over = (k > 0) and { pic = TP.PictureOf(rec, k), color = R(rec, "texstate", "sb" .. k .. "Color") } or nil
+    TP.Dress(e.tpPic, rec, false, e.tpPicFrame, w, h, over)
 end
 
 -- The spell a cooldown picture follows: the rank you know, then its override,
@@ -966,6 +998,17 @@ function TP.StyleButton(e, sub)
             end
         end
     end
+    -- The dim copy rides the button too: the engine shows it with the aura and
+    -- hides it without, in combat, nothing read. Kept while not active, ours
+    -- on the host draws it instead (TP.ShowDimCopy).
+    local dimOn = R(rec, "texlook", "bgShow") == true and R(rec, "texlook", "bgInactive") ~= true
+    if dimOn then
+        sub.dim = sub.dim or b:CreateTexture(nil, "BACKGROUND", nil, 1)
+        TP.Dress(sub.dim, rec, true, b, W, H)
+        sub.dim:Show()
+    elseif sub.dim then
+        sub.dim:Hide()
+    end
     TP.Motion(pf, rec, true, true)
     -- the engine's bindings, handed over again only when they changed
     local DIR = Enum and Enum.StatusBarTimerDirection
@@ -1408,6 +1451,18 @@ function TP.CountGate(e, W, H, edit)
     return function(owner) return TP.WindowMask(owner, "c", fill, lo, hi, W, M) end
 end
 
+-- The dim copy on our host: with the picture while it is active, always with
+-- "Keep the dim copy while not active", and while you place it. An aura's
+-- picture shows on the engine's button, so its dim copy rides that button
+-- (TP.StyleButton) and ours shows only when kept.
+function TP.ShowDimCopy(e, active, edit)
+    local rec = e.rec
+    local on = R(rec, "texlook", "bgShow") == true
+    local keep = R(rec, "texlook", "bgInactive") == true
+    e.tpDimActive = active
+    e.tpBg:SetShown(on and (keep or edit or active == true))
+end
+
 -- Paints a cooldown or rule picture: the whole picture while active, or the
 -- fill running with its timer (full with nothing running but active, empty
 -- when not), its time-left copy and countdown. While you place it (edit mode)
@@ -1418,10 +1473,13 @@ local function PaintPicture(e)
     local edit = K.IsEditMode()
     if s ~= "spellCd" then e.tpCountBar:Hide() end
     if s == "power" or s == "health" then
+        -- a value's picture is behind its own gate: the copy stays as the empty part
+        TP.ShowDimCopy(e, true, edit)
         TP.PaintValue(e, edit)
         return
     end
     if s == "aura" then
+        TP.ShowDimCopy(e, false, edit)
         -- the engine draws the live picture; ours stands in while you place it
         TP.SetMasks(e.tpPic, {})
         e.tpPic:SetShown(edit)
@@ -1432,12 +1490,25 @@ local function PaintPicture(e)
         return
     end
     local active, run = TP.StateOf(e)
+    -- a custom item's stacks are plain: its count gate, its stack pictures and a
+    -- fill by stacks read the count itself
+    local stacks, top
+    local byStacks = s == "rules" and TP.ByStacks(rec)
+    if s == "rules" then
+        stacks, top = TP.RuleStacks(e)
+        local lo, hi = TP.Gate(rec)
+        if lo and not (stacks >= lo and stacks <= hi) then active = false end
+        TP.RuleBand(e, stacks, edit)
+    end
     local frac = (run and not edit) and TP.OwnTimeFrac(e) or nil
     local W, H = TP.PlainSize(e)
     if frac and not (W and H) then frac = nil end
     local drain = (R(rec, "texlook", "fillMode") or "drain") == "drain"
     local gate, none = TP.CountGate(e, W, H, edit)
     if none then active = false end
+    -- a charge gate's window hides the picture by the count alone (secret in
+    -- instances): the copy follows the plain state, not that window
+    TP.ShowDimCopy(e, active, edit)
     local after, before
     if frac then
         local tb = e.tpTimeBar
@@ -1472,13 +1543,16 @@ local function PaintPicture(e)
                 for _, m in ipairs(list) do ml[#ml + 1] = m end
                 TP.SetMasks(mp, ml)
             end
-            if not (run and not edit and K.FeedStatusBarTimer(bar, run, true, drain)) then
+            if byStacks then
+                bar:SetMinMaxValues(0, top)
+                bar:SetValue(edit and top or ((active and math.min(stacks, top)) or 0))
+            elseif not (run and not edit and K.FeedStatusBarTimer(bar, run, true, drain)) then
                 bar:SetMinMaxValues(0, 1)
                 bar:SetValue((active or edit) and 1 or 0)
             end
         end
         if not frac then e.tpBarT:Hide() end
-        e.tpRunning = run ~= nil and not edit
+        e.tpRunning = run ~= nil and not edit and not byStacks
     else
         e.tpBar:Hide()
         e.tpBarT:Hide()
@@ -1806,8 +1880,11 @@ function TP.Styled(e)
     shell.sheen:Hide()
     local w, h = TP.FrameSize(e)
     TP.Dress(e.tpBg, rec, true, e.tpHost, w, h)
-    e.tpBg:SetShown(R(rec, "texlook", "bgShow") == true)
+    -- as the last paint left it (a restyle is no state change)
+    TP.ShowDimCopy(e, e.tpDimActive, K.IsEditMode())
     TP.Dress(e.tpPic, rec, false, e.tpPicFrame, w, h)
+    -- the main picture again: a custom item's stack picture is dressed anew
+    e.tpBandK = 0
     local tcol = R(rec, "texstate", "timeColor") or { 1, 0.25, 0.25, 1 }
     TP.Dress(e.tpPicT, rec, false, e.tpPicFrame, w, h, { color = tcol })
     TP.DressBar(e.tpBar, rec)

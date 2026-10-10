@@ -218,6 +218,17 @@ function Driver.GlowLaneOK(rec)
     return true
 end
 
+-- The icons that can show something over their cooldown ("On this icon"):
+-- spells, and items and trinkets (their use spell stands in for the spell).
+local OVERLAY_KINDS = { spell = true, item = true, trinket = true }
+Driver.OVERLAY_KINDS = OVERLAY_KINDS
+
+-- A spell icon's aura overlay draws glow 1 alone, on the overlay's button;
+-- Glow only in combat moves it onto a lane of its own.
+function Driver.OverlayGlowLaneOK(rec)
+    return IS_121 and rec ~= nil and OVERLAY_KINDS[rec.kind] == true and Driver.ShapeFor(rec) ~= nil
+end
+
 -- Missing and Always glows: an aura icon's holder draws them, or its Dynamic
 -- group's row, so a group member takes them too.
 function Driver.HolderGlowOK(rec)
@@ -283,10 +294,12 @@ end
 -- button keeps every glow with no gate.
 local function LaneIDs(rec, slot, row)
     slot = slot or 1
+    local overlay = false
     if row then
         if not Driver.HolderGlowOK(rec) then return nil end
     elseif not Driver.GlowLaneOK(rec) then
-        return nil
+        if slot ~= 1 or not Driver.OverlayGlowLaneOK(rec) then return nil end
+        overlay = true
     end
     local suf = (slot > 1) and tostring(slot) or ""
     local R = function(k) return Store.Resolve(rec, "auraActive", k .. suf) end
@@ -297,9 +310,11 @@ local function LaneIDs(rec, slot, row)
     -- a Missing or Always glow is the holder's, not a button's
     local when = R("activeGlowWhen")
     if when == "missing" or (when == "both" and not timed) then return nil end
-    local ids = TrackedIDs(rec.driver)
+    local d = Driver.ShapeFor(rec) or {}
+    local ids = TrackedIDs(d)
     local m, n = {}, 0
-    local pick = tonumber(R("activeGlowFor")) or 0
+    -- an overlay has no Glow for: its glow follows every id it tracks
+    local pick = overlay and 0 or (tonumber(R("activeGlowFor")) or 0)
     if pick > 0 then
         for _, id in ipairs(ids) do
             if Store.SameAura(pick, id) then
@@ -311,7 +326,7 @@ local function LaneIDs(rec, slot, row)
     if n == 0 or n == #ids then
         -- no pick, one the icon no longer tracks, or all of them
         if (slot == 1 or row) and R("activeGlowCombatOnly") ~= true and not timed then return nil end
-        m = IncludeMap(rec.driver)
+        m = IncludeMap(d)
     end
     return m
 end
@@ -364,20 +379,20 @@ local function OverlaySource(ov)
 end
 Driver.OverlaySource = OverlaySource
 
--- the aura shape an entry tracks: an aura icon's driver, a spell icon's
--- overlay while it is on and shows an aura, else nil
+-- the aura shape an entry tracks: an aura icon's driver, a spell, item or
+-- trinket icon's overlay while it is on and shows an aura, else nil
 local function ShapeFor(rec)
     if not rec then return nil end
     if rec.kind == "aura" then return rec.driver or {} end
-    local ov = rec.kind == "spell" and rec.driver and rec.driver.overlay
+    local ov = OVERLAY_KINDS[rec.kind] and rec.driver and rec.driver.overlay
     if type(ov) == "table" and ov.on == true and OverlaySource(ov) == "aura" then return ov end
     return nil
 end
 Driver.ShapeFor = ShapeFor
 
--- a spell icon whose overlay is on (any source) and can run on this client
+-- an icon whose overlay is on (any source) and can run on this client
 function Driver.OverlayOn(rec)
-    local ov = IS_121 and rec ~= nil and rec.kind == "spell" and rec.driver and rec.driver.overlay
+    local ov = IS_121 and rec ~= nil and OVERLAY_KINDS[rec.kind] and rec.driver and rec.driver.overlay
     return type(ov) == "table" and ov.on == true
 end
 
@@ -1052,12 +1067,13 @@ function Driver.Attach(rec, f)
     AttachEntry(rec, f, rec.driver or {})
 end
 
--- A spell icon's aura overlay, called after the cooldown driver's attach; it
--- never sets the holder's state. Off: park the entry and zero its container.
+-- A spell, item or trinket icon's aura overlay, called after the cooldown
+-- driver's attach; it never sets the holder's state. Off: park the entry and
+-- zero its container.
 function Driver.AttachOverlay(rec, f)
     if not IS_121 then return end
     local d = ShapeFor(rec)
-    if d and rec.kind == "spell" then
+    if d and OVERLAY_KINDS[rec.kind] then
         AttachEntry(rec, f, d)
         return
     end

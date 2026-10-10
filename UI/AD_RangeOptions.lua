@@ -37,6 +37,7 @@ function Options.RangeBandRows(pg, ctx, vis, owner)
             local b = Band(i)
             return b and b.checks and b.checks[j]
         end
+        if Options.BuildYield then Options.BuildYield() end
         local row = AT.AddRow(pg, 24, function() return vis() and Check() ~= nil end)
         local lbl = AT.RowLabel(row, "Check " .. j)
         local kind = AT.MakeDropdown(owner, row, 150,

@@ -953,7 +953,7 @@ function Options.TextTrackRows(pg, ctx, trackVis, owner, kit)
         function(v)
             local n = tonumber(v)
             if Trim(v) == "" then SetCustom("duration", nil) return end
-            if n and n > 0 then SetCustom("duration", math.min(3600, n)) end
+            if n and n > 0 then SetCustom("duration", math.min(NS.Schema.CUSTOM_MAX_SECONDS or 7200, n)) end
         end,
         rulesVis, "How long the timer runs when a rule starts it with no seconds of its own. Enter applies it.",
         "Set per rule")
@@ -1084,7 +1084,7 @@ function Options.TextTrackRows(pg, ctx, trackVis, owner, kit)
         function(v)
             local n = tonumber(v)
             if Trim(v) == "" then SetTex("duration", nil) return end
-            if n and n > 0 then SetTex("duration", math.min(3600, n)) end
+            if n and n > 0 then SetTex("duration", math.min(NS.Schema.CUSTOM_MAX_SECONDS or 7200, n)) end
         end,
         texVis, "How long the timer runs when a rule starts it with no seconds of its own. Enter applies it.",
         "Set per rule")

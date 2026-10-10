@@ -8,7 +8,7 @@ local AT = {}
 -- Other addons carry copies of this file, generated from it by the
 -- arc-theme-sync tool, which compares this number to find stale copies.
 -- Bump it on every change and never edit a copy.
-AT.VERSION = 28
+AT.VERSION = 29
 
 -- The addon this copy loads in: a palette's font file sits in its folder.
 local THEME_ADDON = ...
@@ -291,7 +291,9 @@ end
 -- Panel scale: a personal multiplier on top of auto-fit. It scales the whole
 -- window, so text and controls grow together and the layout holds. The 0.85
 -- default sits a touch below the auto-fit target.
-AT.uiScale = 0.85
+AT.UI_SCALE_DEFAULT = 0.85
+AT.UI_SCALE_MIN = 0.2
+AT.uiScale = AT.UI_SCALE_DEFAULT
 AT.windows = AT.windows or {}
 
 -- Auto-fit. At one unit per physical pixel a window covers designH / physH of
@@ -315,8 +317,12 @@ function AT.FitScale(designW, designH)
     local ref = designH > AT.REF_H and designH or AT.REF_H
     local s = (AT.TARGET_H * uh / ref) * (AT.uiScale or 1)
     -- Floor at the pixel-perfect scale first, then cap: flooring after the
-    -- caps could push an oversized window back past the screen.
+    -- caps could push an oversized window back past the screen. A panel scale
+    -- below the default lowers the floor with it, so a player who asks for a
+    -- small window gets one; at the default and above the floor is unchanged.
     local floor = AT.Px(UIParent)
+    local u = AT.uiScale or 1
+    if u < AT.UI_SCALE_DEFAULT then floor = floor * u / AT.UI_SCALE_DEFAULT end
     if s < floor then s = floor end
     local capH = AT.MAX_H * uh / designH
     if s > capH then s = capH end
@@ -355,7 +361,7 @@ end
 
 function AT.SetUIScale(v)
     v = tonumber(v) or 1
-    if v < 0.7 then v = 0.7 elseif v > 2 then v = 2 end
+    if v < AT.UI_SCALE_MIN then v = AT.UI_SCALE_MIN elseif v > 2 then v = 2 end
     AT.uiScale = v
     for _, w in ipairs(AT.windows) do
         if w and w.SetScale then

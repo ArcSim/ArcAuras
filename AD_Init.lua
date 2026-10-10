@@ -121,6 +121,11 @@ local function Slash(msg)
             or (def and (def.name .. " count reset.")) or ("no Arc Proc called " .. tracker .. ".")))
         return
     end
+    -- "/arcauras mirror": the Cooldown Manager against its mirrored layout
+    if msg == "mirror" and NS.MirrorCheck then
+        NS.MirrorCheck.Open()
+        return
+    end
     -- "/arcui2 proctracker" opens the ProcTracker import (retail); ArcUI
     -- ProcTracker's own pointer runs it.
     local PW = NS.Options and NS.Options.ImportPT

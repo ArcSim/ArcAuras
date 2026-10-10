@@ -289,14 +289,15 @@ function M.Harmful(id)
     return M.Plain(v) and v == true
 end
 
--- The aura an icon shows, as Blizzard decides it: your own aura on you first, else on your
--- target, matching linked, tooltip, override and spell IDs, never with HideAura. The
--- selfAura / hasAura hints (unread by Blizzard's Lua) say which cooldowns ever have one.
--- Returns NS.DriverAura's shape: the entry's spell first, then the rest, as a set.
-function M.AuraFor(info, tracked)
+-- The aura an icon shows, as Blizzard decides it on every icon (CooldownViewerItemData
+-- GetAuraData): your own buff on you first, else your own aura on your target, matching
+-- linked, tooltip, override and spell IDs, never with HideAura. The selfAura / hasAura
+-- hints are not read: Blizzard's Lua never reads them either. The target lane is a
+-- debuff for a harmful spell (Blizzard picks by the target's side; a helpful spell's aura
+-- sits on a friend, a harmful one's on an enemy). Returns NS.DriverAura's shape: the
+-- entry's spell first, then the rest, as a set.
+function M.AuraFor(info)
     if type(info) ~= "table" or M.HasFlag(info.flags, M.Flag("HideAura")) then return nil end
-    local onYou, onTarget = info.selfAura == true, info.hasAura == true
-    if not tracked and not onYou and not onTarget then return nil end
     local ids, seen = {}, {}
     local lists = { { info.spellID }, info.linkedSpellIDs or {}, { info.overrideTooltipSpellID }, { info.overrideSpellID } }
     for _, l in ipairs(lists) do
@@ -310,26 +311,22 @@ function M.AuraFor(info, tracked)
     end
     if #ids == 0 then return nil end
     local harmful = M.Harmful(info.spellID)
-    local d = { caster = "mine", spellID = ids[1], spellIDs = (#ids > 1) and ids or nil }
-    if onYou and not onTarget then
-        d.auraType, d.unit = "buff", "player"
-    elseif onTarget and not onYou and harmful then
-        d.auraType, d.unit = "debuff", "target"
-    else
-        d.auraType, d.unit, d.unit2 = harmful and "debuff" or "buff", "player", "target"
-    end
-    return d
+    return { caster = "mine", spellID = ids[1], spellIDs = (#ids > 1) and ids or nil,
+        auraType = harmful and "debuff" or "buff", unit = "player", unit2 = "target" }
 end
 
--- what Arc Auras builds for one entry in its merged category
+-- What Arc Auras builds for one entry in its merged category. Blizzard shows a
+-- totem from the entry's spell (its guardian too) ahead of any aura on every
+-- icon, matched live by the slot's spell, so every icon carries its totem
+-- first (Drivers\AD_DriverPhase.lua); a bar shows its aura only.
 function M.PieceFor(info, cat)
     if type(info) ~= "table" then return nil end
     local tracked = M.IsTracked(cat)
+    local bar = cat == M.Cat("TrackedBar")
     if tracked then
-        local kind = cat == M.Cat("TrackedBar") and "aurabar" or "aura"
-        local aura = M.AuraFor(info, true)
+        local aura = M.AuraFor(info)
         if not aura then return nil end
-        return { kind = kind, aura = aura }
+        return { kind = bar and "aurabar" or "aura", aura = aura, totem = not bar }
     end
     if type(info.equipSlot) == "number" then
         return { kind = "trinket", slot = info.equipSlot }
@@ -338,7 +335,9 @@ function M.PieceFor(info, cat)
         return { kind = "item", spellCategoryID = info.spellCategoryID, what = M.ITEM_CATEGORY[info.spellCategoryID] }
     end
     if type(info.spellID) ~= "number" then return nil end
-    return { kind = "spell", spellID = info.spellID, aura = M.AuraFor(info, false) }
+    -- HideAura hides both: Blizzard checks the totem inside its aura test
+    local aura = M.AuraFor(info)
+    return { kind = "spell", spellID = info.spellID, aura = aura, totem = aura ~= nil }
 end
 
 -- the group buffs Blizzard offers, minus the ones the active layout hides
@@ -376,7 +375,12 @@ M.VIEWERS = {
     { cat = "TrackedBuff", frame = "BuffIconCooldownViewer", base = 40, name = "Tracked Buffs", groupKind = "aura", y = -365 },
     { cat = "TrackedBar", frame = "BuffBarCooldownViewer", base = 30, name = "Tracked Bars", bars = true, y = -410 },
 }
--- retail's own stand-in items for its healthstone categories; a bag item with none is skipped
+-- Our picture size per bar at the Cooldown Manager's scale 1 (its own are
+-- 46, 26 and 36): Essential a little smaller, Utility and Tracked Buffs
+-- alike. Its gaps are kept.
+M.SIZE = { Essential = 40, Utility = 32, TrackedBuff = 32 }
+-- retail's own stand-in items for its healthstone categories; any other category starts
+-- on the item that last used it, or none until one does
 M.ITEM_FALLBACK = { [1711] = 5512, [2566] = 224464 }
 
 function M.Available()
@@ -447,6 +451,8 @@ function M.Geometry(v, ids)
     local n = math.max(1, #ids)
     if limit < 1 then limit = n end
     local per = math.max(1, math.min(limit, n))
+    -- never more than two rows: past that a row takes more icons
+    if math.ceil(n / per) > M.MAX_LINES then per = math.ceil(n / M.MAX_LINES) end
     local lines = math.ceil(n / per)
     local want = {}
     for _, id in ipairs(ids) do want[id] = true end
@@ -462,7 +468,7 @@ function M.Geometry(v, ids)
         g.pitch = v.base * scale + pad - 2
         g.up = (not horizontal) and right
     else
-        g.size = M.Clamp(math.floor((v.base - 4) * scale + 0.5), 8, 128)
+        g.size = M.Clamp(math.floor((M.SIZE[v.cat] or (v.base - 4)) * scale + 0.5), 8, 128)
         local pitch = v.base * scale + pad - 4
         if #icons >= 2 then
             local x1, y1 = M.Rect(icons[1])
@@ -473,7 +479,14 @@ function M.Geometry(v, ids)
                 if across < 1 and along > 0 then pitch = along end
             end
         end
-        g.spacing = M.Clamp(math.floor(pitch - g.size + 0.5), -20, 50)
+        -- its gap: the pitch less its own picture (the bar's icon less a 2-unit margin)
+        local art = math.floor((v.base - 4) * scale + 0.5)
+        g.spacing = M.Clamp(math.floor(pitch - art + 0.5), -20, 50)
+        -- in the Cooldown Manager look the mask keeps that margin: the box is the
+        -- picture and its margin, the gap less it
+        local margin = math.floor(4 * scale + 0.5)
+        g.lookSize = M.Clamp(g.size + margin, 8, 128)
+        g.lookSpacing = M.Clamp(g.spacing - margin, -20, 50)
         if horizontal then
             g.cols, g.rows = per, lines
             g.growthH, g.growthV = right and "RIGHT" or "LEFT", "DOWN"
@@ -520,7 +533,7 @@ function M.Plan(snap, merged)
         local pieces, ids = {}, {}
         for _, id in ipairs(M.Shown(snap, merged, M.Cat(v.cat))) do
             local p = M.PieceFor(snap.infos[id], merged.catOf[id])
-            if p and not (p.kind == "item" and not M.ITEM_FALLBACK[p.spellCategoryID]) then
+            if p then
                 pieces[#pieces + 1] = p
                 ids[#ids + 1] = id
             end
@@ -528,6 +541,23 @@ function M.Plan(snap, merged)
         if #pieces > 0 then plan[#plan + 1] = { viewer = v, pieces = pieces, ids = ids } end
     end
     return plan
+end
+
+-- the item that last started a category's cooldown, when the game says plainly
+function M.LastCategoryItem(cat)
+    local f = C_Spell and C_Spell.GetLastCategoryCooldownSource
+    if not f then return nil end
+    local _, iid = f(cat)
+    iid = M.Num(iid)
+    if iid and iid > 0 then return iid end
+    return nil
+end
+
+-- "Combat Potion" for category 4; "Item Category N" for one Blizzard has not named
+function M.ItemName(cat)
+    local what = M.ITEM_CATEGORY[cat]
+    if not what then return "Item Category " .. tostring(cat) end
+    return (what:gsub("(%a)(%a*)", function(a, b) return a:upper() .. b end))
 end
 
 function M.Copy(t)
@@ -543,35 +573,83 @@ function M.NewIconFor(p, groupId)
         if p.aura then
             d.overlay = M.Copy(p.aura)
             d.overlay.on = true
+            -- its totem first, then its aura
+            if p.totem then d.overlay.totem = true end
         end
         return S.NewIcon("spell", d, groupId, nil, M.NameOf(p.spellID) or ("Spell " .. p.spellID))
     end
     if p.kind == "aura" then
         local d = M.Copy(p.aura)
+        if p.totem then d.totem = true end
         return S.NewIcon("aura", d, groupId, nil, M.NameOf(d.spellID) or ("Aura " .. d.spellID))
     end
     if p.kind == "trinket" then
         return S.NewIcon("trinket", { slotID = p.slot }, groupId, nil, p.slot == 14 and "Trinket 2" or "Trinket 1")
     end
     if p.kind == "item" then
-        local iid = M.ITEM_FALLBACK[p.spellCategoryID]
-        local name = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(iid)
-        if type(name) ~= "string" or not M.Plain(name) then name = "Item " .. iid end
-        return S.NewIcon("item", { itemID = iid }, groupId, nil, name)
+        -- the category's item, as Blizzard's icon follows it (Drivers\AD_DriverCooldown.lua CategoryItem)
+        local cat = p.spellCategoryID
+        local iid = M.ITEM_FALLBACK[cat] or M.LastCategoryItem(cat)
+        return S.NewIcon("item", { category = cat, itemID = iid }, groupId, nil, M.ItemName(cat))
     end
     return nil
 end
 
+-- A group in the Cooldown Manager look (its icons the bar's whole size and
+-- spacing), centred in the column the layout stacks.
 function M.Arrange(g, geo, kind)
     local S = NS.Store
-    S.SetOverride(g, "arrangement", "iconWidth", geo.size)
-    S.SetOverride(g, "arrangement", "iconHeight", geo.size)
-    S.SetOverride(g, "arrangement", "spacing", geo.spacing)
+    S.SetOverride(g, "arrangement", "iconWidth", geo.useSize)
+    S.SetOverride(g, "arrangement", "iconHeight", geo.useSize)
+    S.SetOverride(g, "arrangement", "spacing", geo.useSpacing)
     S.SetOverride(g, "arrangement", "cols", geo.cols)
     if kind == "cooldown" then S.SetOverride(g, "arrangement", "rows", geo.rows) end
     S.SetOverride(g, "arrangement", "growthH", geo.growthH)
     S.SetOverride(g, "arrangement", "growthV", geo.growthV)
-    S.SetOverride(g, "arrangement", "alignment", geo.alignment)
+    S.SetOverride(g, "arrangement", "alignment", "center")
+    -- Tracked Buffs packs what is up (Dynamic); its totems line up over it
+    -- (Drivers\AD_DriverAuraRows.lua)
+    if kind == "aura" then S.SetOverride(g, "arrangement", "dynamicLayout", true) end
+end
+
+-- The Cooldown Manager's out-of-range look on a spell icon: its red tint and
+-- its dark overlay (CooldownViewer.lua 15-18, CooldownViewer.xml OutOfRange).
+M.RANGE_RED = { 0.64, 0.15, 0.15, 1 }
+function M.RangeLook(rec)
+    local S = NS.Store
+    S.SetOverride(rec, "states", "rangeTint", true)
+    S.SetOverride(rec, "states", "rangeTintColor", M.Copy(M.RANGE_RED))
+    S.SetOverride(rec, "states", "rangeShadow", true)
+end
+
+-- Where the layout puts its bars: one centred column just under the
+-- character, its top row 120 UI units down (unscaled: a screen many units
+-- tall would push it far down), Tracked Buffs on top, then Essential, then
+-- Utility, the Tracked Bars under them, each by its own height. A bar has two
+-- rows at most.
+M.STACK = { "TrackedBuff", "Essential", "Utility", "TrackedBar" }
+M.STACK_TOP, M.STACK_GAP = -120, 6
+M.MAX_LINES = 2
+
+-- a part's height in the column: its rows of icons, or its bars
+function M.PartHeight(part, geo)
+    if part.viewer.bars then
+        local n = #part.pieces
+        return n * geo.height + (n - 1) * math.max(0, geo.pitch - geo.height)
+    end
+    local rows = (part.viewer.groupKind == "aura" and geo.cols > 0) and math.ceil(#part.pieces / geo.cols)
+        or geo.rows or 1
+    return rows * geo.useSize + (rows - 1) * math.max(0, geo.useSpacing)
+end
+
+-- The sizes a group takes: in the Cooldown Manager look the bar's whole icon
+-- (its mask keeps the art's margin), else the art's own size.
+function M.UseLook(geo, look)
+    if geo.size then
+        geo.useSize = look and geo.lookSize or geo.size
+        geo.useSpacing = look and geo.lookSpacing or geo.spacing
+    end
+    return geo
 end
 
 -- Blizzard's "In Combat" bar: full opacity in combat, hidden out of it
@@ -588,7 +666,9 @@ function M.BuildBars(lay, part, geo, x, y)
     local made = 0
     for i, p in ipairs(part.pieces) do
         local a = p.aura
-        local d = { spellID = a.spellID, spellIDs = a.spellIDs, auraType = a.auraType, unit = a.unit, caster = a.caster }
+        -- a bar watches one unit: a debuff's target, else you
+        local unit = (a.auraType == "debuff") and "target" or "player"
+        local d = { spellID = a.spellID, spellIDs = a.spellIDs, auraType = a.auraType, unit = unit, caster = a.caster }
         local rec = S.NewBar(lay.id, "aura", d, M.NameOf(a.spellID) or ("Aura " .. a.spellID), "duration")
         if rec then
             made = made + 1
@@ -604,40 +684,67 @@ function M.BuildBars(lay, part, geo, x, y)
     return made
 end
 
+
+-- Whether a build would make anything: nil, or why not ("read" with its
+-- reason, "empty"). Nothing is written.
+function M.Check()
+    local snap = M.Read()
+    if not snap.complete then return "read", snap.why end
+    if #M.Plan(snap, M.Merge(snap)) == 0 then return "empty" end
+    return nil
+end
+
 -- "From my Cooldown Manager": a new layout with a group per bar holding the
--- spells it shows now, in its order, placed and sized like it. Returns the
--- layout and the count built, or nil and why ("read" with its reason, "empty").
-function M.Build()
+-- spells it shows now, in its order, placed and sized like it; look: every
+-- icon in the Cooldown Manager look. Returns the layout and the count built,
+-- or nil and why ("read" with its reason, "empty").
+function M.Build(look)
     local S = NS.Store
     if not (S and S.NewLayout and S.NewGroup and S.NewIcon and S.SetOverride) then return nil, "store" end
     local snap = M.Read()
     if not snap.complete then return nil, "read", snap.why end
     local plan = M.Plan(snap, M.Merge(snap))
     if #plan == 0 then return nil, "empty" end
+    local rank = {}
+    for i, cat in ipairs(M.STACK) do rank[cat] = i end
+    table.sort(plan, function(a, b) return (rank[a.viewer.cat] or 9) < (rank[b.viewer.cat] or 9) end)
     local lay = S.NewLayout("Cooldown Manager")
     lay.pos = { x = 0, y = 0 }
-    local h = M.Num(UIParent:GetHeight()) or 768
-    if h <= 0 then h = 768 end
+    local gap = M.STACK_GAP
+    local top
     local made = 0
     for _, part in ipairs(plan) do
         local v = part.viewer
-        local geo = M.Geometry(v, part.ids)
-        local x = geo.x or 0
-        local y = geo.y or math.floor(v.y * h / 1080 + 0.5)
+        local geo = M.UseLook(M.Geometry(v, part.ids), look)
+        local ph = M.PartHeight(part, geo)
+        -- the first part's first row sits at the column's top
+        if not top then
+            local first = v.bars and geo.height or geo.useSize
+            top = M.STACK_TOP + math.floor(first / 2 + 0.5)
+        end
+        local x, y = 0, math.floor(top - ph / 2 + 0.5)
+        top = top - ph - gap
         if v.bars then
-            made = made + M.BuildBars(lay, part, geo, x, y)
+            geo.up = false
+            made = made + M.BuildBars(lay, part, geo, x, math.floor(y + ph / 2 - geo.height / 2 + 0.5))
         else
-            local g = S.NewGroup(lay.id, v.name, v.groupKind)
+            local kind = v.groupKind
+            local g = S.NewGroup(lay.id, v.name, kind)
             if g then
                 g.pos = { x = x, y = y }
-                M.Arrange(g, geo, v.groupKind)
+                M.Arrange(g, geo, kind)
                 if geo.combatOnly then M.CombatOnly(g) end
                 for _, p in ipairs(part.pieces) do
                     local rec = M.NewIconFor(p, g.id)
                     if rec then
                         made = made + 1
-                        if p.kind == "aura" and geo.hideInactive then
-                            S.SetOverride(rec, "auraMissing", "showWhileMissing", false)
+                        if p.kind == "spell" then M.RangeLook(rec) end
+                        -- on each icon, so every switch that shows it reads on
+                        if look then S.SetOverride(rec, "appearance", "cdmLook", true) end
+                        -- Hide When Inactive: an aura leaves the packed row while missing;
+                        -- without it, it keeps its spot (Dynamic reads off unless set)
+                        if p.kind == "aura" then
+                            S.SetOverride(rec, "auraMissing", "showWhileMissing", not geo.hideInactive)
                         end
                     end
                 end

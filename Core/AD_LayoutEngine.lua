@@ -445,49 +445,97 @@ local function CellXY(ctx, vr, vc)
     return ctx.pad + vc * ctx.stepX, ctx.pad + vr * ctx.stepY
 end
 
+-- A one-row (or one-column) group's line widens its steps for a member wider
+-- (taller) than the slot by the static grid's cascade terms, so a full line
+-- lands on the static cells and a short one never overlaps. sizes, the steps'
+-- extras (cum) and each member's overhang (over); nil when nothing is bigger.
+local function LineCascade(ctx, items, horiz)
+    local slot = horiz and ctx.slotW or ctx.slotH
+    local sizes, any = {}, false
+    for i, it in ipairs(items) do
+        local sz = slot
+        if it.rec then
+            local w, h = MemberSize(it.rec, ctx.slotW, ctx.slotH)
+            sz = math.max(slot, Snap(horiz and w or h))
+        end
+        sizes[i] = sz
+        if sz > slot then any = true end
+    end
+    if not any then return nil end
+    local function Over(sz) return Snap(math.max(0, (sz - slot) / 2)) end
+    local cum, c = { 0 }, 0
+    for i = 2, #items do
+        local extra = (sizes[i - 1] + sizes[i]) / 2 - slot
+        if extra > 0 then c = c + Snap(extra) end
+        cum[i] = c
+    end
+    return { sizes = sizes, cum = cum, total = c, over = Over,
+        lo = Over(sizes[1]), hi = Over(sizes[#items]) }
+end
+
 -- Packs items along one visual row, left to right, against the aligned edge or
 -- centered. A full row lands on the static cells, so Dynamic never nudges it.
 -- Corners, as CellXY; centred, a block lands where a frame its size centred
 -- on the group's spot would (ctx.leanX / leanY, CenterLean): a spare pixel
--- falls right and below, as SnapPlacement's.
-local function PackRow(ctx, items, align, vr, out)
+-- falls right and below, as SnapPlacement's. line: the group is this one row,
+-- so its members' own widths and the static grid's row overhangs count. Each
+-- target is { x, y, overhang left, right, up, down }.
+local function PackRow(ctx, items, align, vr, out, line)
     local n = #items
     if n == 0 then return end
-    local span = n * ctx.stepX - ctx.spacingX
+    local lc = line and LineCascade(ctx, items, true)
+    local span = n * ctx.stepX - ctx.spacingX + (lc and lc.total or 0)
+    local lo, hi = lc and lc.lo or 0, lc and lc.hi or 0
     local x0
     if align == "left" then
-        x0 = ctx.pad
+        x0 = ctx.pad + lo
     elseif align == "right" then
-        x0 = ctx.contentW - ctx.pad - span
+        x0 = ctx.contentW - ctx.pad - hi - span
     else
+        local ext = lo + span + hi
         local px = UIPx()
-        local v = (ctx.contentW - span) / 2 + (ctx.leanX or 0)
-        x0 = px and PixRoundLeft(v, px) or FloorPx((ctx.contentW - span) / 2)
+        local v = (ctx.contentW - ext) / 2 + (ctx.leanX or 0)
+        x0 = (px and PixRoundLeft(v, px) or FloorPx((ctx.contentW - ext) / 2)) + lo
     end
     local _, y = CellXY(ctx, vr, 0)
+    local up, down = 0, 0
+    if line and ctx.cascade then
+        up, down = ctx.cascade.topOver or 0, ctx.cascade.bottomOver or 0
+        y = y + up
+    end
     for i, it in ipairs(items) do
-        out[it] = { x0 + (i - 1) * ctx.stepX, y }
+        local o = lc and lc.over(lc.sizes[i]) or 0
+        out[it] = { x0 + (i - 1) * ctx.stepX + (lc and lc.cum[i] or 0), y, o, o, up, down }
     end
 end
 
-local function PackCol(ctx, items, align, vc, out)
+local function PackCol(ctx, items, align, vc, out, line)
     local n = #items
     if n == 0 then return end
-    local span = n * ctx.stepY - ctx.spacingY
-    local y0   -- the block's top edge
+    local lc = line and LineCascade(ctx, items, false)
+    local span = n * ctx.stepY - ctx.spacingY + (lc and lc.total or 0)
+    local lo, hi = lc and lc.lo or 0, lc and lc.hi or 0
+    local y0   -- the first slot's top edge
     if align == "top" then
-        y0 = ctx.pad
+        y0 = ctx.pad + lo
     elseif align == "bottom" then
-        y0 = ctx.contentH - ctx.pad - span
+        y0 = ctx.contentH - ctx.pad - hi - span
     else
         -- measured from the bottom, where the lean is: the frame's sat dy low
+        local ext = lo + span + hi
         local px = UIPx()
-        local rest = ctx.contentH - span
-        y0 = px and (rest - PixRound(rest / 2 + (ctx.leanY or 0), px)) or FloorPx(rest / 2)
+        local rest = ctx.contentH - ext
+        y0 = (px and (rest - PixRound(rest / 2 + (ctx.leanY or 0), px)) or FloorPx(rest / 2)) + lo
     end
     local x = CellXY(ctx, 0, vc)
+    local left, right = 0, 0
+    if line and ctx.cascade then
+        left, right = ctx.cascade.leftOver or 0, ctx.cascade.rightOver or 0
+        x = x + left
+    end
     for i, it in ipairs(items) do
-        out[it] = { x, y0 + (i - 1) * ctx.stepY }
+        local o = lc and lc.over(lc.sizes[i]) or 0
+        out[it] = { x, y0 + (i - 1) * ctx.stepY + (lc and lc.cum[i] or 0), left, right, o, o }
     end
 end
 
@@ -561,9 +609,9 @@ local function DynTargets(group, ctx, align, shape)
         local vis = {}
         for i, m in ipairs(list) do vis[rev and (#list - i + 1) or i] = m end
         if shape == "horizontal" then
-            PackRow(ctx, vis, align, 0, out)
+            PackRow(ctx, vis, align, 0, out, true)
         else
-            PackCol(ctx, vis, align, 0, out)
+            PackCol(ctx, vis, align, 0, out, true)
         end
     end
     return out
@@ -573,9 +621,9 @@ end
 local function DynEmptyXY(ctx, align, shape)
     local tmp, lone = {}, {}
     if shape == "horizontal" then
-        PackRow(ctx, { lone }, align, 0, tmp)
+        PackRow(ctx, { lone }, align, 0, tmp, true)
     elseif shape == "vertical" then
-        PackCol(ctx, { lone }, align, 0, tmp)
+        PackCol(ctx, { lone }, align, 0, tmp, true)
     else
         local vc = (ctx.growthH == "LEFT") and (ctx.cols - 1) or 0
         local vr = (ctx.growthV == "UP") and (ctx.needRows - 1) or 0
@@ -589,25 +637,26 @@ local function DynEmptyXY(ctx, align, shape)
 end
 
 -- Shrink to content: the survivors' box, its top-left corner on the full grid
--- and its size.
+-- and its size. A member bigger than its slot reaches past it by its overhangs.
 local function DynBox(ctx, targets, align, shape)
     local x1, x2, y1, y2
     for _, t in pairs(targets) do
+        local l, r = t[1] - (t[3] or 0), t[1] + ctx.slotW + (t[4] or 0)
+        local u, d = t[2] - (t[5] or 0), t[2] + ctx.slotH + (t[6] or 0)
         if not x1 then
-            x1, x2, y1, y2 = t[1], t[1], t[2], t[2]
+            x1, x2, y1, y2 = l, r, u, d
         else
-            if t[1] < x1 then x1 = t[1] end
-            if t[1] > x2 then x2 = t[1] end
-            if t[2] < y1 then y1 = t[2] end
-            if t[2] > y2 then y2 = t[2] end
+            if l < x1 then x1 = l end
+            if r > x2 then x2 = r end
+            if u < y1 then y1 = u end
+            if d > y2 then y2 = d end
         end
     end
     if not x1 then
         x1, y1 = DynEmptyXY(ctx, align, shape)
-        x2, y2 = x1, y1
+        x2, y2 = x1 + ctx.slotW, y1 + ctx.slotH
     end
-    return x1 - ctx.pad, y1 - ctx.pad,
-        (x2 - x1) + ctx.slotW + 2 * ctx.pad, (y2 - y1) + ctx.slotH + 2 * ctx.pad
+    return x1 - ctx.pad, y1 - ctx.pad, (x2 - x1) + 2 * ctx.pad, (y2 - y1) + 2 * ctx.pad
 end
 
 -- Places a dynamic group's members, for the full rebuild and the state-edge
@@ -709,10 +758,12 @@ local function EnsureLayoutFrame(rec)
         f.drag:SetScript("OnDragStart", function()
             if Store.Locked(rec) then return end
             f:StartMoving()
+            if NS.Pins then NS.Pins.DragStart() end
         end)
         f.drag:SetScript("OnDragStop", function()
             if Store.Locked(rec) then return end
             f:StopMovingOrSizing()
+            if NS.Pins then NS.Pins.DragStop() end
             local cx, cy = f:GetCenter()
             local ux, uy = UIParent:GetCenter()
             if cx and ux then
@@ -824,6 +875,8 @@ local function EnsureGroupChrome(gf)
         if gf:IsMovable() then
             gf._adMoving = true
             gf:StartMoving()
+            -- game frames pinned to it follow the drag
+            if NS.Pins then NS.Pins.DragStart() end
         end
     end)
     bar:SetScript("OnDragStop", function()
@@ -831,6 +884,7 @@ local function EnsureGroupChrome(gf)
         if not gf._adMoving then return end
         gf._adMoving = nil
         gf:StopMovingOrSizing()
+        if NS.Pins then NS.Pins.DragStop() end
         local grec = Store.Get(gf._adRecId)
         if grec and Store.Resolve(grec, "anchor", "anchorEnabled") == true
             and SaveAnchoredOffsets(gf, grec) then
@@ -942,6 +996,8 @@ local function WireBarDrag(f)
         if self:IsMovable() and self:IsMouseEnabled() then
             self._adMoving = true
             self:StartMoving()
+            -- a group anchored to it carries its pinned frames along
+            if NS.Pins then NS.Pins.DragStart() end
         end
     end)
     f:SetScript("OnDragStop", function(self)
@@ -949,6 +1005,7 @@ local function WireBarDrag(f)
         if not self._adMoving then return end
         self._adMoving = nil
         self:StopMovingOrSizing()
+        if NS.Pins then NS.Pins.DragStop() end
         if self._adPlatePin then return end
         local rec = Store.Get(self._adRecId)
         if rec and NS.Anchor and NS.Anchor.IsEnabled(rec)
@@ -1252,6 +1309,7 @@ local function WireIconDrag(f)
         -- A hover tooltip must not ride along with the dragged icon.
         if GameTooltip:IsOwned(self) then GameTooltip:Hide() end
         self:StartMoving()
+        if NS.Pins then NS.Pins.DragStart() end
         dragState = { id = self._adRecId }
         self._adOldStrata = self:GetFrameStrata()
         self:SetFrameStrata("TOOLTIP")
@@ -1282,6 +1340,7 @@ local function WireIconDrag(f)
         -- a drag that never started (a locked icon) leaves it where it is
         if not (dragState and dragState.id == self._adRecId) then return end
         self:StopMovingOrSizing()
+        if NS.Pins then NS.Pins.DragStop() end
         self:SetScript("OnUpdate", nil)
         HideDropIndicators()
         if self._adOldStrata then self:SetFrameStrata(self._adOldStrata) end
@@ -1668,10 +1727,12 @@ local function ContainerLook(group, container)
     local showBorder = Store.Resolve(group, "look", "showBorder")
     local showBg = Store.Resolve(group, "look", "showBackground")
     if showBorder or showBg then
+        -- a thicker edge lands on whole pixels; 1 stays the unit it always was
+        local n = showBorder and tonumber(Store.Resolve(group, "look", "borderSize")) or 1
         container:SetBackdrop({
             bgFile = showBg and WHITE or nil,
             edgeFile = showBorder and WHITE or nil,
-            edgeSize = 1,
+            edgeSize = (n > 1) and Snap(n) or 1,
         })
         if showBg then
             local c = Store.Resolve(group, "look", "bgColor") or { 0, 0, 0, 0.6 }
@@ -1777,7 +1838,8 @@ local function PlaceGroup(group, container, flowMode)
             spacingX = spacingX, spacingY = spacingY, pad = pad,
             contentW = contentW, contentH = contentH,
             growthH = growthH, growthV = growthV,
-            -- Oversized-member cascade, kept on ctx; DynApply steps uniformly.
+            -- Oversized-member cascade: a one-row or one-column group packs
+            -- by it (LineCascade); a multi-row grid steps uniformly.
             cascade = cas }
         dynCtx[group.id] = ctx
         -- The full grid size was just set above; DynApply may shrink it.
@@ -2062,9 +2124,11 @@ function Engine.Rebuild()
         local rec = bf:IsShown() and Store.Get(bid)
         if rec and not DrawnHere(rec) then ReleaseBar(bid) end
     end
-    -- Post-passes: anchors need every live frame (cross-layout too); then the
-    -- conditions pass paints alphas this same frame, so none render stale.
+    -- Post-passes: anchors need every live frame (cross-layout too), and game
+    -- frames pinned to a group need its anchored spot; then the conditions
+    -- pass paints alphas this same frame, so none render stale.
     ApplyAnchors()
+    if NS.Pins then NS.Pins.ApplyAll() end
     if NS.Conditions then NS.Conditions.Pass() end
     Engine.RefreshEditing()
 end
@@ -2090,6 +2154,50 @@ function Engine.IsMoveMode() return moveMode end
 function Engine.GetLayoutFrame(id) return layoutFrames[id] end
 function Engine.GetGroupFrame(id) return groupFrames[id] end
 function Engine.GetBarFrame(id) return barFrames[id] end
+
+-- A group's full grid box (left, bottom, width, height in its frame's units):
+-- the box the options window shows, placed and pixel-snapped as the rebuild
+-- places it there. A dynamic group that shrank to its icons keeps it, so a
+-- game frame pinned to the group (Core\AD_Pins.lua) never moves as icons come
+-- and go, in combat or out. nil while the frame is hidden or reads secret.
+function Engine.GroupBox(gid)
+    local gf = groupFrames[gid]
+    if not (gf and gf:IsShown()) then return nil end
+    local l, b, w, h = gf:GetLeft(), gf:GetBottom(), gf:GetWidth(), gf:GetHeight()
+    if not (l and b and w and h) then return nil end
+    if issecretvalue and (issecretvalue(l) or issecretvalue(b) or issecretvalue(w) or issecretvalue(h)) then
+        return nil
+    end
+    local ctx, grec = dynCtx[gid], Store.Get(gid)
+    if not (ctx and grec and gf._adDynW) then return l, b, w, h end
+    local fw, fh = math.max(ctx.contentW, Snap(4)), math.max(ctx.contentH, Snap(4))
+    if math.abs(fw - w) < 0.01 and math.abs(fh - h) < 0.01 then return l, b, w, h end
+    local s = gf:GetEffectiveScale()
+    local _, physH = GetPhysicalScreenSize()
+    if not (s and s > 0 and physH and physH > 0) then return l, b, w, h end
+    local px = (768 / physH) / s
+    local point, sx, sy
+    if NS.Anchor and NS.Anchor.ResolveTarget(grec) then
+        -- an anchored box keeps its anchor point; its snap moved it off the spot
+        point = Store.Resolve(grec, "anchor", "anchorSrcPoint") or "TOP"
+        sx, sy = PointXY(gf, point)
+        if not sx then return l, b, w, h end
+        local lx, ly = CenterLean(gf, w, h)
+        sx, sy = sx + (lx or 0), sy + (ly or 0)
+    else
+        -- a free box is centred on its layout's centre plus its spot
+        local c = gf:GetParent()
+        local cx, cy
+        if c then cx, cy = c:GetCenter() end
+        if not cx then return l, b, w, h end
+        local k = (c:GetEffectiveScale() or 1) / s
+        local pos = grec.pos or {}
+        point, sx, sy = "CENTER", cx * k + (pos.x or 0), cy * k + (pos.y or 0)
+    end
+    local fl = sx - ((point:find("LEFT") and 0) or (point:find("RIGHT") and fw) or fw / 2)
+    local fb = sy - ((point:find("BOTTOM") and 0) or (point:find("TOP") and fh) or fh / 2)
+    return PixRoundLeft(fl, px), PixRound(fb, px), fw, fh
+end
 
 function Engine.SetEditMode(on)
     editMode = on and true or false
@@ -2222,4 +2330,6 @@ function Engine.Init()
             end
         end)
     end)
+    -- game frames pinned to groups: Blizzard's Edit Mode and late addons
+    if NS.Pins then NS.Pins.Init() end
 end

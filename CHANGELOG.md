@@ -1,5 +1,50 @@
 # Arc Auras
 
+## 2.6.0
+
+Copy your Cooldown Manager into a layout, icon shapes and Masque skins, frames that move with a group, and an options window that opens without a freeze.
+
+### New Features
+
+- **From Cooldown Manager** - New Layout copies the game's Cooldown Manager into a layout: its bars, spells, auras, totems and items, in its own look or ours.
+- **Cooldown Manager look** - Any icon or group can wear the Cooldown Manager's icon look.
+- **Icon shapes** - Wide, Tall, Column and Cropped sizes with the picture cropped to fit, and icons cut to a rounded square, circle, diamond or hexagon.
+- **Masque skins** - Skin your icons with any Masque skin (Modules > Masque Skins).
+- **Frames that move with a group** - Pin up to four game frames, like your player frame, beside a group and they move with it (Position > Anchor).
+- **Anchor list** - An icon or group can list up to four frames to anchor to and sits on the first one shown.
+- **Several spells on one icon** - One cooldown icon for spells like Bloodthirst and Mortal Strike: it shows the one you cast or know.
+- **Custom Bars show stacks** - As pips, icons or a segmented bar, with an Arcane Blast template for Mages.
+- **Queued abilities** - Heroic Strike and other next-swing abilities get a Queued state with the action bar's checkmark, a short-of-rage tint and their cost on the rage bar.
+- **Items you can't use yet** - An item icon can take its own look while the game says you can't use it (Conditions > By State).
+- **Spoken alerts** - Icon alerts can say words you type, with or without a sound.
+- **Glow styles** - A pandemic border with the Cooldown Manager's art, and two styles that match the action bar's queued and toggled-on looks.
+- **Shield equipped** - A condition that loads or shows anything only with a shield on.
+- **Fold the options window** - Fold it to its title bar and keep editing with the Edit buttons on screen.
+
+### Improvements
+
+- **Totems and guardians** - An icon can show its totem or guardian first, then its aura, as the Cooldown Manager does.
+- **Dynamic aura groups** - Totems line up in a row above the group.
+- **When states overlap** - Pick which state a proc lifts and which one keeps texts bright, and show usability colors on a cooling spell (Conditions > By State).
+- **Glows** - The game's own glow color, a dark line behind pixel glows, Glow size on button and proc glows, and bigger offsets.
+- **Duration and stack texts** - Left and right anchors, Show under, more color bands, bands in percent, and shadow color and offset.
+- **Keybinds** - An upper-case short style, your own replacements, an outline, and keybinds on items, trinkets and totems.
+- **Borders** - Class color, grey with the icon, the game's debuff border art, an out-of-range shadow and a thickness for group borders.
+- **Swipe** - Thicker edges, and insets for the aura swipe.
+- **On this icon** - Items and trinkets can show an aura, a totem or a set duration over their cooldown.
+- **Textures** - Follow a Custom trigger's stacks, and the dim copy hides with the picture unless you keep it.
+- **Custom timers** - Up to two hours, keep running through a reload, several spells per rule, each stack on its own clock, a count at 0, and new triggers like "You cast any spell but these".
+- **Stack bars** - A mark between each stack.
+- **Fade when** - Can wait until all of its conditions hold.
+- **Cooldown Manager switch** - Turn the game's Cooldown Manager off in Settings, or copy it and turn it off in one click.
+- **New Layout** - The import cards show each addon's icon, and long titles wrap.
+- **Options window** - Opens without a freeze, loads the rest without frame drops, and scales down to 20%.
+
+### Bug Fixes
+
+- **Totem time** - Shows on icons whose totem is a guardian or carries another name than its spell.
+- **Dynamic groups** - A bigger icon in a one-row or one-column group no longer overlaps its neighbours or shifts when the options open.
+
 ## 2.5.0
 
 A Defaults page, resource bar states, a texture update and icons that wait for the end of a cooldown or aura.

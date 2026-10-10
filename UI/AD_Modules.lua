@@ -382,6 +382,7 @@ function MOD.Fill(pane, header, win)
     local row = AT.AddRow(pg, MOD.CARD_H + 10)
     row._cards = {}
     for i, m in ipairs(MOD.list) do
+Options.BuildYield()
         row._cards[i] = MOD.MakeCard(row, m)
         MOD.cards[i] = row._cards[i]
     end
@@ -583,6 +584,20 @@ function MOD.RankRows(pg, m)
     AT.RowDesc(pg, "Spell ranks only exist on WoW Forever.", 20, function() return not ranked() end)
 end
 
+-- Core\AD_Skins.lua reads the skins and the Factory paints them; this card
+-- switches them on and says where a skin is picked. Off by default: on gives
+-- every icon a skin.
+function MOD.MasqueRows(pg, m)
+    local has = m.available
+    AT.Section(pg, m.name)
+    local row = AT.RowToggle(pg, "Skin icons with Masque", m.isOn, m.setOn, has,
+        "Each icon group, and your free icons, gets a skin you pick in Masque's options: picture size and crop, border, backdrop and gloss.")
+    MOD.Stamp(row, m, m.switch, "bool", has, true)
+    AT.RowDesc(pg, "Pick each group's skin in Masque's options: /msq.", 20,
+        function() return has() and m.isOn() end)
+    AT.RowDesc(pg, "Needs the Masque addon.", 20, function() return not has() end)
+end
+
 MOD.Register({
     key = "pressHighlight",
     switch = "pressHighlight",
@@ -646,4 +661,24 @@ MOD.Register({
     isOn = function() return Store.GetSetting("autoRankBars") == true end,
     setOn = function(v) Store.SetSetting("autoRankBars", v and true or false) end,
     build = function(pg, m) MOD.RankRows(pg, m) end,
+})
+
+MOD.Register({
+    key = "masque",
+    switch = "masqueSkins",
+    name = "Masque Skins",
+    desc = "Your Masque skins on Arc Auras icons, aura icons included: pick one per icon group in Masque.",
+    unavailable = "Needs the Masque addon.",
+    -- an icon in a skin's frame, its gloss along the top
+    glyph = {
+        { 2, 2, 16, 2, "arc" }, { 2, 16, 16, 2, "arc" }, { 2, 2, 2, 16, "arc" }, { 16, 2, 2, 16, "arc" },
+        { 6, 6, 8, 8, "dim" }, { 6, 6, 8, 2, "ink" },
+    },
+    available = function() return NS.Skins ~= nil and NS.Skins.Lib() ~= nil end,
+    isOn = function() return Store.GetSetting("masqueSkins") == true end,
+    setOn = function(v)
+        if NS.Skins then NS.Skins.SetOn(v) end
+        Options.RefreshAll()
+    end,
+    build = function(pg, m) MOD.MasqueRows(pg, m) end,
 })

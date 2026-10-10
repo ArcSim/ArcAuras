@@ -170,6 +170,14 @@ local function Flying()
     return Plain("flying", IsFlying and IsFlying())
 end
 
+-- On a skyriding mount, on the ground too: the game's own "can glide" flag,
+-- plain, with an event of its own.
+local function Skyriding()
+    if not (C_PlayerInfo and C_PlayerInfo.GetGlidingInfo) then return false end
+    local _, canGlide = C_PlayerInfo.GetGlidingInfo()
+    return Plain("skyriding", canGlide)
+end
+
 local function InVehicle()
     return Plain("vehicle", UnitInVehicle and UnitInVehicle("player"))
         or Plain("vehicleUI", UnitHasVehicleUI and UnitHasVehicleUI("player"))
@@ -282,6 +290,24 @@ end
 -- The game's own armor figure: any of its slots marked damaged or broken. Off
 -- where the game's rules turn repairs off.
 Conditions.ALERT_SLOTS = 11
+-- A shield in the off hand, as the macro's [equipped:Shield] reads it. A swap
+-- can come in combat; the off hand's item and its slot type read plain (an
+-- unexpected secret keeps the last plain answer).
+local OFF_HAND = 17
+local function ShieldOn()
+    local id = GetInventoryItemID and GetInventoryItemID("player", OFF_HAND)
+    if IsSecret(id) then return lastPlain.shield == true end
+    if not id then
+        lastPlain.shield = false
+        return false
+    end
+    local GI = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant
+    local loc = GI and select(4, GI(id))
+    if IsSecret(loc) then return lastPlain.shield == true end
+    return Plain("shield", loc == "INVTYPE_SHIELD")
+end
+Conditions.ShieldOn = ShieldOn
+
 local function NeedsRepair()
     local GR = C_GameRules
     local rule = Enum and Enum.GameRule and Enum.GameRule.RepairArmorDisabled
@@ -427,6 +453,7 @@ local ROLE_EV = { "PLAYER_ROLES_ASSIGNED", "ROLE_CHANGED_INFORM", "GROUP_ROSTER_
     "PLAYER_SPECIALIZATION_CHANGED" }
 local LEADER_EV = { "PARTY_LEADER_CHANGED", "GROUP_ROSTER_UPDATE" }
 local THREAT_EV = { "UNIT_THREAT_SITUATION_UPDATE", "PLAYER_REGEN_ENABLED" }
+local GEAR_EV = { "PLAYER_EQUIPMENT_CHANGED" }
 
 local function FormIs(name)
     return function() return Form() == name end
@@ -461,6 +488,8 @@ local VOCAB = {
         ev = { "PLAYER_MOUNT_DISPLAY_CHANGED", "COMPANION_UPDATE" },
         read = function() return Plain("mounted", IsMounted and IsMounted()) end },
     { key = "flying", cat = "move", text = "Flying", poll = true, read = Flying },
+    { key = "skyriding", cat = "move", text = "Skyriding", avail = Retail,
+        ev = { "PLAYER_CAN_GLIDE_CHANGED", "PLAYER_MOUNT_DISPLAY_CHANGED" }, read = Skyriding },
     { key = "swimming", cat = "move", text = "Swimming", poll = true,
         read = function() return Plain("swimming", IsSwimming and IsSwimming()) end },
     { key = "vehicle", cat = "move", text = "Vehicle or taxi", ev = VEHICLE_EV,
@@ -513,6 +542,9 @@ local VOCAB = {
         ev = { "UNIT_FACTION", "PLAYER_FLAGS_CHANGED" },
         read = function() return Plain("pvp", UnitIsPVP and UnitIsPVP("player")) end },
     { key = "needsRepair", cat = "player", text = "Gear needs repair", ev = REPAIR_EV, read = NeedsRepair },
+    { key = "shieldOn", cat = "player", text = "Shield equipped", ev = GEAR_EV, read = ShieldOn },
+    { key = "shieldOff", cat = "player", text = "No shield equipped", ev = GEAR_EV,
+        read = function() return not ShieldOn() end },
     { key = "hasTarget", cat = "target", text = "Have a target", ev = TARGET_EV,
         read = HasTarget },
     { key = "noTarget", cat = "target", text = "No target", ev = TARGET_EV,
@@ -653,10 +685,11 @@ local BY_KEY = {}
 for _, d in ipairs(VOCAB) do BY_KEY[d.key] = d end
 function Conditions.ByKey(key) return BY_KEY[key] end
 
--- rec.c lists; <list>All = true on the two positive ones means all must hold.
+-- rec.c lists; <list>All = true means all must hold (the two positive ones,
+-- and Fade when: faded only while every checked one holds).
 local LISTS = { "loadWhen", "loadNever", "showWhen", "fadeWhen" }
 Conditions.LISTS = LISTS
-local MATCH_LISTS = { loadWhen = true, showWhen = true }
+local MATCH_LISTS = { loadWhen = true, showWhen = true, fadeWhen = true }
 
 -- fadeAlpha is 0-1 (0 = hidden); fadeTime and fadeDelay are in seconds.
 local FADE_DEFAULT = { fadeAlpha = 0, fadeTime = 0, fadeDelay = 0 }
@@ -863,7 +896,7 @@ local function FadeTarget(rec)
     local full = true
     if SetHas(c.showWhen) then full = SetMatch(c.showWhen, c.showWhenAll == true) end
     if full and not RangeHolds(rec) then full = false end
-    if full and SetAny(c.fadeWhen) then full = false end
+    if full and SetHas(c.fadeWhen) and SetMatch(c.fadeWhen, c.fadeWhenAll == true) then full = false end
     if full then return 1 end
     return FadeValue(c, "fadeAlpha")
 end
@@ -1392,6 +1425,7 @@ function Conditions.Normalize(rec)
     end
     if c.loadWhenAll ~= nil and c.loadWhenAll ~= true then c.loadWhenAll = nil end
     if c.showWhenAll ~= nil and c.showWhenAll ~= true then c.showWhenAll = nil end
+    if c.fadeWhenAll ~= nil and c.fadeWhenAll ~= true then c.fadeWhenAll = nil end
     for k, dflt in pairs(FADE_DEFAULT) do
         if c[k] ~= nil then
             local v = tonumber(c[k])

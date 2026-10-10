@@ -401,11 +401,21 @@ local function PaintLook(layer, rec, w, h, kS, texts)
     local alpha = R("states", "readyAlpha") or 1
     local textA = (alpha > 0 and R("states", "preserveDurationText") ~= false) and 1 or alpha
     art:SetTexture(Factory.GetTexture(rec))
-    if Factory.IconTexCoords then art:SetTexCoord(Factory.IconTexCoords(rec)) end
+    if Factory.IconTexCoords then
+        local pad = (R("appearance", "padding") or 0) * kS
+        art:SetTexCoord(Factory.IconTexCoords(rec, (w or 0) - 2 * pad, (h or 0) - 2 * pad))
+    end
     local pad = (R("appearance", "padding") or 0) * kS
     art:ClearAllPoints()
     art:SetPoint("TOPLEFT", st, "TOPLEFT", pad, -pad)
     art:SetPoint("BOTTOMRIGHT", st, "BOTTOMRIGHT", -pad, pad)
+    if Factory.ShapeTex then Factory.ShapeTex(art, Factory.MaskOf(rec)) end
+    -- a Masque skin's picture and layers (the border and shadow below stand aside)
+    if Factory.SkinArt then
+        local plan = Factory.SkinPlan(rec)
+        Factory.SkinArt(art, rec, plan, st, w, h)
+        Factory.SkinLayers(plan, st, st, st, art, w, h, alpha, hideArt)
+    end
     art:SetAlpha(alpha)
     art:SetShown(not hideArt)
     if Factory.ApplyShadow then

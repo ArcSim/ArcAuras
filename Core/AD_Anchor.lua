@@ -35,7 +35,16 @@ local GAME_TARGET = { frame = true, action = true, cdm = true }
 -- May this record pick that target kind? Its family's schema list answers, so
 -- the pick list, the setter and the pin can never disagree.
 local allowSets = {}   -- family -> { [kind] = true }
+
+-- The game's Cooldown Manager switched off (its own option, or Settings >
+-- Cooldown Manager here): its icons are gone, so nothing pins to them.
+function Anchor.CDMOff()
+    local v = C_CVar and C_CVar.GetCVar and C_CVar.GetCVar("cooldownViewerEnabled")
+    return v == "0"
+end
+
 function Anchor.Allows(rec, kind)
+    if kind == "cdm" and Anchor.CDMOff() then return false end
     local fam = rec and Store.FamilyOf(rec)
     if not fam then return false end
     local set = allowSets[fam]
@@ -69,6 +78,53 @@ local function TargetRecord(rec)
     if NO_ID[kind] then return nil end
     return Store.Get(R(rec, "anchorTargetId") or 0)
 end
+
+-- The anchor list: the first pick, then up to three more (anchorBackup1..3,
+-- a pick value as PickGet gives it; a named frame's name in
+-- anchorBackup<n>Frame), tried in order, before the record's own position.
+-- The points, offsets and match apply to whichever wins. Only a first pick
+-- that can be missing has more (not the cursor or the nameplate), and the
+-- others are records or named frames. The panel edits it as slots 1..4.
+Anchor.BACKUPS = 3
+Anchor.BACKUP_KINDS = { group = true, bar = true, icon = true, layout = true, frame = true }
+
+function Anchor.BackupsOK(rec)
+    if not Anchor.IsEnabled(rec) then return false end
+    local kind = R(rec, "anchorTargetKind") or "group"
+    return kind ~= "mouse" and kind ~= "nameplate"
+end
+
+-- backup i as (kind, id, frame name), or nil when unset or not this family's
+function Anchor.Backup(rec, i)
+    local v = R(rec, "anchorBackup" .. i)
+    if type(v) ~= "string" or v == "" or v == "none" then return nil end
+    if v == "frame" then
+        if not Anchor.Allows(rec, "frame") then return nil end
+        local n = R(rec, "anchorBackup" .. i .. "Frame")
+        if type(n) ~= "string" or n == "" then return nil end
+        return "frame", nil, n
+    end
+    local kind, id = v:match("^(%a+):(%d+)$")
+    if not (kind and Anchor.BACKUP_KINDS[kind] and Anchor.Allows(rec, kind)) then return nil end
+    return kind, tonumber(id), nil
+end
+
+-- every record rec may pin to (its first pick and its backups), for the loop
+-- check, the placing order and "Anchored to this"
+local function CandidateIds(rec)
+    local out = {}
+    if not Anchor.IsEnabled(rec) then return out end
+    local kind = R(rec, "anchorTargetKind") or "group"
+    if not NO_ID[kind] then out[#out + 1] = R(rec, "anchorTargetId") or 0 end
+    if Anchor.BackupsOK(rec) then
+        for i = 1, Anchor.BACKUPS do
+            local k, id = Anchor.Backup(rec, i)
+            if k and id then out[#out + 1] = id end
+        end
+    end
+    return out
+end
+Anchor.CandidateIds = CandidateIds
 
 local function IsPlateKind(rec)
     return (R(rec, "anchorTargetKind") or "group") == "nameplate"
@@ -223,21 +279,26 @@ function Anchor.PlatePoints(rec)
         R(rec, "anchorOffsetX") or 0, R(rec, "anchorOffsetY") or 0
 end
 
--- Walks the chain and refuses a loop. It follows every kind, since a loop can
--- mix them (bar -> group -> bar).
+-- Refuses a loop. It walks every pick each record may take, backups too, as
+-- whichever is there at the time is the one it pins to, and a loop can mix
+-- kinds (bar -> group -> bar).
 function Anchor.CreatesCycle(startId, targetRec)
-    local cursor, guard = targetRec, 0
-    while cursor and guard < 16 do
+    local stack, seen, guard = { targetRec }, {}, 0
+    while #stack > 0 do
         guard = guard + 1
+        -- a web that wide: treat it as a loop rather than risk one
+        if guard > 64 then return true end
+        local cursor = table.remove(stack)
         if cursor.id == startId then return true end
-        if Anchor.IsEnabled(cursor) then
-            cursor = TargetRecord(cursor)
-        else
-            cursor = nil
+        if not seen[cursor.id] then
+            seen[cursor.id] = true
+            for _, id in ipairs(CandidateIds(cursor)) do
+                local nxt = Store.Get(id)
+                if nxt then stack[#stack + 1] = nxt end
+            end
         end
     end
-    -- ran out of guard: treat a chain that deep as a loop rather than risk it
-    return cursor ~= nil
+    return false
 end
 
 -- The game names the plates it makes NamePlate1, NamePlate2 ... under
@@ -281,10 +342,20 @@ end
 -- OnShow and OnHide are hooked once, out of combat: a hook runs after the
 -- game's own script and leaves it alone, and only our own frames move.
 local watchedFrames = {}   -- game frame -> true
+-- does rec name this frame anywhere: its first pick or a backup
+local function NamesFrame(rec, name)
+    if Anchor.IsFramePick(rec) and R(rec, "anchorTargetFrame") == name then return true end
+    if not Anchor.BackupsOK(rec) then return false end
+    for i = 1, Anchor.BACKUPS do
+        local k, _, n = Anchor.Backup(rec, i)
+        if k == "frame" and n == name then return true end
+    end
+    return false
+end
 local function PlaceOnFrame(name)
     for id, frame in pairs(sources) do
         local rec = Store.Get(id)
-        if rec and frame:IsShown() and Anchor.IsFramePick(rec) and R(rec, "anchorTargetFrame") == name then
+        if rec and frame:IsShown() and NamesFrame(rec, name) then
             if not Anchor.Apply(rec, frame) and freePlacer then freePlacer(rec, frame) end
         end
     end
@@ -299,13 +370,10 @@ local function WatchFrame(t, name)
     t:HookScript("OnHide", Changed)
 end
 
--- the frame a source should pin to, or nil to fall back to free placement
-function Anchor.ResolveTarget(rec)
-    if not Anchor.IsEnabled(rec) then return nil end
-    local kind = R(rec, "anchorTargetKind") or "group"
-
+-- One pick's frame, or nil while it is not there: a named frame (by name) or
+-- a record (by id).
+local function PickTarget(rec, kind, tid, name)
     if kind == "frame" then
-        local name = R(rec, "anchorTargetFrame")
         if type(name) ~= "string" or name == "" then return nil end
         local t = _G[name]
         -- a forbidden frame would taint us the moment we anchor to it
@@ -320,15 +388,7 @@ function Anchor.ResolveTarget(rec)
         if Plain(t:GetLeft()) and Plain(t:GetBottom()) then return t end
         return nil
     end
-    if kind == "nameplate" then return Anchor.TargetPlate() end
-    if kind == "mouse" then return EnsureMouseProxy() end
-    -- the button or icon holding the spell now; nil while none is on screen
-    if SPELL_KIND[kind] then
-        local SA = NS.SpellAnchor
-        return SA and SA.Resolve(kind, R(rec, "anchorTargetFrame")) or nil
-    end
-
-    local tid = R(rec, "anchorTargetId") or 0
+    tid = tid or 0
     if tid == 0 or tid == rec.id then return nil end
     local trec = Store.Get(tid)
     if not trec then return nil end                  -- target was deleted
@@ -338,6 +398,37 @@ function Anchor.ResolveTarget(rec)
     local t = get(tid)
     if t and t.IsShown and t:IsShown() then return t end
     return nil
+end
+
+-- What a source pins to now: (frame, kind, n) for its first pick (n 0) or the
+-- first backup that is there (n 1..3), or nil for its own position.
+function Anchor.Effective(rec)
+    if not Anchor.IsEnabled(rec) then return nil end
+    local kind = R(rec, "anchorTargetKind") or "group"
+    local t
+    if kind == "nameplate" then return Anchor.TargetPlate(), kind, 0 end
+    if kind == "mouse" then return EnsureMouseProxy(), kind, 0 end
+    if SPELL_KIND[kind] then
+        -- the button or icon holding the spell now; nil while none is on screen
+        local SA = NS.SpellAnchor
+        t = SA and SA.Resolve(kind, R(rec, "anchorTargetFrame")) or nil
+    else
+        t = PickTarget(rec, kind, R(rec, "anchorTargetId"), R(rec, "anchorTargetFrame"))
+    end
+    if t then return t, kind, 0 end
+    for i = 1, Anchor.BACKUPS do
+        local k, id, n = Anchor.Backup(rec, i)
+        if k then
+            t = PickTarget(rec, k, id, n)
+            if t then return t, k, i end
+        end
+    end
+    return nil
+end
+
+-- the frame a source should pin to, or nil to fall back to free placement
+function Anchor.ResolveTarget(rec)
+    return (Anchor.Effective(rec))
 end
 
 -- register a source for the post-pass. Called by whoever built the frame.
@@ -609,7 +700,8 @@ function Anchor.Apply(rec, frame)
         frame._adPlateHid = nil
         frame:Show()
     end
-    local target = Anchor.ResolveTarget(rec)
+    -- the first pick, else the first backup there (its kind decides the rest)
+    local target, kind = Anchor.Effective(rec)
     -- free again: its owner gives it its own size
     if not target then
         Matched(frame, nil, nil)
@@ -622,7 +714,6 @@ function Anchor.Apply(rec, frame)
         R(rec, "anchorDstPoint") or DEFAULT_DST,
         R(rec, "anchorOffsetX") or 0,
         R(rec, "anchorOffsetY") or 0)
-    local kind = R(rec, "anchorTargetKind") or "group"
     if SPELL_KIND[kind] then RaiseOver(frame, target) end
     local mw, mh
     if R(rec, "anchorMatchWidth") == true or R(rec, "anchorMatchHeight") == true then
@@ -681,9 +772,10 @@ function Anchor.ApplyAll()
         done[id] = true
         local rec = Store.Get(id)
         if not (rec and frame.IsShown and frame:IsShown()) then return end
-        local tid = Anchor.IsEnabled(rec) and not NO_ID[R(rec, "anchorTargetKind") or "group"]
-            and R(rec, "anchorTargetId")
-        if tid and sources[tid] then Place(tid, sources[tid]) end
+        -- whichever pick wins, it is placed first (backups too)
+        for _, tid in ipairs(CandidateIds(rec)) do
+            if sources[tid] then Place(tid, sources[tid]) end
+        end
         Anchor.Apply(rec, frame)
     end
     for id, frame in pairs(sources) do Place(id, frame) end
@@ -733,6 +825,7 @@ end
 -- targets under the same legality checks (no self, no cycle).
 
 local KIND_LABEL = { layout = "Layout", group = "Group", bar = "Bar", icon = "Icon" }
+local PREFIX_WORD = KIND_LABEL
 
 -- A grouped icon is never a target: its group's cell places it.
 -- A bar kind with no place on screen (a wheel opens at the cursor) is no target.
@@ -795,6 +888,171 @@ function Anchor.PickList(rec)
         items[#items + 1] = { value = "frame", text = "Named frame..." }
     end
     return items
+end
+
+-- A backup's choices: None, the records rec may pick and Named frame.
+function Anchor.BackupList(rec)
+    local out = { { value = "none", text = "None" } }
+    for _, it in ipairs(Anchor.PickList(rec)) do
+        local kind = it.value:match("^(%a+):%d+$")
+        if (kind and Anchor.BACKUP_KINDS[kind]) or it.value == "frame" then out[#out + 1] = it end
+    end
+    return out
+end
+
+function Anchor.BackupGet(rec, i)
+    local v = rec and R(rec, "anchorBackup" .. i)
+    if type(v) ~= "string" or v == "" then return "none" end
+    return v
+end
+
+-- None clears the backup and every one after it, so the list never has a gap.
+function Anchor.BackupSet(rec, i, v)
+    if not rec then return end
+    if v == nil or v == "none" then
+        for j = i, Anchor.BACKUPS do
+            Store.SetOverride(rec, "anchor", "anchorBackup" .. j, "")
+            Store.SetOverride(rec, "anchor", "anchorBackup" .. j .. "Frame", "")
+        end
+        return
+    end
+    if v ~= "frame" then
+        local kind = tostring(v):match("^(%a+):%d+$")
+        if not (kind and Anchor.BACKUP_KINDS[kind] and Anchor.Allows(rec, kind)) then return end
+    elseif not Anchor.Allows(rec, "frame") then
+        return
+    end
+    Store.SetOverride(rec, "anchor", "anchorBackup" .. i, v)
+end
+
+-- The panel's slots: 1 is the first pick, 2..4 the ones after it. The list
+-- never has a gap.
+Anchor.SLOTS = Anchor.BACKUPS + 1
+
+-- the field holding slot s's frame name (or, first, a spell pin's spell)
+function Anchor.SlotNameKey(s)
+    if s == 1 then return "anchorTargetFrame" end
+    return "anchorBackup" .. (s - 1) .. "Frame"
+end
+
+-- slot s as (pick value, frame name)
+function Anchor.SlotGet(rec, s)
+    local v = (s == 1) and Anchor.PickGet(rec) or Anchor.BackupGet(rec, s - 1)
+    local n = rec and R(rec, Anchor.SlotNameKey(s))
+    return v, (type(n) == "string") and n or ""
+end
+
+-- the slots in use: the first, then each set one after it
+function Anchor.SlotCount(rec)
+    if not (rec and Anchor.BackupsOK(rec)) then return 1 end
+    local n = 1
+    for i = 1, Anchor.BACKUPS do
+        if Anchor.BackupGet(rec, i) == "none" then break end
+        n = i + 1
+    end
+    return n
+end
+
+-- the first slot takes any pick, the others a record or a named frame
+function Anchor.SlotTakes(rec, s, v)
+    if not (rec and v) then return false end
+    if s == 1 then return true end
+    if v == "frame" then return Anchor.Allows(rec, "frame") end
+    local kind = tostring(v):match("^(%a+):%d+$")
+    return kind ~= nil and Anchor.BACKUP_KINDS[kind] == true and Anchor.Allows(rec, kind)
+end
+
+-- Writes slot s; name (optional) is its frame name. A first pick that can
+-- have no list (none, the cursor, the nameplate) clears the others, so none
+-- waits hidden behind it.
+function Anchor.SlotSet(rec, s, v, name)
+    if not Anchor.SlotTakes(rec, s, v) then return false end
+    if s == 1 then
+        Anchor.PickSet(rec, v)
+        if name ~= nil and GAME_TARGET[v] then
+            Store.SetOverride(rec, "anchor", "anchorTargetFrame", name)
+        end
+        if not Anchor.BackupsOK(rec) then Anchor.BackupSet(rec, 1, "none") end
+        return true
+    end
+    Store.SetOverride(rec, "anchor", "anchorBackup" .. (s - 1), v)
+    if name ~= nil then Store.SetOverride(rec, "anchor", Anchor.SlotNameKey(s), name) end
+    return true
+end
+
+-- Swaps two slots; false when one cannot hold the other's pick (a spell pin
+-- stays first).
+function Anchor.SlotSwap(rec, a, b)
+    local va, na = Anchor.SlotGet(rec, a)
+    local vb, nb = Anchor.SlotGet(rec, b)
+    if not (Anchor.SlotTakes(rec, a, vb) and Anchor.SlotTakes(rec, b, va)) then return false end
+    Anchor.SlotSet(rec, a, vb, nb)
+    Anchor.SlotSet(rec, b, va, na)
+    return true
+end
+
+-- Takes slot s out; the ones after it move up. The last one gone, it uses
+-- its own position.
+function Anchor.SlotRemove(rec, s)
+    if not rec then return end
+    local n = Anchor.SlotCount(rec)
+    if s < 1 or s > n then return end
+    if n == 1 then
+        Anchor.SlotSet(rec, 1, "none")
+        return
+    end
+    for j = s, n - 1 do
+        local v, nm = Anchor.SlotGet(rec, j + 1)
+        Anchor.SlotSet(rec, j, v, nm)
+    end
+    Anchor.BackupSet(rec, n - 1, "none")
+end
+
+-- What slot s offers: every pick for the first, records and Named frame for
+-- the others, never a record another slot already holds.
+function Anchor.SlotChoices(rec, s)
+    local out = {}
+    if not rec then return out end
+    local used = {}
+    for j = 1, Anchor.SlotCount(rec) do
+        if j ~= s then
+            local v = Anchor.SlotGet(rec, j)
+            if v ~= "frame" then used[v] = true end
+        end
+    end
+    local list = (s == 1) and Anchor.PickList(rec) or Anchor.BackupList(rec)
+    for _, it in ipairs(list) do
+        if not used[it.value] and (s == 1 or it.value ~= "none") then out[#out + 1] = it end
+    end
+    return out
+end
+
+-- Adds a slot at the end: the first record no slot holds, else a named frame
+-- to fill in. False when the list is full or can have no more.
+function Anchor.SlotAdd(rec)
+    if not (rec and Anchor.BackupsOK(rec)) then return false end
+    local n = Anchor.SlotCount(rec)
+    if n >= Anchor.SLOTS then return false end
+    local pick = "frame"
+    for _, it in ipairs(Anchor.SlotChoices(rec, n + 1)) do
+        if it.value ~= "frame" then
+            pick = it.value
+            break
+        end
+    end
+    return Anchor.SlotSet(rec, n + 1, pick, "")
+end
+
+-- One slot's word for its row: "use" (it holds the record now), "there" (on
+-- screen, after the one in use) or "away"; nil while nothing is anchored.
+function Anchor.SlotState(rec, s)
+    if not (rec and Anchor.IsEnabled(rec)) then return nil end
+    local t, _, n = Anchor.Effective(rec)
+    if t and n == s - 1 then return "use" end
+    if s == 1 then return "away" end
+    local k, id, nm = Anchor.Backup(rec, s - 1)
+    if k and PickTarget(rec, k, id, nm) then return "there" end
+    return "away"
 end
 
 function Anchor.PickGet(rec)
@@ -884,20 +1142,57 @@ function Anchor.DependentsOf(rec)
     local out = {}
     if not (rec and Store.EachRecord) then return out end
     Store.EachRecord(function(id, other)
-        if id ~= rec.id and Anchor.IsEnabled(other)
-            and not NO_ID[R(other, "anchorTargetKind") or "group"]
-            and (R(other, "anchorTargetId") or 0) == rec.id then
-            out[#out + 1] = other
+        if id ~= rec.id then
+            -- its first pick or a backup
+            for _, tid in ipairs(CandidateIds(other)) do
+                if tid == rec.id then
+                    out[#out + 1] = other
+                    break
+                end
+            end
         end
     end)
     table.sort(out, function(a, b) return (a.name or "") < (b.name or "") end)
     return out
 end
 
+-- a slot's words: "Bar: Mana", "Frame: ElvUF_Player", "Action button: Moonfire"
+local function TargetWords(kind, id, name)
+    if kind == "frame" then return "Frame: " .. (name or "?") end
+    local t = Store.Get(id or 0)
+    return (PREFIX_WORD[kind] or "") .. ": " .. ((t and t.name) or "?")
+end
+function Anchor.SlotWords(rec, s)
+    if s == 1 then
+        local kind = R(rec, "anchorTargetKind") or "group"
+        if SPELL_KIND[kind] then
+            local SA = NS.SpellAnchor
+            local p = SA and SA.Parse(R(rec, "anchorTargetFrame"))
+            local what = (kind == "action") and "Action button" or "Cooldown Manager icon"
+            if p and p.cid then return what .. ": cooldown ID " .. p.cid end
+            if p then return what .. ": " .. (SA.NameOf(p.list[1]) or ("spell " .. p.list[1])) end
+            return what
+        end
+        return TargetWords(kind, R(rec, "anchorTargetId"), R(rec, "anchorTargetFrame"))
+    end
+    local k, id, n = Anchor.Backup(rec, s - 1)
+    if not k then return nil end
+    return TargetWords(k, id, n)
+end
+
 -- a one-line summary for the panel: what this is actually pinned to now
 function Anchor.DescribePick(rec)
     if not (rec and Anchor.IsEnabled(rec)) then
-        return "Not anchored - this uses its own position."
+        return "Free: it sits at its own Position."
+    end
+    -- a list: which slot holds it, and the ones before it that are away
+    if Anchor.SlotCount(rec) > 1 then
+        local t, _, n = Anchor.Effective(rec)
+        if not t then return "None of its anchors is there: it sits at its own Position." end
+        local line = "On anchor " .. (n + 1) .. ", " .. (Anchor.SlotWords(rec, n + 1) or "?") .. "."
+        if n == 1 then return line .. " Anchor 1 is not there." end
+        if n > 1 then return line .. " Anchors 1 to " .. n .. " are not there." end
+        return line
     end
     if Anchor.IsPlatePick(rec) then
         if Editing() then
@@ -991,4 +1286,14 @@ function Anchor.PlateReport()
     end
     out[#out + 1] = "bars set to the target's nameplate: " .. n
     return out
+end
+
+-- The game's own option flips the Cooldown Manager too: pins on its icons re-place.
+if NS.Events and NS.Events.On
+    and not (C_EventUtils and C_EventUtils.IsEventValid and not C_EventUtils.IsEventValid("CVAR_UPDATE")) then
+    NS.Events.On("CVAR_UPDATE", "adanchor_cdm", function(_, name)
+        if name == "cooldownViewerEnabled" and NS.LayoutEngine and NS.LayoutEngine.QueueRebuild then
+            NS.LayoutEngine.QueueRebuild()
+        end
+    end)
 end

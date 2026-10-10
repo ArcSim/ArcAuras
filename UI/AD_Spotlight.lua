@@ -3917,6 +3917,37 @@ izquhHp9snwSSLqfplmEzPqjkOHgEbKvsuaEXyvhOWqtXZ2zCsxhypX4W8dpB(WzlpyuDVdmXNNCCOFe
 
 -- What a pack's string holds, read once: its items' permanent IDs and its date.
 SP.info = {}
+
+-- A cheap fingerprint of a pack's string: its length and a sum over 64 of its
+-- bytes (tools\gen_spotlight_index.lua computes the same).
+function SP.Sum(text)
+    local n, s = #text, 0
+    local step = math.max(1, math.floor(n / 64))
+    for k = 1, n, step do s = (s * 31 + text:byte(k)) % 2147483647 end
+    return s
+end
+
+-- The packs' index (UI\AD_SpotlightIndex.lua, made offline): each pack's IDs,
+-- date and preview fill SP.info and the preview cache, so the window decodes
+-- no pack to show it (nine decodes were one long frame on its first open).
+-- A pack whose string changed since the index was made decodes as before.
+function SP.Seed()
+    local idx = NS.SpotlightIndex
+    if type(idx) ~= "table" then return end
+    local LPm = NS.LayoutPreview
+    for _, e in ipairs(SP.LIST) do
+        local x = e.key and idx[e.key]
+        if x and type(e.text) == "string" and x.len == #e.text and x.sum == SP.Sum(e.text) then
+            local uids = {}
+            for _, u in ipairs(x.uids or {}) do uids[u] = true end
+            SP.info[e.key] = { uids = uids, at = x.at or 0 }
+            if LPm and LPm.cache then LPm.cache[e.text] = x.parts end
+        end
+    end
+    -- its copy lives in the caches now
+    NS.SpotlightIndex = nil
+end
+SP.Seed()
 function SP.Info(e)
     local info = SP.info[e.key]
     if info then return info end

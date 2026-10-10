@@ -13,8 +13,8 @@ NS.DriverCustom = CU
 -- not registered by the game's own frames on Forever, so it stays off until a
 -- fight with /adcustom diag proves it fires.
 CU.CUSTOM_TARGET_FEEDBACK = false
--- A saved state older than this is dropped at login: a timer or a count from
--- yesterday's session is stale.
+-- Saved stacks older than this are dropped at login: a count from yesterday's
+-- session is stale. A timer or a stack still running is picked up at any age.
 CU.RUNTIME_MAX_AGE = 3600
 -- "Your cast was interrupted" arrives from two events: one fire per moment.
 CU.DEDUPE = 0.3
@@ -27,7 +27,7 @@ CU.COND_QUIET = 3
 CU.WATCH_PREFIX = "adcustom:"
 CU.EVENT_KEY = "adcustom"
 
-CU.items = {}      -- [recId] = { id, rec, f, bar, text, start, dur, endAt, stacks, gen, last }
+CU.items = {}      -- [recId] = { id, rec, f, bar, text, start, dur, endAt, stacks, gen, last, exp, sgen }
 CU.watchers = {}   -- [key] = fn(st), told after every paint (a text element's readout)
 CU.live = {}       -- [recId] = its state, while attached and loaded
 CU.watched = {}    -- [spellID] = true, an external watch on the reminder runtime
@@ -60,13 +60,15 @@ end
 
 -- The triggers a group offers, by key, and every trigger's group.
 CU.GROUP_OF = {}
-for _, g in ipairs(Schema.SOUND_TRIGGER_GROUPS or Schema.CUSTOM_TRIGGER_GROUPS) do
-    for _, k in ipairs(g.list) do CU.GROUP_OF[k] = g.key end
+for _, list in ipairs({ Schema.CUSTOM_TRIGGER_GROUPS, Schema.SOUND_TRIGGER_GROUPS or {} }) do
+    for _, g in ipairs(list) do
+        for _, k in ipairs(g.list) do CU.GROUP_OF[k] = g.key end
+    end
 end
 for _, k in ipairs(Schema.CUSTOM_TARGET_TRIGGERS) do CU.GROUP_OF[k] = "target" end
 
-CU.SPELL_TRIGGERS = { cast = true, cd_start = true, cd_end = true, usable_on = true, usable_off = true,
-    proc_on = true, proc_off = true, spell_update = true }
+CU.SPELL_TRIGGERS = { cast = true, cast_except = true, cd_start = true, cd_end = true, usable_on = true,
+    usable_off = true, proc_on = true, proc_off = true, spell_update = true }
 CU.WATCH_TRIGGERS = { cd_start = true, cd_end = true, usable_on = true, usable_off = true }
 CU.USABLE_TRIGGERS = { usable_on = true, usable_off = true }
 CU.PROC_TRIGGERS = { proc_on = true, proc_off = true }
@@ -118,17 +120,30 @@ function CU.Active(st)
     return running
 end
 
+-- The count it shows: its stacks, or while the timer is idle at no stacks
+-- the full pool it is set to show (driver.idleCount).
+function CU.ShownCount(st)
+    if st.stacks > 0 then return st.stacks end
+    local n = tonumber(st.rec.driver.idleCount)
+    if n and n > 0 and not CU.Running(st) then return n end
+    return 0
+end
+
 function CU.Save(st)
     if not CU.Running(st) and st.stacks == 0 then
         Store.SetRuntime(st.id, nil)
         return
     end
-    local now = GetTime()
-    local s = { s = st.stacks, w = Clock() }
+    local now, wall = GetTime(), Clock()
+    local s = { s = st.stacks, w = wall }
     if CU.Running(st) then
         s.d = st.dur
         s.g = st.endAt
-        s.e = Clock() + (st.endAt - now)
+        s.e = wall + (st.endAt - now)
+    end
+    if st.exp and #st.exp > 0 then
+        s.x = {}
+        for i, t in ipairs(st.exp) do s.x[i] = wall + (t - now) end
     end
     Store.SetRuntime(st.id, s)
 end
@@ -140,11 +155,30 @@ function CU.Restore(st)
     local s = Store.Runtime(st.id)
     if type(s) ~= "table" then return end
     local wall = Clock()
-    if type(s.w) ~= "number" or wall - s.w > CU.RUNTIME_MAX_AGE then
+    local ahead = type(s.e) == "number" and s.e > wall
+    if type(s.x) == "table" then
+        for _, x in ipairs(s.x) do
+            if type(x) == "number" and x > wall then ahead = true end
+        end
+    end
+    if type(s.w) ~= "number" or (wall - s.w > CU.RUNTIME_MAX_AGE and not ahead) then
         Store.SetRuntime(st.id, nil)
         return
     end
     st.stacks = math.max(0, math.floor(tonumber(s.s) or 0))
+    -- the stacks' own ends: the ones passed while away are gone
+    if type(s.x) == "table" and CU.StackTimed(st) then
+        local exp, gone = {}, 0
+        for _, x in ipairs(s.x) do
+            if type(x) == "number" then
+                if x > wall then exp[#exp + 1] = GetTime() + (x - wall) else gone = gone + 1 end
+            end
+        end
+        st.stacks = math.max(0, st.stacks - gone)
+        while #exp > st.stacks do table.remove(exp) end
+        st.exp = exp
+        CU.ScheduleStacks(st)
+    end
     local d = tonumber(s.d)
     if d and d > 0 and type(s.e) == "number" then
         local left = s.e - wall
@@ -159,7 +193,7 @@ function CU.Restore(st)
             st.start = st.endAt - d
             CU.ScheduleEnd(st)
         elseif st.rec.driver.clearOnEnd then
-            st.stacks = 0
+            CU.SetStacks(st, 0)
         end
     end
 end
@@ -182,9 +216,10 @@ function CU.Ended(st)
     st.gen = (st.gen or 0) + 1
     if not st.endAt then return end
     st.start, st.dur, st.endAt = nil, nil, nil
-    if st.rec.driver.clearOnEnd then st.stacks = 0 end
+    if st.rec.driver.clearOnEnd then CU.SetStacks(st, 0) end
     CU.Paint(st)
     CU.Save(st)
+    -- one pass hears both: this item's "this timer ended" and the items chained to it
     CU.Fire("chain", { srcId = st.id })
 end
 
@@ -198,9 +233,16 @@ function CU.TimerCheck(st)
     end
 end
 
-function CU.StartTimer(st, secs, mode)
+-- A rule's seconds, else the item's Default seconds; 0 = no length.
+function CU.Len(st, secs)
     secs = tonumber(secs) or 0
     if secs <= 0 then secs = tonumber(st.rec.driver.duration) or 0 end
+    if secs < 0 then secs = 0 end
+    return secs
+end
+
+function CU.StartTimer(st, secs, mode)
+    secs = CU.Len(st, secs)
     if secs <= 0 then return false end
     local now = GetTime()
     local running = CU.Running(st)
@@ -223,14 +265,116 @@ function CU.StopTimer(st)
     return true
 end
 
-function CU.SetStacks(st, n)
+-- The one writer of the count. secs: a new stack's seconds when each stack
+-- runs out on its own.
+function CU.SetStacks(st, n, secs)
     n = math.floor(tonumber(n) or 0)
     if n < 0 then n = 0 end
     local cap = tonumber(st.rec.driver.maxStacks)
     if cap and cap > 0 and n > cap then n = cap end
     if n == st.stacks then return false end
+    local was = st.stacks
     st.stacks = n
+    CU.SyncExp(st, was, secs)
     return true
+end
+
+-- k more stacks. Past the cap, with stack timers, an add renews the end of
+-- the stack nearest its end instead.
+function CU.AddStacks(st, k, secs)
+    local want = st.stacks + k
+    local changed = CU.SetStacks(st, want, secs)
+    local over = want - st.stacks
+    if over > 0 and k > 0 and CU.StackTimed(st) and st.exp and #st.exp > 0 then
+        local len = CU.Len(st, secs)
+        if len > 0 then
+            for _ = 1, math.min(over, #st.exp) do
+                local i = CU.Soonest(st.exp)
+                st.exp[i] = GetTime() + len
+            end
+            CU.ScheduleStacks(st)
+            changed = true
+        end
+    end
+    return changed
+end
+
+-- Stacks that each run out on their own (driver.stackTimers): every stack
+-- added carries its own end (st.exp, GetTime seconds) from the rule's seconds,
+-- else the item's Default seconds; with neither it never runs out. One
+-- scheduled call waits for the soonest end.
+function CU.StackTimed(st)
+    return st.rec.driver.stackTimers == true
+end
+
+function CU.Soonest(exp)
+    local bi
+    for i, t in ipairs(exp) do
+        if not bi or t < exp[bi] then bi = i end
+    end
+    return bi
+end
+
+-- The ends follow the count: fewer stacks drop the soonest ends (stacks with
+-- no end go last), more give each new stack its own.
+function CU.SyncExp(st, was, secs)
+    if not CU.StackTimed(st) then
+        if st.exp then
+            st.exp = nil
+            st.sgen = (st.sgen or 0) + 1
+        end
+        return
+    end
+    local exp = st.exp or {}
+    st.exp = exp
+    local n = st.stacks
+    if n < was then
+        for _ = 1, was - n do
+            local i = CU.Soonest(exp)
+            if not i then break end
+            table.remove(exp, i)
+        end
+    elseif n > was then
+        local len = CU.Len(st, secs)
+        if len > 0 then
+            local at = GetTime() + len
+            for _ = 1, n - was do exp[#exp + 1] = at end
+        end
+    end
+    while #exp > n do table.remove(exp, CU.Soonest(exp)) end
+    CU.ScheduleStacks(st)
+end
+
+function CU.ScheduleStacks(st)
+    st.sgen = (st.sgen or 0) + 1
+    local i = st.exp and CU.Soonest(st.exp)
+    if not i then return end
+    local gen, id = st.sgen, st.id
+    C_Timer.After(math.max(st.exp[i] - GetTime(), 0) + 0.01, function()
+        local live = CU.items[id]
+        if live and live.sgen == gen then CU.StacksRanOut(live) end
+    end)
+end
+
+-- The soonest stacks reached their ends: they drop, the item repaints.
+function CU.StacksRanOut(st)
+    if not (CU.StackTimed(st) and st.exp) then
+        st.exp = nil
+        return
+    end
+    local now, gone = GetTime(), 0
+    for i = #st.exp, 1, -1 do
+        if st.exp[i] <= now + 0.005 then
+            table.remove(st.exp, i)
+            gone = gone + 1
+        end
+    end
+    if gone > 0 then
+        st.stacks = math.max(0, st.stacks - gone)
+        CU.Paint(st)
+        CU.Save(st)
+    end
+    CU.ScheduleStacks(st)
 end
 
 -- Matching, guards and actions
@@ -252,10 +396,33 @@ function CU.SpellMatch(want, got)
     return Store.SpellMatch(want, got)
 end
 
-function CU.Matches(r, ctx)
+-- A rule's spells: its one, or every one of its list.
+function CU.RuleSpells(r)
+    if type(r.spellIDs) == "table" and #r.spellIDs > 0 then return r.spellIDs end
+    return { r.spellID }
+end
+
+function CU.RuleHears(r, sid)
+    if type(sid) ~= "number" then return false end
+    if CU.SpellMatch(r.spellID, sid) then return true end
+    local list = r.spellIDs
+    if type(list) ~= "table" then return false end
+    for i = 1, #list do
+        if CU.SpellMatch(list[i], sid) then return true end
+    end
+    return false
+end
+
+-- st: the item whose rule this is (its own end names it).
+function CU.Matches(r, ctx, st)
+    -- your own casts but the listed spells (any rank of them); none listed: every cast
+    if r.when == "cast_except" then
+        if not (ctx and ctx.unit == "player" and type(ctx.spellID) == "number") then return false end
+        return not (CU.RuleHears(r, ctx.spellID) or (ctx.baseID ~= nil and CU.RuleHears(r, ctx.baseID)))
+    end
     if CU.SPELL_TRIGGERS[r.when] then
-        if not (ctx and (CU.SpellMatch(r.spellID, ctx.spellID)
-            or (ctx.baseID ~= nil and CU.SpellMatch(r.spellID, ctx.baseID)))) then return false end
+        if not (ctx and (CU.RuleHears(r, ctx.spellID)
+            or (ctx.baseID ~= nil and CU.RuleHears(r, ctx.baseID)))) then return false end
         if r.when == "cast" and ctx.unit == "pet" and not r.pet then return false end
         -- a usable rule hears one edge: the plain usable one with "Fire even
         -- while on cooldown", the castable one (usable and ready) without
@@ -267,6 +434,9 @@ function CU.Matches(r, ctx)
     end
     if r.when == "chain" then
         return ctx ~= nil and r.srcId ~= nil and r.srcId == ctx.srcId
+    end
+    if r.when == "ended" then
+        return ctx ~= nil and st ~= nil and ctx.srcId == st.id
     end
     if CU.COND_TRIGGERS[r.when] then
         return ctx ~= nil and r.cond ~= nil and r.cond == ctx.cond
@@ -370,12 +540,12 @@ function CU.Act(st, r, i)
     elseif act == "stop" then
         changed = CU.StopTimer(st)
     elseif act == "add" then
-        changed = CU.SetStacks(st, st.stacks + (r.n or 1))
+        changed = CU.AddStacks(st, r.n or 1, r.secs)
         if r.restartToo and CU.StartTimer(st, r.secs, "restart") then changed = true end
     elseif act == "remove" then
         changed = CU.SetStacks(st, st.stacks - (r.n or 1))
     elseif act == "set" then
-        changed = CU.SetStacks(st, r.n or 0)
+        changed = CU.SetStacks(st, r.n or 0, r.secs)
     elseif act == "reset" then
         local a = CU.StopTimer(st)
         local b = CU.SetStacks(st, 0)
@@ -396,8 +566,9 @@ function CU.Fire(when, ctx)
         local rules = CU.Rules(st.rec)
         if rules then
             for i, r in ipairs(rules) do
-                if r.when == when and not (ctx and ctx.once and st.last[i] == ctx.once)
-                    and CU.Matches(r, ctx) and CU.Guard(st, r) then
+                if (r.when == when or (when == "chain" and r.when == "ended"))
+                    and not (ctx and ctx.once and st.last[i] == ctx.once)
+                    and CU.Matches(r, ctx, st) and CU.Guard(st, r) then
                     st.last[i] = GetTime()
                     CU.Act(st, r, i)
                 end
@@ -427,7 +598,9 @@ function CU.PaintIcon(st)
         f.cooldown:Clear()
     end
     if Store.Resolve(rec, "text", "stackText") ~= false then
-        f.stackText:SetText(st.stacks > 0 and st.stacks or "")
+        local n = CU.ShownCount(st)
+        if n == 0 and Store.Resolve(rec, "text", "stackShowZero") ~= true then n = "" end
+        f.stackText:SetText(n)
     end
     local active = CU.Active(st)
     F.SetState(f, rec, not active, not active)
@@ -440,20 +613,45 @@ function CU.BarDone(e)
     if st and st.bar == e then CU.TimerCheck(st) end
 end
 
+-- A stack bar's length in stacks: Max stacks, else the count it holds.
+function CU.BarCap(st)
+    local cap = tonumber(st.rec.driver and st.rec.driver.maxStacks)
+    if cap and cap > 0 then return math.floor(cap) end
+    return math.max(CU.ShownCount(st), 1)
+end
+
 function CU.PaintBar(st)
     local e, rec = st.bar, st.rec
     local K = NS.Bars and NS.Bars.Kit
     if not (e and K) then return end
     local d = rec.driver or {}
+    local shown = CU.ShownCount(st)
     if e.mode == "stack" then
         if e.running then K.TimerStop(e) end
-        e.cuStart, e.cuDur = nil, nil
-        local cap = tonumber(d.maxStacks)
-        if not (cap and cap > 0) then cap = math.max(st.stacks, 1) end
+        local cap = CU.BarCap(st)
         e.shell.fill:SetMinMaxValues(0, cap)
-        e.shell.fill:SetValue(st.stacks)
+        -- cells (pips, icons, segments) light one by one over an empty fill;
+        -- with no Max stacks a new count past the row adds a cell
+        if e.pipsOn then
+            if e.cellCount ~= cap then
+                e.cellCount = cap
+                K.LayoutPips(e)
+            end
+            e.shell.fill:SetValue(0)
+            K.FeedCells(e, shown)
+        else
+            e.shell.fill:SetValue(shown)
+        end
         e.shell.fill:SetStatusBarColor(K.BarColorOf(rec))
         K.SetRunText(e.shell, "dur", "")
+        -- the timer's time left as the duration text (plain GetTime numbers on
+        -- a text-only Cooldown); pushed only when the timer changes
+        local running = CU.Running(st)
+        local s0, d0 = running and st.start or nil, running and st.dur or nil
+        if e.durCD and (e.cuStart ~= s0 or e.cuDur ~= d0) then
+            if running then e.durCD:SetCooldown(s0, d0) else e.durCD:Clear() end
+        end
+        e.cuStart, e.cuDur = s0, d0
     elseif CU.Running(st) then
         -- a start, restart or extension runs the fill afresh over the whole
         -- length, then moves its end to the timer's
@@ -467,7 +665,7 @@ function CU.PaintBar(st)
         if e.running then K.TimerStop(e) end
         e.cuStart, e.cuDur = nil, nil
     end
-    K.SetRunText(e.shell, "stk", K.StackCount(rec, st.stacks))
+    K.SetRunText(e.shell, "stk", K.StackCount(rec, shown))
     e.stateHidden = (not CU.Active(st)) and Store.Resolve(rec, "behavior", "hideWhenInactive") == true
     K.ApplyVisibility(e)
 end
@@ -549,11 +747,21 @@ function CU.Unwatch(key) CU.watchers[key] = nil end
 
 -- The bar kind the bars runtime registers (Bars.RegisterKind("timer")).
 CU.BarKind = {
+    -- stack mode shows its timer as text only (a mode change rebuilds the bar)
+    Build = function(e)
+        local K = NS.Bars and NS.Bars.Kit
+        if e.mode == "stack" and not e.durCD and K and K.TextCooldown then e.durCD = K.TextCooldown(e.shell) end
+    end,
     Ensure = function(e)
         local st = Ensure(e.rec)
         st.bar = e
         local K = NS.Bars.Kit
         K.LayoutDividers(e.shell, e.rec, 1)
+        -- the cells of a stack bar drawn as pips, icons or segments, or none
+        if e.mode == "stack" then
+            e.cellCount = CU.BarCap(st)
+            K.LayoutPips(e)
+        end
         if not e.running then
             e.shell.fill:SetMinMaxValues(0, 1)
             e.shell.fill:SetValue(0)
@@ -564,6 +772,16 @@ CU.BarKind = {
     Refresh = function(e)
         local st = CU.items[e.rec.id]
         if st and st.bar == e then CU.PaintBar(st) end
+    end,
+    -- a new size: the segments split it again
+    Relayout = function(e)
+        local K = NS.Bars.Kit
+        K.LayoutDividers(e.shell, e.rec, 1)
+        if e.mode == "stack" then
+            K.LayoutPips(e)
+            local st = CU.items[e.rec.id]
+            if st and st.bar == e then K.FeedCells(e, CU.ShownCount(st)) end
+        end
     end,
     Release = function(e)
         local st = CU.items[e.rec.id]
@@ -661,7 +879,9 @@ function CU.OnCast(unit, spellID)
     end
     spellID = Plain(spellID)
     if type(spellID) ~= "number" then return end
-    CU.Fire("cast", { spellID = spellID, unit = unit })
+    local ctx = { spellID = spellID, unit = unit }
+    CU.Fire("cast", ctx)
+    CU.Fire("cast_except", ctx)
 end
 
 function CU.OnProc(spellID, on)
@@ -847,12 +1067,14 @@ function CU.Sync()
                 live[id] = st
                 for _, r in ipairs(CU.Rules(rec) or {}) do
                     local g = CU.GROUP_OF[r.when]
-                    if r.when == "cast" then
+                    if r.when == "cast" or r.when == "cast_except" then
                         casts = true
                         if r.pet then petCasts = true end
                     elseif CU.WATCH_TRIGGERS[r.when] and r.spellID then
-                        watch[r.spellID] = true
-                        if CU.USABLE_TRIGGERS[r.when] then usable[r.spellID] = true end
+                        for _, sid in ipairs(CU.RuleSpells(r)) do
+                            watch[sid] = true
+                            if CU.USABLE_TRIGGERS[r.when] then usable[sid] = true end
+                        end
                     elseif CU.PROC_TRIGGERS[r.when] then
                         proc = true
                     elseif r.when == "spell_update" then
@@ -980,7 +1202,7 @@ function CU.SetRule(rec, i, field, value)
     r[field] = value
     -- a new trigger drops the parameters the old one had
     if field == "when" then
-        if not CU.SPELL_TRIGGERS[value] then r.spellID, r.pet = nil, nil end
+        if not CU.SPELL_TRIGGERS[value] then r.spellID, r.spellIDs, r.pet = nil, nil, nil end
         if value ~= "cast" then r.pet = nil end
         if not CU.USABLE_TRIGGERS[value] then r.ignoreCooldown = nil end
         if not CU.TOTEM_TRIGGERS[value] then r.slot = nil end
@@ -1011,6 +1233,12 @@ function CU.SetDriver(rec, field, value)
     if d[field] == value then return false end
     d[field] = value
     Store.Dirty("style", rec.id)
+    -- the count it shows and its stacks' ends follow the edit at once
+    local st = CU.items[rec.id]
+    if st then
+        if field == "stackTimers" then CU.SyncExp(st, st.stacks) end
+        CU.Paint(st)
+    end
     return true
 end
 
@@ -1018,7 +1246,8 @@ end
 function CU.Words(r)
     local L = Schema.CUSTOM_TRIGGER_LABELS[r.when] or tostring(r.when)
     if CU.SPELL_TRIGGERS[r.when] and r.spellID then
-        L = L .. " (" .. (SpellName(r.spellID) or tostring(r.spellID)) .. ")"
+        local more = (type(r.spellIDs) == "table" and #r.spellIDs > 1) and (" + " .. (#r.spellIDs - 1)) or ""
+        L = L .. " (" .. (SpellName(r.spellID) or tostring(r.spellID)) .. more .. ")"
     end
     if CU.COND_TRIGGERS[r.when] and r.cond then
         local C = NS.Conditions

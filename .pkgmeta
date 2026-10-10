@@ -25,6 +25,11 @@ ignore:
   - Textures/ArcUI_Icon_400x400.tga
   - Textures/ArcUI_Icon_Dial_256.tga
   - Textures/ArcUI_Minimap_64.tga
+  - Core/AD_ImportArcUI.lua
+  - Core/AD_ImportArcUIRead.lua
+  - Core/AD_ImportArcUIIcon.lua
+  - UI/AD_ImportArcUIOptions.lua
+  - Textures/ArcUI_Icon_128.tga
   - Libs/LibCustomGlow-1.0/README.md
   - Libs/LibCustomGlow-1.0/cspell.json
   - Libs/LibCustomGlow-1.0/LibCustomGlow-1.0_old.xml

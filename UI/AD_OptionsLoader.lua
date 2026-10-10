@@ -98,14 +98,20 @@ local function Tick()
     -- a background build waits out combat (the window is shut in combat)
     if bg and InCombatLockdown() then return end
     stepping = true
+    local PF = NS.Perf
+    if PF and PF.marking then PF.Mark("build slice starts") end
     sliceStart = debugprofilestop()
     local finished = step()
     stepping = false
+    -- the open probe reads each slice's time (Core\AD_Perf.lua)
+    Loader.sliceMs, Loader.sliceBg = debugprofilestop() - sliceStart, bg
+    if PF and PF.marking then PF.Mark("build slice ends") end
     if finished then
         Loader.Stop()
         local run = after
         after = {}
         for _, fn in ipairs(run) do fn() end
+        if PF and PF.marking then PF.Mark("the build's waiting work ran (show, refresh)") end
     end
     -- outside the build: the picks whose pane now exists open
     if Loader.OnSlice then Loader.OnSlice() end

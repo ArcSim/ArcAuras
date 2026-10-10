@@ -972,12 +972,32 @@ local function ApplySheen(tex, rec)
     end
 end
 
+-- Cells: a resource bar's pips, or a custom bar's stacks drawn as pips, icons
+-- or segments; one renderer (LayoutPips) draws them all. nil = a plain bar.
+local function CellStyle(entry)
+    local rec = entry.rec
+    if entry.kind == "resource" then
+        return (R(rec, "resource", "style") == "pips") and "pips" or nil
+    end
+    if entry.kind == "timer" and entry.mode == "stack" then
+        local s = R(rec, "stacklook", "style")
+        if s == "pips" or s == "icons" or s == "segmented" then return s end
+    end
+    return nil
+end
+Bars.CellStyle = CellStyle
+-- where each kind keeps its cell settings
+local RES_CELL = { sec = "resource", shape = "pipShape", w = "pipWidth", h = "pipHeight", gap = "pipSpacing",
+    tint = "pipEmptyTint" }
+local STACK_CELL = { sec = "stacklook", shape = "cellShape", w = "cellWidth", h = "cellHeight", gap = "cellSpacing",
+    tint = "cellEmptyTint" }
+
 local function ApplyStyle(entry)
     local shell, rec = entry.shell, entry.rec
 
     -- Pips (one cell per item): the shell's own background, border and sheen
     -- stand down, since every cell carries them (LayoutPips).
-    local pipsOn = entry.kind == "resource" and R(rec, "resource", "style") == "pips"
+    local pipsOn = CellStyle(entry) ~= nil
     entry.pipsOn = pipsOn
 
     -- The background defaults to the fill's texture, dimmed, so the empty
@@ -2654,6 +2674,9 @@ local function EnsurePip(entry, i)
     local border = f:CreateTexture(nil, "BACKGROUND", nil, 0)
     local bg = f:CreateTexture(nil, "BACKGROUND", nil, 1)
     local dim = f:CreateTexture(nil, "ARTWORK")
+    -- an icon cell's picture (a custom bar's icons): lit by its plain count
+    local art = f:CreateTexture(nil, "ARTWORK", nil, 1)
+    art:Hide()
     -- the lit layer: a StatusBar whose window (i-0.5, i) turns the fed value
     -- into full / empty with no Lua read (the charge-slot model)
     local litBar = CreateFrame("StatusBar", nil, f)
@@ -2668,7 +2691,8 @@ local function EnsurePip(entry, i)
     border:AddMaskTexture(maskOuter)
     bg:AddMaskTexture(maskInner)
     dim:AddMaskTexture(maskInner)
-    p = { f = f, border = border, bg = bg, dim = dim, litBar = litBar,
+    art:AddMaskTexture(maskInner)
+    p = { f = f, border = border, bg = bg, dim = dim, art = art, litBar = litBar,
         maskOuter = maskOuter, maskInner = maskInner, maskLit = maskLit }
     entry.pips[i] = p
     return p
@@ -2702,9 +2726,13 @@ end
 local function PaintPips(entry)
     local n = entry.pipCount or 0
     if n == 0 then return end
+    local res = entry.kind == "resource"
     local r, g, b, a = entry.cr, entry.cg, entry.cb, entry.ca
-    if not r then r, g, b, a = PowerColorOf(entry.rec, entry.powerType) end
-    local tint = R(entry.rec, "resource", "pipEmptyTint")
+    if not r then
+        if res then r, g, b, a = PowerColorOf(entry.rec, entry.powerType) else r, g, b, a = BarColorOf(entry.rec) end
+    end
+    local CF = res and RES_CELL or STACK_CELL
+    local tint = R(entry.rec, CF.sec, CF.tint)
     if tint == nil then tint = 0 end
     for i = 1, n do
         local p = entry.pips[i]
@@ -2715,27 +2743,84 @@ local function PaintPips(entry)
         p.pr, p.pg, p.pb, p.pa, p.tinted = pr, pg, pb, pa, nil
     end
     -- second laps and charged points paint over these
-    if Bars.ResCells then Bars.ResCells.Painted(entry) end
+    if res and Bars.ResCells then Bars.ResCells.Painted(entry) end
+end
+
+-- An icon cell's picture: the custom bar's own (a file or an atlas), else its
+-- icon's art (the Icon block's override, else the art spell), cropped as icons are.
+local function CellArt(rec)
+    local v = R(rec, "stacklook", "iconArt")
+    if type(v) == "string" and v ~= "" then
+        local info = C_Texture and C_Texture.GetAtlasInfo and C_Texture.GetAtlasInfo(v)
+        if type(info) == "table" and info.file then
+            return info.file, info.leftTexCoord or 0, info.rightTexCoord or 1, info.topTexCoord or 0,
+                info.bottomTexCoord or 1
+        end
+        return tonumber(v) or v, 0, 1, 0, 1
+    end
+    local tex
+    local ov = R(rec, "icon", "iconOverride") or 0
+    if ov > 0 then
+        tex = (C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(ov)) or ov -- raw-id: an art pick, not a tracked spell
+    else
+        local sid = SpellIDFor and SpellIDFor(rec)
+        tex = sid and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(sid)
+    end
+    return tex or 134400, 0.08, 0.92, 0.08, 0.92
+end
+
+-- A count into every cell: each lit bar renders full or empty by its window
+-- (a power may be secret: SetValue is a sink). Icons light from a custom bar's
+-- plain count; an unlit one keeps its own opacity, greyed.
+local function FeedCells(entry, v)
+    if entry.cellStyle == "icons" then
+        local rec = entry.rec
+        local dimA = R(rec, "stacklook", "iconDim") or 0.25
+        local grey = R(rec, "stacklook", "iconColorUnlit") ~= true
+        local cnt = (type(v) == "number" and not (issecretvalue and issecretvalue(v))) and v or 0
+        for i = 1, entry.pipCount or 0 do
+            local p = entry.pips[i]
+            if p then
+                local lit = cnt >= i
+                p.art:SetVertexColor(1, 1, 1, lit and 1 or dimA)
+                p.art:SetDesaturated(grey and not lit)
+            end
+        end
+        return
+    end
+    for i = 1, entry.pipCount or 0 do
+        local p = entry.pips[i]
+        if p then p.litBar:SetValue(v) end
+    end
 end
 
 -- Geometry, dress and shape for every cell, on size or setting changes only:
 -- the Border and Background blocks dress each cell, the Fill texture lights it.
 local function LayoutPips(entry)
     local rec, shell = entry.rec, entry.shell
-    local on = R(rec, "resource", "style") == "pips"
+    local style = CellStyle(entry)
+    local on = style ~= nil
     entry.pipsOn = on
+    entry.cellStyle = style
+    local res = entry.kind == "resource"
     if not on then
         for _, p in ipairs(entry.pips or {}) do p.f:Hide() end
         entry.pipCount = 0
         entry.pipsW, entry.pipsH = nil, nil
         -- bar style: recharge slots, charged marks, the fold's second lap
-        if Bars.ResCells then Bars.ResCells.BarLaid(entry) end
+        if res and Bars.ResCells then Bars.ResCells.BarLaid(entry) end
         return
     end
+    local CF = res and RES_CELL or STACK_CELL
     local fill = shell.fill
-    local range = Bars.PlainMax(entry)
-    local n = ResourceSegmentCount(entry, range)
-    if Bars.ResCells then n = Bars.ResCells.CellCount(entry, n) end   -- half when folded
+    local n
+    if res then
+        n = ResourceSegmentCount(entry, Bars.PlainMax(entry))
+        if Bars.ResCells then n = Bars.ResCells.CellCount(entry, n) end   -- half when folded
+    else
+        -- a custom bar's Max stacks, else the count it holds (its engine sets it)
+        n = math.floor(tonumber(entry.cellCount) or 1)
+    end
     if n > 20 then n = 20 elseif n < 1 then n = 1 end
     local vertical = (R(rec, "fill", "orientation") or "HORIZONTAL") == "VERTICAL"
     local rev = R(rec, "fill", "reverseFill") == true
@@ -2745,13 +2830,36 @@ local function LayoutPips(entry)
     -- anchor at the cell's corner with pixel offsets; circles and diamonds keep
     -- the centre anchor (rotation and the mask need it; their edges are soft).
     local function P(v) return math.max(px, math.floor(v / px + 0.5) * px) end
-    local gap = math.floor((px * (R(rec, "resource", "pipSpacing") or 4)) / px + 0.5) * px
+    local segs = style == "segmented"
+    local gap = math.floor((px * (R(rec, CF.sec, segs and "segGap" or CF.gap) or (segs and 2 or 4))) / px + 0.5) * px
     local sc = R(rec, "size", "scale") or 1
-    local pw = P(px * (R(rec, "resource", "pipWidth") or 28) * sc)
-    local ph = P(px * (R(rec, "resource", "pipHeight") or 28) * sc)
-    local along = vertical and ph or pw
-    local cross = vertical and pw or ph
-    local envAlong = along * n + gap * (n - 1)
+    -- each cell's length along the row: one size; segments split the bar's own
+    -- size (the engine's), a spare whole pixel each to the first cells, so
+    -- every gap is the same
+    local along, cross
+    local lens = {}
+    if segs then
+        local LE = NS.LayoutEngine
+        local bw, bh
+        if LE and LE.BarSize then bw, bh = LE.BarSize(rec, entry.holder) end
+        bw = P(bw or (R(rec, "size", "width") or 220) * sc)
+        bh = P(bh or (R(rec, "size", "height") or 16) * sc)
+        local total = vertical and bh or bw
+        cross = vertical and bw or bh
+        local inner = total - gap * (n - 1)
+        local base = math.max(px, math.floor(inner / n / px) * px)
+        local spare = math.max(0, math.floor((inner - base * n) / px + 0.5))
+        for i = 1, n do lens[i] = base + ((i <= spare) and px or 0) end
+        along = base
+    else
+        local pw = P(px * (R(rec, CF.sec, CF.w) or 28) * sc)
+        local ph = P(px * (R(rec, CF.sec, CF.h) or 28) * sc)
+        along = vertical and ph or pw
+        cross = vertical and pw or ph
+        for i = 1, n do lens[i] = along end
+    end
+    local envAlong = gap * (n - 1)
+    for i = 1, n do envAlong = envAlong + lens[i] end
     -- the size the row gives the bar, for whatever lays out around it (the glows)
     entry.pipsW = vertical and cross or envAlong
     entry.pipsH = vertical and envAlong or cross
@@ -2787,8 +2895,7 @@ local function LayoutPips(entry)
     -- The cells need no rect: they anchor to the pip host (the fill, spanning
     -- the frame in pips style) at offsets known here, so they are right as soon
     -- as the frame has its size. The fill's rect reads 0 until layout runs.
-    local cell = along
-    local shape = R(rec, "resource", "pipShape") or "square"
+    local shape = (not segs) and R(rec, CF.sec, CF.shape) or "square"
     local square = shape == "square"
     local rot = (shape == "diamond") and (math.pi / 4) or 0
     local borderOn = R(rec, "look", "borderEnabled") ~= false
@@ -2800,9 +2907,13 @@ local function LayoutPips(entry)
     end
     local th = borderOn and P(px * (R(rec, "look", "borderThickness") or 1)) or 0
     -- a border that would swallow the cell leaves one pixel of inside
-    if th * 2 >= math.min(pw, ph) then
-        th = math.max(0, math.floor((math.min(pw, ph) - px) / 2 / px) * px)
+    local small = math.min(along, cross)
+    if th * 2 >= small then
+        th = math.max(0, math.floor((small - px) / 2 / px) * px)
     end
+    local icons = style == "icons"
+    local artFile, al, ar, at0, ab = nil, 0, 1, 0, 1
+    if icons then artFile, al, ar, at0, ab = CellArt(rec) end
     local bgShow = R(rec, "look", "bgShow") ~= false
     local bgC = R(rec, "look", "bgColor") or { 0.039, 0.067, 0.125, 1 }
     local bgA = bgShow and (R(rec, "look", "bgAlpha") or 1) or 0
@@ -2811,9 +2922,11 @@ local function LayoutPips(entry)
     local bgPath = ResolveBarTexture((bgKey == nil or bgKey == "") and R(rec, "fill", "texture") or bgKey)
     local maskPath = (shape == "circle") and PIP_CIRCLE_MASK or WHITE
     fill:SetValue(0)
+    local at = 0
     for i = 1, n do
         local p = EnsurePip(entry, i)
-        local at = (i - 1) * (cell + gap)
+        local cell = lens[i]
+        if i > 1 then at = at + lens[i - 1] + gap end
         p.f:ClearAllPoints()
         -- corner anchors, never LEFT / BOTTOM: a centred anchor halves an
         -- odd size difference into a half pixel
@@ -2861,6 +2974,17 @@ local function LayoutPips(entry)
         p.bg:SetTexture(bgPath)
         p.bg:SetVertexColor(bgC[1], bgC[2], bgC[3], bgA)
         p.dim:SetTexture(fillPath)
+        -- icons: the picture in the cell instead of the dim copy and the lit bar
+        -- (a rotated diamond keeps the whole picture: a crop would undo the turn)
+        if icons then
+            PlaceTex(p.art, iw, ih, th)
+            p.art:SetTexture(artFile)
+            if rot == 0 then p.art:SetTexCoord(al, ar, at0, ab) end
+            p.art:Show()
+        else
+            p.art:Hide()
+        end
+        p.dim:SetShown(not icons)
         -- the lit bar fills the inset rect; swapping its texture makes a new
         -- texture object, so the mask and rotation go on whatever is current
         local lb = p.litBar
@@ -2871,6 +2995,7 @@ local function LayoutPips(entry)
             lb:SetPoint("CENTER", p.f, "CENTER", 0, 0)
         end
         lb:SetSize(iw, ih)
+        lb:SetShown(not icons)
         lb:SetOrientation(vertical and "VERTICAL" or "HORIZONTAL")
         lb:SetReverseFill(rev)
         if p.litPath ~= fillPath then
@@ -2885,7 +3010,7 @@ local function LayoutPips(entry)
         lt:SetRotation(rot)
         -- the cell's window in the fill's units (tenths for soul shards)
         local wlo, whi = i - 0.5, i
-        if Bars.ResPowers then wlo, whi = Bars.ResPowers.PipWindow(entry.powerType, i) end
+        if res and Bars.ResPowers then wlo, whi = Bars.ResPowers.PipWindow(entry.powerType, i) end
         lb:SetMinMaxValues(wlo, whi)
         -- Masks: the circle mask on circles, else plain white oversized by a
         -- pixel each side, so a mask edge never sits on the texture's edge
@@ -2919,9 +3044,9 @@ local function LayoutPips(entry)
     for i = n + 1, #(entry.pips or {}) do entry.pips[i].f:Hide() end
     entry.pipCount = n
     -- each cell's extra layers (recharge text, second lap) before the paint
-    if Bars.ResCells then Bars.ResCells.PipsLaid(entry) end
+    if res and Bars.ResCells then Bars.ResCells.PipsLaid(entry) end
     PaintPips(entry)
-    if Bars.ResPowers then Bars.ResPowers.PipsLaid(entry) end   -- re-windowed rune cells feed again
+    if res and Bars.ResPowers then Bars.ResPowers.PipsLaid(entry) end   -- re-windowed rune cells feed again
 end
 
 -- The per-tick path: max, colour, value and text only; re-running visibility
@@ -3130,7 +3255,9 @@ local predictArmed = false
 function PredictLayout(entry)
     local shell, rec = entry.shell, entry.rec
     if Bars.RectHidden(shell.fill) then return end   -- pinned to a nameplate
+    -- a cast's cost, else a queued ability's while that is asked for
     local cost = entry.predCost
+    if not cost and R(rec, "predict", "predictQueued") == true then cost = entry.predQCost end
     local tex = entry.predTex
     -- a folded fill shows two laps: a cost has no single place on it
     local folded = Bars.ResCells and Bars.ResCells.Folded(entry)
@@ -3196,6 +3323,23 @@ local function AnyPredict()
     return false
 end
 
+-- A next-swing ability queued (WoW Forever: the current spell, plain, with
+-- its own event): its cost stays marked until the swing lands or it is
+-- cancelled (Drivers\AD_DriverToggle.lua reads which one).
+local function PredictQueue()
+    local DT = NS.DriverToggle
+    local q = DT and DT.ReadQueued and DT.ReadQueued()
+    ForEach("resource", function(e)
+        local want = q and R(e.rec, "predict", "predictEnabled") == true
+            and R(e.rec, "predict", "predictQueued") == true
+        local c = want and SpellCostFor(q, e.powerType) or nil -- raw-id: the ability the game reports queued
+        if e.predQCost ~= c then
+            e.predQCost = c
+            PredictLayout(e)
+        end
+    end)
+end
+
 local PREDICT_END_EVENTS = { "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_SUCCEEDED",
     "UNIT_SPELLCAST_FAILED", "UNIT_SPELLCAST_INTERRUPTED" }
 
@@ -3212,6 +3356,10 @@ function EnsurePredictEvents()
             if unit == "player" then PredictClear() end
         end)
     end
+    if NS.IsForever then
+        SafeOn("CURRENT_SPELL_CAST_CHANGED", "adbarspred", PredictQueue)
+        PredictQueue()
+    end
 end
 
 local function ReleasePredictEvents()
@@ -3219,6 +3367,7 @@ local function ReleasePredictEvents()
     predictArmed = false
     Events.Off("UNIT_SPELLCAST_START", "adbarspred")
     for _, ev in ipairs(PREDICT_END_EVENTS) do Events.Off(ev, "adbarspred") end
+    Events.Off("CURRENT_SPELL_CAST_CHANGED", "adbarspred")
 end
 
 -- Health runtime: one unit's health (rec.driver.unit) with incoming heals,
@@ -5693,6 +5842,12 @@ function Bars.PreviewModes(rec)
             { key = "static", text = "Idle", tip = "The bar between swings." },
             { key = "loop", text = "Swing loop", tip = "Swing after swing at your weapon's speed." },
         }
+    elseif k == "timer" and stack then
+        return {
+            { key = "static", text = "Stacks", tip = "The bar at 3 stacks, or at its Max stacks when that is lower." },
+            { key = "loop", text = "Stack loop",
+              tip = "The stacks climb to Max stacks, then clear: the fill and the count." },
+        }
     end
     return {
         { key = "static", text = "Idle", tip = "The bar with no timer running." },
@@ -5833,6 +5988,8 @@ function PV.Relayout(e)
         HB.Layout(e)
     elseif e.kind == "aura" or e.kind == "timer" or e.kind == "swing" then
         LayoutDividers(e.shell, e.rec, 1)
+        -- a custom stack bar's cells, or none
+        if e.kind == "timer" then LayoutPips(e) end
     elseif Bars.KINDS[e.kind] and Bars.KINDS[e.kind].Relayout then
         Bars.KINDS[e.kind].Relayout(e)
     end
@@ -5993,6 +6150,26 @@ function PV.PaintAuraDuration(e, remaining, len)
     end
 end
 
+-- a custom bar in stack mode, as CU.PaintBar draws it live: the fill to Max
+-- stacks in the bar's colour, the count, and its timer's time left.
+-- restart: true = a new stack starts it over, false = none shows, nil = it runs on
+function PV.PaintTimerStack(e, count, M, restart)
+    local shell, rec = e.shell, e.rec
+    shell.fill:SetMinMaxValues(0, M)
+    -- cells light one by one; the bar's own fill stays empty under them
+    shell.fill:SetValue(e.pipsOn and 0 or count)
+    if e.pipsOn then FeedCells(e, count) end
+    shell.fill:SetStatusBarColor(BarColorOf(rec))
+    SetRunText(shell, "dur", "")
+    SetRunText(shell, "stk", StackCount(rec, count))
+    if not e.durCD then return end
+    if restart == true and count > 0 then
+        e.durCD:SetCooldown(GetTime(), e.pvLen or 8)
+    elseif restart == false or count == 0 then
+        e.durCD:Clear()
+    end
+end
+
 function PV.PaintAuraStack(e, count, M)
     local shell, rec = e.shell, e.rec
     shell.fill:SetMinMaxValues(0, M)
@@ -6084,6 +6261,24 @@ function PV.Apply(e, fresh)
         else
             PV.PaintAuraDuration(e, len * 0.6, len)
         end
+    elseif kind == "timer" and e.mode == "stack" then
+        local M = e.pvM or 5
+        local count
+        if loop then
+            local step = 0.5
+            local x = t % ((M + 1) * step + 1)
+            count = math.min(M, math.floor(x / step))
+        else
+            count = math.min(3, M)
+        end
+        -- a new stack restarts the time left; a still frame has no clock
+        local restart = false
+        if loop then
+            restart = nil
+            if fresh or count > (e.pvCount or 0) then restart = true end
+            e.pvCount = count
+        end
+        PV.PaintTimerStack(e, count, M, restart)
     elseif kind == "swing" or kind == "timer" then
         -- the live GetTime loop itself (RunTimedFill); the tick restarts it
         if not loop then
@@ -6193,6 +6388,12 @@ function PV.Build(rec, holder, screen)
     -- loop paints 30 times a second and must not re-ask the game)
     e.pvLen = PV.Length(e)
     e.pvM = (e.kind == "aura" and e.mode == "stack") and math.max(1, AuraMaxStacks(rec)) or nil
+    -- a custom bar's Max stacks, else a sample five
+    if e.kind == "timer" and e.mode == "stack" then
+        local cap = tonumber(rec.driver and rec.driver.maxStacks)
+        e.pvM = (cap and cap >= 1) and math.floor(cap) or 5
+        e.cellCount = e.pvM
+    end
     ApplyStyle(e)
     -- the live aura sheen rides the engine fill; the preview uses the shell's
     if e.kind == "aura" then
@@ -6258,7 +6459,7 @@ end
 
 function PV.TickOne(e, paint)
     if not e then return end
-    if e.kind == "swing" or e.kind == "timer" then
+    if e.kind == "swing" or (e.kind == "timer" and e.mode ~= "stack") then
         if not e.running and e.pvRestartAt and GetTime() >= e.pvRestartAt then PV.RunTimed(e) end
         -- the off-hand track keeps its own clock, half a swing behind
         if e.kind == "swing" and Bars.SwingOH then Bars.SwingOH.Preview(e, true, false) end
@@ -6428,6 +6629,22 @@ Bars.Kit = {
     -- drives them), and the stack helpers its stack mode paints with
     RunTimedFill = RunTimedFill, TimerStop = TimerStop, BuildPlainBands = BuildPlainBands,
     LayoutDividers = LayoutDividers, StackCount = StackCount,
+    -- a custom bar's stacks as cells (pips, icons, segments)
+    LayoutPips = LayoutPips, PaintPips = PaintPips, FeedCells = FeedCells, CellStyle = CellStyle,
+    -- a Cooldown that draws only its countdown, in the bar's duration text
+    -- style (ApplyTexts styles any entry's durCD): the game draws the numbers
+    TextCooldown = function(shell)
+        local dcd = CreateFrame("Cooldown", nil, shell.overlay, "CooldownFrameTemplate")
+        dcd:SetAllPoints(shell.overlay)
+        dcd:SetDrawSwipe(false)
+        dcd:SetDrawEdge(false)
+        dcd:SetDrawBling(false)
+        dcd:SetHideCountdownNumbers(false)
+        if dcd.SetMinimumCountdownDuration then dcd:SetMinimumCountdownDuration(0) end
+        dcd:EnableMouse(false)
+        dcd:Show()
+        return dcd
+    end,
     -- the text elements' readers (Bars\AD_TextElement.lua): the current power,
     -- the health percent scale, the font probe and the aura engine's gates
     ResourceCurrent = ResourceCurrent, HealthScale = HB.Scale, ProvenFontPath = ProvenFontPath,

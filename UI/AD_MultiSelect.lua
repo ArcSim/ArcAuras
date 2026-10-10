@@ -457,8 +457,9 @@ end
 
 -- The state table's rows and the cards
 
--- Every record's kind has this state row, with the same field in each
--- column, so a cell edit lands on all of them.
+-- Every record's kind has this state row, showing for it (an item's Can't
+-- use it only with its switch on), with the same field in each column, so a
+-- cell edit lands on all of them.
 function M.StateShared(px, st)
     local ET = Options.EditorTabs
     if not ET then return false end
@@ -468,7 +469,7 @@ function M.StateShared(px, st)
         local list = r and ET.STATES[r.kind]
         local match
         for _, st2 in ipairs(list or {}) do
-            if st2.label == st.label then
+            if st2.label == st.label and (not ET.RowShows or ET.RowShows(st2, r)) then
                 match = st2
                 break
             end

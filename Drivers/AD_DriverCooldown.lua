@@ -75,6 +75,10 @@ local function PlayAlert(rec, enKey, soundKey)
     if type(name) == "string" and name ~= "" and NS.Sounds then
         NS.Sounds.Play(name, Store.Resolve(rec, "alerts", "soundChannel"))
     end
+    -- its words, in the voice every spoken line of Arc Auras uses
+    local say = Store.Resolve(rec, "alerts", (soundKey:gsub("Sound$", "Speech")))
+    local CU = NS.DriverCustom
+    if type(say) == "string" and say ~= "" and CU and CU.Speak then CU.Speak(say) end
 end
 Driver.PlayAlert = PlayAlert
 
@@ -217,13 +221,11 @@ local KB_BARS = {
 local kbCache, kbDirty = {}, true
 local kbExtraEvents = {}   -- the optional events that were registered
 
+-- The cache keeps a key's own words; each icon writes them its way
+-- (Factory.KeyText).
 local function KBShort(key)
     if not key or key == "" then return nil end
-    key = key:gsub("ALT%-", "a"):gsub("CTRL%-", "c"):gsub("SHIFT%-", "s")
-        :gsub("MOUSEWHEELUP", "mwu"):gsub("MOUSEWHEELDOWN", "mwd")
-        :gsub("BUTTON", "m"):gsub("NUMPAD", "n"):gsub("SPACE", "sp")
-    if key == "" then return nil end
-    return #key > 4 and key:sub(1, 4) or key
+    return key
 end
 
 -- First write wins, so the walk order breaks ties.
@@ -271,6 +273,8 @@ local function KBRememberSlot(slot, txt)
         -- filed under the forms the one matcher compares: the ID, its base
         -- form, and on ranked realms its name (ranks share only a name)
         for _, k in ipairs(Store.SeenKeys(id, NS.IsForever == true)) do KBRemember(k, txt) end
+    elseif atype == "item" and id and not (issecretvalue and issecretvalue(id)) then
+        KBRemember("item:" .. tostring(id), txt)
     end
 end
 
@@ -376,6 +380,47 @@ local function KBRebuild()
     KBWalk(false)
 end
 
+-- An icon with several spells (driver.spellAlts) turns to the one just cast:
+-- the cast is the player's own, plain in combat. Its art, cooldown, charges,
+-- usability, range and key follow at once. Procs are kept per spell (a.procs,
+-- from the overlay events), so the new spell's own proc shows.
+function Driver.CastChoice(d, cast, shown, eff)
+    for _, id in ipairs(Store.SpellChoices(d)) do
+        if Store.SpellMatch(id, cast, (id == shown) and eff or nil) then return id end
+    end
+    return nil
+end
+
+-- true when it turned (and fed); the shadows held the old spell, so the
+-- last-of-two-charges verdict is not read from them
+function Driver.TurnTo(a, cast)
+    local d = a.rec.driver
+    local shown = Store.ShownSpell(d)
+    local pick = Driver.CastChoice(d, cast, shown, a.effSid)
+    if not pick or pick == shown then return false end
+    Store.PickSpell(d, pick)
+    if Store.ShownSpell(d) == shown then return false end
+    a.icdToZero = nil
+    a.frame._adUsabSig = nil
+    a.frame._adStateSig = nil
+    Factory.RefreshArt(a.frame, a.rec)
+    Factory.SetProcGlow(a.frame, a.rec, (a.procs and a.procs[pick]) == true)
+    Feed(a)
+    FeedUsability(a)
+    return true
+end
+
+-- the overlay events, kept per spell for an icon with several
+function Driver.NoteProc(a, spellID, on)
+    local d = a.rec.driver
+    local shown = Store.ShownSpell(d)
+    local id = Driver.CastChoice(d, spellID, shown, a.effSid)
+    if not id then return false end
+    a.procs = a.procs or {}
+    a.procs[id] = on or nil
+    return id == shown
+end
+
 -- The key of a tracked spell, looked up by the one matcher's keys: `eff`
 -- (the rank / override its feed resolved, what the bar most likely holds),
 -- the spell, its override and base forms, then (byName, ranked realms) its
@@ -390,28 +435,70 @@ local function KeybindFor(sid, eff, byName)
     return nil
 end
 
+-- The item an item or trinket icon holds now, and the spell a totem icon
+-- drops (the totem bar's pick for one following a slot).
+local function KeyItemOf(rec)
+    if rec.kind == "item" then return Driver.LiveItem(rec) end
+    local slot = rec.driver and tonumber(rec.driver.slotID)
+    if rec.kind == "trinket" and slot and GetInventoryItemID then
+        local id = GetInventoryItemID("player", slot)
+        if issecretvalue and issecretvalue(id) then return nil end
+        return id
+    end
+    return nil
+end
+local function KeySpellOfTotem(rec)
+    local DT = NS.DriverTotem
+    local bar = DT and DT.BarShows and DT.BarShows(rec)
+    return bar or (rec.driver and Store.RecordSpellID(rec.driver)) or nil
+end
+
+-- The raw key of an icon of any kind that shows one; nil when none.
+local function RawKeyFor(rec, live)
+    local kind = rec.kind
+    if kind == "item" or kind == "trinket" then
+        local id = KeyItemOf(rec)
+        if not id then return nil end
+        if kbDirty then KBRebuild() end
+        return kbCache["item:" .. tostring(id)]
+    end
+    local byName = Store.Resolve(rec, "keybind", "keybindByName") == true
+    if kind == "totem" then
+        return KeybindFor(KeySpellOfTotem(rec), nil, byName)
+    end
+    -- the spell it shows now (one of several, Store.ShownSpell)
+    local sid = rec.driver and Store.ShownSpell(rec.driver)
+    if not sid then return nil end
+    local eff = (live and live.effSid) or Store.RecordSpellID(rec.driver)
+    return KeybindFor(sid, eff, byName)
+end
+
 local function ApplyKeybind(a)
     local rec = a.rec
-    if rec.kind ~= "spell" and rec.kind ~= "timer" then return end
-    UsabCfg(a)
+    local kind = rec.kind
+    if kind ~= "spell" and kind ~= "timer" and kind ~= "item" and kind ~= "trinket" and kind ~= "totem" then return end
+    local on
+    if kind == "spell" or kind == "timer" then
+        UsabCfg(a)
+        on = a.kbOn
+    else
+        on = Factory.KeybindEnabled(rec)
+    end
     local txt
-    if a.kbOn then
-        local sid = rec.driver and rec.driver.spellID
-        if sid then txt = KeybindFor(sid, EffOf(a), a.kbByName) end
+    if on then txt = Factory.KeyText(rec, RawKeyFor(rec, a)) end
+    -- an item, trinket or totem that never showed a key has nothing to clear
+    if kind ~= "spell" and kind ~= "timer" then
+        if txt == nil and not a.frame._adKeyShown then return end
+        a.frame._adKeyShown = (txt ~= nil) or nil
     end
     Factory.SetKeybindText(a.frame, txt)
 end
 
 -- The key an icon shows, for the options preview; nil when keybinds are off
--- for it or no bar holds the spell.
+-- for it or no bar holds it.
 function Driver.KeybindTextFor(rec)
     if not (rec and rec.driver and Factory.KeybindEnabled(rec)) then return nil end
-    local sid = rec.driver.spellID
-    if not sid then return nil end
-    local byName = Store.Resolve(rec, "keybind", "keybindByName") == true
-    local live = attached[rec.id]
-    local eff = (live and live.effSid) or Store.RecordSpellID(rec.driver)
-    return KeybindFor(sid, eff, byName)
+    return Factory.KeyText(rec, RawKeyFor(rec, attached[rec.id]))
 end
 
 -- /adkeys <spell id or name>: every bar button that holds the spell (any
@@ -746,8 +833,23 @@ function Driver.ItemReady(id)
     return c > 0 and Driver.ItemUsable(id)
 end
 
+-- An item icon by its spell category (driver.category, the Cooldown Manager's
+-- potions and healthstones): the item that last started the category's
+-- cooldown, which every item in it shares. Its plain answer is kept on the
+-- record (driver.itemID), so a later secret one (cooldowns restricted) still
+-- has an item to read the shared cooldown from.
+function Driver.CategoryItem(d)
+    local f = C_Spell and C_Spell.GetLastCategoryCooldownSource
+    if not f then return nil end
+    local _, iid = f(d.category)
+    if type(iid) ~= "number" or (issecretvalue and issecretvalue(iid)) or iid <= 0 then return nil end
+    if d.itemID ~= iid then d.itemID = iid end
+    return iid
+end
+
 -- the item to show, or nil while a read is unreadable
 function Driver.PickItem(d)
+    if d.category then return Driver.CategoryItem(d) end
     local first = tonumber(d.itemID)
     if not first then return nil end
     local ok = Driver.ItemReady(first)
@@ -770,8 +872,24 @@ end
 function Driver.LiveItem(rec)
     local d = rec and rec.driver
     if not (type(d) == "table" and rec.kind == "item") then return nil end
-    if type(d.itemIDs) ~= "table" then return tonumber(d.itemID) end
+    if type(d.itemIDs) ~= "table" and not d.category then return tonumber(d.itemID) end
     return Driver.liveItems[rec.id] or tonumber(d.itemID)
+end
+
+-- An item you carry but can't use yet, on an icon set to mark it: the game's
+-- own answer (IsUsableItem has no secret return; a secret one keeps the last).
+-- Out of stock wins, so an empty bag never reads as can't use.
+function Driver.ItemUsabilityCode(a)
+    local rec, f = a.rec, a.frame
+    if rec.kind ~= "item" or f._adItemEmpty or Store.Resolve(rec, "states", "itemUsability") ~= true
+        or not (C_Item and C_Item.IsUsableItem) then
+        return nil
+    end
+    local iid = Driver.LiveItem(rec)
+    if not iid then return nil end
+    local usable = C_Item.IsUsableItem(iid)
+    if issecretvalue and issecretvalue(usable) then return f._adUsability end
+    return (usable == false) and "unusable" or nil
 end
 
 -- A trinket with no use spell. Item data not loaded yet reads as on-use, so a
@@ -807,7 +925,7 @@ local function FeedItem(a)
     local d = rec.driver or {}
     -- several items: the one it shows gives the art, cooldown and count
     local iid = d.itemID
-    local several = rec.kind == "item" and type(d.itemIDs) == "table"
+    local several = rec.kind == "item" and (type(d.itemIDs) == "table" or d.category ~= nil)
     if several then
         local pick = Driver.PickItem(d)
         if pick then Driver.liveItems[rec.id] = pick end
@@ -860,6 +978,8 @@ local function FeedItem(a)
         end
         a.frame._adItemEmpty = (GetInventoryItemID("player", AMMO_SLOT) == nil) or nil
     end
+    -- the state paint below carries it (after the empty flag, which wins)
+    if rec.kind == "item" then a.frame._adUsability = Driver.ItemUsabilityCode(a) end
     -- Secret item cooldowns (spell ones are secret on Forever) go through a
     -- duration object, which accepts secrets; the state is read back off the
     -- widget and OnCooldownDone re-feeds at expiry. No arithmetic on a secret.
@@ -904,6 +1024,14 @@ local function FeedItem(a)
         a.frame.cooldown:Clear()
     end
     FinishItemState(a, onCd)
+end
+
+-- The items set to mark when they can't be used, on the usability pass and
+-- the edges that move it (combat, the zone, a boss fight); a repaint only on a change.
+local function FeedItemUsability()
+    for _, a in pairs(attachedItems) do
+        if a.rec.kind == "item" then Factory.SetUsability(a.frame, a.rec, Driver.ItemUsabilityCode(a)) end
+    end
 end
 
 -- Usability and range (spells)
@@ -980,6 +1108,7 @@ local function FeedUsabilityAll()
         a.usabGate = gate
     end
     inPass = false
+    FeedItemUsability()
 end
 
 -- A range answer moved: repaint only the icons on that spell.
@@ -1066,6 +1195,7 @@ local USAB_GAP = 0.25   -- out of combat, seconds between usability passes at mo
 -- A talent that replaces a spell moves what Store.TrackedSpellID answers;
 -- SPELLS_CHANGED should follow, these catch a client that sends only them.
 Driver.TALENT_EVENTS = { "TRAIT_CONFIG_UPDATED", "PLAYER_TALENT_UPDATE" }
+Driver.ITEM_USAB_EVENTS = { "PLAYER_REGEN_ENABLED", "ZONE_CHANGED_NEW_AREA", "ENCOUNTER_START", "ENCOUNTER_END" }
 local function EventValid(e)
     return (not (C_EventUtils and C_EventUtils.IsEventValid)) or C_EventUtils.IsEventValid(e) == true
 end
@@ -1088,8 +1218,11 @@ local function EnsureEvents()
         if unit ~= "player" then return end
         Driver.NoteCast(spellID)
         for _, a in pairs(attached) do
+            -- an icon with several spells turns to the one just cast (and feeds)
+            local turned = a.rec.driver and Store.HasSpellAlts(a.rec.driver) and Driver.TurnTo(a, spellID)
             -- the cast carries the rank / override id (Auto rank)
-            if a.rec.driver and Store.SpellMatch(a.rec.driver.spellID, spellID, a.effSid) then
+            if not turned and a.rec.driver
+                and Store.SpellMatch(Store.ShownSpell(a.rec.driver), spellID, a.effSid) then
                 -- Before the feed, the shadows still hold the state the cast
                 -- came from: a cast while a charge was coming back spent the
                 -- last of two (the cooldown events only queue their feeds).
@@ -1149,6 +1282,13 @@ local function EnsureEvents()
         Driver.itemDataWanted = false
         Events.Coalesce("adcd_feeditems", FeedAllItems)
     end)
+    -- an item's usability moves with combat's end, the zone and a boss fight
+    -- (combat's start and the rest ride the usability pass)
+    for _, e in ipairs(Driver.ITEM_USAB_EVENTS) do
+        if EventValid(e) then
+            Events.On(e, "adcd_itemusab", function() Events.Coalesce("adcd_itemusab", FeedItemUsability) end)
+        end
+    end
     Events.On("PLAYER_ENTERING_WORLD", "adcd", function()
         -- addon bars build at their own login step: re-discover them and
         -- re-read every key after each loading screen
@@ -1175,23 +1315,24 @@ local function EnsureEvents()
         if EventValid(e) then Events.On(e, "adcd", Relearn) end
     end
     -- The cache must be stale before icons re-resolve; KeybindFor rebuilds it.
+    local function KBAll()
+        for _, a in pairs(attached) do ApplyKeybind(a) end
+        for _, a in pairs(attachedItems) do ApplyKeybind(a) end
+        for _, a in pairs(attachedTotems) do ApplyKeybind(a) end
+    end
     Events.On("UPDATE_BINDINGS", "adcd_kb", function()
         kbDirty = true
-        for _, a in pairs(attached) do ApplyKeybind(a) end
+        KBAll()
     end)
     Events.On("ACTIONBAR_SLOT_CHANGED", "adcd_kb", function()
         kbDirty = true
-        Events.Coalesce("adcd_kb_all", function()
-            for _, a in pairs(attached) do ApplyKeybind(a) end
-        end)
+        Events.Coalesce("adcd_kb_all", KBAll)
     end)
     -- Paging and stance swaps change slots without a slot event for each. The
     -- events are probed, since Forever throws on registering one it lacks.
     local function KBRefresh()
         kbDirty = true
-        Events.Coalesce("adcd_kb_all", function()
-            for _, a in pairs(attached) do ApplyKeybind(a) end
-        end)
+        Events.Coalesce("adcd_kb_all", KBAll)
     end
     for _, e in ipairs({ "ACTIONBAR_PAGE_CHANGED", "UPDATE_SHAPESHIFT_FORM" }) do
         if (not (C_EventUtils and C_EventUtils.IsEventValid))
@@ -1204,14 +1345,20 @@ local function EnsureEvents()
     -- goes through the one matcher with the last effective id.
     Events.On("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", "adcd", function(_, spellID)
         for _, a in pairs(attached) do
-            if a.rec.driver and Store.SpellMatch(a.rec.driver.spellID, spellID, a.effSid) then
+            local d = a.rec.driver
+            if d and Store.HasSpellAlts(d) then
+                if Driver.NoteProc(a, spellID, true) then Factory.SetProcGlow(a.frame, a.rec, true) end
+            elseif d and Store.SpellMatch(d.spellID, spellID, a.effSid) then
                 Factory.SetProcGlow(a.frame, a.rec, true)
             end
         end
     end)
     Events.On("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE", "adcd", function(_, spellID)
         for _, a in pairs(attached) do
-            if a.rec.driver and Store.SpellMatch(a.rec.driver.spellID, spellID, a.effSid) then
+            local d = a.rec.driver
+            if d and Store.HasSpellAlts(d) then
+                if Driver.NoteProc(a, spellID, false) then Factory.SetProcGlow(a.frame, a.rec, false) end
+            elseif d and Store.SpellMatch(d.spellID, spellID, a.effSid) then
                 Factory.SetProcGlow(a.frame, a.rec, false)
             end
         end
@@ -1240,6 +1387,7 @@ local function MaybeReleaseEvents()
     Events.Off("PLAYER_EQUIPMENT_CHANGED", "adcd_items")
     Events.Off("PLAYER_LEVEL_UP", "adcd_items")
     Events.Off("GET_ITEM_INFO_RECEIVED", "adcd_items")
+    for _, e in ipairs(Driver.ITEM_USAB_EVENTS) do Events.Off(e, "adcd_itemusab") end
     Events.Off("PLAYER_ENTERING_WORLD", "adcd")
     Events.Off("SPELLS_CHANGED", "adcd")
     for _, e in ipairs(Driver.TALENT_EVENTS) do Events.Off(e, "adcd") end
@@ -1257,6 +1405,8 @@ function Driver.Attach(rec, f)
             -- aura icons ride the engine-owned AuraContainer backend
             NS.DriverAura.Attach(rec, f)
             if NS.AuraSounds then NS.AuraSounds.Attach(rec) end
+            -- its totem first, when it shows one (Drivers\AD_DriverPhase.lua)
+            if NS.DriverPhase then NS.DriverPhase.Attach(rec, f) end
         elseif rec.kind == "trinket" or rec.kind == "item" or rec.kind == "ammo" then
             local ai = attachedItems[rec.id]
             if not ai then
@@ -1266,6 +1416,12 @@ function Driver.Attach(rec, f)
             ai.rec, ai.frame = rec, f
             EnsureEvents()
             FeedItem(ai)
+            ApplyKeybind(ai)
+            -- what shows over an item's or a trinket's cooldown, as on a spell icon
+            if rec.kind ~= "ammo" then
+                if NS.DriverAura and NS.DriverAura.AttachOverlay then NS.DriverAura.AttachOverlay(rec, f) end
+                if NS.DriverPhase then NS.DriverPhase.Attach(rec, f) end
+            end
         elseif rec.kind == "totem" then
             local at = attachedTotems[rec.id]
             if not at then
@@ -1285,6 +1441,7 @@ function Driver.Attach(rec, f)
             -- a click or a key that drops the totem bar's pick
             if NS.TotemButton then NS.TotemButton.Attach(rec, f) end
             FeedTotem(at)
+            ApplyKeybind(at)
         elseif rec.kind == "enchant" and NS.DriverEnchant then
             NS.DriverEnchant.Attach(rec, f)
         elseif rec.kind == "timer" and NS.DriverCustom then

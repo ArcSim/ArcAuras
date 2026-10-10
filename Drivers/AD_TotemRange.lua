@@ -289,11 +289,20 @@ local function PaintArt(layer, rec, f, kS, a)
     end
     local hide = R("appearance", "forceHideIcon") == true
     art:SetTexture(Factory.GetTexture(rec))
-    if Factory.IconTexCoords then art:SetTexCoord(Factory.IconTexCoords(rec)) end
+    if Factory.BoxTexCoords then art:SetTexCoord(Factory.BoxTexCoords(rec, f, (R("appearance", "padding") or 0) * kS)) end
     local pad = (R("appearance", "padding") or 0) * kS
     art:ClearAllPoints()
     art:SetPoint("TOPLEFT", st, "TOPLEFT", pad, -pad)
     art:SetPoint("BOTTOMRIGHT", st, "BOTTOMRIGHT", -pad, pad)
+    if Factory.ShapeTex then Factory.ShapeTex(art, Factory.MaskOf(rec)) end
+    -- a Masque skin's picture and layers on the icon's size (the border below stands aside)
+    if Factory.SkinArt then
+        local fw, fh = f:GetSize()
+        if issecretvalue and (issecretvalue(fw) or issecretvalue(fh)) then fw, fh = nil, nil end
+        local plan = Factory.SkinPlan(rec)
+        Factory.SkinArt(art, rec, plan, st, fw or 36, fh or 36)
+        Factory.SkinLayers(plan, st, st, st, art, fw or 36, fh or 36, a, hide)
+    end
     -- the totem is out: Active's grey out and tint carry under this look
     art:SetDesaturated(R("states", "totemRangeDesaturate") == true or R("states", "readyDesaturate") == true)
     local tc
@@ -337,16 +346,18 @@ local function GlowRecipe(rec)
     local R = function(k) return Store.Resolve(rec, "states", "totemRangeGlow" .. k) end
     local c = R("Color") or { 1, 0.3, 0.3, 1 }
     local gtype = R("Type") or "pixel"
-    if Factory.DrawnGlowStyle then gtype = Factory.DrawnGlowStyle(gtype) end
+    if Factory.DrawnGlowStyle then gtype = Factory.DrawnGlowStyle(gtype, rec) end
+    local inten = R("Intensity") or 1
     local p = {
-        color = { c[1], c[2], c[3], (c[4] or 1) * (R("Intensity") or 1) },
+        color = { c[1], c[2], c[3], (c[4] or 1) * inten },
         speed = R("Speed") or 0.25, lines = R("Lines") or 8, thickness = R("Thickness") or 2,
         particles = R("Particles") or 4, scale = R("Scale") or 1,
         xo = R("XOffset") or 0, yo = R("YOffset") or 0, length = R("Length") or 0,
         mx = R("MoveX") or 0, my = R("MoveY") or 0, level = TR.GLOW, strata = "inherit",
     }
+    local look = Factory.LaneLook and Factory.LaneLook(rec, "states", "totemRangeGlow", gtype, p, inten) or ""
     local sig = table.concat({ gtype, p.color[1], p.color[2], p.color[3], p.color[4], p.speed,
-        p.lines, p.thickness, p.particles, p.scale, p.xo, p.yo, p.length, p.mx, p.my }, ":")
+        p.lines, p.thickness, p.particles, p.scale, p.xo, p.yo, p.length, p.mx, p.my }, ":") .. look
     return gtype, p, sig
 end
 

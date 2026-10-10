@@ -225,15 +225,16 @@ end
 -- Card words
 
 -- A glow card names its lane, so its rows take short words.
-local GLOW_WORDS = { Type = "Style", Color = "Color", CombatOnly = "Only in combat", For = "Glow for",
-    When = "Glow when", TimeUnit = "Time left in", TimePct = "Under this % left",
+local GLOW_WORDS = { Type = "Style", Native = "Game's own color", Color = "Color", CombatOnly = "Only in combat",
+    For = "Glow for", When = "Glow when", TimeUnit = "Time left in", TimePct = "Under this % left",
     TimeSec = "Under this many seconds left", AuraLength = "The aura lasts (seconds)",
     Speed = "Speed", Lines = "Lines", Thickness = "Thickness", Length = "Line length (0 = auto)",
-    Particles = "Particles", Intensity = "Intensity", Scale = "Size", XOffset = "X offset",
-    YOffset = "Y offset", MoveX = "Move X", MoveY = "Move Y", Strata = "Strata", Level = "Frame level" }
+    Backing = "Dark backing line", Particles = "Particles", Intensity = "Intensity", Scale = "Size",
+    XOffset = "X offset", YOffset = "Y offset", MoveX = "Move X", MoveY = "Move Y", Strata = "Strata",
+    Level = "Frame level" }
 -- switch, when it fires, look, gates, then the tuning (the tuning folds away)
-local GLOW_ORDER = { "When", "TimeUnit", "TimePct", "TimeSec", "AuraLength", "Type", "Color",
-    "CombatOnly", "For", "Speed", "Lines", "Thickness", "Length", "Particles", "Intensity", "Scale",
+local GLOW_ORDER = { "When", "TimeUnit", "TimePct", "TimeSec", "AuraLength", "Type", "Native", "Color",
+    "CombatOnly", "For", "Speed", "Lines", "Thickness", "Length", "Backing", "Particles", "Intensity", "Scale",
     "XOffset", "YOffset", "MoveX", "MoveY", "Strata", "Level" }
 
 -- When each glow card fires, in plain words for its header.
@@ -254,7 +255,8 @@ ET.GLOW_WHEN = {
     proc = "the proc glow is up",
     usable = "you can cast it now",
     overlay = function(rec)
-        return ET.OverlayWords(rec, "its aura is up", "its totem is down", "the set duration runs")
+        return ET.OverlayWords(rec, "its aura is up", "its totem is down", "the set duration runs",
+            "its totem is down or its aura is up")
     end,
     range = "the totem is out and its buff is not on you",
     outrange = "your target is out of range",
@@ -265,6 +267,7 @@ ET.GLOW_WHEN = {
         return (name or "it") .. " is on"
     end,
     warn = function(rec) return WARN_WORDS[Store.Resolve(rec, "states", "warnGlowWhen")] or "" end,
+    assist = "the game's Assisted Highlight suggests it next",
 }
 
 -- An aura glow's words follow its own Glow when.
@@ -299,13 +302,14 @@ end
 -- The state table
 
 local S, A, M, O = "states", "auraActive", "auraMissing", "outOfStock"
--- A spell icon's overlay rows in its source's words: an aura, its totem or a
--- set duration (Drivers\AD_DriverPhase.lua).
-function ET.OverlayWords(rec, aura, totem, cast)
+-- A spell icon's overlay rows in its source's words: an aura, its totem, its
+-- totem else the aura (both) or a set duration (Drivers\AD_DriverPhase.lua).
+function ET.OverlayWords(rec, aura, totem, cast, both)
     local ov = rec and rec.driver and rec.driver.overlay
     local src = NS.DriverAura and NS.DriverAura.OverlaySource and NS.DriverAura.OverlaySource(ov)
     if src == "totem" then return totem end
     if src == "cast" then return cast end
+    if both and type(ov) == "table" and ov.totem == true then return both end
     return aura
 end
 -- One field's every gate (its kind, class and game), as the editor reads it.
@@ -344,8 +348,24 @@ local READY = { key = "ready", label = "Ready", when = "while it is ready", alph
 local COOLDOWN = { key = "cooldown", label = "On cooldown", when = "while it is on cooldown", alpha = { S, "cooldownAlpha" },
     grey = { S, "cooldownDesaturate" }, tint = { S, "cooldownTintColor", on = "cooldownTintEnabled" },
     fx = { glow = { "states.cooldownGlow" }, sound = { "alerts.cooldownSoundEnabled" } } }
+local UNUSABLE = { key = "unusable", label = "Can't use it", when = "while it can't be used", alpha = { S, "unusableAlpha" },
+    grey = { S, "unusableDesaturate" }, tint = { S, "unusableTintColor", on = "unusableTintEnabled" },
+    alphaTip = "Never brighter than Ready's opacity." }
+-- What shows over the cooldown ("On this icon": an aura, a totem, a set
+-- duration), on a spell, item or trinket icon: its two rows while it is on.
+local OVERLAY = { key = "overlay", label = "Aura active", when = "while its aura is up", overlay = true,
+    alpha = { A, "activeAlpha" },
+    grey = { A, "activeDesaturate" }, tint = { A, "activeTintColor", on = "activeTintEnabled" },
+    labelFn = function(r) return ET.OverlayWords(r, "Aura active", "Totem down", "Duration running", "Totem or aura up") end,
+    fx = { glow = { "auraActive.activeGlow" }, art = { "art.active" } } }
+local OVERLAY_MISSING = { key = "overlayMissing", label = "Aura missing", when = "while its aura is down", overlay = true,
+    grey = { A, "overlayDesatInactive" },
+    labelFn = function(r) return ET.OverlayWords(r, "Aura missing", "Totem gone", "Duration over", "Totem and aura gone") end }
+-- an item's row, while it is set to mark when it can't be used
+local ITEM_UNUSABLE = { showIf = function(r) return r ~= nil and Store.Resolve(r, S, "itemUsability") == true end }
+for k, v in pairs(UNUSABLE) do ITEM_UNUSABLE[k] = v end
 local OUT_OF_STOCK = { key = "out", label = "Out of stock", when = "while none is left", alpha = { O, "outAlpha", on = "outAlphaEnabled" },
-    grey = { O, "outDesaturate" },
+    grey = { O, "outDesaturate" }, tint = { O, "outTintColor", on = "outTintEnabled" },
     onTip = "On: this opacity while none is left. Off: it keeps its opacity." }
 -- ammo running low or the pet in trouble (Drivers\AD_DriverWarn.lua), for
 -- the classes with ammo or a pet: a glow, named for what it warns of
@@ -399,9 +419,7 @@ ET.STATES = {
           fx = { glow = { "states.rechargeGlow" },
               sound = { "alerts.rechargeSoundEnabled", "alerts.chargeGainedSoundEnabled" } } },
         SPELL_COOLDOWN,
-        { key = "unusable", label = "Can't use it", when = "while it can't be used", alpha = { S, "unusableAlpha" },
-          grey = { S, "unusableDesaturate" }, tint = { S, "unusableTintColor", on = "unusableTintEnabled" },
-          alphaTip = "Never brighter than Ready's opacity." },
+        UNUSABLE,
         { key = "nomana", label = "Not enough resource", when = "while you lack the resource for it",
           alpha = { S, "resourceAlpha" },
           grey = { S, "resourceDesaturate" }, tint = { S, "resourceTintColor", on = "resourceTintEnabled" },
@@ -411,24 +429,28 @@ ET.STATES = {
           alphaTip = "Never brighter than Ready's opacity.",
           fx = { glow = { "states.rangeGlow" } } },
         -- Shoot, Auto Shot or Attack on, a pet spell on autocast (Drivers\AD_DriverToggle.lua)
+        -- a next-swing ability's toggle is its queue: the row reads Queued
+        -- and its icon effect is the action bar's checkmark
         { key = "toggle", label = "Toggled on", when = "while it is toggled on",
           alpha = { S, "toggleAlpha", on = "toggleAlphaEnabled" },
           onTip = "On: this opacity while toggled on. Off: it keeps its opacity.",
           grey = { S, "toggleDesaturate" }, tint = { S, "toggleTintColor", on = "toggleTintEnabled" },
           showIf = function(r) return NS.DriverToggle ~= nil and NS.DriverToggle.IsToggle(r) end,
-          fx = { glow = { "states.toggleGlow" } } },
+          labelFn = function(r)
+              local DT = NS.DriverToggle
+              return (DT ~= nil and DT.Kind(r) == "queue") and "Queued" or "Toggled on"
+          end,
+          fx = { glow = { "states.toggleGlow" }, art = { "states.queueCheck", "states.queueShort" } } },
         -- the game lights it up: its glow here, its opacity rule under the table
         { key = "proc", label = "Proc lit", when = "while the game lights it up",
           fx = { glow = { "states.procGlow" } } },
+        -- the game's Assisted Highlight picks it next (retail, Drivers\AD_DriverAssist.lua)
+        { key = "assist", label = "Suggested", when = "while the game suggests it next",
+          showIf = function() return NS.DriverAssist ~= nil and NS.DriverAssist.Available() end,
+          fx = { glow = { "states.assistGlow" } } },
         WARNING,
-        { key = "overlay", label = "Aura active", when = "while its aura is up", overlay = true,
-          alpha = { A, "activeAlpha" },
-          grey = { A, "activeDesaturate" }, tint = { A, "activeTintColor", on = "activeTintEnabled" },
-          labelFn = function(r) return ET.OverlayWords(r, "Aura active", "Totem down", "Duration running") end,
-          fx = { glow = { "auraActive.activeGlow" }, art = { "art.active" } } },
-        { key = "overlayMissing", label = "Aura missing", when = "while its aura is down", overlay = true,
-          grey = { A, "overlayDesatInactive" },
-          labelFn = function(r) return ET.OverlayWords(r, "Aura missing", "Totem gone", "Duration over") end },
+        OVERLAY,
+        OVERLAY_MISSING,
     },
     aura = {
         { key = "active", label = "Active", when = "while the aura is up", alpha = { A, "activeAlpha" },
@@ -447,11 +469,11 @@ ET.STATES = {
           fx = { glow = AuraGlowKeys(false), sound = { "alerts.auraGainSoundEnabled", "alerts.auraStackSoundEnabled" },
               art = { "art.active" } } },
         { key = "missing", label = "Missing", when = "while the aura is missing", alpha = { M, "missingAlpha" },
-          grey = { M, "missingDesaturate" },
+          grey = { M, "missingDesaturate" }, tint = { M, "missingTintColor", on = "missingTintEnabled" },
           fx = { glow = AuraGlowKeys(true), sound = { "alerts.auraLostSoundEnabled" }, art = { "art.missing" } } },
     },
-    item = { READY, COOLDOWN, OUT_OF_STOCK, WARNING },
-    trinket = { READY, COOLDOWN, OUT_OF_STOCK, WARNING },
+    item = { READY, COOLDOWN, ITEM_UNUSABLE, OUT_OF_STOCK, WARNING, OVERLAY, OVERLAY_MISSING },
+    trinket = { READY, COOLDOWN, OUT_OF_STOCK, WARNING, OVERLAY, OVERLAY_MISSING },
     -- a Custom Icon: active per its Show as active while (the ready bucket),
     -- else not active (the cooldown bucket); both can grey out
     timer = {
@@ -570,6 +592,7 @@ local function RowShows(st, rec)
     if st.overlay and not OverlayOn(rec) then return false end
     return not st.showIf or st.showIf(rec) == true
 end
+ET.RowShows = RowShows
 
 -- The state rows a record shows.
 function ET.StatesFor(rec)
@@ -988,6 +1011,34 @@ local function NumberBox(parent, w, get, set, lo, hi, int, isId)
     return box, refresh
 end
 
+-- A few words, set on Enter or on leaving the box; an empty box clears them.
+local function TextBox(parent, w, get, set, maxLen)
+    local box = CreateFrame("EditBox", nil, parent, "BackdropTemplate")
+    box:SetSize(w, 18)
+    AT.Skin(box, COL.well)
+    box:SetFont(AT.FONT, 11, "")
+    box:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+    box:SetJustifyH("LEFT")
+    box:SetTextInsets(4, 4, 0, 0)
+    box:SetAutoFocus(false)
+    if maxLen then box:SetMaxLetters(maxLen) end
+    local function refresh()
+        if box:HasFocus() then return end
+        local v = get()
+        AT.BoxText(box, type(v) == "string" and v or "")
+    end
+    local function commit(self)
+        local v = tostring(self:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        set(v)
+        refresh()
+    end
+    box:SetScript("OnEnterPressed", function(self) commit(self) self:ClearFocus() end)
+    box:SetScript("OnEditFocusLost", commit)
+    box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    refresh()
+    return box, refresh
+end
+
 -- The colour picker on a swatch; withAlpha offers opacity (the field's
 -- alpha honoured), else the stored alpha stays.
 local function PickColor(sw, get, set, withAlpha, alphaDefault, relay)
@@ -1098,10 +1149,11 @@ local function MakePair(ed, blk, field, ctx, owner, relay)
         if t == "enum" then
             items = function()
                 local out, rv = {}, ctx()
+                local L = (fdef.labelsFn and rv ~= nil and fdef.labelsFn(rv)) or fdef.labels
                 for _, v in ipairs(fdef.values or {}) do
                     local cond = fdef.valueIf and fdef.valueIf[v]
                     if not cond or (rv ~= nil and cond(rv)) then
-                        out[#out + 1] = { value = v, text = (fdef.labels and fdef.labels[v]) or v }
+                        out[#out + 1] = { value = v, text = (L and L[v]) or v }
                     end
                 end
                 return out
@@ -1161,6 +1213,24 @@ local function MakePair(ed, blk, field, ctx, owner, relay)
         P.sync = function()
             local c = Cur()
             sw:SetColor(c, withAlpha and (c[4] or aDef) or nil)
+        end
+    elseif t == "text" then
+        -- words to speak, with Speak to hear them once in the voice they use
+        local box, refresh = TextBox(ed, ET.SOUND_W, Get, function(v) Put(v ~= "" and v or nil) end, 200)
+        P.ctrl = box
+        P.sync = refresh
+        local say = AT.MakeSmallButton(ed, "Speak", 52)
+        say:SetScript("OnClick", function()
+            AT.CloseDropdown()
+            local v, CU = Get(), NS.DriverCustom
+            if type(v) == "string" and v ~= "" and CU and CU.Speak then CU.Speak(v) end
+        end)
+        Tip(say, "Speak", "Hear the words once.")
+        P.extra = say
+        P.fit = function(room)
+            local other = Measure(lbl) + 8 + 4 + say:GetWidth()
+            box:SetWidth(math.max(80, math.floor(room - other)))
+            return P.width()
         end
     elseif t == "id" or ((t == "num" or t == "int") and fdef.input) then
         local box, refresh = NumberBox(ed, 56, Get, Put, fdef.min, fdef.max, t ~= "num", t == "id")
@@ -2447,6 +2517,7 @@ function ET.StateTable(pg, ctx, vis, owner)
         for _, st in ipairs(ET.STATES[kind] or {}) do
             Options.BuildYield()
             local srow = StateRow(pg, T, ctx, vis, kind, st, owner)
+            Options.BuildYield()
             T.editors[#T.editors + 1] = EditorRow(pg, T, ctx, vis, kind, st, owner, srow)
         end
     end

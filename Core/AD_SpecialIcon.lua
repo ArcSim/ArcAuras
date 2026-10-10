@@ -207,6 +207,7 @@ local function PaintWarn(f, rec, on)
         local tint = w:CreateTexture(nil, "OVERLAY")
         tint:SetAllPoints()
         tint:SetColorTexture(1, 0.85, 0, 0.25)
+        w._adTint = tint
         local mark = w:CreateFontString(nil, "OVERLAY")
         mark:SetFont(STANDARD_TEXT_FONT, 22, "OUTLINE")
         mark:SetPoint("CENTER")
@@ -216,6 +217,8 @@ local function PaintWarn(f, rec, on)
     end
     w:ClearAllPoints()
     w:SetAllPoints(f.icon or f)
+    if NS.Factory.ShapeTex then NS.Factory.ShapeTex(w._adTint, NS.Factory.MaskOf(rec), f.icon or f) end
+    if NS.Factory.SkinMaskOver then NS.Factory.SkinMaskOver(w._adTint, f) end
     -- over the art and the swipe, under the glows and texts
     local lvl = f:GetFrameLevel()
     if type(lvl) == "number" and not (issecretvalue and issecretvalue(lvl)) then w:SetFrameLevel(lvl + 3) end

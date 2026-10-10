@@ -104,11 +104,14 @@ end
 
 -- A spell icon lights for what the one matcher calls its spell: its own ID,
 -- its override, the base of what was pressed and, on ranked realms, any rank
--- with the same name.
+-- with the same name. An icon with several spells lights for any of them:
+-- the cast turns it to the one pressed.
 local function SpellMatches(d, sid)
-    local mine = d.spellID
-    if type(mine) ~= "number" then return false end
-    return Store.SpellMatch(mine, sid)
+    if type(d.spellID) ~= "number" then return false end
+    for _, mine in ipairs(Store.SpellChoices(d)) do
+        if Store.SpellMatch(mine, sid) then return true end
+    end
+    return false
 end
 
 local function Matches(rec, kind, id)
@@ -159,6 +162,9 @@ local function Paint(o, f)
     local t = o.tex
     t:ClearAllPoints()
     t:SetAllPoints(f.icon or f)          -- the art's own rect (padding included)
+    -- a shaped icon's press look keeps to its shape (Factory.ApplyStyle sets the key)
+    if NS.Factory and NS.Factory.ShapeTex then NS.Factory.ShapeTex(t, f._adMaskKey, f.icon or f) end
+    if NS.Factory and NS.Factory.SkinMaskOver then NS.Factory.SkinMaskOver(t, f) end
     local look = Setting("pressLook", "fill")
     local c = Setting("pressColor", PH.DEFAULT_COLOR)
     local a = Setting("pressAlpha", PH.DEFAULT_ALPHA)

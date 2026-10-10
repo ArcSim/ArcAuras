@@ -941,6 +941,24 @@ function Store.Normalize()
             rec.driver = rec.driver or {}
             Store.CleanCustom(rec.driver, false)
         end
+        -- a spell icon's other spells: whole positive IDs, once each, never
+        -- its own spell; none = no list
+        if rec.type == "icon" and rec.kind == "spell" and type(rec.driver) == "table"
+            and rec.driver.spellAlts ~= nil then
+            local d, out, seen = rec.driver, {}, {}
+            seen[tonumber(d.spellID) or 0] = true
+            if type(d.spellAlts) == "table" then
+                for _, v in ipairs(d.spellAlts) do
+                    v = tonumber(v)
+                    v = v and v > 0 and math.floor(v) or nil
+                    if v and not seen[v] then
+                        seen[v] = true
+                        out[#out + 1] = v
+                    end
+                end
+            end
+            d.spellAlts = (#out > 0) and out or nil
+        end
         -- a stance icon's pick is a whole positive spell ID or none
         if rec.type == "icon" and rec.kind == "stance" then
             local d = type(rec.driver) == "table" and rec.driver or {}
@@ -1476,6 +1494,10 @@ function Store.SetBarStanding(rec, stand)
     stand = stand == true
     if Store.BarStanding(rec) == stand then return end
     if rec.barKind == "resource" and Store.Resolve(rec, "resource", "style") == "pips" then return end
+    if rec.barKind == "timer" and rec.barMode == "stack" then
+        local s = Store.Resolve(rec, "stacklook", "style")
+        if s == "pips" or s == "icons" then return end
+    end
     local w = Store.Resolve(rec, "size", "width")
     local h = Store.Resolve(rec, "size", "height")
     Store.SetOverride(rec, "size", "width", h)
@@ -2557,13 +2579,67 @@ function Store.TrackedSpellID(sid, follow, noOverride)
     return rank
 end
 
+-- A spell icon with more spells (driver.spellAlts, after driver.spellID)
+-- shows one at a time: the last of them cast (Store.PickSpell, from the
+-- cooldown driver's cast event), else the first one known. The pick is
+-- runtime only, keyed by the driver table, and goes when that spell does.
+local spellPick = setmetatable({}, { __mode = "k" })
+
+-- its spells in order: spellID, then the others
+function Store.SpellChoices(d)
+    local out = {}
+    if type(d) ~= "table" then return out end
+    local first = tonumber(d.spellID)
+    local seen = {}
+    if first then
+        out[1] = first
+        seen[first] = true
+    end
+    if type(d.spellAlts) == "table" then
+        for _, v in ipairs(d.spellAlts) do
+            v = tonumber(v)
+            if v and not seen[v] then
+                seen[v] = true
+                out[#out + 1] = v
+            end
+        end
+    end
+    return out
+end
+
+function Store.HasSpellAlts(d)
+    return type(d) == "table" and type(d.spellAlts) == "table" and #d.spellAlts > 0
+end
+
+-- the spell the icon shows now (its own ID on a one-spell icon)
+function Store.ShownSpell(d)
+    if type(d) ~= "table" then return nil end
+    if not Store.HasSpellAlts(d) then return d.spellID end
+    local choices = Store.SpellChoices(d)
+    local pk = spellPick[d]
+    if pk and Store.KnowsSpell(pk) ~= false then
+        -- only while it is still one of its spells
+        for _, id in ipairs(choices) do
+            if id == pk then return pk end
+        end
+    end
+    for _, id in ipairs(choices) do
+        if Store.KnowsSpell(id) == true then return id end
+    end
+    return d.spellID
+end
+
+function Store.PickSpell(d, id)
+    if type(d) == "table" then spellPick[d] = tonumber(id) end
+end
+
 -- A record's spell as the game is asked about it now, with the record's own
 -- Auto rank and Ignore override switches (`d` = its driver; `sid` another
--- spell of the same record, default its own). No record: a typed spell
--- follows the rank you know on ranked realms, as a record does by default.
+-- spell of the same record, default the one it shows). No record: a typed
+-- spell follows the rank you know on ranked realms, as a record does by default.
 function Store.RecordSpellID(d, sid)
     if type(d) ~= "table" then d = nil end
-    sid = sid or (d and d.spellID)
+    sid = sid or (d and Store.ShownSpell(d))
     -- a typed box can leave the number as text
     if type(sid) == "string" then sid = tonumber(sid) end
     if d then return Store.TrackedSpellID(sid, Store.AutoRankOn(d), d.ignoreSpellOverride == true) end
@@ -2809,9 +2885,17 @@ function Store.IsLoaded(rec)
     -- Known spells: the Tracking toggle, then the Known Spell rule (any record).
     -- An answer that cannot be told never gates.
     local d = rec.driver
-    if d and d.onlyKnown == true and d.spellID
-        and Store.KnowsSpell(d.spellID, d.knownExact == true) == false then
-        return false
+    if d and d.onlyKnown == true and d.spellID then
+        -- an icon with several spells is known while any of them is
+        local none = true
+        local ids = Store.HasSpellAlts(d) and Store.SpellChoices(d) or { d.spellID }
+        for _, id in ipairs(ids) do
+            if Store.KnowsSpell(id, d.knownExact == true) ~= false then
+                none = false
+                break
+            end
+        end
+        if none then return false end
     end
     -- A weapon enchant icon's Tracking toggle: only while its hand holds a weapon
     if d and d.onlyArmed == true and rec.kind == "enchant" and NS.DriverEnchant
@@ -3608,6 +3692,21 @@ local function TemplateSet(rec, section, field, value)
     rec.o[section][field] = value
 end
 
+-- A custom bar switched to its stacks gets the stack marks a new stack bar is
+-- born with, unless its ticks were set by hand; switched back to its timer,
+-- those marks go (every point of a timer is every second).
+function Store.StackModeTicks(rec, toStack)
+    local o = rec.o and rec.o.ticks
+    if toStack then
+        if o and o.ticksShow ~= nil then return end
+        TemplateSet(rec, "ticks", "ticksShow", true)
+        TemplateSet(rec, "ticks", "tickMode", "all")
+    elseif o and o.ticksShow == true and o.tickMode == "all" then
+        o.ticksShow, o.tickMode = nil, nil
+        if next(o) == nil then rec.o.ticks = nil end
+    end
+end
+
 -- ArcUI v1's pulse spot, 120 above the screen centre, measured from the
 -- layout's centre as CenterSpot does (no step-down: it is the one spot).
 local function PulseSpot(layoutId)
@@ -4290,7 +4389,7 @@ function Store.CleanRules(list)
                 withinRule = Whole(r.withinRule, 1, Schema.CUSTOM_MAX_RULES),
                 timer = (r.timer == "running" or r.timer == "idle") and r.timer or nil,
                 act = acts[r.act] and r.act or "start",
-                secs = Num(r.secs, 0, 3600),
+                secs = Num(r.secs, 0, Schema.CUSTOM_MAX_SECONDS or 7200),
                 mode = modes[r.mode] and r.mode or nil,
                 n = Whole(r.n, 1, 999),
                 restartToo = (r.restartToo == true) and true or nil,
@@ -4299,6 +4398,19 @@ function Store.CleanRules(list)
                 quiet = Num(r.quiet, 0, 3600),
             }
             if c.withinRule then c.withinSecs = Num(r.withinSecs, 0.1, 600) or 1 end
+            -- the spells a trigger hears past its first: the list keeps the
+            -- first in front and is set only for two or more
+            if c.spellID and type(r.spellIDs) == "table" then
+                local ids, seen = { c.spellID }, { [c.spellID] = true }
+                for _, v in ipairs(r.spellIDs) do
+                    local n = Whole(v, 1, 1e9)
+                    if n and not seen[n] and #ids < (Schema.CUSTOM_RULE_MAX_SPELLS or 13) then
+                        seen[n] = true
+                        ids[#ids + 1] = n
+                    end
+                end
+                c.spellIDs = (#ids > 1) and ids or nil
+            end
             -- a talent's choice option and its reverse live only with a talent
             if c.talent then
                 c.talentEntry = Whole(r.talentEntry, 1, 1e9)
@@ -4325,7 +4437,8 @@ function Store.CleanRules(list)
 end
 
 -- A custom item's driver made usable: the art spell, how it shows, its default
--- seconds, its stack cap, the clear-on-end switch and its rules. A bar from
+-- seconds, its stack cap, the clear-on-end switch, its stack timers and idle
+-- count, and its rules. A bar from
 -- before the rule engine (a spell and seconds, its trigger "cast" or unset)
 -- becomes one rule that does the same; its aura triggers never worked and fold
 -- to nothing.
@@ -4333,10 +4446,14 @@ function Store.CleanCustom(d, isBar)
     local sid = tonumber(d.spellID)
     d.spellID = (sid and sid > 0) and math.floor(sid) or nil
     local dur = tonumber(d.duration)
-    d.duration = (dur and dur > 0) and math.min(dur, 3600) or nil
+    d.duration = (dur and dur > 0) and math.min(dur, Schema.CUSTOM_MAX_SECONDS or 7200) or nil
     local ms = tonumber(d.maxStacks)
     d.maxStacks = (ms and ms >= 1) and math.floor(math.min(ms, 999)) or nil
     d.clearOnEnd = (d.clearOnEnd == true) and true or nil
+    -- each stack running out on its own; the count shown while idle at 0
+    d.stackTimers = (d.stackTimers == true) and true or nil
+    local ic = tonumber(d.idleCount)
+    d.idleCount = (ic and ic >= 1) and math.floor(math.min(ic, 999)) or nil
     local ok = false
     for _, v in ipairs(Schema.CUSTOM_SHOW_WHILE) do
         if d.showWhile == v then ok = true end
@@ -4517,6 +4634,12 @@ function Store.BarTemplate(rec, put)
     end
     -- A deck bar marks where each proc landed.
     if barKind == "special" then put("ticks", "ticksShow", true) end
+    -- A stack bar marks every stack, so its count reads at a glance (a
+    -- cooldown's charges draw slots instead).
+    if rec.barMode == "stack" and (barKind == "aura" or barKind == "timer") then
+        put("ticks", "ticksShow", true)
+        put("ticks", "tickMode", "all")
+    end
     -- Name text shows on spell bars. A resource or swing bar's name is just its
     -- power or hand, and a player health bar's is your own, so it stays off
     -- there; other health bars show their unit's live name.
@@ -4821,6 +4944,24 @@ end
 local function RemapAnchors(rec, map, keep)
     local a = rec.o and rec.o.anchor
     if type(a) ~= "table" then return end
+    -- the backups name records as "kind:id"; one pointing outside an import goes
+    -- with every one after it, so the list keeps no gap
+    for i = 1, 3 do
+        local key = "anchorBackup" .. i
+        local kind, id = tostring(a[key] or ""):match("^(%a+):(%d+)$")
+        id = tonumber(id)
+        if kind and id then
+            if map[id] then
+                a[key] = kind .. ":" .. map[id]
+            elseif not keep then
+                for j = i, 3 do
+                    a["anchorBackup" .. j] = nil
+                    a["anchorBackup" .. j .. "Frame"] = nil
+                end
+                break
+            end
+        end
+    end
     if a.anchorTargetKind == "frame" then return end
     local tid = tonumber(a.anchorTargetId)
     if not tid or tid == 0 then return end
@@ -5765,6 +5906,7 @@ local PART_OF_SECTION = {
         rescolors = "appearance",
         predict = "appearance",
         range = "appearance", regen = "appearance", resource = "appearance", segments = "appearance",
+        stacklook = "appearance",
         size = "position",
         stackcolors = "appearance", texlook = "appearance", texstate = "showhide", pictext = "text",
         text = "text", textel = "text",

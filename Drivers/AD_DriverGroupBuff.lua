@@ -484,6 +484,8 @@ local function PlaceSet(a, set)
         st:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
         st:SetFrameStrata(f:GetFrameStrata())
         st:SetFrameLevel(lvl)
+        -- born on UIParent: the icon's layout scale, so its look counts in the icon's units
+        if NS.LayoutEngine and NS.LayoutEngine.FollowScale then NS.LayoutEngine.FollowScale(st, f) end
         PaintLook(layer, rec, w, h, kS, texts)
         for _, slot in ipairs(layer.slots) do
             if set.kind == "raid" then LayShare(slot.pre, st, st, "raid", slot.k, set.box, "OVERLAY") end

@@ -1,5 +1,5 @@
 -- AD_CDMMirror: reads the player's Cooldown Manager and says what Arc Auras builds from it.
--- Owns the read, Blizzard's list merge redone over plain tables, and the aura rule; no frames, no writes.
+-- Owns the read, Blizzard's list merge redone over plain tables, and the aura rule; no frames (one event watch for the aura picker), no writes.
 -- Only C calls touch the game here: a secret or missing answer marks the read incomplete, never empty.
 local ADDON, NS = ...
 
@@ -752,4 +752,136 @@ function M.Build(look)
         end
     end
     return lay, made
+end
+
+-- THE AURA PICKER's lists (UI\AD_AuraPicker.lua): the auras the Cooldown
+-- Manager tracks for this spec, then the auras its cooldown entries carry.
+-- Read only out of combat; combat answers the last read, and a failed read
+-- keeps the last lists (incomplete is never empty).
+M.AURA_CATS = { "TrackedBuff", "TrackedBar", "SpecAgnosticTracked", "EquipSlotTracked" }
+M.SPELL_CATS = { "Essential", "Utility" }
+M.SHOWN_CATS = { "Essential", "Utility", "TrackedBuff", "TrackedBar" }
+M.AURA_EVENTS = { "COOLDOWN_VIEWER_DATA_LOADED", "COOLDOWN_VIEWER_TABLE_HOTFIXED",
+    "PLAYER_SPECIALIZATION_CHANGED", "TRAIT_CONFIG_UPDATED" }
+M.aura = { dirty = true }
+
+-- A new spec, talents or table marks the lists stale; the next ask reads.
+-- The frame comes with the first ask, so a player who never opens the
+-- picker pays nothing.
+function M.AuraWatch()
+    local A = M.aura
+    if A.watch or not CreateFrame then return end
+    local f = CreateFrame("Frame")
+    for _, e in ipairs(M.AURA_EVENTS) do
+        if C_EventUtils and C_EventUtils.IsEventValid and C_EventUtils.IsEventValid(e) then
+            f:RegisterEvent(e)
+        end
+    end
+    f:SetScript("OnEvent", function() A.dirty = true end)
+    A.watch = f
+end
+
+-- a spell the aura form can take: a bag item has no aura, HideAura shows none
+function M.AuraShaped(info)
+    if type(info) ~= "table" or type(info.spellCategoryID) == "number" then return false end
+    if type(info.spellID) ~= "number" or info.spellID <= 0 then return false end
+    return not M.HasFlag(info.flags, M.Flag("HideAura"))
+end
+
+-- one square: the IDs Blizzard matches (M.AuraFor), its name, art and side
+function M.PickEntry(info, shown)
+    local a = M.AuraFor(info)
+    if not a then return nil end
+    local sid = info.spellID
+    local f = C_Spell and C_Spell.GetSpellTexture
+    local tex = f and f(sid) -- raw-id: a Cooldown Manager entry
+    if not M.Plain(tex) then tex = nil end
+    local ids = a.spellIDs or { a.spellID }
+    local copy = {}
+    for i = 1, #ids do copy[i] = ids[i] end
+    return { spellID = sid, ids = copy, name = M.NameOf(sid) or ("Spell " .. sid), texture = tex,
+        auraType = a.auraType, known = info.isKnown == true, shown = shown == true }
+end
+
+-- On the player's screen first, in its order; then the rest A-Z.
+function M.PickOrder(list)
+    local lit, rest = {}, {}
+    for _, e in ipairs(list) do
+        if e.shown then lit[#lit + 1] = e else rest[#rest + 1] = e end
+    end
+    table.sort(rest, function(a, b)
+        if a.name ~= b.name then return a.name < b.name end
+        return a.spellID < b.spellID
+    end)
+    for _, e in ipairs(rest) do lit[#lit + 1] = e end
+    return lit
+end
+
+-- One read into the two lists, one square per spell across ranks and lists
+-- (a tracked aura wins over the same spell's cooldown entry; the rank you
+-- know stands for its spell). nil and why when the read is incomplete.
+function M.AuraRead()
+    local snap = M.Read()
+    if not snap.complete then return nil, snap.why end
+    local merged = M.Merge(snap)
+    local shownFam = {}
+    for _, name in ipairs(M.SHOWN_CATS) do
+        for _, id in ipairs(M.Shown(snap, merged, M.Cat(name))) do
+            local key = M.FamilyKey(snap.infos[id])
+            if key then shownFam[key] = true end
+        end
+    end
+    local fams = {}
+    local function Collect(cats, needHint)
+        local from = {}
+        for _, name in ipairs(cats) do
+            for _, id in ipairs(snap.sets[M.Cat(name)] or {}) do from[id] = true end
+        end
+        local out = {}
+        for _, id in ipairs(merged.order) do
+            local info = snap.infos[id]
+            if from[id] and M.AuraShaped(info)
+                and (not needHint or info.hasAura == true or info.selfAura == true) then
+                local key = M.FamilyKey(info) or ("cd:" .. id)
+                local at = fams[key]
+                if at == nil then
+                    out[#out + 1] = { key = key, info = info }
+                    fams[key] = { out = out, i = #out }
+                elseif at.out == out and info.isKnown == true and out[at.i].info.isKnown ~= true then
+                    out[at.i].info = info
+                end
+            end
+        end
+        local list = {}
+        for _, f in ipairs(out) do
+            local e = M.PickEntry(f.info, shownFam[f.key])
+            if e then list[#list + 1] = e end
+        end
+        return M.PickOrder(list)
+    end
+    local tracked = Collect(M.AURA_CATS, false)
+    local spells = Collect(M.SPELL_CATS, true)
+    return tracked, spells
+end
+
+-- The picker's lists: tracked, on your spells, and why they may be short
+-- ("combat" before any read, else the last failed read's reason). fresh:
+-- read again (the window opened; the Cooldown Manager's own settings
+-- window saves its arrangement with no event).
+function M.AuraEntries(fresh)
+    local A = M.aura
+    M.AuraWatch()
+    if fresh then A.dirty = true end
+    local fight = InCombatLockdown and InCombatLockdown()
+    if fight then
+        if not A.tracked then A.why = "combat" end
+    elseif A.dirty or not A.tracked then
+        local tracked, spells = M.AuraRead()
+        if tracked then
+            A.tracked, A.onSpells, A.why, A.dirty = tracked, spells, nil, false
+        else
+            A.why = spells
+        end
+    end
+    return A.tracked or {}, A.onSpells or {}, A.why
 end

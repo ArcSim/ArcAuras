@@ -8,6 +8,8 @@
 -- and Release at fixed points; Bars\AD_BarGlow.lua draws the glows of the rows CR.GlowRows names.
 -- Aura presence is never read: an aura row's colour rides an engine lane of its own, as a bar
 -- glow does. Power is never compared in Lua: a power row asks a curve of its own.
+-- On a bar whose power is Automatic a row can be for one power (row.power): while another power
+-- shows it does not run at all.
 local ADDON, NS = ...
 local Bars = NS.Bars
 if not Bars then return end
@@ -38,8 +40,22 @@ CR.EPS = 0.0001
 CR.state = {}    -- [barId] = { rect, mask, up = {}, miss = {}, retired = {}, gen, entry, base, strata }
 CR.queue = {}    -- [lane] = parked, filter edits waiting out combat
 CR.watched = {}  -- [barId] = { [watch key] = true }
--- the row the editor's table has open: the preview wears it
+-- the row the editor's table has open, and the bar it is open on: the preview
+-- wears it only while that table is showing (CR.PreviewRow)
 CR.previewSel = nil
+CR.previewSelId = nil
+-- the power the editor's preview shows an Automatic bar as (nil: yours now)
+CR.previewPower = nil
+
+-- The open row for bar rec, or nil: a row number left over from another bar or
+-- from a tab closed since must not paint the preview.
+function CR.PreviewRow(rec)
+    local k = CR.previewSel
+    if not (k and rec and CR.previewSelId == rec.id) then return nil end
+    local RSO = NS.Options and NS.Options.ResStateOptions
+    if not (RSO and RSO.Open and RSO.Open()) then return nil end
+    return k
+end
 
 local function IsSecret(v) return issecretvalue ~= nil and issecretvalue(v) == true end
 local function Yes(v) return not IsSecret(v) and v == true end
@@ -53,6 +69,78 @@ local function Default() return (NS.Schema and NS.Schema.RES_COLOR_DEFAULT) or {
 local function Own(rec)
     return rec ~= nil and rec.type == "bar" and rec.barKind == "resource" and not rec._adMulti
         and not rec._adLayoutTier and not rec._adDefaults
+end
+
+-- A row can be for one power only on a bar whose power is Automatic: a fixed
+-- bar shows one power, so every row of it runs.
+function CR.ForPower(rec)
+    if not Own(rec) then return false end
+    local pt = tonumber(rec.driver and rec.driver.powerType)
+    return pt == nil or pt < 0
+end
+
+-- the power rows are judged for: pt on an Automatic bar, else nil (all run)
+local function PowerFor(rec, pt)
+    if pt == nil or not CR.ForPower(rec) then return nil end
+    return pt
+end
+
+-- a row with no power is for all of them
+local function Runs(r, only)
+    return only == nil or type(r.power) ~= "number" or r.power == only
+end
+
+-- The powers a class's bar shows, per client; a class not named shows mana.
+CR.CLASS_POWERS = {
+    forever = { WARRIOR = { 1 }, ROGUE = { 3 }, DRUID = { 0, 1, 3 } },
+    retail = { WARRIOR = { 1 }, ROGUE = { 3 }, DRUID = { 0, 1, 3, 8 }, HUNTER = { 2 }, DEATHKNIGHT = { 6 },
+        DEMONHUNTER = { 17 }, MONK = { 3, 0 }, PRIEST = { 0, 13 }, SHAMAN = { 0, 11 } },
+}
+CR.DISPLAY_POWERS = { 0, 1, 2, 3, 6, 8, 11, 13, 17, 18 }
+
+-- The For column's choices: the powers of the classes the bar loads for (every
+-- class without a class condition), and yours now, in the looks' order. The
+-- looks' own list offers only this character's powers on retail, so the class
+-- table decides here.
+function CR.PowersFor(rec)
+    local tbl = CR.CLASS_POWERS[(NS.IsForever == true) and "forever" or "retail"]
+    local want = {}
+    local tags, limited
+    if Store.ClassesOf then
+        tags, limited = Store.ClassesOf(rec)
+    else
+        tags = {}
+        local set = rec and rec.c and rec.c.classes
+        for tag, on in pairs(type(set) == "table" and set or {}) do
+            if on then tags[#tags + 1] = tag end
+        end
+        limited = #tags > 0
+    end
+    if limited and #tags > 0 then
+        for _, tag in ipairs(tags) do
+            for _, id in ipairs(tbl[tag] or { 0 }) do want[id] = true end
+        end
+    else
+        want[0] = true
+        for _, list in pairs(tbl) do
+            for _, id in ipairs(list) do want[id] = true end
+        end
+    end
+    local cur = UnitPowerType and UnitPowerType("player")
+    if type(cur) == "number" then want[cur] = true end
+    local LK = NS.Looks
+    local order, all, out, seen = (LK and LK.DISPLAY_POWERS) or CR.DISPLAY_POWERS, Bars.POWER_ALL or {}, {}, {}
+    local function Add(id)
+        local info = all[id]
+        if seen[id] or not (want[id] and info) then return end
+        seen[id] = true
+        local c = info.color or { 1, 1, 1 }
+        out[#out + 1] = { value = id, text = info.name or ("Power " .. id),
+            color = { c[1], c[2], c[3], r = c[1], g = c[2], b = c[3] } }
+    end
+    for _, id in ipairs(order) do Add(id) end
+    if type(cur) == "number" then Add(cur) end
+    return out
 end
 
 -- The rows in play: the look in play's own, else the bar's. Old colour
@@ -81,16 +169,23 @@ local function RowSpell(sid, follow)
     return Store.TrackedSpellID(sid, NS.IsForever == true and follow ~= false, false) or sid
 end
 
--- The rows as the runtime reads them. An aura row colours the fill only on a
--- bar with one continuous fill, and only the first few (one lane each).
-local function Build(list, rec)
+-- The rows as the runtime reads them for power pt, each with its list place
+-- (idx), which the open row and the glows name; a row for another power is
+-- left out (skip). An aura row colours only one continuous fill, the first
+-- few (a lane each). Slots count skipped rows too: a lane can be neither made
+-- nor refiltered in combat, where druids shift. powered: a row for one power.
+local function Build(list, rec, pt)
     local S = NS.Schema
     local okFill = S ~= nil and S.ResColorsOK ~= nil and S.ResColorsOK(rec)
-    local out, slot = {}, 0
-    for _, r in ipairs(list) do
-        if type(r) == "table" and #out < CR.MaxRows() then
+    local forPower = CR.ForPower(rec)
+    local only = PowerFor(rec, pt)
+    local out, slot, n, skip, powered = {}, 0, 0, nil, false
+    for i, r in ipairs(list) do
+        if type(r) == "table" and n < CR.MaxRows() then
+            n = n + 1
+            if forPower and type(r.power) == "number" then powered = true end
             local w = Store.RES_STATE_WHEN[r.when] and r.when or "enough"
-            local rr = { k = #out + 1, when = w, src = r, lua = not CR.AURA[w], glow = r.glow ~= nil,
+            local rr = { idx = i, when = w, src = r, lua = not CR.AURA[w], glow = r.glow ~= nil,
                 fill = (type(r.fill) == "table") and ColorOf(r.fill) or nil,
                 text = (not CR.AURA[w] and type(r.text) == "table") and ColorOf(r.text, { 1, 1, 1, 1 }) or nil }
             if CR.SPELL[w] then
@@ -107,10 +202,16 @@ local function Build(list, rec)
             end
             -- a row read each pass: one that changes something while it holds
             rr.needs = rr.lua and (rr.fill ~= nil or rr.text ~= nil or rr.glow)
-            out[#out + 1] = rr
+            if Runs(r, only) then
+                out[#out + 1] = rr
+            else
+                rr.dark = true
+                skip = skip or {}
+                skip[i] = rr
+            end
         end
     end
-    return out
+    return out, skip, powered
 end
 
 -- The share of the bar a power row names (0..1), or nil when it can never
@@ -217,12 +318,13 @@ function CR.Pick(e)
         return nil
     end
     local pv = e.isPreview == true
-    local sel = pv and CR.previewSel or nil
+    local sel = pv and CR.PreviewRow(e.rec) or nil
     local win, col, txt, moved = nil, nil, nil, false
-    for k, rr in ipairs(rows) do
+    for _, rr in ipairs(rows) do
         local h = false
         if pv then
-            h = (sel == k) or (CR.POWER[rr.when] == true and PowerHolds(e, rr))
+            -- the open row is named by its place in the list, as the table shows it
+            h = (sel == rr.idx) or (CR.POWER[rr.when] == true and PowerHolds(e, rr))
         elseif rr.needs then
             if CR.POWER[rr.when] then h = PowerHolds(e, rr) else h = SpellHolds(rr) end
         end
@@ -232,7 +334,7 @@ function CR.Pick(e)
         end
         if h then
             -- an aura row's colour is its lane's; in the preview it is the open row's
-            if not col and rr.fill and (rr.lua or pv) then win, col = k, rr.fill end
+            if not col and rr.fill and (rr.lua or pv) then win, col = rr.idx, rr.fill end
             if not txt and rr.text then txt = rr.text end
         end
     end
@@ -276,11 +378,12 @@ local function SyncWatches(id, rows)
     local DC = NS.DriverCooldown
     if not (DC and DC.WatchSpell) then return end
     local old, now = CR.watched[id], {}
-    for k, rr in ipairs(rows or {}) do
+    for _, rr in ipairs(rows or {}) do
         rr.watches = nil
         if CR.CD[rr.when] and rr.needs then
             for j, sid in ipairs(rr.rowSpells or {}) do
-                local key = CR.KEY .. ":" .. tostring(id) .. ":" .. k .. ":" .. j
+                -- keyed by the row's place in the list: a shift keeps the watches it keeps
+                local key = CR.KEY .. ":" .. tostring(id) .. ":" .. rr.idx .. ":" .. j
                 DC.WatchSpell(key, sid, rr.follow, CR.WatchFn(id))
                 now[key] = true
                 rr.watches = rr.watches or {}
@@ -295,11 +398,13 @@ local function SyncWatches(id, rows)
 end
 
 -- Cost marks: every spell of a row with its mark on, in the rank and form the
--- game uses now (Bars\AD_Bars.lua lays them with the ticks).
-function CR.MarkSpells(rec)
+-- game uses now (Bars\AD_Bars.lua lays them with the ticks). pt: the power
+-- the bar shows, which leaves out the rows for another.
+function CR.MarkSpells(rec, pt)
     local out, seen
+    local only = PowerFor(rec, pt)
     for _, r in ipairs(CR.RowsOf(rec) or {}) do
-        if r.mark and CR.SPELL[r.when] then
+        if r.mark and CR.SPELL[r.when] and Runs(r, only) then
             for _, sid in ipairs(r.rowSpells or {}) do
                 local eff = RowSpell(sid, r.follow)
                 if eff and not (seen and seen[eff]) then
@@ -322,7 +427,9 @@ function CR.HasMarks(rec)
 end
 
 -- Glows: the rows that carry one, in order, as many as a bar glows
--- (Bars\AD_BarGlow.lua: glow k is the k-th of these).
+-- (Bars\AD_BarGlow.lua: glow k is the k-th of these). Rows for another power
+-- keep their place, so glow k keeps its lane through a shift: the glows ask
+-- CR.Built and CR.Off whether the row runs.
 function CR.GlowRows(rec)
     local out
     local max = (NS.Schema and NS.Schema.BAR_GLOW_SLOTS) or 3
@@ -333,6 +440,18 @@ function CR.GlowRows(rec)
         end
     end
     return out
+end
+
+-- The running row at list place i on entry e, or nil (left out, or past the cap).
+function CR.Built(e, i)
+    local m = e and e.crIdx
+    return m and i and m[i] or nil
+end
+
+-- True when list row i is left out on e for another power.
+function CR.Off(e, i)
+    local m = e and e.crOff
+    return m ~= nil and i ~= nil and m[i] ~= nil
 end
 
 -- Lanes: one engine container per aura row that colours the fill, made once
@@ -578,7 +697,8 @@ function CR.SlotLane(st, e, s, kind, rr)
             return
         end
     end
-    lane.look, lane.shape, lane.on, lane.row = look, shape, true, rr.k
+    -- dark: a row for another power keeps its lane, filtered and unseen
+    lane.look, lane.shape, lane.on, lane.row, lane.dark = look, shape, true, rr.idx, rr.dark == true
     CR.Refilter(lane, false)
     if kind == "miss" then CR.PaintMiss(lane) end
     local b = lane.frame
@@ -596,18 +716,37 @@ function CR.SlotLane(st, e, s, kind, rr)
     end
 end
 
+-- The glows ran their pass before the rows were built: a bar with a row for
+-- one power shows or hides them again by the rows that run now.
+local function GlowsAgain(e, was)
+    if (e.crPowered or was) and Bars.Glow and Bars.Glow.Visible then Bars.Glow.Visible(e) end
+end
+
 -- The live pass, at the end of every EnsureBar; a preview takes only the rows.
+-- The rows run for the entry's power (e.powerType).
 function CR.Styled(e)
     local rec = e.rec
     local id = rec.id
     local list = CR.RowsOf(rec)
-    local rows = list and Build(list, rec) or nil
-    -- crUsab: a row reads usability (its events); crAura: one rides a lane
-    e.crRows, e.crUsab, e.crAura = rows, false, false
+    local rows, skip, powered
+    if list then rows, skip, powered = Build(list, rec, e.powerType) end
+    if rows and #rows == 0 then rows = nil end
+    local was = e.crPowered
+    -- crUsab: a row reads usability (its events); crAura: one rides a lane;
+    -- crIdx: the running rows by list place; crOff: the ones left out
+    e.crRows, e.crUsab, e.crAura, e.crIdx, e.crOff, e.crPowered = rows, false, false, nil, skip, powered == true
     if not rows then e.crColor, e.crText, e.crWin = nil, nil, nil end
     local bySlot = {}
     for _, rr in ipairs(rows or {}) do
+        e.crIdx = e.crIdx or {}
+        e.crIdx[rr.idx] = rr
         if rr.needs and CR.USAB[rr.when] then e.crUsab = true end
+        if rr.slot then
+            e.crAura = true
+            bySlot[rr.slot] = rr
+        end
+    end
+    for _, rr in pairs(skip or {}) do
         if rr.slot then
             e.crAura = true
             bySlot[rr.slot] = rr
@@ -619,6 +758,7 @@ function CR.Styled(e)
     if not (e.crAura or st) then
         CR.SyncEvents()
         Recolor(e, true)
+        GlowsAgain(e, was)
         return
     end
     st = st or State(id)
@@ -636,6 +776,13 @@ function CR.Styled(e)
     CR.SyncEvents()
     CR.Visible(e)
     Recolor(e, true)
+    GlowsAgain(e, was)
+end
+
+-- The bar's power moved (a form, a vehicle): with a row for one power, the
+-- rows are built again for the new one. Nothing to do without such a row.
+function CR.PowerMoved(e)
+    if e and e.crPowered and not e.isPreview and e.rec and K.live[e.rec.id] == e then CR.Styled(e) end
 end
 
 -- 12.1.0 shows an unfiltered aura on such a lane: it stays out.
@@ -666,7 +813,7 @@ function CR.Visible(e)
     for _, kind in ipairs(CR.LANE_KINDS) do
         for _, lane in pairs(st[kind]) do
             local la = a
-            if not lane.on or (e.crWin ~= nil and (lane.row or 0) > e.crWin) then la = 0 end
+            if not lane.on or lane.dark or (e.crWin ~= nil and (lane.row or 0) > e.crWin) then la = 0 end
             if kind == "up" and Blind(lane) then la = 0 end
             local f = (kind == "up") and lane.container or lane.stage
             if gate ~= nil and la > 0 and f.SetAlphaFromBoolean then
@@ -707,6 +854,7 @@ function CR.Release(e)
     local id = e.rec and e.rec.id
     if id then SyncWatches(id, nil) end
     e.crRows, e.crWin, e.crColor, e.crText = nil, nil, nil, nil
+    e.crIdx, e.crOff, e.crPowered = nil, nil, nil
     local st = id and CR.state[id]
     if st and st.entry == e then
         st.entry = nil
@@ -837,8 +985,9 @@ local function Changed(rec)
 end
 
 -- A new row of `when` at the end: its first look picked so it shows at once (a
--- spell or aura row colours the fill, a power row the fill as well).
-function CR.AddRow(rec, when)
+-- spell or aura row colours the fill, a power row the fill as well). power:
+-- the one power it is for (nil: all).
+function CR.AddRow(rec, when, power)
     if not Own(rec) then return false end
     Store.ConvertResStates(rec)
     if not Store.RES_STATE_WHEN[when] then when = "enough" end
@@ -847,6 +996,7 @@ function CR.AddRow(rec, when)
     local d = Default()
     local r = { when = when, fill = { d[1], d[2], d[3], d[4] or 1 } }
     if when == "below" or when == "above" then r.value = (when == "below") and 20 or 80 end
+    if type(power) == "number" then r.power = power end
     l[#l + 1] = r
     Changed(rec)
     return #l
@@ -883,9 +1033,9 @@ end
 -- key "when": one of CR.WHEN; "fill" / "text": { r, g, b, a } or false (keep
 -- the bar's own); "mark": a spell row's cost mark; "value": a power row's
 -- value; "units": its value in power units; "follow": false pins the spells'
--- rank. The aura pick's fields (spellID / spellIDs, auraType, unit, caster,
--- followRank) are the aura icons' shape, written by the editor's shared aura
--- rows on the row itself.
+-- rank; "power": the one power the row is for, nil for all. The aura pick's
+-- fields (spellID / spellIDs, auraType, unit, caster, followRank) are the
+-- aura icons' shape, written by the editor's shared aura rows on the row itself.
 function CR.SetRow(rec, i, key, v)
     if not Own(rec) then return false end
     local cur = CR.List(rec)[i]
@@ -911,6 +1061,9 @@ function CR.SetRow(rec, i, key, v)
     elseif key == "follow" then
         if v ~= false then v = nil end
         if cur.follow == v then return false end
+    elseif key == "power" then
+        if type(v) ~= "number" then v = nil end
+        if cur.power == v then return false end
     else
         return false
     end

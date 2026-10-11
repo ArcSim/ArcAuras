@@ -69,27 +69,51 @@ CO.TEMPLATES_FOREVER = {
       } } },
 }
 
--- the templates this client gets
-function CO.Templates()
-    if NS.IsForever ~= true then return {} end
-    return CO.TEMPLATES_FOREVER
+-- Ready-made Custom Icons (retail): an item's buff as a timer from its use.
+-- The cast starts it, dying clears it.
+CO.TEMPLATES_RETAIL = {
+    -- a second use while it runs keeps the first timer
+    { key = "puzzlebox", which = "Icon", name = "Algeth'ar Puzzle Box", art = 383781,
+      tip = "The Algeth'ar Puzzle Box's haste: 20 seconds from its use; dying clears it.",
+      driver = { duration = 20, rules = {
+          { when = "cast", spellID = 383781, act = "start", mode = "idle", secs = 20 },
+          { when = "cond_on", cond = "dead", timer = "running", act = "reset" },
+      } } },
+    { key = "lightspotential", which = "Icon", name = "Light's Potential", art = 1236616,
+      tip = "The Light's Potential potion: 30 seconds from the drink, each drink restarts it; dying clears it.",
+      driver = { duration = 30, rules = {
+          { when = "cast", spellID = 1236616, act = "start", mode = "restart", secs = 30 },
+          { when = "cond_on", cond = "dead", timer = "running", act = "reset" },
+      } } },
+}
+
+-- the templates this client gets; which = "Icon" or "Bar" (a template
+-- without one is a bar), nil for every one
+function CO.Templates(which)
+    local all = (NS.IsForever == true) and CO.TEMPLATES_FOREVER or CO.TEMPLATES_RETAIL
+    if not which then return all end
+    local out = {}
+    for _, t in ipairs(all) do
+        if (t.which or "Bar") == which then out[#out + 1] = t end
+    end
+    return out
 end
 
-function CO.Template(key)
-    for _, t in ipairs(CO.Templates()) do
+function CO.Template(key, which)
+    for _, t in ipairs(CO.Templates(which)) do
         if t.key == key then return t end
     end
     return nil
 end
 
--- a template picked into the Add window's state: its name, art and mode fill
--- the form
+-- a template picked into the Add window's state: its name, art and a bar's
+-- mode fill the form
 function CO.Pick(addState, key)
     local t = CO.Template(key)
     if not t then return false end
     addState.customTemplate = t.key
     addState.customName, addState.customArt = t.name, tostring(t.art)
-    addState.barMode = t.mode
+    if t.mode then addState.barMode = t.mode end
     return true
 end
 
@@ -101,11 +125,12 @@ end
 
 CO.CELL, CO.PITCH = 32, 36
 
--- One square per template, on the label margin: a click picks it (name, art
--- and mode filled in, the pick cyan), a second click lets it go.
-function CO.TemplateRow(pg, addState, vis)
+-- One square per template of that kind (which: "Icon" or "Bar"), on the
+-- label margin: a click picks it (name, art and mode filled in, the pick
+-- cyan), a second click lets it go.
+function CO.TemplateRow(pg, addState, vis, which)
     local AT, COL = NS.AT, NS.AT.COL
-    local list = CO.Templates()
+    local list = CO.Templates(which or "Bar")
     if #list == 0 then return nil end
     local row = AT.AddRow(pg, CO.PITCH + 8, vis)
     local cells = {}
@@ -168,7 +193,7 @@ function Options.CustomAddRows(pg, owner, addState, which)
         end
     end
     AT.RowDesc(pg, "Its rules (the Triggers tab) start its timer and count its stacks from events you pick.", 20, vis)
-    if which == "Bar" then CO.TemplateRow(pg, addState, vis) end
+    CO.TemplateRow(pg, addState, vis, which)
     AT.RowInput(pg, "Name",
         function() return addState.customName or "" end,
         function(v) addState.customName = v end,
@@ -187,16 +212,24 @@ function CO.AddFields(addState, which)
     return name, art
 end
 
+-- a picked Custom Icon template comes with its rules, like a bar's below
 function Options.CustomCreate(addState, dest, layoutId)
     local name, art = CO.AddFields(addState, "Icon")
-    return NS.Store.NewIcon("timer", { spellID = art, rules = {} }, dest, layoutId, name)
+    local t = addState.customTemplate and CO.Template(addState.customTemplate, "Icon")
+    addState.customTemplate = nil
+    local d = { spellID = art, rules = {} }
+    if t then
+        d = CO.Copy(t.driver)
+        d.spellID = art or t.art
+    end
+    return NS.Store.NewIcon("timer", d, dest, layoutId, name)
 end
 
 -- a picked template's rules and settings, its art unless another was typed;
 -- the pick is used once
 function Options.CustomBarDriver(addState)
     local name, art = CO.AddFields(addState, "Bar")
-    local t = addState.customTemplate and CO.Template(addState.customTemplate)
+    local t = addState.customTemplate and CO.Template(addState.customTemplate, "Bar")
     addState.customTemplate = nil
     if t then
         local d = CO.Copy(t.driver)

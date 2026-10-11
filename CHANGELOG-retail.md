@@ -1,5 +1,39 @@
 # Arc Auras
 
+## 2.7.0
+
+Edit your layouts right on your screen, make a whole layout bigger with one slider, and a new texture picker.
+
+### New Features
+
+- **Edit on screen** - Drag, size and anchor every element of a layout right on your screen, with snap guides, several picked at once, and Undo and Redo (a layout's Overview, or the button on the window's title bar).
+- **Layout scale** - One slider makes everything in a layout bigger or smaller, the gaps between them included.
+- **Layout Overview** - A layout opens on Overview: its size, where it sits, and a map of everything in it. Icon, group and bar looks share one Looks tab.
+- **Pin a layout** - Keep a layout at the middle, an edge or a corner of your screen when your resolution or UI scale changes.
+- **Center a layout** - Center puts the middle of what you see on the middle of your screen, or drop the cross on screen to pick your own center.
+- **Layout strata** - Put a whole layout on one frame strata, or move each element up or down from its own.
+- **Bar texture picker** - A texture window with a live preview, favorites, your recent picks, and textures sorted by the addon that adds them.
+- **Aura picker** - Adding an aura icon lists your Cooldown Manager's buffs and debuffs to pick from, plus a Bloodlust / Heroism icon.
+- **More Custom Icon templates** - Algeth'ar Puzzle Box and Light's Potential, each a timer from its use.
+- **Aura icons on several units** - On unit has a new Several units choice: tick each unit to watch, and the first one that has the aura shows on top.
+- **States for one power** - On a bar that follows your form, a By State row can be for Energy, Mana or any one power.
+- **Keep the swipe bright** - Dim an icon on cooldown and keep its swipe clear (Conditions > By State).
+- **End a set duration by casting again** - On this icon > A set duration > When cast again has a new choice, End it: a cast while the timer runs ends it, so the cast works as a toggle.
+
+### Improvements
+
+- **Resource bar color** - Color by Power color or Fill color, and the texture swatch shows the power's color.
+- **Position** - X and Y can count from the middle of your screen.
+- **Sidebar** - Edit stays on every layout row; +, the eye and the lock show when you hover the row (Settings keeps them shown).
+- **Group frames while editing** - Show the border and background, the border only, or nothing (Settings).
+- **Anchors** - Offsets now reach 2000, so you can anchor far away without anything moving.
+- **Proc Tracker import moved into Import / Export** - It is now a tab there: tick the parts to bring, see which are already in Arc Auras, and import again after deleting a layout.
+
+### Bug Fixes
+
+- **Dispel-type borders** - A hidden aura icon no longer leaves its dispel-type border on screen.
+- **Resource bar color** - A Fill color now shows on resource bars when you pick it.
+
 ## 2.6.0
 
 Copy your Cooldown Manager into a layout, icon shapes and Masque skins, frames that move with a group, and an options window that opens without a freeze.

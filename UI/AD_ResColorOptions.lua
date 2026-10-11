@@ -27,13 +27,77 @@ RSO.KINDS = {
 RSO.GLOWS = { { value = "off", text = "Off" }, { value = "pixel", text = "Pixel" }, { value = "autocast", text = "Autocast" } }
 RSO.AURA_IDS = "Aura name or spell IDs"
 RSO.NOTE = "Fill and texts: the highest row that holds wins. A glow shows while its row holds."
--- the table's columns, measured from the row's right edge
-RSO.COLS = { remove = { w = 22 }, glow = { w = 96 }, mark = { w = 78 }, text = { w = 56 }, fill = { w = 56 } }
+-- the table's columns, measured from the row's right edge; power is the For
+-- column, on an Automatic power bar only
+RSO.COLS = { remove = { w = 22 }, glow = { w = 96 }, mark = { w = 78 }, text = { w = 56 }, fill = { w = 56 },
+    power = { w = 76 } }
 RSO.GAP = 10
 -- the open row per bar
 RSO.sel = {}
+-- an Automatic bar's row for every power, and the look of a row for another
+-- power than the one previewed: still there and still clickable
+RSO.FOR_ALL = "All powers"
+RSO.DIM = 0.42
+-- page -> what runs after each layout of it
+RSO.after = RSO.after or {}
 
 local function CRm() return NS.Bars and NS.Bars.ResColor end
+
+-- An Automatic power bar: each row can be for one power.
+local function ForPower(rec)
+    local C = CRm()
+    return rec ~= nil and C ~= nil and C.ForPower ~= nil and C.ForPower(rec) == true
+end
+
+-- the powers a row can be for: { value, text, color }
+local function Powers(rec)
+    local C = CRm()
+    return (rec and C and C.PowersFor and C.PowersFor(rec)) or {}
+end
+
+-- the power the table and the preview show: the picked one, else the one in use
+local function PreviewPower()
+    local C = CRm()
+    local pt = C and C.previewPower
+    if pt == nil and UnitPowerType then pt = UnitPowerType("player") end
+    return pt
+end
+
+-- a power's name and colour, the bar's own list first
+local function PowerInfo(rec, pt)
+    for _, it in ipairs(Powers(rec)) do
+        if it.value == pt then return it.text, it.color end
+    end
+    local info = NS.Bars and NS.Bars.POWER_ALL and NS.Bars.POWER_ALL[pt]
+    if info then return info.name, info.color end
+    return tostring(pt), nil
+end
+
+-- a For pick's items: each power, the saved one even off the list, then all
+local function ForItems(rec, keep)
+    local out, has = {}, false
+    for _, it in ipairs(Powers(rec)) do
+        out[#out + 1] = { value = it.value, text = it.text }
+        if it.value == keep then has = true end
+    end
+    if keep ~= nil and not has then out[#out + 1] = { value = keep, text = (PowerInfo(rec, keep)) } end
+    out[#out + 1] = { value = "all", text = RSO.FOR_ALL }
+    return out
+end
+
+local function StrW(fs)
+    return (fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth()) or fs:GetStringWidth() or 0
+end
+
+-- The picked power is let go: the preview and the Add pick follow the power
+-- in use again.
+function RSO.ClearPreview()
+    RSO.addFor, RSO.pvId = nil, nil
+    local C = CRm()
+    if not (C and C.previewPower ~= nil) then return end
+    C.previewPower = nil
+    if NS.Bars.PreviewRepaint then NS.Bars.PreviewRepaint() end
+end
 
 -- the words a spell ID is shown by
 local function SpellName(id)
@@ -172,6 +236,8 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         row._adMeta = { family = "bar", section = "rescolors", field = field, def = { label = label }, baseVis = vis }
     end
     local maxR = (CRm() and CRm().MaxRows()) or 12
+    -- a pause point between rows: the window builds in slices
+    local function Pause() if Options.BuildYield then Options.BuildYield() end end
 
     -- The table
 
@@ -181,12 +247,15 @@ function Options.ResStateRows(pg, ctx, vis, owner)
     local right = {}
     do
         local x = 8
-        for _, k in ipairs({ "remove", "glow", "mark", "text", "fill" }) do
+        for _, k in ipairs({ "remove", "glow", "mark", "text", "fill", "power" }) do
             right[k] = x
             x = x + C[k].w + GAP
+            if k == "fill" then RSO.LABEL_RIGHT = x end
         end
-        RSO.LABEL_RIGHT = x
+        RSO.LABEL_RIGHT_FOR = x
     end
+    -- the state words end at the first cell: For on an Automatic bar, else Fill
+    local function LabelRight(on) return on and RSO.LABEL_RIGHT_FOR or RSO.LABEL_RIGHT end
     local function Cell(row, k)
         local f = CreateFrame("Frame", nil, row)
         f:SetSize(C[k].w, 24)
@@ -214,7 +283,107 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         return fs
     end
 
+    -- the picked power is the bar's it was picked on, while By State shows
+    local function KeepPick()
+        local C2 = CRm()
+        if not (C2 and C2.previewPower ~= nil) then return end
+        local r = Rec()
+        if not (r and RSO.pvId == r.id and RSO.Open() and vis() and ForPower(r)) then RSO.ClearPreview() end
+    end
+
+    -- Preview as: the power the table and the preview show, a chip per power
+    local pv = AT.AddRow(pg, 26, function()
+        local r = Rec()
+        return vis() and #Rows() > 0 and ForPower(r) and #Powers(r) > 0
+    end)
+    do
+        -- on the first line's middle: more powers than fit wrap under the chips
+        local lbl = pv:CreateFontString(nil, "OVERLAY")
+        lbl:SetFont(AT.FONT, 11, "")
+        lbl:SetPoint("TOPLEFT", 10, -7)
+        lbl:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+        lbl:SetText("Preview as")
+        local chips = {}
+        local function Paint(b)
+            local on, hot = b._on, b._hot
+            local bg = on and COL.sel or COL.well
+            local e = (on or hot) and COL.arc or COL.line2
+            local ink = on and COL.ink or COL.dim
+            b:SetBackdropColor(bg[1], bg[2], bg[3], 1)
+            b:SetBackdropBorderColor(e[1], e[2], e[3], 1)
+            b.fs:SetTextColor(ink[1], ink[2], ink[3])
+        end
+        local function Chip(j)
+            if chips[j] then return chips[j] end
+            local b = CreateFrame("Button", nil, pv, "BackdropTemplate")
+            b:SetHeight(20)
+            AT.Skin(b, COL.well, COL.line2)
+            local box = b:CreateTexture(nil, "ARTWORK")
+            box:SetTexture(AT.WHITE)
+            box:SetVertexColor(0, 0, 0, 1)
+            box:SetSize(10, 10)
+            box:SetPoint("LEFT", 9, 0)
+            b.sq = b:CreateTexture(nil, "OVERLAY")
+            b.sq:SetTexture(AT.WHITE)
+            b.sq:SetSize(8, 8)
+            b.sq:SetPoint("CENTER", box, "CENTER", 0, 0)
+            b.fs = b:CreateFontString(nil, "OVERLAY")
+            b.fs:SetFont(AT.FONT, 11, "")
+            b.fs:SetPoint("LEFT", box, "RIGHT", 6, 0)
+            b.fs:SetWordWrap(false)
+            b:SetScript("OnEnter", function() b._hot = true Paint(b) end)
+            b:SetScript("OnLeave", function() b._hot = false Paint(b) end)
+            b:SetScript("OnClick", function()
+                local C2, r = CRm(), Rec()
+                if not (C2 and r) then return end
+                AT.CloseDropdown()
+                C2.previewPower, RSO.pvId = b._pt, r.id
+                if NS.Bars.PreviewRepaint then NS.Bars.PreviewRepaint() end
+                AT.LayoutPage(pg)
+            end)
+            chips[j] = b
+            return b
+        end
+        pv._sync = function()
+            KeepPick()
+            local r = Rec()
+            local list = (r and ForPower(r)) and Powers(r) or {}
+            local cur = PreviewPower()
+            local x0 = 10 + math.ceil(StrW(lbl)) + 12
+            local maxW = math.max(x0 + 160, (pv:GetWidth() or 0) - 8)
+            local x, y, lines = x0, 0, 1
+            for j = 1, math.max(#list, #chips) do
+                local it = list[j]
+                if it then
+                    local b = Chip(j)
+                    b._pt, b._on = it.value, it.value == cur
+                    b.fs:SetText(it.text or "")
+                    local c = it.color or { 1, 1, 1 }
+                    b.sq:SetVertexColor(c[1], c[2], c[3], 1)
+                    local w = math.ceil(StrW(b.fs)) + 34
+                    b:SetWidth(w)
+                    if x > x0 and x + w > maxW then
+                        x, y, lines = x0, y + 24, lines + 1
+                    end
+                    b:ClearAllPoints()
+                    b:SetPoint("TOPLEFT", pv, "TOPLEFT", x, -3 - y)
+                    x = x + w + 6
+                    Paint(b)
+                    b:Show()
+                elseif chips[j] then
+                    chips[j]:Hide()
+                end
+            end
+            local h = 2 + lines * 24
+            if pv._h ~= h then
+                pv._h = h
+                pv:SetHeight(h)
+            end
+        end
+    end
+
     local head = AT.AddRow(pg, 22, function() return vis() and #Rows() > 0 end)
+    local forHead
     do
         local fs = Faint(head)
         fs:SetPoint("LEFT", 44, 0)
@@ -225,22 +394,28 @@ function Options.ResStateRows(pg, ctx, vis, owner)
             h:SetPoint("LEFT", Cell(head, k), "LEFT", 0, 0)
             h:SetText(word)
         end
+        forHead = Faint(head)
+        forHead:SetPoint("LEFT", Cell(head, "power"), "LEFT", 0, 0)
+        forHead:SetText("FOR")
     end
     Stamp(head, "resStates", "How the bar looks in each state")
     -- the open row follows the sub-tab into the preview
     head._sync = function()
+        forHead:SetShown(ForPower(Rec()))
+        KeepPick()
         local C2 = CRm()
         if not C2 then return end
         local r = Rec()
         local want = (r and RSO.Open() and vis()) and Sel() or nil
-        if C2.previewSel ~= want then
-            C2.previewSel = want
+        local wantId = want and r.id or nil
+        if C2.previewSel ~= want or C2.previewSelId ~= wantId then
+            C2.previewSel, C2.previewSelId = want, wantId
             if NS.Bars.PreviewRepaint then NS.Bars.PreviewRepaint() end
         end
     end
 
     for i = 1, maxR do
-        if Options.BuildYield then Options.BuildYield() end
+        Pause()
         local row = AT.AddRow(pg, 30, function() return vis() and Row(i) ~= nil end)
         -- the open row: a raised fill and an accent edge
         local openFill = row:CreateTexture(nil, "BACKGROUND", nil, 1)
@@ -281,6 +456,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         local pick = CreateFrame("Button", nil, row)
         pick:SetPoint("LEFT", 44, 0)
         pick:SetPoint("RIGHT", row, "RIGHT", -RSO.LABEL_RIGHT, 0)
+        pick._right = RSO.LABEL_RIGHT
         pick:SetHeight(26)
         local lbl = pick:CreateFontString(nil, "OVERLAY")
         lbl:SetFont(AT.FONT, 13, "")
@@ -295,6 +471,26 @@ function Options.ResStateRows(pg, ctx, vis, owner)
             AT.LayoutPage(pg)
         end)
         AT.Tooltip(pick, "State", function() return RSO.Label(Row(i)) end)
+
+        -- For: the power the row holds on, edged in its colour
+        local forCell = Cell(row, "power")
+        local forChip = CreateFrame("Frame", nil, forCell, "BackdropTemplate")
+        forChip:SetHeight(16)
+        forChip:SetPoint("LEFT", 0, 0)
+        AT.Skin(forChip, { 0, 0, 0, 0 }, COL.line2)
+        forChip:EnableMouse(true)
+        local forFs = forChip:CreateFontString(nil, "OVERLAY")
+        forFs:SetFont(AT.FONT, 10, "")
+        forFs:SetPoint("LEFT", 6, 0)
+        forFs:SetPoint("RIGHT", -6, 0)
+        forFs:SetJustifyH("LEFT")
+        forFs:SetWordWrap(false)
+        AT.Tooltip(forChip, "For", function()
+            local g = Row(i)
+            if not g then return nil end
+            if g.power == nil then return "Holds on every power." end
+            return "Holds only while the bar shows " .. (PowerInfo(Rec(), g.power)) .. "."
+        end)
 
         -- fill and texts: a swatch, "keep" while the row leaves the bar's own
         local function ColorCell(key)
@@ -392,6 +588,24 @@ function Options.ResStateRows(pg, ctx, vis, owner)
             local n = #Rows()
             up:SetShown(i > 1)
             down:SetShown(i < n)
+            local on = ForPower(r)
+            local lr = LabelRight(on)
+            if pick._right ~= lr then
+                pick._right = lr
+                pick:SetPoint("RIGHT", row, "RIGHT", -lr, 0)
+            end
+            forCell:SetShown(on)
+            if on then
+                local name, c
+                if g.power ~= nil then name, c = PowerInfo(r, g.power) end
+                forFs:SetText(name or RSO.FOR_ALL)
+                local ink = name and COL.ink or COL.dim
+                forFs:SetTextColor(ink[1], ink[2], ink[3])
+                local e = c or COL.line2
+                forChip:SetBackdropBorderColor(e[1], e[2], e[3], 1)
+                forChip:SetWidth(math.min(C.power.w, math.ceil(StrW(forFs)) + 12))
+            end
+            row:SetAlpha((on and g.power ~= nil and g.power ~= PreviewPower()) and RSO.DIM or 1)
             local w = Kind(g)
             local S = NS.Schema
             local auraFillOK = S and S.ResColorsOK and S.ResColorsOK(r)
@@ -425,6 +639,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         end
     end
 
+    Pause()
     -- the bar's own look, under every row
     local normal = AT.AddRow(pg, 30, function() return vis() and #Rows() > 0 end)
     do
@@ -438,12 +653,20 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         lbl:SetPoint("LEFT", 44, 0)
         lbl:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
         lbl:SetText("Normal")
+        local fillCell = Cell(normal, "fill")
         local sub = Faint(normal, 11)
         sub:SetPoint("LEFT", lbl, "RIGHT", 8, 0)
+        sub:SetPoint("RIGHT", fillCell, "LEFT", -8, 0)
+        sub:SetJustifyH("LEFT")
         sub:SetText("the bar's own colors")
         local fillW = Faint(normal, 11)
-        fillW:SetPoint("LEFT", Cell(normal, "fill"), "LEFT", 0, 0)
+        fillW:SetPoint("LEFT", fillCell, "LEFT", 0, 0)
         fillW:SetText("own")
+        -- an Automatic bar: the fill the previewed power shows
+        local sw = AT.MakeSwatch(fillCell, 40, 16)
+        sw:SetPoint("LEFT", 0, 0)
+        sw:EnableMouse(false)
+        sw:Hide()
         local textW = Faint(normal, 11)
         textW:SetPoint("LEFT", Cell(normal, "text"), "LEFT", 0, 0)
         normal._sync = function()
@@ -451,6 +674,21 @@ function Options.ResStateRows(pg, ctx, vis, owner)
             local r = Rec()
             local follow = r and Store.Resolve(r, "rescolors", "resTextFill") == true
             textW:SetText(follow and "fill" or "own")
+            local on = ForPower(r)
+            local cr, cg, cb, ca
+            if on then
+                local pt = PreviewPower()
+                local name, c = PowerInfo(r, pt)
+                local byPower = Store.Resolve(r, "resource", "usePowerColor") ~= false
+                sub:SetText(byPower and ("the power color, " .. name) or "the fill color")
+                if NS.Bars.FillColorOf then cr, cg, cb, ca = NS.Bars.FillColorOf(r, pt) end
+                if cr == nil and c then cr, cg, cb, ca = c[1], c[2], c[3], 1 end
+                if cr ~= nil then sw:SetColor({ cr, cg, cb }, ca or 1) end
+            else
+                sub:SetText("the bar's own colors")
+            end
+            fillW:SetShown(not (on and cr ~= nil))
+            sw:SetShown(on and cr ~= nil)
         end
     end
 
@@ -458,6 +696,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
     -- (where the state names start), so the new row's place reads at once and
     -- no label leaves a gap before the column of the toggle below
     RSO.addKind = RSO.addKind or "enough"
+    Pause()
     local add = AT.AddRow(pg, 32, function() return vis() and Rec() ~= nil and #Rows() < maxR end)
     do
         local dd = AT.MakeDropdown(owner, add, 220,
@@ -475,18 +714,57 @@ function Options.ResStateRows(pg, ctx, vis, owner)
             function() return RSO.addKind end,
             function(v) RSO.addKind = v end)
         dd:SetPoint("LEFT", 44, 0)
+        -- an Automatic bar: the power the new row is for, the previewed one
+        -- until picked
+        local function AddFor()
+            local r, pt = Rec(), PreviewPower()
+            if RSO.addFor ~= nil and r and RSO.addForId == r.id then return RSO.addFor end
+            for _, it in ipairs(Powers(r)) do
+                if it.value == pt then return pt end
+            end
+            return "all"
+        end
+        local forWord = add:CreateFontString(nil, "OVERLAY")
+        forWord:SetFont(AT.FONT, 11, "")
+        forWord:SetPoint("LEFT", dd, "RIGHT", 8, 0)
+        forWord:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+        forWord:SetText("for")
+        local forDD = AT.MakeDropdown(owner, add, 120,
+            function() return ForItems(Rec()) end,
+            AddFor,
+            function(v)
+                local r = Rec()
+                RSO.addFor, RSO.addForId = v, r and r.id
+            end)
+        forDD:SetPoint("LEFT", forWord, "RIGHT", 8, 0)
         local btn = AT.MakeSmallButton(add, "Add state", 84)
         btn:SetPoint("LEFT", dd, "RIGHT", 8, 0)
         btn:SetScript("OnClick", function()
             AT.CloseDropdown()
             local r = Rec()
-            local n = r and CRm().AddRow(r, RSO.addKind)
+            local pw = nil
+            if ForPower(r) then
+                local v = AddFor()
+                if v ~= "all" then pw = v end
+            end
+            local n = r and CRm().AddRow(r, RSO.addKind, pw)
             if n then RSO.sel[r.id] = n end
             AT.LayoutPage(pg)
         end)
-        add._sync = dd.Refresh
+        add._sync = function()
+            dd.Refresh()
+            local on = ForPower(Rec())
+            forWord:SetShown(on)
+            forDD:SetShown(on)
+            if on then forDD.Refresh() end
+            if btn._for ~= on then
+                btn._for = on
+                btn:SetPoint("LEFT", on and forDD or dd, "RIGHT", 8, 0)
+            end
+        end
         Stamp(add, "resStateAdd", "Add a state")
     end
+    Pause()
     -- the texts and the fill's colour, together
     local follow = AT.RowToggle(pg, "Texts take the bar's color",
         function()
@@ -505,6 +783,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
 
     -- The open row's editor
 
+    Pause()
     local edVis = function() return vis() and SelRow() ~= nil end
     AT.Section(pg, "State", { visibleFn = edVis })
     local edSec = pg._curSection
@@ -545,7 +824,19 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         edVis)
     AT.Tooltip(whenRow, "State",
         "Enough power: you could pay its cost now. Usable: the game would let you cast it. Ready: off cooldown.")
-    -- the section names the open row
+    -- the section names the open row, and on an Automatic bar tags its power
+    local tag
+    if edSec and edSec.title then
+        tag = CreateFrame("Frame", nil, edSec.band or edSec.hit or pg, "BackdropTemplate")
+        tag:SetHeight(14)
+        AT.Skin(tag, { 0, 0, 0, 0 }, COL.focus)
+        tag.fs = tag:CreateFontString(nil, "OVERLAY")
+        tag.fs:SetFont(AT.FONT, 9, "")
+        tag.fs:SetPoint("CENTER", 0, 0)
+        tag.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+        tag:SetPoint("LEFT", edSec.title, "RIGHT", 8, 0)
+        tag:Hide()
+    end
     local whenSync = whenRow._sync
     whenRow._sync = function()
         whenSync()
@@ -554,9 +845,51 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         if not (g and t) then return end
         local words = RSO.Label(g)
         t:SetText(edSec.boxed and words or string.upper(words))
+        local r = Rec()
+        local on = ForPower(r)
+        if on then
+            tag.fs:SetText((g.power ~= nil) and (PowerInfo(r, g.power)) or RSO.FOR_ALL)
+            tag:SetWidth(math.ceil(StrW(tag.fs)) + 10)
+        end
+        tag:SetShown(on)
     end
     Stamp(whenRow, "resStateWhen", "State")
+    -- the title hides with its section: the tag goes with it
+    RSO.after[pg] = function()
+        if tag and tag:IsShown() and not edSec.title:IsShown() then tag:Hide() end
+    end
 
+    Pause()
+    -- an Automatic bar: the power the open row holds on
+    local forRow = AT.RowDropdown(pg, owner, "For",
+        function()
+            local g = SelRow()
+            return (g and g.power ~= nil) and g.power or "all"
+        end,
+        function(v) Edit(function(S, r) S.SetRow(r, Sel(), "power", (v ~= "all") and v or nil) end) end,
+        function() return ForItems(Rec(), (SelRow() or {}).power) end,
+        function() return edVis() and ForPower(Rec()) end)
+    AT.Tooltip(forRow, "For", "The power this row holds on. All powers: whatever power the bar shows.")
+    -- as wide as State's above it: the two read as one pair
+    do
+        local forDD, whenDD = forRow._colCtrl, whenRow._colCtrl
+        local function Match()
+            local w = whenDD:GetWidth() or 0
+            if w > (forDD:GetWidth() or 0) then forDD:SetWidth(w) end
+        end
+        local forSync = forRow._sync
+        forRow._sync = function()
+            forSync()
+            Match()
+        end
+        forDD:HookScript("OnClick", function()
+            Match()
+            local l = AT.openDropdown
+            if l and l._owner == forDD then l:SetWidth(forDD:GetWidth()) end
+        end)
+    end
+
+    Pause()
     -- a spell row's spells: one chip each, a click takes it away
     local chips = AT.AddRow(pg, 30, spellVis)
     do
@@ -623,6 +956,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         if not id then return end
         Edit(function(S, r) S.AddSpell(r, Sel(), id) end)
     end
+    Pause()
     local addSpell
     addSpell = AT.RowInput(pg, "Add a spell", function() return "" end,
         function(v)
@@ -635,6 +969,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         end,
         "Type the spell's name and click it below, or type its ID and press Enter. Any of the row's spells counts.",
         "name or ID")
+    Pause()
     if BGO and BGO.SpellSuggest then
         local Suggest = BGO.SpellSuggest(pg, function() return addSpell._visibleFn() end,
             function()
@@ -654,6 +989,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
     end
     addSpell._adCommit = SpellAdd
     Stamp(addSpell, "resStateSpell", "Add a spell")
+    Pause()
     AT.RowToggle(pg, "Follow my rank",
         function()
             local g = SelRow()
@@ -673,6 +1009,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         if #ids == 0 or table.concat(ids, ", ") == IDsText() then return end
         AuraEdit(function(g) Options.SetAuraSpellIDs(g, ids) end)
     end
+    Pause()
     local idRow = AT.RowInput(pg, RSO.AURA_IDS, IDsText, AuraCommit, auraVis,
         "Type the aura's name and click one to add its ID, or type IDs separated by commas or spaces. Any of them counts.",
         "e.g. 102560, 390414")
@@ -691,6 +1028,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         if t:find("%a") then t = t:gsub("^[%d%s,;]+", "") end
         return t
     end
+    Pause()
     local AuraSuggest = Options.AuraSuggestPanel and Options.AuraSuggestPanel(pg, auraVis, Typed, AuraAdd,
         false, nil, true)
     if AuraSuggest and idRow._colCtrl then
@@ -700,6 +1038,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
     end
     idRow._adCommit, idRow._adAdd, idRow._adSuggest = AuraCommit, AuraAdd, AuraSuggest
     Stamp(idRow, "resStateAura", RSO.AURA_IDS)
+    Pause()
     AT.RowToggle(pg, "Follow my rank",
         function()
             local g = SelRow()
@@ -708,6 +1047,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         function(v) AuraEdit(function(g) if v then g.followRank = nil else g.followRank = false end end) end,
         function() return auraVis() and NS.IsForever == true end,
         Options.FOLLOW_RANK_DESC)
+    Pause()
     AT.RowDropdown(pg, owner, "Aura type",
         function()
             local g = SelRow()
@@ -724,6 +1064,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         end,
         function() return { { value = "buff", text = "Buff" }, { value = "debuff", text = "Debuff" } } end,
         auraVis)
+    Pause()
     local unitRow = AT.RowDropdown(pg, owner, "On unit",
         function() return (DA.ShapeOf((SelRow()) or {})) end,
         function(v) AuraEdit(function(g) g.unit = v end) end,
@@ -733,6 +1074,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         end,
         auraVis)
     AT.Tooltip(unitRow, "On unit", "Who carries the aura: a buff on you, a debuff on your target, or another unit.")
+    Pause()
     AT.RowDropdown(pg, owner, "Cast by",
         function()
             local _, _, caster = DA.ShapeOf((SelRow()) or {})
@@ -759,6 +1101,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         local mx = e and NS.Bars.PlainMax and NS.Bars.PlainMax(e)
         return (mx and mx > 1) and math.floor(mx) or 200
     end
+    Pause()
     local valRow = AT.RowSlider(pg, "Value",
         function()
             local g = SelRow()
@@ -768,6 +1111,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         1, function() return Units() and math.max(2, UnitMax() - 1) or 99 end, 1, false, valueVis)
     AT.Tooltip(valRow, "Value", "A percent of the bar, or power with In power units on.")
     Stamp(valRow, "resStateValue", "Value")
+    Pause()
     AT.RowToggle(pg, "In power units",
         function() return Units() end,
         function(v) Edit(function(S, r) S.SetRow(r, Sel(), "units", v) end) end,
@@ -785,6 +1129,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         return v
     end
     local function GlowSet(key, v) Edit(function(S, r) S.SetGlow(r, Sel(), key, v) end) end
+    Pause()
     local gcol = AT.RowColor(pg, "Glow color",
         function()
             local g = SelRow()
@@ -794,12 +1139,15 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         function(c) GlowSet("color", { c[1], c[2], c[3], c[4] or 1 }) end,
         glowVis, { alpha = true })
     Stamp(gcol, "resStateGlowColor", "Glow color")
+    Pause()
     AT.RowToggle(pg, "Glow only in combat",
         function() return GlowGet("combat", false) == true end,
         function(v) GlowSet("combat", v) end,
         glowVis, "The glow waits for combat; out of combat the bar shows without it.")
+    Pause()
     local fold = ET and ET.NewFold(pg, "resStateGlow", "glow", ctx)
     local function Tuning(label, key, lo, hi, step, fmt, when)
+        Pause()
         local gate = function()
             if not glowVis() then return false end
             local g = SelRow()
@@ -836,12 +1184,18 @@ function Options.ResStateRows(pg, ctx, vis, owner)
     if hooksecurefunc and not RSO.hooked then
         RSO.hooked = true
         hooksecurefunc(AT, "LayoutPage", function(p)
+            local after = RSO.after[p]
+            if after then after() end
             if p ~= pg then return end
             local open = RSO.Open()
             if open ~= RSO.lastOpen then
                 RSO.lastOpen = open
+                -- a picked power is for By State only
+                if not open then RSO.ClearPreview() end
                 if G and G.PreviewSync then G.PreviewSync() end
             end
         end)
     end
+    -- the window shut or another editor: the picked power goes too
+    if pg.HookScript then pg:HookScript("OnHide", function() RSO.ClearPreview() end) end
 end

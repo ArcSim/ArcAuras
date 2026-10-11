@@ -265,6 +265,8 @@ local function Stand(layer, f, at)
     st:SetPoint("TOPLEFT", f, "TOPLEFT", 0, 0)
     st:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", 0, 0)
     st:SetFrameStrata(f:GetFrameStrata())
+    -- born on UIParent: the icon's layout scale, so its look counts in the icon's units
+    if NS.LayoutEngine and NS.LayoutEngine.FollowScale then NS.LayoutEngine.FollowScale(st, f) end
     local lvl = f:GetFrameLevel()
     if type(lvl) ~= "number" or not Plain(lvl) then lvl = 1 end
     st:SetFrameLevel(lvl + at)

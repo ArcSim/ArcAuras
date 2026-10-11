@@ -176,8 +176,8 @@ function PH.ShowTimer(id)
 end
 
 -- A cast while it runs: restart it (the default), extend it by the seconds,
--- or leave it ("idle": only a cast with none running starts one), as a Custom
--- item's Start mode.
+-- leave it ("idle": only a cast with none running starts one), as a Custom
+-- item's Start mode, or end it ("end": the cast works as a toggle).
 function PH.Start(id)
     local e = PH.entries[id]
     if not e then return end
@@ -187,6 +187,10 @@ function PH.Start(id)
     local t = PH.timers[id]
     local running = t ~= nil and t.at + t.dur > GetTime()
     if running and ov.recast == "idle" then return end
+    if running and ov.recast == "end" then
+        PH.Stop(id)
+        return
+    end
     if running and ov.recast == "extend" then
         t.dur = t.dur + dur
     else

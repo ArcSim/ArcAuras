@@ -66,7 +66,60 @@ function Fold.HideBody()
     end
 end
 
+-- The layout Edit on screen opens: the one being edited, the one holding the
+-- edited element, else the first that loads here. The element comes picked.
+function Fold.EditTarget()
+    local rec = SelectedRecord()
+    local lay = rec and ((rec.type == "layout") and rec or (Store.LayoutOf and Store.LayoutOf(rec))) or nil
+    if not lay and Store.Layouts then
+        for _, l in ipairs(Store.Layouts()) do
+            if not Store.IsLoaded or Store.IsLoaded(l) then
+                lay = l
+                break
+            end
+        end
+    end
+    if not lay then return nil end
+    return lay, (rec and rec ~= lay) and rec.id or nil
+end
+
+local function OnScreen() return Options.LayoutOnScreen end
+
+function Fold.ToggleEdit()
+    AT.CloseDropdown()
+    local LOS = OnScreen()
+    if not LOS then return end
+    if LOS.IsOpen() then
+        LOS.Close()
+    else
+        local lay, pick = Fold.EditTarget()
+        if lay and LOS.Open(lay.id) then
+            local EO = NS.EditOps
+            if pick and EO and EO.Kind and EO.Kind(pick) and LOS.SetPicks then
+                LOS.SetPicks(pick, {})
+                if LOS.Redraw then LOS.Redraw() end
+            end
+        end
+    end
+    Fold.SyncEdit()
+end
+
+function Fold.SyncEdit()
+    local eb = Fold.editButton
+    if not eb then return end
+    local LOS = OnScreen()
+    local open = LOS ~= nil and LOS.IsOpen() == true
+    eb.fs:SetText(open and "Done editing" or "Edit on screen")
+    eb:SetWidth(math.ceil(eb.fs:GetStringWidth()) + 18)
+    local can = open or Fold.EditTarget() ~= nil
+    local edge = (eb._hot and can) and COL.arc or COL.line2
+    eb:SetBackdropBorderColor(edge[1], edge[2], edge[3], 1)
+    local ink = (not can and COL.faint) or ((eb._hot or open) and COL.arc) or COL.ink
+    eb.fs:SetTextColor(ink[1], ink[2], ink[3])
+end
+
 function Fold.Sync()
+    Fold.SyncEdit()
     if Fold.folded and Fold.win then Fold.HideBody() end
     local chip = Fold.chip
     if not chip then return end
@@ -84,6 +137,8 @@ function Fold.Set(on)
     local win = Fold.win
     if not win or Fold.folded == (on and true or false) then return end
     AT.CloseDropdown()
+    -- Edit on screen folds and unfolds around its own open flag: read it after
+    C_Timer.After(0, Fold.SyncEdit)
     if on then
         Fold.folded = true
         Fold.restore = {}
@@ -163,6 +218,24 @@ function Fold.Attach(win, bounds)
     b:SetScript("OnClick", function() Fold.Set(not Fold.folded) end)
     AT.Tooltip(b, "Fold", "Folds the window down to its title bar. Click an Edit button on screen to switch what you edit; click here again to see its settings.")
     Fold.button = b
+
+    -- Edit on screen from any page, left of the fold button, the same look.
+    local eb = CreateFrame("Button", nil, bar, "BackdropTemplate")
+    eb:SetHeight(18)
+    eb:SetPoint("RIGHT", b, "LEFT", -6, 0)
+    AT.Skin(eb, COL.well, COL.line2)
+    eb.fs = eb:CreateFontString(nil, "OVERLAY")
+    eb.fs:SetFont(AT.FONT, 11, "")
+    eb.fs:SetPoint("CENTER")
+    eb:SetScript("OnEnter", function(s) s._hot = true Fold.SyncEdit() end)
+    eb:SetScript("OnLeave", function(s) s._hot = nil Fold.SyncEdit() end)
+    eb:SetScript("OnClick", function() Fold.ToggleEdit() end)
+    AT.Tooltip(eb, "Edit on screen", function()
+        if Fold.EditTarget() then return "Drag, size and anchor this layout's elements on your screen." end
+        return "Make a layout first."
+    end)
+    Fold.editButton = eb
+    Fold.SyncEdit()
 
     -- "Editing: <name>" right after the title (and version), only while folded.
     local anchor = win.titleText

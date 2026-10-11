@@ -816,6 +816,10 @@ function Anchor.SaveOffsets(rec, frame)
     local sx, sy = PointXY(frame, sp)
     local tx, ty = PointXY(target, dp)
     if not (sx and tx) then return false end
+    -- an offset counts in the frame's own units; the target may sit in a
+    -- layout of another scale (or be the game's)
+    local ts, fs = Plain(target:GetEffectiveScale()), Plain(frame:GetEffectiveScale())
+    if ts and fs and fs > 0 then tx, ty = tx * ts / fs, ty * ts / fs end
     Store.SetOverride(rec, "anchor", "anchorOffsetX", math.floor(sx - tx + 0.5))
     Store.SetOverride(rec, "anchor", "anchorOffsetY", math.floor(sy - ty + 0.5))
     return true

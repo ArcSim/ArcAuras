@@ -157,7 +157,13 @@ Bars.LADDER = { aura = 1, auraTop = 18, border = 19, glow = 20, missBtn = 21, ma
     -- Bars\AD_ResColors.lua), and the cost preview and regen marks over them
     rule = 10, fillMarks = 18 }
 
+-- The texture the picker window is trying on one bar: read before the
+-- record, so the bar shows it without a write (Bars.PreviewTexture).
+local texPreview
+
 local function R(rec, section, field)
+    local p = texPreview
+    if p and p.id == rec.id and p.field == field and p.section == section then return p.key end
     return Store.Resolve(rec, section, field)
 end
 
@@ -2481,6 +2487,19 @@ local function PowerColorOf(rec, pt)
     return BarColorOf(rec)
 end
 
+-- The colour a bar's fill shows while no state row holds, for the editor's
+-- swatches: a resource bar's power colour unless Color by is Fill color.
+-- pt: the power to show it for (the editor's Preview as), else the bar's.
+function Bars.FillColorOf(rec, pt)
+    if rec and rec.barKind == "resource" then
+        local d = rec.driver
+        if pt == nil then pt = d and d.powerType end
+        if pt == nil or pt < 0 then pt = UnitPowerType("player") end
+        return PowerColorOf(rec, pt)
+    end
+    return BarColorOf(rec)
+end
+
 -- Which power this bar tracks: an explicit choice, else the live display power
 -- (UnitPowerType is not secret and follows druid forms).
 local function ResourceSyncType(entry)
@@ -3154,9 +3173,10 @@ local function ResourceRefresh(entry)
     if RP then RP.Refresh(entry) end   -- rune cells run their own timers
 end
 
--- full (re)setup for one resource bar: type, range, segments, ticks, colour
+-- full (re)setup for one resource bar: type, range, segments, ticks, colour;
+-- true when the power it shows moved
 local function ResourceEnsure(entry)
-    ResourceSyncType(entry)
+    local moved = ResourceSyncType(entry)
     entry.lastMax = nil      -- re-derive the range: segments, ticks, preview
     entry.cr, entry.cg, entry.cb = nil, nil, nil
     entry.txMode = nil
@@ -3165,6 +3185,7 @@ local function ResourceEnsure(entry)
     ApplyVisibility(entry)
     EnsurePredictEvents()
     if Bars.ResPowers then Bars.ResPowers.Sync() end
+    return moved
 end
 
 -- The shown power changed (a druid's form): a bar with a look per power is
@@ -3176,7 +3197,8 @@ function Bars.FormChanged(entry)
     if lk and lk.by == "power" and entry.holder and not entry.isPreview then
         Bars.EnsureBar(entry.rec, entry.holder)
     else
-        ResourceEnsure(entry)
+        -- a States row for one power: the new power runs its own rows
+        if ResourceEnsure(entry) and Bars.ResColor then Bars.ResColor.PowerMoved(entry) end
     end
 end
 
@@ -3208,7 +3230,7 @@ end
 function ResourceCostList(entry, range)
     if not range or range <= 0 then return nil end
     local CRm = Bars.ResColor
-    local spells = CRm and CRm.MarkSpells(entry.rec)
+    local spells = CRm and CRm.MarkSpells(entry.rec, entry.powerType)
     if not spells then return nil end
     local out = {}
     for _, sid in ipairs(spells) do
@@ -5395,7 +5417,12 @@ local function EnsureSharedEvents()
         lsm.RegisterCallback(lsmOwner, "LibSharedMedia_Registered", function(_, mediatype)
             if mediatype ~= "font" and mediatype ~= "statusbar" and mediatype ~= "border" then return end
             Events.Coalesce("adbars_media", function()
-                ForEach(nil, function(e) ApplyStyle(e) end)
+                -- a resource bar's style pass paints Fill color: its power or
+                -- state colour goes back on after it
+                ForEach(nil, function(e)
+                    ApplyStyle(e)
+                    if e.kind == "resource" then ResourceEnsure(e) end
+                end)
             end)
         end)
     end
@@ -5567,7 +5594,7 @@ function Bars.Refresh(barId)
     elseif kind == "resource" then
         -- A full refresh re-resolves the type and busts the setter memos;
         -- without it a resource bar would take the timer path and hide itself.
-        ResourceEnsure(e)
+        if ResourceEnsure(e) and Bars.ResColor then Bars.ResColor.PowerMoved(e) end
     elseif kind == "health" then
         -- Same reason: without it a health bar would fall to the timer path.
         HB.Ensure(e)
@@ -5590,6 +5617,23 @@ function Bars.Refresh(barId)
         end
         ApplyVisibility(e)
     end
+end
+
+-- Shows key as one bar's section.field until it is cleared (key nil), then
+-- restyles only that bar: a pick being tried costs no engine rebuild.
+function Bars.PreviewTexture(id, section, field, key)
+    local was = texPreview
+    if key ~= nil and id then
+        texPreview = { id = id, section = section, field = field, key = key }
+    else
+        texPreview = nil
+    end
+    local tid = id or (was and was.id)
+    local e = tid and live[tid]
+    if e and e.holder then Bars.EnsureBar(e.rec, e.holder) end
+    -- a preview moved to another bar leaves the first one as it was
+    local old = was and was.id ~= tid and live[was.id]
+    if old and old.holder then Bars.EnsureBar(old.rec, old.holder) end
 end
 
 -- Called on every engine rebuild; the holder is already sized and placed.
@@ -5857,6 +5901,19 @@ end
 
 function Bars.PreviewTicking()
     return PV.e ~= nil and PV.mode == "loop" and PV.e.kind ~= "health" and PV.e.kind ~= "stack"
+end
+
+-- The power a resource preview shows: on an Automatic bar the one its States
+-- table previews as (Bars\AD_ResColors.lua, CR.previewPower), else the bar's
+-- own, as ResourceSyncType resolves it.
+function PV.PowerAs(e)
+    local CRm = Bars.ResColor
+    local pt = CRm and CRm.ForPower(e.rec) and tonumber(CRm.previewPower) or nil
+    if pt ~= nil then return pt end
+    local d = e.rec.driver
+    pt = d and d.powerType
+    if pt == nil or pt < 0 then pt = UnitPowerType("player") end
+    return pt
 end
 
 -- the plain maximum of a resource bar's power (the live cache, else a
@@ -6380,6 +6437,9 @@ function PV.Build(rec, holder, screen)
     end
     if e.kind == "resource" then
         ResourceSyncType(e)
+        -- the power picked to preview as: its range, colour and States rows
+        local pt = PV.PowerAs(e)
+        if pt ~= nil and pt ~= e.powerType then e.powerType, e.cr, e.cg, e.cb = pt, nil, nil, nil end
         e.lastMax = nil
     end
     if e.kind == "swing" then e.swingLen = PV.SwingLen(rec) end
@@ -6434,12 +6494,18 @@ end
 function Bars.PreviewMode() return PV.mode end
 
 -- A resource bar's States table opened another row: the preview wears it now,
--- its glow too (Bars\AD_ResColors.lua, CR.previewSel).
+-- its glow too (Bars\AD_ResColors.lua, CR.previewSel). Another power to
+-- preview as (CR.previewPower) builds it again for that power.
 function Bars.PreviewRepaint()
     for _, e in pairs({ pane = PV.e, screen = PV.se }) do
         if e.kind == "resource" then
-            PV.Apply(e, false)
-            if Bars.Glow then Bars.Glow.Preview(e) end
+            local pt = PV.PowerAs(e)
+            if pt ~= nil and pt ~= e.powerType and e.rec and e.holder then
+                PV.Build(e.rec, e.holder, e == PV.se)
+            else
+                PV.Apply(e, false)
+                if Bars.Glow then Bars.Glow.Preview(e) end
+            end
         end
     end
 end

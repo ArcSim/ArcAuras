@@ -547,8 +547,13 @@ function G.SlotLane(st, e, k, kind, look)
     end
     lane.look, lane.gm, lane.on, lane.combat = look, gm, true, look.combat
     G.Refilter(lane, false)
-    if kind == "miss" then G.PaintMiss(lane) end
     local b = lane.frame
+    -- born on UIParent: the bar's layout scale, so the glow counts in its units
+    local LE = NS.LayoutEngine
+    if LE and LE.FollowScale and (not b or DA.IsAccessible(b)) then
+        LE.FollowScale(lane.stage or lane.container, e.shell)
+    end
+    if kind == "miss" then G.PaintMiss(lane) end
     if b then
         if DA.IsAccessible(b) then
             if lane.level ~= (st.base or 1) + ((kind == "miss") and Bars.LADDER.missBtn or Bars.LADDER.glow)
@@ -684,7 +689,9 @@ function G.RowShow(st, k)
     local host = st.row[k]
     if not host then return end
     local e = st.entry
-    local rr = e and e.crRows and host._adRow and e.crRows[host._adRow]
+    -- _adRow is the row's place in the list; a row left out for another power has none
+    local CRm = Bars.ResColor
+    local rr = CRm and CRm.Built(e, host._adRow)
     local want = (rr ~= nil and rr.hold == true) and (not host._adCombat or G.ForCombat())
     want = want and true or false
     if want ~= (host:IsShown() == true) then
@@ -796,10 +803,13 @@ function G.Visible(e)
     end
     local gate = e.shellGate
     local combatOK = G.ForCombat()
+    -- a state row left out for another power: its lane stays made and filtered, unseen
+    local CRm = e.crOff ~= nil and G.FromRows(e.rec) and Bars.ResColor or nil
     for _, kind in ipairs(G.LANE_KINDS) do
         for _, lane in pairs(st[kind]) do
             local la = a
             if not lane.on or (lane.combat and not combatOK) then la = 0 end
+            if CRm and CRm.Off(e, select(2, G.Row(e.rec, lane.slot))) then la = 0 end
             if kind == "up" and G.Blind(lane) then la = 0 end
             local f = (kind == "up") and lane.container or lane.stage
             if gate ~= nil and la > 0 and f.SetAlphaFromBoolean then
@@ -961,12 +971,14 @@ function G.Preview(e)
     local lvl = e.shell.fill:GetFrameLevel()
     lvl = (type(lvl) == "number") and lvl or 1
     -- a bar whose glows are its rows shows the glow of the row its table has open
+    -- (both named by the row's place in the list), unless it is for another power
     local rows = rec and G.FromRows(rec)
-    local sel = rows and Bars.ResColor and Bars.ResColor.previewSel
+    local CRm = Bars.ResColor
+    local sel = rows and CRm and CRm.PreviewRow(rec)
     for k = 1, G.Slots() do
         local host = e.pvGlow[k]
         local look = (open and rec and G.On(rec, k) and G.Kind(rec, k)) and G.Look(rec, k) or nil
-        if look and rows and select(2, G.Row(rec, k)) ~= sel then look = nil end
+        if look and rows and (select(2, G.Row(rec, k)) ~= sel or CRm.Off(e, sel)) then look = nil end
         if look then
             if not host then
                 host = CreateFrame("Frame", nil, e.shell)

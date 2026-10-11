@@ -147,12 +147,13 @@ Groups.StyleButtons = StyleButtons
 -- Layout helpers
 
 -- A group's cell size, spacing, columns and growth, from its arrangement. Each
--- size and spacing is whole pixels, rounded as the engine's grid rounds them,
--- so aura rows step exactly like the static grid at any UI scale.
+-- size and spacing is whole pixels, rounded as the engine's grid rounds them
+-- (on its layout's scale), so aura rows step exactly like the static grid at
+-- any UI scale.
 local function GroupDims(grec)
     local R = function(field) return Store.Resolve(grec, "arrangement", field) end
     local E = NS.LayoutEngine
-    local Snap = E and E.Snap or function(v) return v end
+    local Snap = function(v) return (E and E.Snap) and E.Snap(v, grec) or v end
     local scale = math.floor((R("iconSize") or 36) + 0.5) / 36
     local w = Snap(math.floor((R("iconWidth") or 36) * scale + 0.5))
     local h = Snap(math.floor((R("iconHeight") or 36) * scale + 0.5))
@@ -212,7 +213,9 @@ Groups.ApplyFlow = ApplyFlow
 
 -- Mirror the group frame's shown state, effective alpha and strata onto a
 -- container, which is not its child: conditions and the flip must carry over.
-local function MirrorOnto(c, gf, on)
+-- mult: a scale of its own on top of the group's layout scale (a row's
+-- half-scale copy).
+local function MirrorOnto(c, gf, on, mult)
     local alpha = 1
     if gf then
         alpha = gf.GetEffectiveAlpha and gf:GetEffectiveAlpha() or gf:GetAlpha() or 1
@@ -223,6 +226,9 @@ local function MirrorOnto(c, gf, on)
     if gf then
         c:SetFrameStrata(gf:GetFrameStrata())
         c:SetFrameLevel(gf:GetFrameLevel() + 2)
+        -- born on UIParent, so it takes the layout's scale the group carries
+        local E = NS.LayoutEngine
+        if E and E.FollowScale then E.FollowScale(c, gf, mult) end
     end
 end
 Groups.MirrorOnto = MirrorOnto

@@ -1,9 +1,9 @@
--- AD_ImportPTOptions: the "Import from ArcUI ProcTracker" card on the New Layout page
--- and its window: a tick per tracker part ArcUI ProcTracker has settings for (its
--- icon, its bar, the Power Infusion icon), the switched-on ones ticked; Import
--- copies the ticked ones through MigratePT.Import into a new layout. At login, a
--- small offer opens the window while something there is switched on, until an
--- import or "Don't ask again" (Store.UI().ptOffer). Retail only.
+-- AD_ImportPTOptions: Import from ArcUI ProcTracker, the "Proc Tracker" tab of the
+-- Import / Export page (UI\AD_Options.lua hosts it through PW.TabShown, PW.BuildPane and
+-- PW.Refresh): a box of its icons beside one of its bars, a tick per part ArcUI
+-- ProcTracker has settings for (the switched-on ones ticked); Import copies the ticked
+-- ones through MigratePT.Import into a new layout, again any time. The New Layout card,
+-- the login offer (Store.UI().ptOffer) and /arcui2 proctracker open the tab. Retail only.
 local ADDON, NS = ...
 if NS.IsForever == true then return end
 
@@ -13,144 +13,234 @@ if not Options then return end
 local PW = {}
 Options.ImportPT = PW
 
-PW.MAX_ROWS = 20
-PW.PART_WORDS = { icon = "icon", bar = "deck bar", aura = "icon" }
+PW.ROW_H = 24
+PW.NOTE_H = 26
+PW.GAP = 10
+PW.FOOT_H = 40
+PW.HEAD_H = 26
+PW.BOXES = { { "ICONS", { icon = true, aura = true } }, { "BARS", { bar = true } } }
 
-local win, page, status, done
-local cands, picks = {}, {}
+local pane
+local cands, picks = {}, nil
+-- the foot bar's lines after an import or a refusal: { text, text2, bad }
+local said
+local W = { rows = {} }
+-- for harnesses: the widgets
+PW.W = W
 
-local function Line(pg, h, textFn, visibleFn)
+-- Which parts are ticked, for a check.
+function PW.Ticked(key) return picks ~= nil and picks[key] == true end
+
+local function Font(parent, size, col) return Options.ImportKit.Line(parent, size, col) end
+
+-- A part's row: its tick, its name, then what it is there (imported, off, another class).
+local function Row(i)
+    local r = W.rows[i]
+    if r then return r end
     local AT, COL = NS.AT, NS.AT.COL
-    local row = AT.AddRow(pg, h, visibleFn)
-    local fs = row:CreateFontString(nil, "OVERLAY")
-    fs:SetFont(NS.AT.FONT, 11, "")
-    fs:SetPoint("TOPLEFT", 10, -3)
-    fs:SetPoint("TOPRIGHT", -10, -3)
-    fs:SetJustifyH("LEFT")
-    fs:SetJustifyV("TOP")
-    fs:SetWordWrap(true)
-    fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
-    row._sync = function() fs:SetText(textFn() or "") end
-    row.fs = fs
-    return row
+    r = CreateFrame("Button", nil, pane)
+    r:SetHeight(PW.ROW_H)
+    r:SetHighlightTexture(AT.WHITE)
+    r:GetHighlightTexture():SetVertexColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 0.35)
+    r.check = Options.ImportKit.Check(r)
+    r.check:SetPoint("LEFT", 10, 0)
+    r.name = Font(r, 12, COL.ink)
+    r.name:SetPoint("LEFT", r.check, "RIGHT", 9, 0)
+    r.tag = Options.ImportKit.Pill(r)
+    r.tag:SetPoint("LEFT", r.name, "RIGHT", 8, 0)
+    local function Flip() if r.onTick then r.onTick() end end
+    r:SetScript("OnClick", Flip)
+    r.check:SetScript("OnClick", Flip)
+    r:HookScript("OnEnter", function() r.check:SetHover(true) end)
+    r:HookScript("OnLeave", function() r.check:SetHover(false) end)
+    W.rows[i] = r
+    return r
 end
 
-local function Picked()
-    local n = 0
-    for _ in pairs(picks) do n = n + 1 end
-    return n
-end
-
--- A row's words: the tracker, the part, and a dim mark on one switched off there.
-function PW.RowText(c)
-    local note = ""
-    if c.off then
-        note = "  |cff8fa3b8(off in ProcTracker)|r"
-    elseif c.other then
-        local L = LOCALIZED_CLASS_NAMES_MALE
-        note = "  |cff8fa3b8(" .. tostring((L and L[c.other]) or c.other) .. ")|r"
-    end
-    return c.name .. "  " .. (PW.PART_WORDS[c.part] or c.part) .. note
-end
-
--- Which parts are ticked (the window's picks), for a check.
-function PW.Ticked(key) return picks[key] == true end
-
--- One tickable row per candidate, pooled: the list is read on every open.
-local function PickRow(i)
-    local AT, COL = NS.AT, NS.AT.COL
-    local row = AT.AddRow(page, 22, function() return cands[i] ~= nil end)
-    row.box = AT.MakeCheckbox(row)
-    row.box:SetPoint("LEFT", row, "LEFT", 10, 0)
-    row.fs = row:CreateFontString(nil, "OVERLAY")
-    row.fs:SetFont(NS.AT.FONT, 12, "")
-    row.fs:SetPoint("LEFT", row.box, "RIGHT", 8, 0)
-    row.fs:SetPoint("RIGHT", row, "RIGHT", -10, 0)
-    row.fs:SetJustifyH("LEFT")
-    row.fs:SetWordWrap(false)
-    row.fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
-    local function Flip()
-        local c = cands[i]
-        if not c then return end
-        picks[c.key] = (not picks[c.key]) or nil
-        PW.Refresh()
-    end
-    row:EnableMouse(true)
-    row:SetScript("OnMouseUp", Flip)
-    row.box:SetScript("OnClick", Flip)
-    row:HookScript("OnEnter", function() row.box:SetHover(true) end)
-    row:HookScript("OnLeave", function() row.box:SetHover(false) end)
-    row._sync = function()
-        local c = cands[i]
-        if not c then return end
-        row.fs:SetText(PW.RowText(c))
-        row.box:SetOn(picks[c.key] == true)
-    end
-    return row
-end
-
-function PW.Build()
-    if win then return end
-    local AT, COL = NS.AT, NS.AT.COL
-    win = AT.CreateWindow("ArcAurasImportPT", {
-        w = 480, h = 560, minW = 400, minH = 360, maxW = 900, maxH = 1000,
-        title = NS.AT.Brand("Arc", " Auras"),
-        onResize = function() if page then AT.LayoutPage(page) end end,
-    })
-    page = AT.NewPage(win)
-    AT.MakeScrollable(page)
-    page:SetPoint("TOPLEFT", 8, -38)
-    page:SetPoint("BOTTOMRIGHT", -8, 8)
-    page:Show()
-
-    AT.Section(page, "Import from ArcUI ProcTracker")
-    AT.RowDesc(page, "Copies the trackers you tick into a new ProcTracker layout, with the same places, sizes, texts, colors and sounds. Each one imported is switched off in ArcUI ProcTracker, so nothing shows twice.", 34)
-    Line(page, 32, function()
-        local MP = NS.MigratePT
-        if MP and not MP.Loaded() then
-            return "ArcUI ProcTracker is turned off, so its settings cannot be read. Turn it on and reload, then open this again."
+-- What Import brings, and whether some of it is here already.
+local function PaintFoot()
+    local COL = NS.AT.COL
+    local MP = NS.MigratePT
+    local icons, bars, again = 0, 0, 0
+    for _, c in ipairs(cands) do
+        if picks and picks[c.key] then
+            if c.part == "bar" then bars = bars + 1 else icons = icons + 1 end
+            if MP and MP.PartLive(c.key) then again = again + 1 end
         end
-        if #cands == 0 then return "ArcUI ProcTracker has no trackers set up to copy." end
-        return ""
-    end, function()
-        local MP = NS.MigratePT
-        return (MP ~= nil and not MP.Loaded()) or #cands == 0
-    end)
-    local offVis = function() local MP = NS.MigratePT return MP ~= nil and not MP.Loaded() end
-    AT.RowActions(page, {
-        { label = "Turn it on and reload", w = 170, onClick = function() PW.SetAddon(true) end, visibleFn = offVis },
-    }, "left", offVis)
-
-    AT.Section(page, "What to import", { visibleFn = function() return #cands > 0 end })
-    for i = 1, PW.MAX_ROWS do PickRow(i) end
-
-    AT.Section(page, nil)
-    AT.RowActions(page, {
-        { label = "Import selected", w = 130, onClick = function() PW.DoImport() end,
-            visibleFn = function() return #cands > 0 end },
-        { label = "Close", w = 80, quiet = true, onClick = function() win:Hide() end },
-    }, "left")
-    status = Line(page, 34, function() return PW.StatusText() end).fs
-    status:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
-    -- once the trackers moved, ArcUI ProcTracker can go
-    local onVis = function() local MP = NS.MigratePT return done ~= nil and MP ~= nil and MP.Loaded() end
-    AT.RowActions(page, {
-        { label = "Turn ArcUI ProcTracker off and reload", w = 250, onClick = function() PW.SetAddon(false) end,
-            visibleFn = onVis },
-    }, "left", onVis)
-    AT.LayoutPage(page)
+    end
+    local text, text2, col = "", "", COL.ink
+    if said then
+        text, text2 = said.text or "", said.text2 or ""
+        col = said.bad and { 1, 0.45, 0.4 } or { 0.498, 0.824, 0.557 }
+    elseif icons + bars == 0 then
+        text, col = "Nothing ticked yet.", COL.dim
+    else
+        local bits = {}
+        if icons > 0 then bits[#bits + 1] = icons .. (icons == 1 and " icon" or " icons") end
+        if bars > 0 then bits[#bits + 1] = bars .. (bars == 1 and " bar" or " bars") end
+        text = "Brings " .. table.concat(bits, " and ") .. " into a new ProcTracker layout."
+        if again > 0 then
+            text2 = ((again == 1) and "1 of them is" or (again .. " of them are"))
+                .. " in Arc Auras already: importing again adds a second copy."
+        end
+    end
+    W.sum:SetText(text)
+    W.sum:SetTextColor(col[1], col[2], col[3])
+    W.sum2:SetText(text2)
+    W.sum2:SetShown(text2 ~= "")
+    W.sum:ClearAllPoints()
+    W.sum:SetPoint("LEFT", W.foot, "LEFT", 12, (text2 ~= "") and 7 or 0)
+    W.sum:SetPoint("RIGHT", W.importBtn, "LEFT", -12, (text2 ~= "") and 7 or 0)
+    -- once the trackers moved and nothing is on there, ArcUI ProcTracker can go
+    local spent = said ~= nil and not said.bad and MP ~= nil and MP.Loaded() and not MP.AnyOn()
+    W.offPT:SetShown(spent)
+    local any = icons + bars > 0
+    W.importBtn:SetAlpha(any and 1 or 0.45)
+    W.importBtn:EnableMouse(any)
 end
 
-function PW.StatusText()
-    if done then
-        local MP = NS.MigratePT
-        local left = MP ~= nil and MP.AnyOn()
-        return ("Imported %d icons and %d bars into the layout %s and switched them off in ArcUI ProcTracker.%s")
-            :format(done.icons, done.bars, done.name or "ProcTracker",
-                left and "" or " Nothing is left on there: you can turn it off.")
+function PW.Paint()
+    if not pane then return end
+    local COL = NS.AT.COL
+    local MP = NS.MigratePT
+    local ok = MP ~= nil and MP.Loaded() and #cands > 0
+    for _, b in ipairs(W.boxes) do b:SetShown(ok) end
+    W.foot:SetShown(ok)
+    W.onBtn:Hide()
+    for _, r in ipairs(W.rows) do r:Hide() end
+    if not ok then
+        if MP and not MP.Loaded() then
+            W.off:SetText("ArcUI ProcTracker is turned off, so its settings cannot be read. Turn it on and reload, then come back here.")
+            W.onBtn:Show()
+        else
+            W.off:SetText("ArcUI ProcTracker has no trackers set up to copy.")
+        end
+        W.off:Show()
+        return
     end
-    if #cands == 0 then return "" end
-    return ("%d of %d ticked. Import makes a new layout; nothing you have in Arc Auras is touched."):format(Picked(), #cands)
+    W.off:Hide()
+    -- the two boxes side by side, each as tall as its rows
+    local pw = (pane:GetWidth() or 0)
+    if pw < 200 then pw = 760 end
+    local bw = math.floor((pw - 4 - PW.GAP) / 2)
+    local n = 0
+    for bi, B in ipairs(PW.BOXES) do
+        local box = W.boxes[bi]
+        box:ClearAllPoints()
+        box:SetPoint("TOPLEFT", pane, "TOPLEFT", (bi - 1) * (bw + PW.GAP), -PW.NOTE_H)
+        box:SetWidth(bw)
+        local y, count = PW.HEAD_H + 2, 0
+        for _, c in ipairs(cands) do
+            if B[2][c.part] then
+                n, count = n + 1, count + 1
+                local r = Row(n)
+                r:SetParent(box)
+                r:ClearAllPoints()
+                r:SetPoint("TOPLEFT", box, "TOPLEFT", 1, -y)
+                r:SetWidth(bw - 2)
+                local on = picks and picks[c.key] == true
+                r.check:SetState(on and "on" or "off")
+                r.name:SetText(c.name)
+                r.name:SetTextColor((on and COL.ink or COL.dim)[1], (on and COL.ink or COL.dim)[2], (on and COL.ink or COL.dim)[3])
+                local tag
+                if MP.PartLive(c.key) then
+                    tag = Options.ImportKit.TAGS.done
+                    r.tag:Set(tag)
+                elseif c.other then
+                    local names = rawget(_G, "LOCALIZED_CLASS_NAMES_MALE")
+                    tag = Options.ImportKit.TAGS.later
+                    r.tag:Set(tag, tostring((names and names[c.other]) or c.other))
+                elseif c.off then
+                    tag = Options.ImportKit.TAGS.off
+                    r.tag:Set(tag)
+                end
+                r.tag:SetShown(tag ~= nil)
+                r.onTick = function()
+                    picks = picks or {}
+                    picks[c.key] = (not picks[c.key]) or nil
+                    said = nil
+                    PW.Paint()
+                end
+                r:Show()
+                y = y + PW.ROW_H
+            end
+        end
+        box.right:SetText(tostring(count))
+        box:SetHeight(y + 3)
+    end
+    PaintFoot()
+end
+
+-- Reads ArcUI ProcTracker's parts each time the tab shows (an import switches them
+-- off there); the switched-on ones start ticked.
+function PW.Refresh()
+    if not pane then return end
+    local MP = NS.MigratePT
+    cands = MP and MP.Loaded() and MP.Candidates() or {}
+    if picks == nil then
+        picks = {}
+        for _, c in ipairs(cands) do
+            if not c.off and not c.other then picks[c.key] = true end
+        end
+    end
+    PW.Paint()
+end
+
+-- The tab shows while ArcUI ProcTracker is installed (its settings read once it is on).
+function PW.TabShown()
+    local MP = NS.MigratePT
+    return MP ~= nil and MP.Installed()
+end
+
+function PW.BuildPane(parent)
+    if pane then return pane end
+    local AT, COL = NS.AT, NS.AT.COL
+    pane = CreateFrame("Frame", nil, parent)
+    W.note = Font(pane, 12, COL.ink)
+    W.note:SetPoint("TOPLEFT", 4, -2)
+    W.note:SetText("Pick what comes over from Proc Tracker into a ProcTracker layout. You can import again any time.")
+    W.boxes = {}
+    for i, B in ipairs(PW.BOXES) do
+        W.boxes[i] = Options.ImportKit.Box(pane, B[1])
+    end
+    -- the foot bar: what Import brings, then Import
+    local fb = CreateFrame("Frame", nil, pane, "BackdropTemplate")
+    AT.Skin(fb, COL.box, COL.line2)
+    fb:SetPoint("BOTTOMLEFT", pane, "BOTTOMLEFT", 0, 6)
+    fb:SetPoint("BOTTOMRIGHT", pane, "BOTTOMRIGHT", -4, 6)
+    fb:SetHeight(PW.FOOT_H)
+    W.foot = fb
+    local imp = AT.MakeSmallButton(fb, "Import", 84)
+    imp:SetHeight(24)
+    imp:SetPoint("RIGHT", -8, 0)
+    imp:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
+    imp:SetScript("OnLeave", function()
+        imp:SetBackdropColor(COL.btn[1], COL.btn[2], COL.btn[3], 1)
+        imp:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
+    end)
+    imp:SetScript("OnClick", function() PW.DoImport() end)
+    W.importBtn = imp
+    local offPT = AT.MakeQuietButton(fb, "Turn ArcUI ProcTracker off and reload", 250)
+    offPT:SetHeight(24)
+    offPT:SetPoint("RIGHT", imp, "LEFT", -8, 0)
+    offPT:SetScript("OnClick", function() PW.SetAddon(false) end)
+    offPT:Hide()
+    W.offPT = offPT
+    W.sum = Font(fb, 12, COL.ink)
+    W.sum2 = Font(fb, 11, COL.dim)
+    W.sum2:SetPoint("LEFT", fb, "LEFT", 12, -8)
+    W.sum2:SetPoint("RIGHT", imp, "LEFT", -12, -8)
+    -- ArcUI ProcTracker off, or nothing to copy: one line where the boxes would be
+    W.off = Font(pane, 12, COL.dim)
+    W.off:SetPoint("TOPLEFT", pane, "TOPLEFT", 4, -(PW.NOTE_H + 4))
+    W.off:SetPoint("RIGHT", pane, "RIGHT", -10, 0)
+    W.off:SetWordWrap(true)
+    W.onBtn = AT.MakeSmallButton(pane, "Turn it on and reload", 170)
+    W.onBtn:SetPoint("TOPLEFT", W.off, "BOTTOMLEFT", 0, -10)
+    W.onBtn:SetScript("OnClick", function() PW.SetAddon(true) end)
+    pane:SetScript("OnSizeChanged", function() PW.Paint() end)
+    pane:SetScript("OnShow", function() PW.Refresh() end)
+    return pane
 end
 
 -- ArcUI ProcTracker on (to read its settings) or off (once imported), then reload.
@@ -163,49 +253,28 @@ function PW.SetAddon(on)
     if ReloadUI then ReloadUI() end
 end
 
-function PW.Refresh()
-    if not win then return end
-    NS.AT.LayoutPage(page)
-end
-
 function PW.DoImport()
     local MP = NS.MigratePT
-    if not MP then return end
+    if not (MP and picks) or next(picks) == nil then return end
     local res, err = MP.Import(picks)
     if not res then
-        status:SetText(err or "The import did not run.")
+        said = { text = err or "The import did not run.", bad = true }
+        PW.Paint()
         return
     end
-    local L = NS.Store.Get(res.layoutId)
-    done = { icons = res.icons, bars = res.bars, name = L and L.name }
     -- imported: the login offer has done its job
     local ui = NS.Store.UI and NS.Store.UI()
     if ui then ui.ptOffer = "done" end
     picks = {}
-    PW.Refresh()
+    said = { text = "Imported: the new ProcTracker layout is in the sidebar.",
+        text2 = "Not right? Delete the layout and import it again." }
     if Options.RefreshAll then Options.RefreshAll() end
-    if L and Options.OpenLayout then
-        -- From the login offer the panel was never opened: open it on the new
-        -- layout, then keep this window over it.
-        if Options.Open then Options.Open() end
-        Options.OpenLayout(L)
-        if Options.WhenBuilt then
-            Options.WhenBuilt(function() if win:IsShown() then win:Raise() end end)
-        end
-    end
+    PW.Refresh()
 end
 
+-- Opens the tab: the card, the login offer and /arcui2 proctracker come here.
 function PW.Open()
-    PW.Build()
-    local MP = NS.MigratePT
-    cands = MP and MP.Candidates() or {}
-    while #cands > PW.MAX_ROWS do table.remove(cands) end
-    picks, done = {}, nil
-    for _, c in ipairs(cands) do
-        if not c.off and not c.other then picks[c.key] = true end
-    end
-    win:Show()
-    PW.Refresh()
+    if Options.OpenImportTab then Options.OpenImportTab("pt") end
 end
 
 -- The login offer: a small window, its three answers. "Not now" asks again
@@ -275,7 +344,7 @@ PW.ICON = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\ProcTracker_Icon_128"
 function PW.DrawCard(stage)
     local AT, COL = NS.AT, NS.AT.COL
     local NL = NS.NewLayout
-    local W, H = NL.STAGE_W, NL.STAGE_H
+    local W2, H = NL.STAGE_W, NL.STAGE_H
     local function Box(x, y, w, h, c, n)
         local f = CreateFrame("Frame", nil, stage, "BackdropTemplate")
         f:SetSize(w, h)
@@ -290,12 +359,12 @@ function PW.DrawCard(stage)
         return f
     end
     NL.SourceIcon(stage, PW.ICON)
-    Box(W / 2 + 22, (H - 36) / 2, 44, 36, COL.arc, 1)
+    Box(W2 / 2 + 22, (H - 36) / 2, 44, 36, COL.arc, 1)
     local head = AT.MakeChevron(stage)
     head:SetDir("right")
     head:SetColor(COL.arc)
     head:SetScale(2)
-    head:SetPoint("CENTER", stage, "TOPLEFT", (W / 2) / 2, -(H / 2) / 2)
+    head:SetPoint("CENTER", stage, "TOPLEFT", (W2 / 2) / 2, -(H / 2) / 2)
 end
 
 if NS.NewLayout and NS.NewLayout.AddOwnCard then

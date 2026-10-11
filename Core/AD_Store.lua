@@ -535,6 +535,32 @@ local function CleanLayoutValues(rec)
     if next(rec.inh) == nil then rec.inh = nil end
 end
 
+-- A layout's own placement beside its pos: the scale its container takes and
+-- a strata for it and everything in it. nil is the default (1, and each
+-- element its own strata), so a layout never set stores nothing.
+Store.LAYOUT_SCALE_MIN, Store.LAYOUT_SCALE_MAX = 0.5, 2
+Store.LAYOUT_STRATAS = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG" }
+local LAYOUT_STRATA_OK = { BACKGROUND = true, LOW = true, MEDIUM = true, HIGH = true, DIALOG = true }
+-- Or a shift instead: every element moves that many steps from its own
+-- strata, held at the ends. The picker lists them in this order.
+Store.LAYOUT_STRATA_SHIFTS = { -1, -2, 1, 2 }
+local LAYOUT_SHIFT_OK = { [-2] = true, [-1] = true, [1] = true, [2] = true }
+-- The screen spot a layout keeps its distance from when the resolution or UI
+-- scale changes; nil is the screen's middle. The picker lists them in this order.
+Store.LAYOUT_PINS = { "TOP", "BOTTOM", "LEFT", "RIGHT", "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT" }
+local LAYOUT_PIN_OK = {}
+for _, p in ipairs(Store.LAYOUT_PINS) do LAYOUT_PIN_OK[p] = true end
+
+-- 0.5 to 2 in whole 0.05 steps (twentieths); nil for 1 or nothing usable
+local function CleanLayoutScale(s)
+    s = tonumber(s)
+    if not s or s ~= s then return nil end
+    s = math.max(Store.LAYOUT_SCALE_MIN, math.min(Store.LAYOUT_SCALE_MAX, s))
+    s = math.floor(s * 20 + 0.5) / 20
+    if s == 1 then return nil end
+    return s
+end
+
 -- A resource bar's looks (Core\AD_Looks.lua) cleaned like its overrides: a
 -- known mode, number keys (a talent's: 1 with it, 0 without), known fields
 -- that a look may carry and its own state rows; empty ones go. The talent its
@@ -1049,7 +1075,18 @@ function Store.Normalize()
         CleanWho(rec)
         if NS.Conditions then NS.Conditions.Normalize(rec) end
         -- Only a layout carries looks for the things inside it.
-        if rec.type == "layout" then CleanLayoutValues(rec) else rec.inh = nil end
+        if rec.type == "layout" then
+            CleanLayoutValues(rec)
+            rec.scale = CleanLayoutScale(rec.scale)
+            rec.strata = LAYOUT_STRATA_OK[rec.strata] and rec.strata or nil
+            -- a fixed strata and a shift exclude each other: the fixed one stays
+            local n = rec.strataShift
+            rec.strataShift = (rec.strata == nil and type(n) == "number" and LAYOUT_SHIFT_OK[n]) and n or nil
+            rec.centerSet = (rec.centerSet == true) or nil
+            rec.pin = LAYOUT_PIN_OK[rec.pin] and rec.pin or nil
+        else
+            rec.inh, rec.centerSet, rec.pin = nil, nil, nil
+        end
         local family = Store.FamilyOf(rec)
         if family then
             local fam = Schema[family]
@@ -1300,6 +1337,112 @@ function Store.LayoutOf(rec)
     end
     local lay = lid and DB.records[lid]
     if lay and lay.type == "layout" then return lay end
+end
+
+-- A layout's scale: its container's, so every group, icon, bar, text and gap
+-- in it grows together from the layout's own point. 1 when unset.
+function Store.LayoutScale(layout)
+    return (layout and CleanLayoutScale(layout.scale)) or 1
+end
+
+-- Clamped to 0.5 - 2 in 0.05 steps; 1 stores nothing.
+function Store.SetLayoutScale(layout, s)
+    if not (layout and layout.type == "layout") then return end
+    s = CleanLayoutScale(s)
+    if layout.scale == s then return end
+    layout.scale = s
+    Store.Dirty("style", layout.id)
+end
+
+-- A layout's spot: its centre's offset from the screen spot it is pinned to
+-- (the screen's centre unless set), in UIParent units, whatever its scale.
+function Store.LayoutPos(layout)
+    local p = layout and type(layout.pos) == "table" and layout.pos
+    if not p then return 0, 0 end
+    return tonumber(p.x) or 0, tonumber(p.y) or 0
+end
+
+-- Whole units; an axis given as nothing usable keeps its value. exact keeps a
+-- fraction: a pin change, which must move nothing, can leave one.
+function Store.SetLayoutPos(layout, x, y, exact)
+    if not (layout and layout.type == "layout") then return end
+    local function Whole(v, keep)
+        v = tonumber(v)
+        if not v or v ~= v or v == math.huge or v == -math.huge then return keep end
+        return exact and v or math.floor(v + 0.5)
+    end
+    local ox, oy = Store.LayoutPos(layout)
+    x, y = Whole(x, ox), Whole(y, oy)
+    if type(layout.pos) ~= "table" then layout.pos = {} end
+    if layout.pos.x == x and layout.pos.y == y then return end
+    layout.pos.x, layout.pos.y = x, y
+    Store.Dirty("style", layout.id)
+end
+
+-- nil: each element keeps its own strata (the default). Set, the layout and
+-- every element in it take that one.
+function Store.LayoutStrata(layout)
+    local v = layout and layout.strata
+    return (v and LAYOUT_STRATA_OK[v]) and v or nil
+end
+
+-- nil is "each element its own", which also drops a shift.
+function Store.SetLayoutStrata(layout, v)
+    if not (layout and layout.type == "layout") then return end
+    v = (v and LAYOUT_STRATA_OK[v]) and v or nil
+    if layout.strata == v and layout.strataShift == nil then return end
+    layout.strata, layout.strataShift = v, nil
+    Store.Dirty("style", layout.id)
+end
+
+-- nil: no shift (the default, nothing stored). Set, every element in the
+-- layout moves that many steps from its own strata; a fixed strata wins.
+function Store.LayoutStrataShift(layout)
+    if not layout or Store.LayoutStrata(layout) then return nil end
+    local n = layout.strataShift
+    return (type(n) == "number" and LAYOUT_SHIFT_OK[n]) and n or nil
+end
+
+-- A shift clears the fixed strata; nil clears the shift alone.
+function Store.SetLayoutStrataShift(layout, n)
+    if not (layout and layout.type == "layout") then return end
+    n = tonumber(n)
+    n = (n and LAYOUT_SHIFT_OK[n]) and n or nil
+    local strata = (n == nil) and layout.strata or nil
+    if layout.strataShift == n and layout.strata == strata then return end
+    layout.strataShift, layout.strata = n, strata
+    Store.Dirty("style", layout.id)
+end
+
+-- true once the player has picked the layout's center point; Center then puts
+-- that point on the screen's middle. nil (the default) centers what's shown.
+function Store.LayoutCenterSet(layout)
+    return layout ~= nil and layout.type == "layout" and layout.centerSet == true
+end
+
+-- Anything truthy sets it; nil or false forgets it. Nothing on screen moves.
+function Store.SetLayoutCenterSet(layout, on)
+    if not (layout and layout.type == "layout") then return end
+    local v = on and true or nil
+    if layout.centerSet == v then return end
+    layout.centerSet = v
+    Store.Dirty("style", layout.id)
+end
+
+-- One of LAYOUT_PINS, or nil for the screen's middle (the default).
+function Store.LayoutPin(layout)
+    local v = layout and layout.type == "layout" and layout.pin
+    return (v and LAYOUT_PIN_OK[v]) and v or nil
+end
+
+-- Anything not in LAYOUT_PINS stores nil. Alone this moves the layout, as its
+-- pos counts from the new spot; Engine.SetLayoutPin keeps it in place.
+function Store.SetLayoutPin(layout, v)
+    if not (layout and layout.type == "layout") then return end
+    v = (v and LAYOUT_PIN_OK[v]) and v or nil
+    if layout.pin == v then return end
+    layout.pin = v
+    Store.Dirty("style", layout.id)
 end
 
 -- Resolution: record -> layout -> newDefaults -> schema default
@@ -2516,10 +2659,30 @@ function Store.KnowsSpell(sid, exact)
     return known
 end
 
+-- Whether the Cooldown Manager lists one of its entries (a cooldown ID) as
+-- learned, as it decides what it shows: true, false, or nil while the game
+-- can't say (the last plain answer then stands, and none never gates).
+Store.cdmKnownSeen = {}
+function Store.CdmKnown(id)
+    id = PlainNum(id)
+    if not id then return nil end
+    local CV = C_CooldownViewer
+    local info = CV and CV.GetCooldownViewerCooldownInfo and CV.GetCooldownViewerCooldownInfo(id)
+    local k
+    if type(info) == "table" then k = info.isKnown end
+    if issecretvalue and issecretvalue(k) then k = nil end
+    if type(k) ~= "boolean" then return Store.cdmKnownSeen[id] end
+    Store.cdmKnownSeen[id] = k
+    return k
+end
+
 -- SPELLS_CHANGED (AD_Conditions): true when a spell some record waits on has a
 -- new answer, so the load pass runs again. Re-reading refreshes the answers.
 function Store.KnownChanged()
     local changed = false
+    for id, was in pairs(Store.cdmKnownSeen) do
+        if Store.CdmKnown(id) ~= was then changed = true end
+    end
     for sid, was in pairs(Store.knownSeen) do
         if Store.KnowsSpell(sid) ~= was then changed = true end
     end
@@ -2885,7 +3048,11 @@ function Store.IsLoaded(rec)
     -- Known spells: the Tracking toggle, then the Known Spell rule (any record).
     -- An answer that cannot be told never gates.
     local d = rec.driver
-    if d and d.onlyKnown == true and d.spellID then
+    if d and d.onlyKnown == true and rec.kind == "aura" and d.cdmID then
+        -- a Cooldown Manager aura: learned as the Cooldown Manager answers it, since
+        -- the aura's own id is often no spell you learn (a proc's buff)
+        if Store.CdmKnown(d.cdmID) == false then return false end
+    elseif d and d.onlyKnown == true and d.spellID then
         -- an icon with several spells is known while any of them is
         local none = true
         local ids = Store.HasSpellAlts(d) and Store.SpellChoices(d) or { d.spellID }
@@ -3601,27 +3768,32 @@ end
 
 -- Creating, moving and deleting records
 
+-- The screen centre's offset from a layout's centre, in the layout's own
+-- units: its container carries the layout's scale, so UIParent's centre is
+-- divided by it first. 0, 0 while the frame has no rect.
+local function ScreenCentreIn(layoutId)
+    local LE = NS.LayoutEngine
+    local lf = LE and LE.GetLayoutFrame and LE.GetLayoutFrame(layoutId)
+    if not (lf and lf.GetCenter) then return 0, 0 end
+    local ux, uy = UIParent:GetCenter()
+    local lx, ly = lf:GetCenter()
+    if not (ux and lx) then return 0, 0 end
+    local k = 1
+    if lf.GetEffectiveScale then
+        local ls, us = lf:GetEffectiveScale(), UIParent:GetEffectiveScale()
+        if type(ls) == "number" and type(us) == "number" and ls > 0 and us > 0 then k = ls / us end
+    end
+    return math.floor(ux / k - lx + 0.5), math.floor(uy / k - ly + 0.5)
+end
+
 -- Where a new thing appears: the screen centre in its parent's coordinates (a
 -- layout's pos is from the screen centre; a group's, free icon's or bar's from
--- its layout's centre). No engine frame carries its own scale, so GetCenter
--- units match. Always the centre, even on top of another item: a new item
--- must be found where the player looks, never stepped down the screen. A
+-- its layout's centre). Always the centre, even on top of another item: a new
+-- item must be found where the player looks, never stepped down the screen. A
 -- layout frame with no rect yet falls back to the layout's own centre.
 local function CenterSpot(layoutId)
-    local x, y = 0, 0
-    if layoutId then
-        local LE = NS.LayoutEngine
-        local lf = LE and LE.GetLayoutFrame and LE.GetLayoutFrame(layoutId)
-        if lf and lf.GetCenter then
-            local ux, uy = UIParent:GetCenter()
-            local lx, ly = lf:GetCenter()
-            if ux and lx then
-                x = math.floor(ux - lx + 0.5)
-                y = math.floor(uy - ly + 0.5)
-            end
-        end
-    end
-    return x, y
+    if not layoutId then return 0, 0 end
+    return ScreenCentreIn(layoutId)
 end
 
 function Store.NewLayout(name)
@@ -3710,17 +3882,7 @@ end
 -- ArcUI v1's pulse spot, 120 above the screen centre, measured from the
 -- layout's centre as CenterSpot does (no step-down: it is the one spot).
 local function PulseSpot(layoutId)
-    local x, y = 0, 0
-    local LE = NS.LayoutEngine
-    local lf = LE and LE.GetLayoutFrame and LE.GetLayoutFrame(layoutId)
-    if lf and lf.GetCenter then
-        local ux, uy = UIParent:GetCenter()
-        local lx, ly = lf:GetCenter()
-        if ux and lx then
-            x = math.floor(ux - lx + 0.5)
-            y = math.floor(uy - ly + 0.5)
-        end
-    end
+    local x, y = ScreenCentreIn(layoutId)
     return x, y + 120
 end
 
@@ -4107,6 +4269,8 @@ function Store.CleanResStates(list)
             -- an aura row's state is never read, so it has no text colour
             r.text = (w ~= "up" and w ~= "missing") and ResColor(r.text, { 1, 1, 1, 1 }) or nil
             r.glow = Store.CleanRowGlow(r.glow)
+            -- the one power the row is for; none: all of them
+            if type(r.power) ~= "number" then r.power = nil end
             out[#out + 1] = r
         end
     end
@@ -5943,9 +6107,13 @@ function Store.PartOf(family, section, field)
 end
 
 -- the record's own keys; placement (pos, gpos, groupId, layoutId) and the
--- member order are handled apart
+-- member order are handled apart. A layout's scale, strata, strata shift, set
+-- center and pin are the player's own spot like its pos: Size & Position,
+-- which starts off.
 local PART_OF_KEY = { name = "names", driver = "tracking", triggers = "tracking", kind = "tracking",
-    barKind = "tracking", barMode = "tracking", groupKind = "tracking" }
+    barKind = "tracking", barMode = "tracking", groupKind = "tracking",
+    scale = "position", strata = "position", strataShift = "position", centerSet = "position",
+    pin = "position" }
 
 -- conditions: the fade and show rules are Conditions, the rest is Load;
 -- a character list is the player's own (nil: never updated)

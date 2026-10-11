@@ -775,11 +775,26 @@ function MP.Import(picks)
     end
     -- off in ArcUI ProcTracker once every part has read its settings
     for _, c in ipairs(made) do MP.SwitchOffInPT(c) end
+    -- what came in, by part, for the Imported marks (they last while the layout does)
+    local adb = rawget(_G, "ArcAurasDB")
+    if type(adb) == "table" then
+        adb.importPT = type(adb.importPT) == "table" and adb.importPT or {}
+        for _, c in ipairs(made) do adb.importPT[c.key] = L.id end
+    end
     -- its Safe Mythic+ Reset choice (on unless the player turned it off)
     local SP = NS.Special
     if db.safeMPlusReset ~= nil and SP and SP.SetSafeMPlusReset then SP.SetSafeMPlusReset(db.safeMPlusReset == true) end
     Store.Dirty("tree")
     return res
+end
+
+-- A part imported before whose layout is still there; a deleted layout's parts
+-- read as never imported.
+function MP.PartLive(key)
+    local adb = rawget(_G, "ArcAurasDB")
+    local id = type(adb) == "table" and type(adb.importPT) == "table" and adb.importPT[key] or nil
+    local r = id and NS.Store and NS.Store.Get(id)
+    return r ~= nil and r.type == "layout"
 end
 
 -- An imported part is switched off in ArcUI ProcTracker, so it never shows

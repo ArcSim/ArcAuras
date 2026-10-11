@@ -1259,9 +1259,10 @@ function RM.Place(g, gf, editMode)
     if mode == "stack" then
         w = size + (size + (R(g, "pulse", "stackSpacing") or 4)) * (RM.STACK_MAX - 1)
     end
-    -- whole pixels: the aura row counts from this frame's top-left corner
+    -- whole pixels on the group's layout scale: the aura row counts from this
+    -- frame's top-left corner
     local E = NS.LayoutEngine
-    local S = (E and E.Snap) or function(v) return v end
+    local S = function(v) return (E and E.Snap) and E.Snap(v, g) or v end
     w = S(math.max(w, size))
     gf:SetSize(w, S(size))
     local lvl = gf:GetFrameLevel() + 5
@@ -1319,9 +1320,10 @@ function RM.PlaceAuras(g, gf, pw, ph)
     local all = Store.IconsOf(g)
     if #all == 0 then return end
     -- Slot corners from the pulse area's top-left (y down), every size and gap
-    -- whole pixels, so each step is the same pixel count.
-    local S = E.Snap or function(v) return v end
-    local Floor = E.FloorPx or math.floor
+    -- whole pixels (the group's layout scale), so each step is the same pixel
+    -- count.
+    local S = function(v) return E.Snap and E.Snap(v, g) or v end
+    local Floor = function(v) return E.FloorPx and E.FloorPx(v, g) or math.floor(v) end
     local size = S(math.max(8, R(g, "pulse", "auraSize") or 40))
     local sp = S(math.max(0, R(g, "pulse", "auraSpacing") or 4))
     local side = R(g, "pulse", "auraSide") or "below"

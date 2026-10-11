@@ -47,25 +47,39 @@ local function PixRoundLeft(v, px)
     return math.floor(v / px + 0.5 - TIE) * px
 end
 
--- One physical pixel in UIParent's units, the scale of every engine frame.
-local function UIPx()
+-- The layout scale pixel math runs at: a number, or any record (a layout, or
+-- what sits in one). A layout's container carries its scale, so every frame
+-- inside it counts in units that many times UIParent's. 1 outside a layout.
+local function ScaleOf(x)
+    if type(x) == "number" then return (x > 0) and x or 1 end
+    if type(x) ~= "table" then return 1 end
+    local lay = (x.type == "layout") and x or Store.LayoutOf(x)
+    return lay and Store.LayoutScale(lay) or 1
+end
+Engine.ScaleOf = ScaleOf
+
+-- One physical pixel in the units of a frame inside a layout of scale k (a
+-- number or a record, ScaleOf); no k is UIParent's own units.
+local function UIPx(k)
     local _, screenH = GetPhysicalScreenSize()
-    local ppu = (screenH / 768) * (UIParent:GetEffectiveScale() or 1)
+    local ppu = (screenH / 768) * (UIParent:GetEffectiveScale() or 1) * ScaleOf(k)
     if ppu <= 0 then return nil end
     return 1 / ppu
 end
 
 -- Pixel snap for the whole addon; slot sizes and steps are snapped separately.
-local function Snap(v)
-    local px = UIPx()
+-- k: the layout the value is laid in (ScaleOf), so a scaled layout's sizes
+-- and gaps land on whole pixels too.
+local function Snap(v, k)
+    local px = UIPx(k)
     if not px then return v end
     return PixRound(v, px)
 end
 
 -- A whole or half pixel count floored to whole pixels, toward the top-left;
 -- the sliver only absorbs float error.
-local function FloorPx(v)
-    local px = UIPx()
+local function FloorPx(v, k)
+    local px = UIPx(k)
     if not px then return v end
     return math.floor(v / px + TIE) * px
 end
@@ -109,6 +123,7 @@ end
 
 local moveMode = false
 local editMode = false   -- true while the options panel is open
+local screenEditing = false   -- the on-screen layout mode draws its own names and handles
 
 -- With the panel open, a record failing its load conditions is still drawn,
 -- tagged, when its eye in the panel is on or, for an eye never clicked, when
@@ -186,6 +201,39 @@ local function EditStrata(want)
     return want
 end
 
+-- The strata a layout sets for everything in it (Store.LayoutStrata), held
+-- at MEDIUM like any display's while the panel is open; nil when unset.
+local function LayoutStrataOf(rec)
+    local lay = rec and ((rec.type == "layout") and rec or Store.LayoutOf(rec))
+    local s = lay and Store.LayoutStrata(lay)
+    return s and EditStrata(s) or nil
+end
+
+-- The steps a layout moves every element's own strata (Store.LayoutStrataShift),
+-- or nil for none.
+local function LayoutShiftOf(rec)
+    local lay = rec and ((rec.type == "layout") and rec or Store.LayoutOf(rec))
+    return lay and Store.LayoutStrataShift and Store.LayoutStrataShift(lay) or nil
+end
+
+local STRATA_BY_RANK = { "BACKGROUND", "LOW", "MEDIUM", "HIGH", "DIALOG" }
+
+-- s moved n steps along the five, held at both ends.
+local function ShiftStrata(s, n)
+    if not n then return s end
+    local r = (STRATA_RANK[s] or STRATA_RANK.MEDIUM) + n
+    return STRATA_BY_RANK[math.max(1, math.min(#STRATA_BY_RANK, r))]
+end
+Engine.ShiftStrata = ShiftStrata
+
+-- A group's or bar's strata: its layout's while that is set, else its own,
+-- moved by the layout's shift; the panel's hold comes after the shift.
+local function ElementStrata(rec)
+    return LayoutStrataOf(rec)
+        or EditStrata(ShiftStrata(Store.Resolve(rec, "frame", "strata") or "MEDIUM", LayoutShiftOf(rec)))
+end
+Engine.ElementStrata = ElementStrata
+
 -- A bar riding a spell's action button or Cooldown Manager icon goes back to
 -- its own spot, strata and level when that target leaves the screen between
 -- two rebuilds (Core\AD_Anchor.lua calls it).
@@ -193,7 +241,7 @@ if NS.Anchor and NS.Anchor.SetFreePlacer then
     NS.Anchor.SetFreePlacer(function(rec, f)
         local c = f:GetParent()
         if not (c and rec.pos) then return end
-        f:SetFrameStrata(EditStrata(Store.Resolve(rec, "frame", "strata")))
+        f:SetFrameStrata(ElementStrata(rec))
         f:SetFrameLevel(Store.Resolve(rec, "frame", "level") or 10)
         SnapPlacement(f, c, rec.pos.x or 0, rec.pos.y or 0)
     end)
@@ -222,18 +270,19 @@ end
 function Engine.IconSize(rec)
     local bw, bh = 36, 36
     local g = rec and rec.groupId and Store.Get(rec.groupId)
+    local k = ScaleOf(rec)
     if g and g.groupKind == "reminder" then
         -- an aura reminder: the row's size (Drivers\AD_DriverReminders.lua)
-        bw = Snap(math.floor((Store.Resolve(g, "pulse", "auraSize") or 40) + 0.5))
+        bw = Snap(math.floor((Store.Resolve(g, "pulse", "auraSize") or 40) + 0.5), k)
         bh = bw
     elseif g then
         local R = function(field) return Store.Resolve(g, "arrangement", field) end
         local scale = math.floor((R("iconSize") or 36) + 0.5) / 36
-        bw = Snap(math.floor((R("iconWidth") or 36) * scale + 0.5))
-        bh = Snap(math.floor((R("iconHeight") or 36) * scale + 0.5))
+        bw = Snap(math.floor((R("iconWidth") or 36) * scale + 0.5), k)
+        bh = Snap(math.floor((R("iconHeight") or 36) * scale + 0.5), k)
     end
     local w, h = MemberSize(rec, bw, bh)
-    return Snap(w), Snap(h)
+    return Snap(w, k), Snap(h, k)
 end
 
 -- Play on screen draws a copy over the icon (UI\AD_IconScreen), so the live
@@ -247,12 +296,18 @@ local function ShowIcon(f, rec)
     end
 end
 
--- An icon's strata and level, from its own settings over its parent's.
+-- An icon's strata and level, from its own settings over its parent's; a
+-- layout's strata wins over both while it is set. A layout's shift moves an
+-- icon's own strata; AUTO takes the parent's, which the shift already moved.
 local function IconLayer(f, rec, parent)
     local Rp = function(k) return Store.Resolve(rec, "position", k) end
     local strata = Rp("strata")
-    if strata and strata ~= "AUTO" then
-        f:SetFrameStrata(strata)
+    local ls = LayoutStrataOf(rec)
+    if ls then
+        f:SetFrameStrata(ls)
+    elseif strata and strata ~= "AUTO" then
+        local n = LayoutShiftOf(rec)
+        f:SetFrameStrata(n and EditStrata(ShiftStrata(strata, n)) or strata)
     else
         f:SetFrameStrata(parent:GetFrameStrata())
     end
@@ -263,7 +318,8 @@ end
 local function ApplyIconPosition(f, rec, parent, cx, cy, baseW, baseH)
     local Rp = function(k) return Store.Resolve(rec, "position", k) end
     local w, h = MemberSize(rec, baseW, baseH)
-    f:SetSize(Snap(w), Snap(h))
+    local k = ScaleOf(rec)
+    f:SetSize(Snap(w, k), Snap(h, k))
     -- Size first, so SnapPlacement measures the final rect.
     SnapPlacement(f, parent, cx + (Rp("offsetX") or 0), cy + (Rp("offsetY") or 0))
     IconLayer(f, rec, parent)
@@ -276,10 +332,11 @@ end
 local function PlaceCell(f, rec, parent, left, top, slotW, slotH)
     local Rp = function(k) return Store.Resolve(rec, "position", k) end
     local w, h = MemberSize(rec, slotW, slotH)
-    w, h = Snap(w), Snap(h)
+    local k = ScaleOf(rec)
+    w, h = Snap(w, k), Snap(h, k)
     f:SetSize(w, h)
-    local x = Snap(left + FloorPx((slotW - w) / 2) + Snap(Rp("offsetX") or 0))
-    local y = Snap(top + FloorPx((slotH - h) / 2) - Snap(Rp("offsetY") or 0))
+    local x = Snap(left + FloorPx((slotW - w) / 2, k) + Snap(Rp("offsetX") or 0, k), k)
+    local y = Snap(top + FloorPx((slotH - h) / 2, k) - Snap(Rp("offsetY") or 0, k), k)
     f:ClearAllPoints()
     f:SetPoint("TOPLEFT", parent, "TOPLEFT", x, -y)
     IconLayer(f, rec, parent)
@@ -456,17 +513,17 @@ local function LineCascade(ctx, items, horiz)
         local sz = slot
         if it.rec then
             local w, h = MemberSize(it.rec, ctx.slotW, ctx.slotH)
-            sz = math.max(slot, Snap(horiz and w or h))
+            sz = math.max(slot, Snap(horiz and w or h, ctx.k))
         end
         sizes[i] = sz
         if sz > slot then any = true end
     end
     if not any then return nil end
-    local function Over(sz) return Snap(math.max(0, (sz - slot) / 2)) end
+    local function Over(sz) return Snap(math.max(0, (sz - slot) / 2), ctx.k) end
     local cum, c = { 0 }, 0
     for i = 2, #items do
         local extra = (sizes[i - 1] + sizes[i]) / 2 - slot
-        if extra > 0 then c = c + Snap(extra) end
+        if extra > 0 then c = c + Snap(extra, ctx.k) end
         cum[i] = c
     end
     return { sizes = sizes, cum = cum, total = c, over = Over,
@@ -493,9 +550,9 @@ local function PackRow(ctx, items, align, vr, out, line)
         x0 = ctx.contentW - ctx.pad - hi - span
     else
         local ext = lo + span + hi
-        local px = UIPx()
+        local px = UIPx(ctx.k)
         local v = (ctx.contentW - ext) / 2 + (ctx.leanX or 0)
-        x0 = (px and PixRoundLeft(v, px) or FloorPx((ctx.contentW - ext) / 2)) + lo
+        x0 = (px and PixRoundLeft(v, px) or FloorPx((ctx.contentW - ext) / 2, ctx.k)) + lo
     end
     local _, y = CellXY(ctx, vr, 0)
     local up, down = 0, 0
@@ -523,9 +580,9 @@ local function PackCol(ctx, items, align, vc, out, line)
     else
         -- measured from the bottom, where the lean is: the frame's sat dy low
         local ext = lo + span + hi
-        local px = UIPx()
+        local px = UIPx(ctx.k)
         local rest = ctx.contentH - ext
-        y0 = (px and (rest - PixRound(rest / 2 + (ctx.leanY or 0), px)) or FloorPx(rest / 2)) + lo
+        y0 = (px and (rest - PixRound(rest / 2 + (ctx.leanY or 0), px)) or FloorPx(rest / 2, ctx.k)) + lo
     end
     local x = CellXY(ctx, 0, vc)
     local left, right = 0, 0
@@ -667,7 +724,7 @@ local function DynApply(group, gf, ctx)
     -- the full grid's lean: off the frame when it was last snapped at full
     -- size (the rebuild's snap, an anchored group's own); a shrunk box keeps
     -- the one its first pass read
-    local lx, ly = CenterLean(gf, math.max(ctx.contentW, Snap(4)), math.max(ctx.contentH, Snap(4)))
+    local lx, ly = CenterLean(gf, math.max(ctx.contentW, Snap(4, ctx.k)), math.max(ctx.contentH, Snap(4, ctx.k)))
     if lx then ctx.leanX, ctx.leanY = lx, ly end
     ctx.usedLeanX, ctx.usedLeanY = ctx.leanX or 0, ctx.leanY or 0
     local targets = DynTargets(group, ctx, align, shape)
@@ -676,7 +733,7 @@ local function DynApply(group, gf, ctx)
     if Store.Resolve(group, "arrangement", "dynamicShrink") == true then
         bx, by, w, h = DynBox(ctx, targets, align, shape)
     end
-    w, h = math.max(w, Snap(4)), math.max(h, Snap(4))
+    w, h = math.max(w, Snap(4, ctx.k)), math.max(h, Snap(4, ctx.k))
     local sizeChanged = gf._adDynW ~= w or gf._adDynH ~= h
     gf._adDynW, gf._adDynH = w, h
     gf:SetSize(w, h)
@@ -729,11 +786,21 @@ if NS.Anchor then
     NS.Anchor.onSnap = function(rec, frame)
         local ctx = rec and rec.type == "group" and dynCtx[rec.id]
         if not ctx or editMode or groupFrames[rec.id] ~= frame or not frame:IsShown() then return end
-        local lx, ly = CenterLean(frame, math.max(ctx.contentW, Snap(4)), math.max(ctx.contentH, Snap(4)))
+        local lx, ly = CenterLean(frame, math.max(ctx.contentW, Snap(4, ctx.k)), math.max(ctx.contentH, Snap(4, ctx.k)))
         if lx and (math.abs(lx - (ctx.usedLeanX or 0)) > 0.001 or math.abs(ly - (ctx.usedLeanY or 0)) > 0.001) then
             DynApply(rec, frame, ctx)
         end
     end
+end
+
+-- The spot a layout is pinned to as an offset from the screen's middle, in
+-- UIParent units; the middle (nil) reads nothing, so it stays exactly 0, 0.
+local function PinSpot(pin)
+    if not pin then return 0, 0 end
+    local w, h = tonumber(UIParent:GetWidth()) or 0, tonumber(UIParent:GetHeight()) or 0
+    local x = (pin:find("LEFT") and -w / 2) or (pin:find("RIGHT") and w / 2) or 0
+    local y = (pin:find("BOTTOM") and -h / 2) or (pin:find("TOP") and h / 2) or 0
+    return x, y
 end
 
 local function EnsureLayoutFrame(rec)
@@ -764,17 +831,53 @@ local function EnsureLayoutFrame(rec)
             if Store.Locked(rec) then return end
             f:StopMovingOrSizing()
             if NS.Pins then NS.Pins.DragStop() end
+            -- pos is in UIParent units from the pinned spot; the frame's
+            -- centre is in its own, which the layout's scale multiplies. An
+            -- axis whose whole number holds keeps a fraction a pin change left.
             local cx, cy = f:GetCenter()
             local ux, uy = UIParent:GetCenter()
             if cx and ux then
-                rec.pos.x = math.floor(cx - ux + 0.5)
-                rec.pos.y = math.floor(cy - uy + 0.5)
+                local k = f:GetEffectiveScale() / UIParent:GetEffectiveScale()
+                local ax, ay = PinSpot(Store.LayoutPin(rec))
+                local ox, oy = Store.LayoutPos(rec)
+                local nx = math.floor(cx * k - ux - ax + 0.5)
+                local ny = math.floor(cy * k - uy - ay + 0.5)
+                Store.SetLayoutPos(rec, (nx ~= math.floor(ox + 0.5)) and nx or nil,
+                    (ny ~= math.floor(oy + 0.5)) and ny or nil)
             end
             Engine.Rebuild()
         end)
         layoutFrames[rec.id] = f
     end
     return f
+end
+
+-- A layout's container: its scale first, so every snap of what it holds
+-- measures at it, then its spot, whose offset counts in the frame's own
+-- scaled units (pos / scale keeps the layout's point where pos puts it, and
+-- the layout grows from there). The strata it sets goes on the container;
+-- each element takes it in its own pass. Scale and strata are written only
+-- on a change, so a layout never set never has either written.
+local function PlaceLayoutFrame(layout, container)
+    local k = Store.LayoutScale(layout)
+    if (container._adScale or 1) ~= k then
+        container:SetScale(k)
+        container._adScale = k
+    end
+    -- a shift moves the container's MEDIUM: a free icon on AUTO moves once
+    local n = LayoutShiftOf(layout)
+    local ls = LayoutStrataOf(layout) or (n and EditStrata(ShiftStrata("MEDIUM", n))) or nil
+    if container._adStrata ~= ls then
+        container:SetFrameStrata(ls or "MEDIUM")
+        container._adStrata = ls
+        -- the move handle stays where it always drew
+        if container.drag then container.drag:SetFrameStrata("MEDIUM") end
+    end
+    -- on the spot it is pinned to, so a new resolution or UI scale keeps
+    -- its distance from that spot
+    local x, y = Store.LayoutPos(layout)
+    container:ClearAllPoints()
+    container:SetPoint("CENTER", UIParent, Store.LayoutPin(layout) or "CENTER", x / k, y / k)
 end
 
 local function EnsureGroupFrame(rec)
@@ -821,6 +924,30 @@ local GROUP_TEXT = { 0.85, 1, 0.85 }
 -- The item the editor has open: its Edit chip reads Editing in this yellow,
 -- and a group, which has no chip, turns its name this yellow.
 local EDIT_YELLOW = { 1, 0.82, 0 }
+
+-- Settings "Group frames while editing", its one reader: nil draws the
+-- outline and its fill, "border" the outline alone, "none" neither.
+function Engine.GroupEditFrames()
+    local v = Store.GetSetting("groupEditFrames")
+    if v == "border" or v == "none" then return v end
+    return nil
+end
+
+-- The outline's resting colour. Under "none", and while the on-screen mode
+-- draws its own outlines, it turns clear rather than hidden, so nothing
+-- anchored to it moves and a drag's drop highlight still lands on it.
+local function RestGroupEdge(border)
+    local a = (screenEditing or Engine.GroupEditFrames() == "none") and 0 or 0.9
+    border:SetBackdropBorderColor(GROUP_GREEN[1], GROUP_GREEN[2], GROUP_GREEN[3], a)
+end
+
+-- The fill inside the outline: the colour WireGroupEdit picked, clear while
+-- the on-screen mode runs.
+local function PaintGroupFill(ch)
+    local c = ch.fillRGBA
+    if not c then return end
+    ch.border:SetBackdropColor(c[1], c[2], c[3], screenEditing and 0 or c[4])
+end
 
 local function EnsureGroupChrome(gf)
     if gf._adChrome then return gf._adChrome end
@@ -919,7 +1046,7 @@ function Engine.BarSize(rec, f)
     local w = Store.Resolve(rec, "size", "width") or 220
     local h = Store.Resolve(rec, "size", "height") or 16
     local sc = Store.Resolve(rec, "size", "scale") or 1
-    w, h = Snap(math.max(1, w * sc)), Snap(math.max(1, h * sc))
+    w, h = Snap(math.max(1, w * sc), rec), Snap(math.max(1, h * sc), rec)
     if f then return f._adMatchW or w, f._adMatchH or h end
     return w, h
 end
@@ -975,11 +1102,15 @@ local function EnsureBarChrome(f)
 end
 
 -- Widened for the longer word; it grows left from the corner it is pinned to.
-local function PaintBarChip(chip, on)
-    if (chip._adEditing or false) == on then return end
-    chip._adEditing = on
+-- rec: the bar, whose layout's scale its pixels are counted at.
+local function PaintBarChip(chip, on, rec)
+    local k = ScaleOf(rec)
+    if (chip._adEditing or false) == on and chip._adK == k then return end
+    chip._adEditing, chip._adK = on, k
     local c = on and EDIT_YELLOW or BAR_CYAN
-    chip:SetSize(Snap(on and 36 or 24), Snap(10))
+    chip:SetSize(Snap(on and 36 or 24, k), Snap(10, k))
+    chip:ClearAllPoints()
+    chip:SetPoint("TOPRIGHT", chip:GetParent(), "TOPRIGHT", -Snap(2, k), -Snap(2, k))
     chip:SetBackdropBorderColor(c[1], c[2], c[3], 0.9)
     chip.fs:SetText(on and "EDITING" or "EDIT")
     chip.fs:SetTextColor(c[1], c[2], c[3])
@@ -1021,7 +1152,7 @@ local function PlaceBar(rec, container)
     local f = EnsureBarFrame(rec)
     f._adRecId = rec.id
     f:SetParent(container)
-    f:SetFrameStrata(EditStrata(Store.Resolve(rec, "frame", "strata")))
+    f:SetFrameStrata(ElementStrata(rec))
     f:SetFrameLevel(Store.Resolve(rec, "frame", "level") or 10)
     -- Its own size, which the free spot below is snapped for; the anchor
     -- post-pass gives a match back in this same rebuild. The glows draw at the
@@ -1076,6 +1207,16 @@ end
 
 -- The group under the dragged icon's center; a group ignores icons it does not
 -- take (Store.GroupTakes).
+-- The dragged icon's centre (its own units) in a group frame's units: the two
+-- may sit in layouts of different scales.
+local function InGroupUnits(gf, cx, cy, iconId)
+    local f = iconId and Factory.frames[iconId]
+    if not f then return cx, cy end
+    local fs, gs = f:GetEffectiveScale(), gf:GetEffectiveScale()
+    if not (fs and gs) or gs <= 0 then return cx, cy end
+    return cx * fs / gs, cy * fs / gs
+end
+
 local function FindDropGroup(cx, cy, iconId)
     local rec = Store.Get(iconId)
     for gid, gf in pairs(groupFrames) do
@@ -1084,7 +1225,8 @@ local function FindDropGroup(cx, cy, iconId)
         if grec and gf:IsShown() and not Store.Locked(grec)
             and not (rec and not Store.GroupTakes(grec, rec.kind)) then
             local l, r, t, b = gf:GetLeft(), gf:GetRight(), gf:GetTop(), gf:GetBottom()
-            if l and cx >= l - 16 and cx <= r + 16 and cy >= b - 16 and cy <= t + 16 then
+            local gx, gy = InGroupUnits(gf, cx, cy, iconId)
+            if l and gx >= l - 16 and gx <= r + 16 and gy >= b - 16 and gy <= t + 16 then
                 return grec, gf
             end
         end
@@ -1119,22 +1261,26 @@ local function GridMetrics(group)
     -- iconSize is a scale where 36 = 1, applied to the base width and height;
     -- each term rounds to an integer first.
     local scale = math.floor((R("iconSize") or 36) + 0.5) / 36
-    local slotW = Snap(math.floor((R("iconWidth") or 36) * scale + 0.5))
-    local slotH = Snap(math.floor((R("iconHeight") or 36) * scale + 0.5))
+    -- on the pixel grid of the group's layout, whose scale its frames carry
+    local k = ScaleOf(group)
+    local slotW = Snap(math.floor((R("iconWidth") or 36) * scale + 0.5), k)
+    local slotH = Snap(math.floor((R("iconHeight") or 36) * scale + 0.5), k)
     local spBase = R("spacing") or 2
     local sep = R("separateSpacing") == true
-    local spacingX = Snap(sep and (R("spacingX") or spBase) or spBase)
-    local spacingY = Snap(sep and (R("spacingY") or spBase) or spBase)
+    local spacingX = Snap(sep and (R("spacingX") or spBase) or spBase, k)
+    local spacingY = Snap(sep and (R("spacingY") or spBase) or spBase, k)
     return slotW, slotH, slotW + spacingX, slotH + spacingY, spacingX, spacingY,
-        Snap(R("containerPadding") or 0)
+        Snap(R("containerPadding") or 0, k)
 end
+Engine.GridMetrics = GridMetrics
 
 -- Oversized members (Use group scale off) widen their column and heighten
 -- their row; later columns and rows shift so spacing stays between edges, and
 -- the container grows to fit. cells = { [row * cols + col] = rec } in logical
 -- cells; results are keyed by visual column and row. Placement and the drop
--- mapping share this, so a drop target always matches a drawn cell.
-local function GroupCascade(cells, cols, needRows, slotW, slotH, growthH, growthV)
+-- mapping share this, so a drop target always matches a drawn cell. k: the
+-- group's layout scale (ScaleOf).
+local function GroupCascade(cells, cols, needRows, slotW, slotH, growthH, growthV, k)
     local colW, rowH = {}, {}
     for key, rec in pairs(cells) do
         local row = math.floor(key / cols)
@@ -1142,7 +1288,7 @@ local function GroupCascade(cells, cols, needRows, slotW, slotH, growthH, growth
         if growthH == "LEFT" then col = (cols - 1) - col end
         if growthV == "UP" then row = (needRows - 1) - row end
         local mw, mh = MemberSize(rec, slotW, slotH)
-        mw, mh = Snap(mw), Snap(mh)
+        mw, mh = Snap(mw, k), Snap(mh, k)
         if mw > (colW[col] or slotW) then colW[col] = mw end
         if mh > (rowH[row] or slotH) then rowH[row] = mh end
     end
@@ -1152,7 +1298,7 @@ local function GroupCascade(cells, cols, needRows, slotW, slotH, growthH, growth
         cas.colCum[c] = cum
         if c < cols - 1 then
             local extra = ((colW[c] or slotW) + (colW[c + 1] or slotW)) / 2 - slotW
-            if extra > 0 then cum = cum + Snap(extra) end
+            if extra > 0 then cum = cum + Snap(extra, k) end
         end
     end
     cas.totalExtraW = cum
@@ -1161,14 +1307,14 @@ local function GroupCascade(cells, cols, needRows, slotW, slotH, growthH, growth
         cas.rowCum[r] = cum
         if r < needRows - 1 then
             local extra = ((rowH[r] or slotH) + (rowH[r + 1] or slotH)) / 2 - slotH
-            if extra > 0 then cum = cum + Snap(extra) end
+            if extra > 0 then cum = cum + Snap(extra, k) end
         end
     end
     cas.totalExtraH = cum
-    cas.leftOver = Snap(math.max(0, ((colW[0] or slotW) - slotW) / 2))
-    cas.rightOver = Snap(math.max(0, ((colW[cols - 1] or slotW) - slotW) / 2))
-    cas.topOver = Snap(math.max(0, ((rowH[0] or slotH) - slotH) / 2))
-    cas.bottomOver = Snap(math.max(0, ((rowH[needRows - 1] or slotH) - slotH) / 2))
+    cas.leftOver = Snap(math.max(0, ((colW[0] or slotW) - slotW) / 2), k)
+    cas.rightOver = Snap(math.max(0, ((colW[cols - 1] or slotW) - slotW) / 2), k)
+    cas.topOver = Snap(math.max(0, ((rowH[0] or slotH) - slotH) / 2), k)
+    cas.bottomOver = Snap(math.max(0, ((rowH[needRows - 1] or slotH) - slotH) / 2), k)
     return cas
 end
 
@@ -1192,6 +1338,7 @@ local function GroupDropInfo(grec, gf, cx, cy, skipId)
     local slotW, slotH, stepX, stepY, _, _, pad = GridMetrics(grec)
     local gl, gt = gf:GetLeft(), gf:GetTop()
     if not (gl and gt and stepX > 0 and stepY > 0) then return nil end
+    cx, cy = InGroupUnits(gf, cx, cy, skipId)
 
     local cols = math.max(1, R("cols") or 6)
     local rows = math.max(1, R("rows") or 1)
@@ -1219,7 +1366,7 @@ local function GroupDropInfo(grec, gf, cx, cy, skipId)
             allCells[(r.gpos.row or 0) * cols + (r.gpos.col or 0)] = r
         end
     end
-    local cas = GroupCascade(allCells, cols, needRows, slotW, slotH, growthH, growthV)
+    local cas = GroupCascade(allCells, cols, needRows, slotW, slotH, growthH, growthV, ScaleOf(grec))
 
     -- Visual cell under the cursor: the nearest drawn cell centre.
     local relX = cx - gl
@@ -1261,6 +1408,8 @@ local function ShowDropIndicator(info, sameGroup)
     end
     if info.mode == "empty" and info.cell then
         local cl = info.cell
+        -- the cell's numbers are in the group's units
+        Engine.FollowScale(DropSquare, cl.gf)
         DropSquare:ClearAllPoints()
         DropSquare:SetSize(cl.w or cl.slotW, cl.h or cl.slotH)
         DropSquare:SetPoint("CENTER", cl.gf, "TOPLEFT", cl.x, -cl.y)
@@ -1274,6 +1423,8 @@ local function ShowDropIndicator(info, sameGroup)
         HideDropIndicators()
         return
     end
+    Engine.FollowScale(DropSquare, info.frame)
+    Engine.FollowScale(InsertLine, info.frame)
     if info.mode == "swap" then
         DropSquare:ClearAllPoints()
         DropSquare:SetPoint("TOPLEFT", info.frame, "TOPLEFT", 0, 0)
@@ -1319,8 +1470,7 @@ local function WireIconDrag(f)
             if not (cx and dragState) then return end
             local grec, gf = FindDropGroup(cx, cy, dragState.id)
             if dragState.lastGF and dragState.lastGF ~= gf and dragState.lastGF._adChrome then
-                dragState.lastGF._adChrome.border:SetBackdropBorderColor(
-                    GROUP_GREEN[1], GROUP_GREEN[2], GROUP_GREEN[3], 0.9)
+                RestGroupEdge(dragState.lastGF._adChrome.border)
             end
             if gf and gf._adChrome then
                 gf._adChrome.border:SetBackdropBorderColor(1, 0.95, 0.3, 1)
@@ -1347,8 +1497,7 @@ local function WireIconDrag(f)
         local st = dragState
         dragState = nil
         if st and st.lastGF and st.lastGF._adChrome then
-            st.lastGF._adChrome.border:SetBackdropBorderColor(
-                GROUP_GREEN[1], GROUP_GREEN[2], GROUP_GREEN[3], 0.9)
+            RestGroupEdge(st.lastGF._adChrome.border)
         end
         local rec = Store.Get(self._adRecId)
         if not rec then Engine.QueueRebuild() return end
@@ -1611,7 +1760,7 @@ function Engine.RefreshEditing()
     local id = editMode and O and O.EditingId and O.EditingId() or nil
     for bid, bf in pairs(barFrames) do
         local ch = bf._adBarChrome
-        if ch then PaintBarChip(ch.chip, bid == id) end
+        if ch then PaintBarChip(ch.chip, bid == id, Store.Get(bid)) end
     end
     for gid, gf in pairs(groupFrames) do
         local ch = gf._adChrome
@@ -1640,11 +1789,21 @@ local function WireGroupEdit(gf, rec)
         ch.bar:SetSize(24, 8)
     end
     ch.border:SetFrameLevel(gf:GetFrameLevel())
-    -- "Background while editing" (look.editFill): the fill inside the outline
+    -- "Background while editing" (look.editFill): the fill inside the outline.
+    -- Settings "Group frames while editing" clears the fill, or the fill and
+    -- the outline: colours only, so nothing moves or resizes.
     local fill = Store.Resolve(rec, "look", "editFill")
-    if type(fill) == "table" then
-        ch.border:SetBackdropColor(fill[1] or 0, fill[2] or 0, fill[3] or 0, fill[4] or 1)
+    local c = ch.fillRGBA or {}
+    ch.fillRGBA = c
+    if Engine.GroupEditFrames() then
+        c[1], c[2], c[3], c[4] = 0, 0, 0, 0
+    elseif type(fill) == "table" then
+        c[1], c[2], c[3], c[4] = fill[1] or 0, fill[2] or 0, fill[3] or 0, fill[4] or 1
+    else
+        c[1], c[2], c[3], c[4] = 0, 0, 0, 0.5
     end
+    PaintGroupFill(ch)
+    RestGroupEdge(ch.border)
     ch.border:SetShown(editMode)
     ch.bar:SetShown(editMode)
     -- While the panel is open the handle outranks every display, so a bar
@@ -1732,7 +1891,7 @@ local function ContainerLook(group, container)
         container:SetBackdrop({
             bgFile = showBg and WHITE or nil,
             edgeFile = showBorder and WHITE or nil,
-            edgeSize = (n > 1) and Snap(n) or 1,
+            edgeSize = (n > 1) and Snap(n, group) or 1,
         })
         if showBg then
             local c = Store.Resolve(group, "look", "bgColor") or { 0, 0, 0, 0.6 }
@@ -1793,7 +1952,8 @@ local function PlaceGroup(group, container, flowMode)
     local growthH = R("growthH") or "RIGHT"
     local growthV = R("growthV") or "DOWN"
 
-    local cas = GroupCascade(occupied, cols, needRows, slotW, slotH, growthH, growthV)
+    local k = ScaleOf(group)
+    local cas = GroupCascade(occupied, cols, needRows, slotW, slotH, growthH, growthV, k)
 
     -- Closed panel: DynApply places dynamic cooldown groups. Edit sessions draw
     -- the static grid for drag and drop; dynamic aura groups use flowMode.
@@ -1801,10 +1961,10 @@ local function PlaceGroup(group, container, flowMode)
         and R("dynamicLayout") == true
 
     local contentW = Snap(cols * slotW + (cols - 1) * spacingX + pad * 2
-        + cas.totalExtraW + cas.leftOver + cas.rightOver)
+        + cas.totalExtraW + cas.leftOver + cas.rightOver, k)
     local contentH = Snap(needRows * slotH + (needRows - 1) * spacingY + pad * 2
-        + cas.totalExtraH + cas.topOver + cas.bottomOver)
-    container:SetSize(math.max(contentW, Snap(4)), math.max(contentH, Snap(4)))
+        + cas.totalExtraH + cas.topOver + cas.bottomOver, k)
+    container:SetSize(math.max(contentW, Snap(4, k)), math.max(contentH, Snap(4, k)))
     ContainerLook(group, container)
     PlaceGroupRoot(group, container, 0, 0)
 
@@ -1840,7 +2000,9 @@ local function PlaceGroup(group, container, flowMode)
             growthH = growthH, growthV = growthV,
             -- Oversized-member cascade: a one-row or one-column group packs
             -- by it (LineCascade); a multi-row grid steps uniformly.
-            cascade = cas }
+            cascade = cas,
+            -- the layout scale the pixel math of every later pass runs at
+            k = k }
         dynCtx[group.id] = ctx
         -- The full grid size was just set above; DynApply may shrink it.
         container._adDynW, container._adDynH = nil, nil
@@ -1954,6 +2116,54 @@ if NS.Conditions then
     })
 end
 
+-- The on-screen layout mode draws its own names, handles and outlines, so
+-- each group's name tab, its edit outline and fill, the Edit chips and the
+-- layout move handles hide while it runs: visibility and colours only,
+-- nothing moves. Every rebuild shows them again, so it runs after each one.
+local function HideEditChrome()
+    for _, gf in pairs(groupFrames) do
+        local ch = gf._adChrome
+        if ch then
+            ch.bar:Hide()
+            PaintGroupFill(ch)
+            RestGroupEdge(ch.border)
+        end
+    end
+    for _, bf in pairs(barFrames) do
+        if bf._adBarChrome then bf._adBarChrome.chip:Hide() end
+    end
+    for _, f in pairs(Factory.frames) do
+        if f._adEditBtn then f._adEditBtn:Hide() end
+    end
+    for _, lf in pairs(layoutFrames) do
+        if lf.drag then lf.drag:Hide() end
+    end
+end
+
+-- What a rebuild would show, put back without one.
+local function ShowEditChrome()
+    for _, gf in pairs(groupFrames) do
+        local ch = gf._adChrome
+        if ch then
+            ch.bar:SetShown(editMode)
+            PaintGroupFill(ch)
+            RestGroupEdge(ch.border)
+        end
+    end
+    for _, bf in pairs(barFrames) do
+        if bf._adBarChrome then
+            bf._adBarChrome.chip:SetShown(editMode and (Factory.EditChipsOn == nil or Factory.EditChipsOn("bar")))
+        end
+    end
+    for id, f in pairs(Factory.frames) do
+        local rec = f._adEditBtn and Store.Get(id)
+        if rec then Factory.SetEditMode(f, rec, editMode) end
+    end
+    for _, lf in pairs(layoutFrames) do
+        if lf.drag then lf.drag:SetShown(moveMode) end
+    end
+end
+
 function Engine.Rebuild()
     -- One fresh world read for the whole rebuild: placement asks the
     -- conditions (dynamic drop-outs) before their pass runs at the end.
@@ -1963,8 +2173,7 @@ function Engine.Rebuild()
         local container = EnsureLayoutFrame(layout)
         liveLayouts[layout.id] = true
         if ShowsRec(layout) then
-            container:ClearAllPoints()
-            container:SetPoint("CENTER", UIParent, "CENTER", layout.pos.x or 0, layout.pos.y or 0)
+            PlaceLayoutFrame(layout, container)
             container:Show()
             container.dragLabel:SetText(Store.LockedSelf(layout) and (layout.name .. "  (locked)") or layout.name)
             container.drag:SetShown(moveMode)
@@ -1977,7 +2186,7 @@ function Engine.Rebuild()
                 liveGroups[group.id] = true
                 if ShowsRec(group) then
                     gf:SetParent(container)
-                    gf:SetFrameStrata(EditStrata(Store.Resolve(group, "frame", "strata")))
+                    gf:SetFrameStrata(ElementStrata(group))
                     gf:SetFrameLevel(Store.Resolve(group, "frame", "level") or 1)
                     gf:ClearAllPoints()
                     gf:SetPoint("CENTER", container, "CENTER", group.pos.x or 0, group.pos.y or 0)
@@ -2131,6 +2340,7 @@ function Engine.Rebuild()
     if NS.Pins then NS.Pins.ApplyAll() end
     if NS.Conditions then NS.Conditions.Pass() end
     Engine.RefreshEditing()
+    if screenEditing then HideEditChrome() end
 end
 
 function Engine.QueueRebuild()
@@ -2138,7 +2348,8 @@ function Engine.QueueRebuild()
 end
 
 -- A new resolution or UI scale moves the physical pixel grid: every size and
--- corner was rounded to the old one, so the whole layout is placed again.
+-- corner was rounded to the old one, so the whole layout is placed again,
+-- each from the screen spot it is pinned to.
 function Engine.OnScreenChanged()
     Engine.QueueRebuild()
 end
@@ -2149,6 +2360,35 @@ function Engine.SetMoveMode(on)
 end
 
 function Engine.IsMoveMode() return moveMode end
+
+-- On while the on-screen layout mode runs (UI\AD_LayoutOnScreen.lua); it
+-- holds through rebuilds. Works in combat too, so the mode's teardown always
+-- puts the chrome back.
+function Engine.SetScreenEditing(on)
+    on = on and true or false
+    if screenEditing == on then return end
+    screenEditing = on
+    if on then HideEditChrome() else ShowEditChrome() end
+end
+
+function Engine.IsScreenEditing() return screenEditing end
+
+-- A frame born on UIParent that draws over one of ours (an aura container's
+-- stage, a glow lane) takes that frame's layout scale, times mult, so its
+-- sizes, texts and gaps grow with the layout as a child's would. Written only
+-- on a change: a frame over an unscaled layout never has it written.
+function Engine.FollowScale(f, target, mult)
+    if not (f and target) then return end
+    local ts, us = target:GetEffectiveScale(), UIParent:GetEffectiveScale()
+    if type(ts) ~= "number" or type(us) ~= "number" then return end
+    if issecretvalue and (issecretvalue(ts) or issecretvalue(us)) then return end
+    if ts <= 0 or us <= 0 then return end
+    -- the ratio's float noise rounded off, so one scale reads as one value
+    local k = math.floor(ts / us * (mult or 1) * 1e6 + 0.5) / 1e6
+    if (f._adFollowK or 1) == k then return end
+    f:SetScale(k)
+    f._adFollowK = k
+end
 
 -- Frame getters for sibling modules (the bars engine anchors to layouts).
 function Engine.GetLayoutFrame(id) return layoutFrames[id] end
@@ -2170,7 +2410,7 @@ function Engine.GroupBox(gid)
     end
     local ctx, grec = dynCtx[gid], Store.Get(gid)
     if not (ctx and grec and gf._adDynW) then return l, b, w, h end
-    local fw, fh = math.max(ctx.contentW, Snap(4)), math.max(ctx.contentH, Snap(4))
+    local fw, fh = math.max(ctx.contentW, Snap(4, ctx.k)), math.max(ctx.contentH, Snap(4, ctx.k))
     if math.abs(fw - w) < 0.01 and math.abs(fh - h) < 0.01 then return l, b, w, h end
     local s = gf:GetEffectiveScale()
     local _, physH = GetPhysicalScreenSize()
@@ -2197,6 +2437,268 @@ function Engine.GroupBox(gid)
     local fl = sx - ((point:find("LEFT") and 0) or (point:find("RIGHT") and fw) or fw / 2)
     local fb = sy - ((point:find("BOTTOM") and 0) or (point:find("TOP") and fh) or fh / 2)
     return PixRoundLeft(fl, px), PixRound(fb, px), fw, fh
+end
+
+-- The short word the panel's map and the on-screen outlines name an element by.
+local GROUP_WORD = { cooldown = "CD Group", aura = "Aura Group", reminder = "Reminders" }
+local BAR_WORD = { cooldown = "CD Bar", aura = "Aura Bar", swing = "Swing Bar", resource = "Resource",
+    health = "Health", cast = "Castbar", enchant = "Enchant", range = "Range", text = "Text",
+    texture = "Texture", wheel = "Wheel", special = "Proc Bar", sound = "Sound", timer = "Timer",
+    stack = "Stack Bar" }
+
+-- A frame's rect read plain, in UIParent units; nil while it has none or any
+-- part reads secret (a bar on a nameplate).
+local function RectInUI(f, l, b, w, h)
+    if not (l and b and w and h) then return nil end
+    if issecretvalue and (issecretvalue(l) or issecretvalue(b) or issecretvalue(w) or issecretvalue(h)) then
+        return nil
+    end
+    local fs, us = f:GetEffectiveScale(), UIParent:GetEffectiveScale()
+    if not (fs and us) or us <= 0 then return nil end
+    local k = fs / us
+    return l * k, b * k, w * k, h * k
+end
+
+-- Every top-level element of a layout that is on screen now (its groups, free
+-- icons and bars), in UIParent units: { id, name, kind, left, bottom, width,
+-- height }, in the layout's member order. A group gives its full grid box, so
+-- a dynamic one never jumps as icons come and go; a bar riding a nameplate is
+-- not at the layout's spot and stays out. Plain reads: out of combat.
+function Engine.LayoutElementRects(layoutId)
+    local out = {}
+    local layout = Store.Get(layoutId)
+    local container = layoutFrames[layoutId]
+    if not (layout and layout.type == "layout" and container and container:IsShown()) then return out end
+    for _, mid in ipairs(layout.members or {}) do
+        local rec = Store.Get(mid)
+        local f, kind, l, b, w, h
+        if rec and rec.type == "group" then
+            f, kind = groupFrames[mid], GROUP_WORD[rec.groupKind] or "Group"
+            l, b, w, h = Engine.GroupBox(mid)
+        elseif rec and rec.type == "icon" then
+            f, kind = Factory.frames[mid], "Icon"
+        elseif rec and rec.type == "bar" then
+            f, kind = barFrames[mid], BAR_WORD[rec.barKind] or "Bar"
+        end
+        if f and f:IsShown() and f:GetParent() == container and not f._adPlatePin then
+            if rec.type ~= "group" then l, b, w, h = f:GetLeft(), f:GetBottom(), f:GetWidth(), f:GetHeight() end
+            l, b, w, h = RectInUI(f, l, b, w, h)
+            if l then
+                out[#out + 1] = { id = mid, name = rec.name, kind = kind,
+                    left = l, bottom = b, width = w, height = h }
+            end
+        end
+    end
+    return out
+end
+
+-- The union of a layout's element rects (left, bottom, width, height in
+-- UIParent units), or nil while none is on screen.
+function Engine.LayoutBounds(layoutId)
+    local l, b, r, t
+    for _, e in ipairs(Engine.LayoutElementRects(layoutId)) do
+        local er, et = e.left + e.width, e.bottom + e.height
+        if not l then
+            l, b, r, t = e.left, e.bottom, er, et
+        else
+            if e.left < l then l = e.left end
+            if e.bottom < b then b = e.bottom end
+            if er > r then r = er end
+            if et > t then t = et end
+        end
+    end
+    if not l then return nil end
+    return l, b, r - l, t - b
+end
+
+-- The layout's point: the spot its container sits on and its scale grows
+-- from, as an offset from the screen's middle in UIParent units whatever it
+-- is pinned to (Store.LayoutPos counts from the pinned spot); nil for an
+-- unknown id.
+function Engine.LayoutPoint(id)
+    local lay = Store.Get(id)
+    if not (lay and lay.type == "layout") then return nil end
+    local x, y = Store.LayoutPos(lay)
+    local ax, ay = PinSpot(Store.LayoutPin(lay))
+    return x + ax, y + ay
+end
+
+-- Adds dx, dy (UIParent units) to every element's offset from the point, as
+-- the scale divides them: the point moving -dx, -dy then leaves all in place.
+-- Offsets may end fractional (a whole unit is a whole pixel at one scale only);
+-- placement snaps from the stored value. An anchored element follows its
+-- target; the spot it falls back to moves with the rest.
+local function ReRoot(lay, dx, dy)
+    local k = Store.LayoutScale(lay)
+    local ox, oy = dx / k, dy / k
+    for _, rec in ipairs(Store.MembersOf(lay)) do
+        if type(rec.pos) ~= "table" then rec.pos = {} end
+        rec.pos.x = (tonumber(rec.pos.x) or 0) + ox
+        rec.pos.y = (tonumber(rec.pos.y) or 0) + oy
+    end
+end
+
+-- Store.SetLayoutPos's rounding: whole units, nothing usable keeps the axis.
+local function WholeOr(v, keep)
+    v = tonumber(v)
+    if not v or v ~= v or v == math.huge or v == -math.huge then return keep end
+    return math.floor(v + 0.5)
+end
+
+-- Moves the point to x, y from the screen's middle (an axis given nothing
+-- keeps its value) without moving anything on screen, in whole units from the
+-- pinned spot; an axis put within half a unit of the point stays as stored,
+-- so a fraction a pin change left is never rounded away. The point stays half
+-- a container inside the screen: the container is clamped there, and a clamp
+-- would carry the layout.
+function Engine.SetLayoutPoint(id, x, y)
+    local lay = Store.Get(id)
+    if not (lay and lay.type == "layout") then return end
+    local ox, oy = Store.LayoutPos(lay)
+    local ax, ay = PinSpot(Store.LayoutPin(lay))
+    local function Target(v, a, o)
+        v = tonumber(v)
+        if not v then return o end
+        if math.abs(v - a - o) < 0.5 then return o end
+        return WholeOr(v - a, o)
+    end
+    local nx, ny = Target(x, ax, ox), Target(y, ay, oy)
+    local k = Store.LayoutScale(lay)
+    local uw, uh = UIParent:GetWidth(), UIParent:GetHeight()
+    if type(uw) == "number" and type(uh) == "number" and uw > 2 * k and uh > 2 * k then
+        -- the screen's edges, counted from the pinned spot
+        local lx, hx = math.ceil(-uw / 2 + k - ax), math.floor(uw / 2 - k - ax)
+        local ly, hy = math.ceil(-uh / 2 + k - ay), math.floor(uh / 2 - k - ay)
+        if nx ~= ox then nx = math.max(lx, math.min(hx, nx)) end
+        if ny ~= oy then ny = math.max(ly, math.min(hy, ny)) end
+    end
+    if nx == ox and ny == oy then return end
+    -- offsets first, so a rebuild the spot's write sets off reads both; an
+    -- axis that stays is not written, so its fraction is not rounded
+    ReRoot(lay, ox - nx, oy - ny)
+    Store.SetLayoutPos(lay, (nx ~= ox) and nx or nil, (ny ~= oy) and ny or nil)
+    Engine.Rebuild()
+end
+
+-- The layout's members that ride its container: placed on it, or anchored
+-- through any chain to one that is. One pinned to anything else (a game
+-- frame, another layout, the cursor, a spell's button, the layout's point)
+-- stays with that. Read off where each frame hangs now.
+local function RidesContainer(lay, container)
+    local byFrame, out, seen = {}, {}, {}
+    local members = Store.MembersOf(lay)
+    for _, rec in ipairs(members) do
+        local f = (rec.type == "group" and groupFrames[rec.id]) or (rec.type == "bar" and barFrames[rec.id])
+            or (rec.type == "icon" and Factory.frames[rec.id]) or nil
+        if f then byFrame[f] = rec end
+    end
+    local function Rides(rec, f)
+        if out[rec.id] ~= nil then return out[rec.id] end
+        if seen[rec.id] then return false end
+        seen[rec.id] = true
+        local rel
+        if f and not f._adPlatePin then
+            local _, r = f:GetPoint(1)
+            if not (issecretvalue and issecretvalue(r)) then rel = r end
+        end
+        -- one anchored to the point itself hangs on the container too
+        local onPoint = rel == container and NS.Anchor ~= nil and NS.Anchor.ResolveTarget(rec) == container
+        local rides = rel ~= nil and not onPoint
+            and (rel == container or (byFrame[rel] ~= nil and Rides(byFrame[rel], rel)))
+        out[rec.id] = rides
+        return rides
+    end
+    for f, rec in pairs(byFrame) do Rides(rec, f) end
+    return out
+end
+
+-- v as whole physical pixels of px units each; a half-pixel tie goes toward
+-- zero, so a second Center moves nothing.
+local function WholeSteps(v, px)
+    local n = math.floor(math.abs(v) / px + 0.5 - TIE)
+    return ((v < 0) and -n or n) * px
+end
+
+-- Center: the middle of what the layout shows goes to the screen's middle and
+-- the point with it (0, 0), so its scale grows from the middle you see. All
+-- of it moves by one whole number of physical pixels, so every gap holds;
+-- what rides something else stays and is left out of the middle. Nothing on
+-- screen: the point alone goes to 0, 0.
+function Engine.CenterLayout(id)
+    local lay = Store.Get(id)
+    if not (lay and lay.type == "layout") then return end
+    -- pinned, the middle is the whole unit from the pin nearest it
+    local ax, ay = PinSpot(Store.LayoutPin(lay))
+    local cx, cy = WholeOr(-ax, 0), WholeOr(-ay, 0)
+    -- A center the player set goes to the middle itself, the layout with it:
+    -- every element by the whole-pixel step nearest the point's move, so the
+    -- point lands on the middle and shifts against them by under half a pixel.
+    if Store.LayoutCenterSet and Store.LayoutCenterSet(lay) then
+        local x, y = Store.LayoutPos(lay)
+        local px = UIPx()
+        local mx, my = cx - x, cy - y
+        if px and (mx ~= 0 or my ~= 0) then
+            ReRoot(lay, WholeSteps(mx, px) - mx, WholeSteps(my, px) - my)
+        end
+        Store.SetLayoutPos(lay, cx, cy)
+        Engine.Rebuild()
+        return
+    end
+    -- read what is drawn from the current records
+    Engine.Rebuild()
+    local container = layoutFrames[id]
+    local rides = container and RidesContainer(lay, container) or {}
+    local l, b, r, t
+    for _, e in ipairs(Engine.LayoutElementRects(id)) do
+        if rides[e.id] then
+            local er, et = e.left + e.width, e.bottom + e.height
+            l, b = math.min(l or e.left, e.left), math.min(b or e.bottom, e.bottom)
+            r, t = math.max(r or er, er), math.max(t or et, et)
+        end
+    end
+    local ux, uy = UIParent:GetCenter()
+    local px = UIPx()
+    local x, y = Store.LayoutPos(lay)
+    if l and ux and uy and px then
+        -- whole physical pixels, so each snap lands the same number further on
+        local dx = WholeSteps(ux - (l + r) / 2, px)
+        local dy = WholeSteps(uy - (b + t) / 2, px)
+        -- the point moves mx, my; everything else moves dx, dy
+        local mx, my = cx - x, cy - y
+        if dx - mx ~= 0 or dy - my ~= 0 then
+            ReRoot(lay, dx - mx, dy - my)
+            -- a point already on its spot writes nothing, so tell the readers here
+            if mx == 0 and my == 0 then Store.Dirty("style", lay.id) end
+        end
+    end
+    Store.SetLayoutPos(lay, cx, cy)
+    Engine.Rebuild()
+end
+
+-- Pins the layout to a screen spot (one of Store.LAYOUT_PINS, nil for the
+-- middle) without moving it, not even what is anchored to its point: pos
+-- becomes the point's exact offset from the new spot, a fraction where that
+-- spot is no whole unit from the old one. Float dust under a millionth of a
+-- unit is dropped, so a pin and back stores the whole number it had.
+function Engine.SetLayoutPin(id, v)
+    local lay = Store.Get(id)
+    if not (lay and lay.type == "layout") then return end
+    local old, new = Store.LayoutPin(lay), nil
+    for _, p in ipairs(Store.LAYOUT_PINS) do
+        if p == v then new = p end
+    end
+    if new == old then return end
+    local ax, ay = PinSpot(old)
+    local bx, by = PinSpot(new)
+    local x, y = Store.LayoutPos(lay)
+    local function Tidy(e)
+        local n = math.floor(e + 0.5)
+        return (math.abs(e - n) < 1e-6) and n or e
+    end
+    -- the spot first, so a rebuild the pin's write sets off reads both
+    Store.SetLayoutPos(lay, Tidy(x + ax - bx), Tidy(y + ay - by), true)
+    Store.SetLayoutPin(lay, new)
+    Engine.Rebuild()
 end
 
 function Engine.SetEditMode(on)

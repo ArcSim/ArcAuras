@@ -43,27 +43,37 @@ AR.BASE = { player = "HELPFUL", target = "HARMFUL", pet = "HELPFUL" }
 -- as the real row: the real row starts at the copy's left edge.
 AR.COPY_SCALE = 0.5
 
--- Whole pixels, rounded as the engine's grid rounds them.
-function AR.Snap(v)
+-- Whole pixels, rounded as the engine's grid rounds them. k: the group's
+-- layout scale (a number or a record), whose units its rows count in.
+function AR.Snap(v, k)
     local E = NS.LayoutEngine
-    return (E and E.Snap) and E.Snap(v) or v
+    return (E and E.Snap) and E.Snap(v, k) or v
 end
 
-function AR.FloorPx(v)
+function AR.FloorPx(v, k)
     local E = NS.LayoutEngine
-    return (E and E.FloorPx) and E.FloorPx(v) or math.floor(v)
+    return (E and E.FloorPx) and E.FloorPx(v, k) or math.floor(v)
 end
 
--- A quarter of a physical pixel in UIParent's units. A centered line's start
--- is (box - shown) / 2, a half pixel whenever that is odd, and the shown
--- count is the game's: leaning by a quarter rounds a half toward the top-left,
--- as the engine floors a centered cooldown row, and leaves a whole pixel put,
--- so float noise can never split one line's icons across two pixels.
-function AR.Lean()
+-- A quarter of a physical pixel in the group's units (k as AR.Snap's). A
+-- centered line's start is (box - shown) / 2, a half pixel whenever that is
+-- odd, and the shown count is the game's: leaning by a quarter rounds a half
+-- toward the top-left, as the engine floors a centered cooldown row, and
+-- leaves a whole pixel put, so float noise can never split one line's icons
+-- across two pixels.
+function AR.Lean(k)
     local _, physH = GetPhysicalScreenSize()
     local s = UIParent and UIParent:GetEffectiveScale() or 1
     if not physH or physH <= 0 or s <= 0 then return 0 end
-    return (768 / physH) / s / 4
+    local E = NS.LayoutEngine
+    local ks = (E and E.ScaleOf) and E.ScaleOf(k) or 1
+    return (768 / physH) / s / ks / 4
+end
+
+-- The layout scale a group's rows count in (1 with no engine).
+function AR.ScaleOf(g)
+    local E = NS.LayoutEngine
+    return (E and E.ScaleOf) and E.ScaleOf(g) or 1
 end
 
 -- Every Dynamic aura group, except one showing every aura on a unit (its own
@@ -191,6 +201,7 @@ function AR.Give(p)
     p.c:Hide()
     p.c:ClearAllPoints()
     p.c:SetScale(1)
+    p.c._adFollowK = nil
     if p.stage then
         p.stage:Hide()
         p.stage:ClearAllPoints()
@@ -372,7 +383,8 @@ end
 -- box, each member's visual row and column, the steps.
 function AR.Grid(g, members)
     local w, h, sx, sy, cols, growthH, growthV = NS.DriverAuraGroups.GroupDims(g)
-    local pad = AR.Snap(math.max(0, Store.Resolve(g, "arrangement", "containerPadding") or 0))
+    local ks = AR.ScaleOf(g)
+    local pad = AR.Snap(math.max(0, Store.Resolve(g, "arrangement", "containerPadding") or 0), ks)
     local occupied, pending = {}, {}
     for _, rec in ipairs(members) do
         local gp = rec.gpos
@@ -395,7 +407,7 @@ function AR.Grid(g, members)
         cells[#cells + 1] = { rec = rec, row = row, col = col, k = k }
     end
     return { w = w, h = h, sx = sx, sy = sy, cols = cols, rows = rows, pad = pad, cells = cells,
-        right = growthH ~= "LEFT", down = growthV ~= "UP",
+        right = growthH ~= "LEFT", down = growthV ~= "UP", k = ks,
         boxW = cols * w + (cols - 1) * sx + pad * 2, boxH = rows * h + (rows - 1) * sy + pad * 2 }
 end
 
@@ -421,7 +433,7 @@ function AR.Dims(rec, grid)
     if iw > 0 then w = iw end
     if ih > 0 then h = ih end
     local sc = Rp("iconScale") or 1
-    return AR.Snap(math.max(1, math.floor(w * sc + 0.5))), AR.Snap(math.max(1, math.floor(h * sc + 0.5)))
+    return AR.Snap(math.max(1, math.floor(w * sc + 0.5)), grid.k), AR.Snap(math.max(1, math.floor(h * sc + 0.5)), grid.k)
 end
 
 -- The piece for rec in `set` (a group's pieces or its copies), kept while its
@@ -488,6 +500,9 @@ end
 -- the line in its own (half) scale. Its far end, or nil while a copy can't be
 -- made yet (made at the settle edge).
 function AR.CopyLine(rt, list, keepCopy, grid, dir, a, horizontal)
+    -- the group frame the line starts on: a copy is half its layout's scale
+    local gf = a.f
+    local E = NS.LayoutEngine
     for i = #list, 1, -1 do
         local e = list[i]
         local q
@@ -498,7 +513,11 @@ function AR.CopyLine(rt, list, keepCopy, grid, dir, a, horizontal)
             keepCopy[e.rec.id] = true
             q.cfg.iconW, q.cfg.iconH = e.w, e.h
             if AR.Send(q, e.rec) then AR.pending = true end
-            q.c:SetScale(AR.COPY_SCALE)
+            if E and E.FollowScale then
+                E.FollowScale(q.c, gf, AR.COPY_SCALE)
+            else
+                q.c:SetScale(AR.COPY_SCALE)
+            end
         end
         a = AR.Step(q, nil, e.mode, a, dir, horizontal and (e.w + grid.sx) or (e.h + grid.sy), e, grid)
     end
@@ -528,7 +547,7 @@ function AR.LayRow(rt, gf, grid, list, align, rowY, keepCopy)
         -- alone: on the middle, floored to a whole pixel, no copy (its cell's
         -- spacing and extra unit trail the icon)
         local e = list[1]
-        local x0 = AR.FloorPx((grid.boxW - e.w) / 2)
+        local x0 = AR.FloorPx((grid.boxW - e.w) / 2, grid.k)
         AR.Shape(e.p, e.w, e.h, sx, sy, "right")
         e.p.c:ClearAllPoints()
         e.p.c:SetPoint("TOPLEFT", gf, "TOPLEFT", x0, rowY)
@@ -541,7 +560,7 @@ function AR.LayRow(rt, gf, grid, list, align, rowY, keepCopy)
         local c = AR.CopyLine(rt, list, keepCopy, grid, "left",
             { f = gf, pt = "TOP", x = 0, y = rowY / AR.COPY_SCALE }, true)
         if c then
-            a = { f = c.f, pt = c.pt, x = c.x * AR.COPY_SCALE + sx / 2 - AR.Lean(), y = c.y * AR.COPY_SCALE }
+            a = { f = c.f, pt = c.pt, x = c.x * AR.COPY_SCALE + sx / 2 - AR.Lean(grid.k), y = c.y * AR.COPY_SCALE }
         else
             a = { f = gf, pt = "TOP", x = 0, y = rowY }
         end
@@ -574,7 +593,7 @@ function AR.LayCol(rt, gf, grid, list, align, colX, keepCopy)
     elseif n == 1 then
         -- alone: on the middle, floored to a whole pixel, no copy
         local e = list[1]
-        local y0 = AR.FloorPx((grid.boxH - e.h) / 2)
+        local y0 = AR.FloorPx((grid.boxH - e.h) / 2, grid.k)
         AR.Shape(e.p, e.w, e.h, sx, sy, "down")
         e.p.c:ClearAllPoints()
         e.p.c:SetPoint("TOPLEFT", gf, "TOPLEFT", colX, -y0)
@@ -587,7 +606,7 @@ function AR.LayCol(rt, gf, grid, list, align, colX, keepCopy)
         local c = AR.CopyLine(rt, list, keepCopy, grid, "up",
             { f = gf, pt = "LEFT", x = colX / AR.COPY_SCALE, y = 0 }, false)
         if c then
-            a = { f = c.f, pt = c.pt, x = c.x * AR.COPY_SCALE, y = c.y * AR.COPY_SCALE - sy / 2 + AR.Lean() }
+            a = { f = c.f, pt = c.pt, x = c.x * AR.COPY_SCALE, y = c.y * AR.COPY_SCALE - sy / 2 + AR.Lean(grid.k) }
         else
             a = { f = gf, pt = "LEFT", x = colX, y = 0 }
         end
@@ -732,7 +751,7 @@ function AR.Mirror(g, rt, gf)
         end
     end
     for _, q in pairs(rt.copies) do
-        G.MirrorOnto(q.c, gf, on)
+        G.MirrorOnto(q.c, gf, on, AR.COPY_SCALE)
         q.c:SetAlpha(0)
     end
     for _, p in pairs(rt.flows or {}) do G.MirrorOnto(p.c, gf, on) end
@@ -749,7 +768,7 @@ end
 function AR.Place(g, gf, editMode)
     local G = NS.DriverAuraGroups
     local grid = AR.Grid(g, AR.Members(g))
-    gf:SetSize(math.max(grid.boxW, AR.Snap(4)), math.max(grid.boxH, AR.Snap(4)))
+    gf:SetSize(math.max(grid.boxW, AR.Snap(4, grid.k)), math.max(grid.boxH, AR.Snap(4, grid.k)))
     AR.placed[g.id] = gf
     local rt = AR.runtimes[g.id] or { pieces = {}, copies = {}, lanes = {}, flows = {} }
     rt.lanes = rt.lanes or {}
@@ -971,7 +990,7 @@ function AR.PinFlow(p, prev, gf, grid, axis, align)
         if prev then
             c:SetPoint(v .. near, prev.c, v .. far, grid.right and -E or E, 0)
         else
-            local y = (v == "TOP" and -pad) or (v == "BOTTOM" and pad) or AR.Lean()
+            local y = (v == "TOP" and -pad) or (v == "BOTTOM" and pad) or AR.Lean(grid.k)
             c:SetPoint(v .. near, gf, v .. near, grid.right and pad or -pad, y)
         end
         return
@@ -981,7 +1000,7 @@ function AR.PinFlow(p, prev, gf, grid, axis, align)
     if prev then
         c:SetPoint(near .. hp, prev.c, far .. hp, 0, grid.down and E or -E)
     else
-        local x = (hp == "LEFT" and pad) or (hp == "RIGHT" and -pad) or -AR.Lean()
+        local x = (hp == "LEFT" and pad) or (hp == "RIGHT" and -pad) or -AR.Lean(grid.k)
         c:SetPoint(near .. hp, gf, near .. hp, x, grid.down and -pad or pad)
     end
 end
@@ -1101,7 +1120,7 @@ function AR.PackTotems(gid)
     elseif t.align == "right" then
         x = grid.boxW - grid.pad - span
     else
-        x = AR.FloorPx((grid.boxW - span) / 2)
+        x = AR.FloorPx((grid.boxW - span) / 2, grid.k)
     end
     for _, e in ipairs(up) do
         e.s:ClearAllPoints()

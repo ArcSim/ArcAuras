@@ -179,9 +179,10 @@ function UA.Plan(g, cfg)
     local per = math.max(1, math.min(vertical and cfg.rows or cfg.cols, cap))
     local lines = math.ceil(cap / per)
     local blocks = cfg.both and 2 or 1
-    -- whole pixels, as the slots and gaps are, so the box is too
+    -- whole pixels, as the slots and gaps are, so the box is too (on the
+    -- group's layout scale)
     local E = NS.LayoutEngine
-    local Snap = (E and E.Snap) or function(v) return v end
+    local Snap = function(v) return (E and E.Snap) and E.Snap(v, g) or v end
     local pad = Store.Resolve(g, "arrangement", "containerPadding") or 0
     if pad < 0 then pad = 0 end
     pad = Snap(pad)

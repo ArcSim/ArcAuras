@@ -308,6 +308,11 @@ Schema.CUSTOM_ACTION_LABELS = { start = "Start the timer", stop = "Stop the time
 Schema.CUSTOM_START_MODES = { "restart", "extend", "idle" }
 Schema.CUSTOM_START_MODE_LABELS = { restart = "Restart it", extend = "Extend it by the seconds",
     idle = "Only if it is not running" }
+-- A set duration on an icon also ends on a cast while it runs (a toggle); a Custom
+-- item's start keeps the three above, its own Stop action ends it.
+Schema.OVERLAY_RECAST_MODES = { "restart", "extend", "idle", "end" }
+Schema.OVERLAY_RECAST_LABELS = { restart = "Restart it", extend = "Extend it by the seconds",
+    idle = "Only if it is not running", ["end"] = "End it" }
 Schema.CUSTOM_COMBAT = { "any", "in", "out" }
 Schema.CUSTOM_COMBAT_LABELS = { any = "In or out of combat", ["in"] = "In combat", out = "Out of combat" }
 Schema.CUSTOM_TIMER_STATES = { "any", "running", "idle" }
@@ -732,6 +737,10 @@ Schema.icon = {
         -- On: duration, stack and label texts stay bright while the icon dims.
         -- Off: they follow the state alpha.
         preserveDurationText = { d = true, t = "bool", label = "Keep texts bright while dimmed" },
+        -- On: the cooldown swipe and its edge keep their own opacity while the
+        -- icon dims; a hidden icon still hides them.
+        preserveSwipe = { adv = "text", d = false, t = "bool", label = "Keep the swipe bright while dimmed",
+            desc = "The cooldown swipe keeps its own opacity while the icon dims, so only the art fades." },
         procOverride = { d = false, t = "bool", kinds = SP, label = "Proc overrides dim" },
         -- With the ready alpha at 0, a reactive ability shows only while
         -- usable. Out of range counts as usable; the range tint marks it.
@@ -1480,9 +1489,9 @@ Schema.icon = {
         anchorDstPoint = { d = "BOTTOM", t = "enum", values = POINTS,
             label = "Target point",
             dep = { { field = "anchorEnabled" }, { field = "anchorTargetKind", notValue = "mouse" } } },
-        anchorOffsetX = { d = 0, t = "int", min = -400, max = 400,
+        anchorOffsetX = { d = 0, t = "int", min = -2000, max = 2000,
             label = "Anchor offset X", dep = { field = "anchorEnabled" } },
-        anchorOffsetY = { d = 0, t = "int", min = -400, max = 400,
+        anchorOffsetY = { d = 0, t = "int", min = -2000, max = 2000,
             label = "Anchor offset Y", dep = { field = "anchorEnabled" } },
         anchorMatchWidth = { d = false, t = "bool", hidden = true, label = "Match target width" },
         anchorMatchWidthAdjust = { d = 0, t = "int", min = -200, max = 200, hidden = true,
@@ -1567,6 +1576,9 @@ Schema.icon = {
         -- active look keeps its texts bright. A spell icon's aura phase follows
         -- the spell's own states.preserveDurationText instead.
         activePreserveText = { d = true, t = "bool", kinds = AU, label = "Keep texts bright while active" },
+        -- The twin of states.preserveSwipe on the live button's own swipe.
+        activePreserveSwipe = { d = false, t = "bool", kinds = AU, label = "Keep the swipe bright while active",
+            desc = "The swipe keeps its own opacity while Active opacity dims the icon, so only the art fades." },
         -- Custom texts out of the active dim, whatever Keep texts bright says
         -- (a hidden active look still hides them).
         activeLabelsBright = { d = false, t = "bool", kinds = AU, label = "Custom texts keep full opacity",
@@ -2496,9 +2508,9 @@ Schema.iconGroup = {
         anchorDstPoint = { d = "BOTTOM", t = "enum", values = POINTS,
             label = "Target point",
             dep = { { field = "anchorEnabled" }, { field = "anchorTargetKind", notValue = "mouse" } } },
-        anchorOffsetX = { d = 0, t = "int", min = -400, max = 400,
+        anchorOffsetX = { d = 0, t = "int", min = -2000, max = 2000,
             label = "Anchor offset X", dep = { field = "anchorEnabled" } },
-        anchorOffsetY = { d = 0, t = "int", min = -400, max = 400,
+        anchorOffsetY = { d = 0, t = "int", min = -2000, max = 2000,
             label = "Anchor offset Y", dep = { field = "anchorEnabled" } },
         anchorMatchWidth = { d = false, t = "bool", label = "Match target width",
             dep = { { field = "anchorEnabled" }, { field = "anchorTargetKind", notValue = "mouse" } } },
@@ -2582,7 +2594,7 @@ Schema.TYPE_FULL_BLOCKS = {
     { tab = "Icon", title = "Swipe", section = "auraSwipe",
         fields = { "swipeShow", "swipeColor", "swipeReverse", "swipeEdge", "edgeColor", "edgeScale", "swipeBling" } },
     { tab = "Icon", title = "While the aura is up", section = "auraActive",
-        fields = { "activeAlpha", "activeDesaturate", "activeTintEnabled", "activeTintColor", "activePreserveText" } },
+        fields = { "activeAlpha", "activeDesaturate", "activeTintEnabled", "activeTintColor", "activePreserveText", "activePreserveSwipe" } },
     { tab = "Glows", glows = true, section = "auraActive" },
     { tab = "Text", title = "Duration text", section = "text",
         fields = { "durationText", "durationRounding", "durationFont", "durationSize", "durationColor",
@@ -2828,8 +2840,12 @@ local READOUT_LABELS = { value = "Value", abbreviated = "Short value (5.2k)", va
     percent = "Percent", pctnum = "Percent, no sign", none = "Nothing" }
 
 -- A deck bar's fill wears its procs' colours while Color by procs used is on,
--- so its own Fill color shows only with that off (Bars\AD_SpecialBar.lua).
+-- so its own Fill color shows only with that off (Bars\AD_SpecialBar.lua);
+-- a resource bar's only while Color by is Fill color, else it is a dead row.
 Schema.DeckFillColorShows = function(rec)
+    if rec and rec.barKind == "resource" then
+        return NS.Store ~= nil and NS.Store.Resolve(rec, "resource", "usePowerColor") == false
+    end
     if not (rec and rec.barKind == "special") then return true end
     return NS.Store ~= nil and NS.Store.Resolve(rec, "deck", "stateFill") == false
 end
@@ -4242,9 +4258,9 @@ Schema.bar = {
         anchorDstPoint = { d = "BOTTOM", t = "enum", values = BAR_ANCHORS,
             label = "Target point",
             dep = { { field = "anchorEnabled" }, { field = "anchorTargetKind", notValue = "mouse" } } },
-        anchorOffsetX = { d = 0, t = "int", min = -500, max = 500,
+        anchorOffsetX = { d = 0, t = "int", min = -2000, max = 2000,
             label = "Anchor offset X", dep = { field = "anchorEnabled" } },
-        anchorOffsetY = { d = 0, t = "int", min = -500, max = 500,
+        anchorOffsetY = { d = 0, t = "int", min = -2000, max = 2000,
             label = "Anchor offset Y", dep = { field = "anchorEnabled" } },
         -- A standing bar matches the target's height, its long side. Not on a
         -- nameplate: its size can be secret, and a resize would lay the bar out

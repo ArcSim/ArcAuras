@@ -816,7 +816,13 @@ local function ApplySwipeAlpha(f)
     -- The shown alpha (with the editing floor), not the raw state value.
     local a = f._adShownAlpha or f._adStateAlpha or 1
     local T = f._adTimed
+    -- kept bright: its own opacity whenever the icon shows at all
+    local bright = f._adSwipeBright
     local function A(own)
+        if bright then
+            if T then return TimedValue(f, T.late > 0 and own or 0, T.before > 0 and own or 0) end
+            return a > 0 and own or 0
+        end
         if T then return TimedValue(f, own * T.late, own * T.before) end
         return own * a
     end
@@ -1480,6 +1486,10 @@ local function ApplyAuraButtonDispel(b, rec, on, alpha)
     local edges = b._adDispelEdges
     -- the textures the engine holds now: the four strips, or a shaped icon's ring
     local held = b._adDispelHeld
+    -- Once handed over the engine owns each texture's own alpha, so the
+    -- icon's opacity (a hidden active look) goes on their frame.
+    local dhost = b._adDispelHost
+    if dhost then dhost:SetAlpha(alpha or 1) end
     if not (on and canEngine) then
         if held and b._adDispelSig then
             for _, t in ipairs(held) do
@@ -1496,21 +1506,20 @@ local function ApplyAuraButtonDispel(b, rec, on, alpha)
     if R("appearance", "dispelBorderStyle") == "game" and styles.Border ~= nil then
         local art = b._adDispelArt
         if not art then
-            local host = b._adEdgeHost or b.TextOverlay or b
+            local host = dhost or b._adEdgeHost or b.TextOverlay or b
             art = host:CreateTexture(nil, "OVERLAY", nil, 6)
             b._adDispelArt = art
         end
         local bw, bh = b:GetSize()
         if type(bw) ~= "number" or (issecretvalue and issecretvalue(bw)) then bw = 36 end
         if type(bh) ~= "number" or (issecretvalue and issecretvalue(bh)) then bh = bw end
-        local grow = math.min(bw, bh) * Factory.PANDEMIC_GROW
-        if PixelUtil and PixelUtil.GetNearestPixelSize then
-            grow = PixelUtil.GetNearestPixelSize(grow, UIParent:GetEffectiveScale(), 0)
-        end
+        -- on the live button's grid (it carries its layout's scale); a preview's
+        -- stand-in keeps the live one's (_adPxRef)
+        local grow = SkinSnap(b._adPxRef or b, math.min(bw, bh) * Factory.PANDEMIC_GROW, 0)
         art:ClearAllPoints()
         art:SetPoint("TOPLEFT", b, "TOPLEFT", -grow, grow)
         art:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", grow, -grow)
-        art:SetAlpha(alpha or 1)
+        art:SetAlpha(dhost and 1 or (alpha or 1))
         local h = false
         if NS.DriverAura and NS.DriverAura.ShapeOf then
             local _, hh = NS.DriverAura.ShapeOf(rec.driver)
@@ -1533,7 +1542,7 @@ local function ApplyAuraButtonDispel(b, rec, on, alpha)
     end
     if not edges then
         -- the border's layer: under the button's glows like the plain border
-        local host = b._adEdgeHost or b.TextOverlay or b
+        local host = dhost or b._adEdgeHost or b.TextOverlay or b
         edges = {}
         for _, k in ipairs(BORDER_KEYS) do
             local t = host:CreateTexture(nil, "OVERLAY", nil, 6)
@@ -1547,7 +1556,7 @@ local function ApplyAuraButtonDispel(b, rec, on, alpha)
     local key = Factory.MaskOf(rec)
     local list = key and { edges._adRing }
         or { edges.top, edges.bottom, edges.left, edges.right }
-    for _, t in ipairs(list) do t:SetAlpha(alpha or 1) end
+    for _, t in ipairs(list) do t:SetAlpha(dhost and 1 or (alpha or 1)) end
     local harmful = false
     if NS.DriverAura and NS.DriverAura.ShapeOf then
         local _, h = NS.DriverAura.ShapeOf(rec.driver)
@@ -2963,11 +2972,9 @@ function Factory.StyleAuraButton(b, rec, px, opts)
                 ix = R("auraSwipe", "swipeInset") or 0
                 iy = ix
             end
-            ix, iy = ix * kS, iy * kS
-            if PixelUtil and PixelUtil.GetNearestPixelSize then
-                local es = UIParent:GetEffectiveScale()
-                ix, iy = PixelUtil.GetNearestPixelSize(ix, es, 0), PixelUtil.GetNearestPixelSize(iy, es, 0)
-            end
+            -- on the live button's grid (it carries its layout's scale)
+            local ref = b._adPxRef or b
+            ix, iy = SkinSnap(ref, ix * kS, 0), SkinSnap(ref, iy * kS, 0)
             if ix ~= 0 or iy ~= 0 then
                 sw:ClearAllPoints()
                 sw:SetPoint("TOPLEFT", b, "TOPLEFT", ix, -iy)
@@ -2983,13 +2990,18 @@ function Factory.StyleAuraButton(b, rec, px, opts)
         sw:SetDrawEdge(R("auraSwipe", "swipeEdge") == true and not forceHide
             and (mask == nil or Factory.SHAPE_EDGE[mask] == true))
         sw:SetDrawBling(R("auraSwipe", "swipeBling") == true and not forceHide)
-        sw:SetSwipeColor(sc[1], sc[2], sc[3], (sc[4] or 0.8) * aA)
+        -- the swipe out of the active dim, as the texts can be (a hidden
+        -- active look still hides it); a spell's aura phase asks its States
+        local swKeep = (rec.kind == "aura") and R("auraActive", "activePreserveSwipe")
+            or R("states", "preserveSwipe")
+        local swA = (aA > 0 and swKeep == true) and 1 or aA
+        sw:SetSwipeColor(sc[1], sc[2], sc[3], (sc[4] or 0.8) * swA)
         -- Edge colour and length as on the cooldown swipe (template art, no
-        -- SetEdgeTexture); its alpha follows Active alpha.
+        -- SetEdgeTexture); its alpha follows the swipe's.
         if sw.SetEdgeScale then sw:SetEdgeScale(R("auraSwipe", "edgeScale") or 1.8) end
         if sw.SetEdgeColor then
             local ec = R("auraSwipe", "edgeColor") or { 1, 1, 1, 1 }
-            sw:SetEdgeColor(ec[1], ec[2], ec[3], (ec[4] or 1) * aA)
+            sw:SetEdgeColor(ec[1], ec[2], ec[3], (ec[4] or 1) * swA)
         end
         -- The hide goes last: handing over a formatter shows the numbers, and
         -- an aura button gets no per-feed hide after it.
@@ -4103,12 +4115,11 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
     elseif gtype == "barattack" then
         GlowBarAttack(host, W, H, r, g, bl, a)
     elseif gtype == "pixel" then
-        -- Whole physical pixels; the buttons scale with UIParent.
-        local tpx, bpx = th, th + 1
-        if PixelUtil and PixelUtil.GetNearestPixelSize then
-            tpx = PixelUtil.GetNearestPixelSize(th, UIParent:GetEffectiveScale(), 1)
-            bpx = tpx + PixelUtil.GetNearestPixelSize(1, UIParent:GetEffectiveScale(), 1)
-        end
+        -- Whole physical pixels on the live button's grid, which carries its
+        -- layout's scale (a preview's stand-in keeps the live one's).
+        local ref = b._adPxRef or b
+        local tpx = SkinSnap(ref, th, 1)
+        local bpx = tpx + SkinSnap(ref, 1, 1)
         -- the backing dims with the aura's opacity, as the cooldown lanes' does with the icon
         GlowPixel(host, W, H, lines, tpx, 1 / speed, r, g, bl, a, dash,
             backing and { w = bpx, a = 0.8 * (alphaMul or 1) } or nil)
@@ -4326,6 +4337,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
                 or (R("auraMissing", "missingAlpha") or 1)
             desat = R("auraMissing", "missingDesaturate") ~= false
         end
+        f._adSwipeBright = nil
         ApplyStateAlpha(f, a, R("auraMissing", "missingPreserveText") ~= false)
         f.icon:SetDesaturated(desat)
         Factory.BorderGrey(f, rec, desat)
@@ -4432,6 +4444,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     SetTimed(f, T)
     -- preserveDurationText (on by default) keeps the texts out of the dim.
     f._adLabelsBright = R("states", "labelsFullOpacity") == true
+    f._adSwipeBright = R("states", "preserveSwipe") == true
     ApplyStateAlpha(f, f._adStateAlpha, keepText)
     local desatOK = not keepBright or R("appearance", "keepBrightAllowDesat") == true
     f.icon:SetDesaturated(desatOK and f._adDesatState

@@ -23,6 +23,14 @@ local allContainers = {}  -- { {unit=, frame=} } for target-swap refresh
 local pendingCreate = {}  -- [iconId] = true, deferred while auras are secret
 local combatQueue = {}    -- [entry] = parked flag, filter edits queued in combat
 local loadWindowOver = false
+
+-- A frame of ours born on UIParent (a stage, a container) takes the holder's
+-- layout scale (Engine.FollowScale; written only on a change).
+local function FollowScale(f, holder)
+    local E = NS.LayoutEngine
+    if E and E.FollowScale and f and holder then E.FollowScale(f, holder) end
+end
+
 -- For the combat-only glows. InCombatLockdown is still false while
 -- PLAYER_REGEN_DISABLED runs, so the combat events carry it.
 local inCombat = InCombatLockdown() and true or false
@@ -126,10 +134,40 @@ local function TwoUnits(d)
 end
 Driver.TwoUnits = TwoUnits
 
+-- Several units (driver.units, in order, the first also driver.unit): one
+-- button per unit with the icon's aura type, each a RISE over the next, so the
+-- first unit that has the aura covers the rest; presence is never read.
+local function UnitList(d)
+    if type(d) ~= "table" or type(d.units) ~= "table" then return nil end
+    local out, seen = {}, {}
+    for _, u in ipairs(d.units) do
+        if AURA_UNITS[u] and not seen[u] then
+            seen[u] = true
+            out[#out + 1] = u
+        end
+    end
+    return #out >= 2 and out or nil
+end
+Driver.UnitList = UnitList
+
+-- more than one button: you, then your target, or several units
+local function MultiUnit(d)
+    return TwoUnits(d) or UnitList(d) ~= nil
+end
+Driver.MultiUnit = MultiUnit
+
 local function LanesFor(d)
     local unit, harmful = LaneOf(d)
     if TwoUnits(d) then
         return { { unit = "player", harmful = false, rise = RISE }, { unit = "target", harmful = harmful } }
+    end
+    local list = UnitList(d)
+    if list then
+        local out = {}
+        for i, u in ipairs(list) do
+            out[i] = { unit = u, harmful = harmful, rise = (#list - i) * RISE }
+        end
+        return out
     end
     return { { unit = unit, harmful = harmful } }
 end
@@ -248,9 +286,9 @@ function Driver.GlowGateOK(rec)
 end
 
 -- Show only when little time is left: an aura icon outside a Dynamic group,
--- on one unit (a two-unit icon's ladder has no rung for it).
+-- on one unit (a several-unit icon's ladder has no rung for it).
 function Driver.TimeGateOK(rec)
-    return FB_OK and Driver.GlowLaneOK(rec) and not TwoUnits(rec.driver)
+    return FB_OK and Driver.GlowLaneOK(rec) and not MultiUnit(rec.driver)
 end
 
 -- The share of time left the live look shows under, or nil: off, or seconds
@@ -396,10 +434,14 @@ function Driver.OverlayOn(rec)
     return type(ov) == "table" and ov.on == true
 end
 
--- How far the holder's texts and glows sit up to stay over a two-unit icon's top button.
+-- How far the holder's texts and glows sit up to stay over a several-unit icon's top button.
 function Driver.Rise(rec)
     if not IS_121 then return 0 end
-    return TwoUnits(ShapeFor(rec)) and RISE or 0
+    local top = 0
+    for _, l in ipairs(LanesFor(ShapeFor(rec))) do
+        if (l.rise or 0) > top then top = l.rise end
+    end
+    return top
 end
 
 -- True when every tracked id is never-secret, the one case a spell-ID filter
@@ -538,6 +580,13 @@ local function WireButton(btn)
     edge:SetAllPoints()
     edge:SetFrameLevel(swipe:GetFrameLevel() + S.edge - S.swipe)
     btn._adEdgeHost = edge
+    -- The dispel-type border's own frame on the border's rung: a texture
+    -- handed to the engine has its alpha taken over, so the icon's opacity
+    -- rides this frame instead (Factory ApplyAuraButtonDispel).
+    local dispel = CreateFrame("Frame", nil, edge)
+    dispel:SetAllPoints()
+    dispel:SetFrameLevel(edge:GetFrameLevel())
+    btn._adDispelHost = dispel
 
     local overlay = CreateFrame("Frame", nil, btn)
     overlay:SetAllPoints()
@@ -628,6 +677,9 @@ local function AnchorStage(entry)
     st:SetPoint("BOTTOMRIGHT", holder, "BOTTOMRIGHT", 0, 0)
     st:SetFrameStrata(holder:GetFrameStrata())
     st:SetFrameLevel(holder:GetFrameLevel())
+    -- born on UIParent: the holder's layout scale, so the button's texts and
+    -- edges count in the holder's units
+    FollowScale(st, holder)
     return true
 end
 
@@ -702,6 +754,7 @@ local function EnsureGlowSlots(iconId, entry, startParked)
             local c = CreateIconContainer(lane.unit)
             if c then
                 c:SetAlpha(0)
+                FollowScale(c, entry.holder)
                 local key = "adglow" .. slot .. "_" .. tostring(iconId) .. "_" .. lane.unit
                     .. (lane.harmful and "_h" or "_b") .. "_g" .. (entry.gen or 0)
                 local ids = (startParked or not gids) and { [0] = true } or gids
@@ -754,6 +807,8 @@ local function EnsureSlots(iconId, rec, startParked)
     for _, lane in ipairs(LanesFor(d)) do
         local c = CreateIconContainer(lane.unit, stage)
         if c then
+            -- in a stage it rides the stage's scale; on UIParent it takes its own
+            if not stage then FollowScale(c, entry.holder) end
             -- generation-suffixed key: slots can never be removed; a rewire
             -- parks the old keys and adds fresh ones
             local key = "ad" .. tostring(iconId) .. "_" .. lane.unit
@@ -951,6 +1006,7 @@ local function RestyleEntry(entry)
         local b = sub.frame
         if b then
             if IsAccessible(b) then
+                if not sub.inStage then FollowScale(sub.container, entry.holder) end
                 AnchorButton(b, entry.holder, (entry.lift or 0) + (sub.rise or 0))
                 Factory.StyleAuraButton(b, entry.rec, px, opts)
             else
@@ -963,6 +1019,7 @@ local function RestyleEntry(entry)
         local b = g.frame
         if b then
             if IsAccessible(b) then
+                FollowScale(g.container, entry.holder)
                 AnchorButton(b, entry.holder, (entry.lift or 0) + (g.rise or 0))
                 Factory.StyleAuraGlowButton(b, entry.rec, px, GlowOpts(entry, opts, g))
             else

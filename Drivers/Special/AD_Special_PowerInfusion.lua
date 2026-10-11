@@ -5,6 +5,7 @@ local ADDON, NS = ...
 if NS.IsForever == true then return end
 local SP = NS.Special
 if not SP then return end
+local Tr = SP.Tr
 
 local PI_SPELL = 10060
 local SETTLE_EVENTS = { "PLAYER_REGEN_ENABLED", "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "ENCOUNTER_END" }
@@ -119,5 +120,8 @@ SP.Register({
     labels = {},
     stack = "",
     Read = Read, SyncSound = PI.SyncSound, SetSound = PI.SetSound, SoundState = PI.SoundState,
-    Status = function() return soundSig and ("sound registered") or (pendingSound and "sound waiting for a quiet moment" or "no sound") end,
+    Status = function()
+        if soundSig then return Tr("sound registered") end
+        return pendingSound and Tr("sound waiting for a quiet moment") or Tr("no sound")
+    end,
 })

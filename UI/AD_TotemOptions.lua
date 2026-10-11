@@ -38,8 +38,12 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
         end
     end
     local spellVis, slotVis, barVis = Shows("spell"), Shows("slot"), Shows("bar")
+    -- an element's English word (a key), or the slot's number where the
+    -- driver names none, translated already (raw = true)
     local function Element(slot)
-        return (DT and DT.ELEMENTS and DT.ELEMENTS[slot]) or ("Slot " .. tostring(slot))
+        local w = DT and DT.ELEMENTS and DT.ELEMENTS[slot]
+        if w then return w, false end
+        return AT.Tr("Slot %d"):format(tonumber(slot) or 1), true
     end
 
     local follow = AT.RowDropdown(pg, owner, "Follow",
@@ -116,7 +120,10 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
         end,
         function()
             local out = {}
-            for _, s in ipairs(BAR_ORDER) do out[#out + 1] = { value = s, text = Element(s) } end
+            for _, s in ipairs(BAR_ORDER) do
+                local w, raw = Element(s)
+                out[#out + 1] = { value = s, text = w, raw = raw or nil }
+            end
             return out
         end,
         barVis)
@@ -135,17 +142,21 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
         local r = Rec()
         if not (r and DT) then return end
         local slot = r.driver.slot or 1
-        local el = Element(slot)
+        local el, elRaw = Element(slot)
         local text
+        local Tr = NS.AT.Tr
+        local elWord = elRaw and el or Tr(el)
+        local elLow = elRaw and el or Tr(el:lower())
+        -- the element's word mid-line is a key of its own, lower case
         if not DT.BarAction(slot) then
-            text = "Your totem bar is not up yet: it comes with your first totem."
+            text = Tr("Your totem bar is not up yet: it comes with your first totem.")
         else
             local sid = DT.BarPick(slot)
             if sid then
-                text = ("Shows %s, your totem bar's %s pick, while no %s totem is down."):format(
-                    DT.SpellName(sid) or "that totem", el, el:lower()) -- raw-id: the totem bar slot's own spell
+                text = Tr("Shows %s, your totem bar's %s pick, while no %s totem is down."):format(
+                    DT.SpellName(sid) or Tr("that totem"), elWord, elLow) -- raw-id: the totem bar slot's own spell
             else
-                text = ("Your totem bar has no %s totem picked yet: pick one in its flyout."):format(el)
+                text = Tr("Your totem bar has no %s totem picked yet: pick one in its flyout."):format(elWord)
             end
         end
         barFS:SetText(text)
@@ -179,7 +190,7 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
     local capturing = false
     local function KeyWords(r)
         local k = r and r.driver.key
-        if type(k) ~= "string" or k == "" then return "Not set" end
+        if type(k) ~= "string" or k == "" then return NS.AT.Tr("Not set") end
         return (GetBindingText and GetBindingText(k)) or k
     end
     local function Stop()
@@ -199,11 +210,11 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
         end
         -- a binding is set out of combat only
         if InCombatLockdown() then
-            kb.fs:SetText("Leave combat first")
+            kb.fs:SetText(NS.AT.Tr("Leave combat first"))
             return
         end
         capturing = true
-        kb.fs:SetText("Press a key...")
+        kb.fs:SetText(NS.AT.Tr("Press a key..."))
         kb:EnableKeyboard(true)
         kb:SetPropagateKeyboardInput(false)
         kb:SetScript("OnKeyDown", function(_, key)

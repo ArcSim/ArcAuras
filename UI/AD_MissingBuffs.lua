@@ -6,6 +6,13 @@ local ADDON, NS = ...
 local MB = {}
 NS.MissingBuffs = MB
 
+-- the client's words for the addon's own text (NS.AT read when drawn)
+local function Tr(s)
+    local AT = NS.AT
+    if AT and AT.Tr then return AT.Tr(s) end
+    return s
+end
+
 MB.SECTIONS = {
     { key = "raid", text = "RAID BUFFS" },
     { key = "class", text = "YOUR CLASS" },
@@ -16,18 +23,23 @@ MB.SECTIONS = {
 -- class), the spells that stand for it on this client, and specs (retail)
 -- when it is one spec's. expand: every spell named as one of these joins too,
 -- with the same icon ("name": any icon), so other ranks and versions count.
+-- nameSpell: the spell (or spells) whose game name another language shows for
+-- the words; words of our own (Flask, Food) have none.
 MB.RETAIL = {
-    { key = "shout", name = "Battle Shout", sect = "raid", ids = { 6673 } },
-    { key = "intellect", name = "Arcane Intellect", sect = "raid", ids = { 1459 } },
-    { key = "fortitude", name = "Power Word: Fortitude", sect = "raid", ids = { 21562 } },
-    { key = "mark", name = "Mark of the Wild", sect = "raid", ids = { 1126 } },
+    { key = "shout", name = "Battle Shout", nameSpell = 6673, sect = "raid", ids = { 6673 } },
+    { key = "intellect", name = "Arcane Intellect", nameSpell = 1459, sect = "raid", ids = { 1459 } },
+    { key = "fortitude", name = "Power Word: Fortitude", nameSpell = 21562, sect = "raid", ids = { 21562 } },
+    { key = "mark", name = "Mark of the Wild", nameSpell = 1126, sect = "raid", ids = { 1126 } },
     -- one buff ID per class, all one name
-    { key = "bronze", name = "Blessing of the Bronze", sect = "raid", ids = { 381748, 381732, 381758 }, expand = true },
-    { key = "skyfury", name = "Skyfury", sect = "raid", ids = { 462854 } },
+    { key = "bronze", name = "Blessing of the Bronze", nameSpell = 381748, sect = "raid", ids = { 381748, 381732, 381758 },
+      expand = true },
+    { key = "skyfury", name = "Skyfury", nameSpell = 462854, sect = "raid", ids = { 462854 } },
     { key = "lethal", name = "Lethal Poison", sect = "class", class = "ROGUE", ids = { 315584, 2823, 8679, 381664 } },
     { key = "nonlethal", name = "Non-Lethal Poison", sect = "class", class = "ROGUE", ids = { 3408, 5761, 381637 } },
-    { key = "shield", name = "Lightning or Water Shield", sect = "class", class = "SHAMAN", ids = { 192106, 52127 } },
-    { key = "shadowform", name = "Shadowform", sect = "class", class = "PRIEST", specs = { 258 }, ids = { 232698 } },
+    { key = "shield", name = "Lightning or Water Shield", nameSpell = { 192106, 52127 }, sect = "class", class = "SHAMAN",
+      ids = { 192106, 52127 } },
+    { key = "shadowform", name = "Shadowform", nameSpell = 232698, sect = "class", class = "PRIEST", specs = { 258 },
+      ids = { 232698 } },
     { key = "paladinaura", name = "Paladin Aura", sect = "class", class = "PALADIN", ids = { 465, 317920, 32223 } },
     { key = "flask", name = "Flask", sect = "consumable", ids = { 1235057, 1235108, 1235110, 1235111 }, expand = true },
     { key = "rune", name = "Augment Rune", sect = "consumable", ids = { 1264426, 1295329, 1234969, 1242347, 453250 } },
@@ -35,24 +47,29 @@ MB.RETAIL = {
 }
 MB.FOREVER = {
     { key = "fortitude", name = "Fortitude", sect = "raid", ids = { 1243, 21562 }, expand = true },
-    { key = "intellect", name = "Arcane Intellect", sect = "raid", ids = { 1459, 23028 }, expand = true },
-    { key = "mark", name = "Mark of the Wild", sect = "raid", ids = { 1126, 21849 }, expand = true },
-    { key = "shout", name = "Battle Shout", sect = "raid", ids = { 6673 }, expand = true },
-    { key = "spirit", name = "Divine Spirit", sect = "raid", ids = { 14752, 27681 }, expand = true },
-    { key = "shadowprot", name = "Shadow Protection", sect = "raid", ids = { 976, 27683 }, expand = true },
-    { key = "kings", name = "Blessing of Kings", sect = "raid", ids = { 20217, 25898 }, expand = true },
-    { key = "might", name = "Blessing of Might", sect = "raid", ids = { 19740, 25782 }, expand = true },
-    { key = "wisdom", name = "Blessing of Wisdom", sect = "raid", ids = { 19742, 25894 }, expand = true },
-    { key = "salvation", name = "Blessing of Salvation", sect = "raid", ids = { 1038, 25895 }, expand = true },
-    { key = "innerfire", name = "Inner Fire", sect = "class", class = "PRIEST", ids = { 588 }, expand = true },
-    { key = "magearmor", name = "Mage Armor", sect = "class", class = "MAGE", ids = { 168, 7302, 6117 }, expand = true },
-    { key = "demonarmor", name = "Demon Armor", sect = "class", class = "WARLOCK", ids = { 687, 706 }, expand = true },
-    { key = "lshield", name = "Lightning Shield", sect = "class", class = "SHAMAN", ids = { 324 }, expand = true },
+    { key = "intellect", name = "Arcane Intellect", nameSpell = 1459, sect = "raid", ids = { 1459, 23028 }, expand = true },
+    { key = "mark", name = "Mark of the Wild", nameSpell = 1126, sect = "raid", ids = { 1126, 21849 }, expand = true },
+    { key = "shout", name = "Battle Shout", nameSpell = 6673, sect = "raid", ids = { 6673 }, expand = true },
+    { key = "spirit", name = "Divine Spirit", nameSpell = 14752, sect = "raid", ids = { 14752, 27681 }, expand = true },
+    { key = "shadowprot", name = "Shadow Protection", nameSpell = 976, sect = "raid", ids = { 976, 27683 }, expand = true },
+    { key = "kings", name = "Blessing of Kings", nameSpell = 20217, sect = "raid", ids = { 20217, 25898 }, expand = true },
+    { key = "might", name = "Blessing of Might", nameSpell = 19740, sect = "raid", ids = { 19740, 25782 }, expand = true },
+    { key = "wisdom", name = "Blessing of Wisdom", nameSpell = 19742, sect = "raid", ids = { 19742, 25894 }, expand = true },
+    { key = "salvation", name = "Blessing of Salvation", nameSpell = 1038, sect = "raid", ids = { 1038, 25895 },
+      expand = true },
+    { key = "innerfire", name = "Inner Fire", nameSpell = 588, sect = "class", class = "PRIEST", ids = { 588 }, expand = true },
+    { key = "magearmor", name = "Mage Armor", nameSpell = 6117, sect = "class", class = "MAGE", ids = { 168, 7302, 6117 },
+      expand = true },
+    { key = "demonarmor", name = "Demon Armor", nameSpell = 706, sect = "class", class = "WARLOCK", ids = { 687, 706 },
+      expand = true },
+    { key = "lshield", name = "Lightning Shield", nameSpell = 324, sect = "class", class = "SHAMAN", ids = { 324 },
+      expand = true },
     { key = "aspect", name = "Aspect", sect = "class", class = "HUNTER",
         ids = { 13165, 13163, 5118, 13161, 13159, 20043 }, expand = true },
-    { key = "trueshot", name = "Trueshot Aura", sect = "class", class = "HUNTER", ids = { 19506 }, expand = true },
-    { key = "thorns", name = "Thorns", sect = "class", class = "DRUID", ids = { 467 }, expand = true },
-    { key = "rfury", name = "Righteous Fury", sect = "class", class = "PALADIN", ids = { 25780 } },
+    { key = "trueshot", name = "Trueshot Aura", nameSpell = 19506, sect = "class", class = "HUNTER", ids = { 19506 },
+      expand = true },
+    { key = "thorns", name = "Thorns", nameSpell = 467, sect = "class", class = "DRUID", ids = { 467 }, expand = true },
+    { key = "rfury", name = "Righteous Fury", nameSpell = 25780, sect = "class", class = "PALADIN", ids = { 25780 } },
     { key = "flask", name = "Flask", sect = "consumable", ids = { 17626, 17627, 17628, 17629 } },
     { key = "food", name = "Food", sect = "consumable", ids = { 19705 }, expand = "name" },
 }
@@ -64,6 +81,25 @@ function MB.NameOf(id)
     local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id)
     if type(nm) ~= "string" or Secret(nm) or nm == "" then return nil end
     return nm
+end
+
+local function EnglishClient()
+    local loc = GetLocale and GetLocale()
+    return loc == nil or loc == "enUS" or loc == "enGB"
+end
+
+-- An entry's words as shown: the English as written on an English client; on
+-- another, the game's name for its spell (two joined), else the English.
+function MB.Label(e)
+    if not e.nameSpell or EnglishClient() then return e.name end
+    local ids = (type(e.nameSpell) == "table") and e.nameSpell or { e.nameSpell }
+    local parts = {}
+    for _, id in ipairs(ids) do
+        local nm = MB.NameOf(id) -- raw-id: an entry's own spell, for its name
+        if not nm then return e.name end
+        parts[#parts + 1] = nm
+    end
+    return table.concat(parts, " / ")
 end
 
 -- an entry's spells this client has
@@ -187,11 +223,12 @@ function MB.Create(addState, layoutId, onProgress, onDone)
     local entries = MB.Picked(addState)
     if #entries == 0 or MB.busy then return end
     local nm = (type(addState.groupName) == "string") and addState.groupName:gsub("^%s+", ""):gsub("%s+$", "") or ""
-    if nm == "" then nm = "Missing Buffs" end
+    -- the group's first name is written in the client's words; then it is the player's
+    if nm == "" then nm = Tr("Missing Buffs") end
     MB.busy = true
     MB.Resolve(entries, function(state, ids, pct)
         if state ~= "done" then
-            if MB.status then MB.status.fs:SetText(("Reading the game's spells, once a session: %d%%"):format(pct or 0)) end
+            if MB.status then MB.status.fs:SetText(Tr("Reading the game's spells, once a session: %d%%"):format(pct or 0)) end
             if onProgress then onProgress(pct or 0) end
             return
         end
@@ -212,9 +249,9 @@ function MB.Tip(e)
             names[#names + 1] = nm
         end
     end
-    local t = "Shows while you have none of: " .. table.concat(names, ", ") .. "."
-    if e.expand == "name" then return t .. " Every food counts." end
-    if e.expand then return t .. " Every rank counts, from anyone." end
+    local t = Tr("Shows while you have none of: %s."):format(table.concat(names, ", "))
+    if e.expand == "name" then return t .. " " .. Tr("Every food counts.") end
+    if e.expand then return t .. " " .. Tr("Every rank counts, from anyone.") end
     return t
 end
 
@@ -236,7 +273,7 @@ function MB.SectionRow(pg, sect, addState, vis)
     cap:SetFont(NS.AT.FONT, 9, "")
     cap:SetPoint("TOPLEFT", 10, -2)
     cap:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
-    cap:SetText(sect.text)
+    cap:SetText(Tr(sect.text))
     row._cells = {}
     local function Cell(i)
         local b = row._cells[i]
@@ -256,7 +293,7 @@ function MB.SectionRow(pg, sect, addState, vis)
         b:SetScript("OnEnter", function()
             b.Edge(true)
             GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
-            GameTooltip:SetText(b._entry.name, COL.ink[1], COL.ink[2], COL.ink[3])
+            GameTooltip:SetText(MB.Label(b._entry), COL.ink[1], COL.ink[2], COL.ink[3])
             GameTooltip:AddLine(MB.Tip(b._entry), COL.dim[1], COL.dim[2], COL.dim[3], true)
             GameTooltip:Show()
         end)

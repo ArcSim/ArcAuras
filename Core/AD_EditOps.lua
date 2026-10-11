@@ -529,10 +529,25 @@ end
 
 -- Snap lines
 
-local function Poss(name)
+-- The client's words for a line drawn on screen; NS.AT is looked up late, as
+-- an edit-only load has no theme.
+local function Tr(s)
+    local AT = NS.AT
+    if AT and AT.Tr then return AT.Tr(s) end
+    return s
+end
+
+-- An element's snap line in words, one whole line per edge: the English
+-- possessive differs for a name ending in s ("Bars' top").
+local EDGE_WORDS = {
+    left = { "%s's left edge", "%s' left edge" }, right = { "%s's right edge", "%s' right edge" },
+    middle = { "%s's middle", "%s' middle" }, top = { "%s's top", "%s' top" },
+    bottom = { "%s's bottom", "%s' bottom" },
+}
+function EO.EdgeWords(name, edge)
     name = name or "?"
-    if name:match("[sS]$") then return name .. "'" end
-    return name .. "'s"
+    local f = EDGE_WORDS[edge]
+    return Tr(name:match("[sS]$") and f[2] or f[1]):format(name)
 end
 
 function EO.SnapLines(layoutId, skipIds)
@@ -547,19 +562,20 @@ function EO.SnapLines(layoutId, skipIds)
     local k = UIPer(c)
     cx, cy = Plain(cx), Plain(cy)
     if cx and cy and k then
-        out.xs[1] = { at = cx * k, word = "the center point" }
-        out.ys[1] = { at = cy * k, word = "the center point" }
+        out.xs[1] = { at = cx * k, word = Tr("the center point") }
+        out.ys[1] = { at = cy * k, word = Tr("the center point") }
     end
     for _, e in ipairs(Engine.LayoutElementRects(layoutId)) do
         if not (skip[e.id] or Rides(e.id, skip)) then
-            local nm = Poss(e.name)
+            local nm = e.name
+            local mid = EO.EdgeWords(nm, "middle")
             local xs, ys = out.xs, out.ys
-            xs[#xs + 1] = { at = e.left, word = nm .. " left edge" }
-            xs[#xs + 1] = { at = e.left + e.width / 2, word = nm .. " middle" }
-            xs[#xs + 1] = { at = e.left + e.width, word = nm .. " right edge" }
-            ys[#ys + 1] = { at = e.bottom + e.height, word = nm .. " top" }
-            ys[#ys + 1] = { at = e.bottom + e.height / 2, word = nm .. " middle" }
-            ys[#ys + 1] = { at = e.bottom, word = nm .. " bottom" }
+            xs[#xs + 1] = { at = e.left, word = EO.EdgeWords(nm, "left") }
+            xs[#xs + 1] = { at = e.left + e.width / 2, word = mid }
+            xs[#xs + 1] = { at = e.left + e.width, word = EO.EdgeWords(nm, "right") }
+            ys[#ys + 1] = { at = e.bottom + e.height, word = EO.EdgeWords(nm, "top") }
+            ys[#ys + 1] = { at = e.bottom + e.height / 2, word = mid }
+            ys[#ys + 1] = { at = e.bottom, word = EO.EdgeWords(nm, "bottom") }
         end
     end
     return out
@@ -790,8 +806,10 @@ function EO.AnchorInfo(id)
         kind = kind, slot = n + 1, there = t ~= nil }
     local lay = MemberLayout(rec)
     local trec = tid and Store.Get(tid)
+    -- info.name is drawn as it is: a record's or frame's name as named, the
+    -- other targets already in the client's words
     if kind == "layout" and lay and tid == lay.id then
-        info.to, info.name = "point", "the center point"
+        info.to, info.name = "point", Tr("the center point")
     elseif REC_KIND[kind] and trec then
         info.to, info.name = trec.id, trec.name
     else
@@ -799,9 +817,9 @@ function EO.AnchorInfo(id)
         if kind == "frame" then
             info.name = frameName
         elseif kind == "mouse" then
-            info.name = "the mouse cursor"
+            info.name = Tr("the mouse cursor")
         elseif kind == "nameplate" then
-            info.name = "the target's nameplate"
+            info.name = Tr("the target's nameplate")
         elseif kind == "layout" then
             info.name = trec and trec.name
         else

@@ -5,6 +5,7 @@ local ADDON, NS = ...
 if NS.IsForever == true then return end
 local SP = NS.Special
 if not SP then return end
+local Tr = SP.Tr
 
 local ASC_SPELL_ID = 114051
 local DRE_ICON = 960689
@@ -192,7 +193,7 @@ local function Load(t)
 end
 
 local function Status()
-    return dreEnabled and "tracking" or "not talented"
+    return dreEnabled and Tr("tracking") or Tr("not talented")
 end
 
 SP.Register({

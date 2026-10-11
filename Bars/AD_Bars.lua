@@ -124,9 +124,41 @@ local BUILTIN_FONT_ORDER = { "Default", "Arial Narrow", "Skurri", "Morpheus", "E
 Bars.BUILTIN_FONTS = BUILTIN_FONTS
 Bars.BUILTIN_FONT_ORDER = BUILTIN_FONT_ORDER
 
+-- Faces with no Korean or Chinese letters: on those clients they leave the
+-- picks, and a saved one draws the game's face (the saved name stays).
+-- Skurri and Morpheus have no Cyrillic: a Russian client draws their _CYR
+-- files, each proven once at its first draw, else the game's face.
+Bars.LATIN_FONTS = { ["Arial Narrow"] = true, Skurri = true, Morpheus = true, Expressway = true }
+Bars.CYR_FONTS = { Skurri = "Fonts\\SKURRI_CYR.TTF", Morpheus = "Fonts\\MORPHEUS_CYR.TTF" }
+function Bars.LocaleFonts(loc)
+    if loc == "koKR" or loc == "zhCN" or loc == "zhTW" then
+        for k in pairs(Bars.LATIN_FONTS) do BUILTIN_FONTS[k] = BUILTIN_FONTS.Default end
+        for i = #BUILTIN_FONT_ORDER, 1, -1 do
+            if Bars.LATIN_FONTS[BUILTIN_FONT_ORDER[i]] then table.remove(BUILTIN_FONT_ORDER, i) end
+        end
+    elseif loc == "ruRU" then
+        for k, path in pairs(Bars.CYR_FONTS) do BUILTIN_FONTS[k] = path end
+        Bars.cyrPending = true
+    end
+end
+Bars.LocaleFonts(GetLocale and GetLocale())
+
+function Bars.ProveCyrFonts()
+    Bars.cyrPending = nil
+    if not (UIParent and UIParent.CreateFontString) then return end
+    local fs = UIParent:CreateFontString(nil, "OVERLAY")
+    fs:Hide()
+    for k, path in pairs(Bars.CYR_FONTS) do
+        if BUILTIN_FONTS[k] == path and not fs:SetFont(path, 12, "") then BUILTIN_FONTS[k] = BUILTIN_FONTS.Default end
+    end
+end
+
 local function ResolveFont(key)
     if not key or key == "" then return BUILTIN_FONTS["Default"] end
-    if BUILTIN_FONTS[key] then return BUILTIN_FONTS[key] end
+    if BUILTIN_FONTS[key] then
+        if Bars.cyrPending and Bars.CYR_FONTS[key] then Bars.ProveCyrFonts() end
+        return BUILTIN_FONTS[key]
+    end
     local lsm = GetLSM()
     if lsm then
         local path = lsm:Fetch("font", key, true)
@@ -165,6 +197,21 @@ local function R(rec, section, field)
     local p = texPreview
     if p and p.id == rec.id and p.field == field and p.section == section then return p.key end
     return Store.Resolve(rec, section, field)
+end
+
+-- A cooldown bar's ready words as drawn: the shipped "Ready" in the client's
+-- words, a text the bar sets itself exactly as typed. Worked out only when
+-- the words or their owner change, so a fight costs two compares.
+function Bars.ReadyWords(entry, rec)
+    local v = R(rec, "text", "readyText") or "Ready"
+    local o = rec.o and rec.o.text
+    local own = o ~= nil and o.readyText ~= nil
+    if entry.readyRaw ~= v or entry.readyOwn ~= own then
+        entry.readyRaw, entry.readyOwn = v, own
+        local T = NS.AT and NS.AT.Tr
+        entry.readyShown = (not own and v == "Ready" and T) and T(v) or v
+    end
+    return entry.readyShown
 end
 
 -- A preview frame carries _adPxRef, the real bar's frame, and measures in its
@@ -1605,7 +1652,7 @@ local function CooldownPushState(entry)
 
     local readyFS = entry.shell.texts.ready
     if readyFS and readyFS:IsShown() then
-        readyFS:SetText(ready and (R(rec, "text", "readyText") or "Ready") or "")
+        readyFS:SetText(ready and Bars.ReadyWords(entry, rec) or "")
     end
     -- the bar glows' cooldown states (Bars\AD_BarGlow.lua): ready, recharging
     -- (a charge used, not all), on cooldown; the GCD tracker has none
@@ -2106,6 +2153,20 @@ local POWER_ALL = {
     [103] = { token = "SOUL_FRAGMENTS_DEVOURER", name = "Soul Fragments", color = { 0.35, 0.25, 0.73 } },
 }
 Bars.POWER_ALL = POWER_ALL
+-- Another language shows the game's own word for a power, its token's global
+-- (as the unit frames show it); English keeps the words above, and so does a
+-- pseudo resource, which has no global.
+function Bars.LocalePowerNames(loc)
+    if loc == nil or loc == "enUS" or loc == "enGB" then return end
+    for id, info in pairs(POWER_ALL) do
+        local w = id <= 100 and _G[info.token]
+        if type(w) == "string" and w ~= "" then
+            info.en = info.en or info.name
+            info.name = w
+        end
+    end
+end
+Bars.LocalePowerNames(GetLocale and GetLocale())
 -- seconds after your cast for the second combo point read (a late server update)
 Bars.COMBO_LATE = 0.3
 
@@ -3787,7 +3848,11 @@ function HB.Name(entry, unit, preview)
     if (R(entry.rec, "text", "nameSource") or "unit") ~= "unit" then return end
     if BarCustomName(entry.rec) then return end   -- the custom name owns the run
     if preview then
-        fs:SetText(HB.PREVIEW_NAMES[unit] or unit)
+        -- the stand-in name is the addon's own word: the client's language
+        local T = AT and AT.Tr
+        local nm, n = HB.PREVIEW_NAMES[unit], unit:match("^party(%d)$")
+        if n and T then nm = T("Party %s"):format(n) elseif nm and T then nm = T(nm) end
+        fs:SetText(nm or unit)
     else
         fs:SetText(UnitName(unit))
     end
@@ -6139,7 +6204,7 @@ function PV.PaintCooldown(e, remaining, len, started)
         shell.fill:SetValue(R(rec, "fill", "idleEmpty") == true and 0 or 1)
         shell.fill:SetStatusBarColor(BarColorOf(rec))
         if e.durCD then e.durCD:Clear() end
-        if readyFS and readyFS:IsShown() then readyFS:SetText(R(rec, "text", "readyText") or "Ready") end
+        if readyFS and readyFS:IsShown() then readyFS:SetText(Bars.ReadyWords(e, rec)) end
         return
     end
     shell.fill:SetMinMaxValues(0, len)

@@ -5,6 +5,7 @@ local ADDON, NS = ...
 if NS.IsForever == true then return end
 local SP = NS.Special
 if not SP then return end
+local Tr = SP.Tr
 
 local SOUL_FRAGMENTS = 1245577
 local VOID_META = 1217607
@@ -335,9 +336,9 @@ local function Load(t)
 end
 
 local function Status()
-    if not sbEnabled then return "needs Devourer" end
+    if not sbEnabled then return Tr("needs Devourer") end
     local n = SetPieceCount()
-    return string.format("tracking, %d/5 pieces equipped", n)
+    return Tr("tracking, %d/5 pieces equipped"):format(n)
 end
 
 SP.Register({

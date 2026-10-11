@@ -257,8 +257,9 @@ function Driver.GlowLaneOK(rec)
 end
 
 -- The icons that can show something over their cooldown ("On this icon"):
--- spells, and items and trinkets (their use spell stands in for the spell).
-local OVERLAY_KINDS = { spell = true, item = true, trinket = true }
+-- spells, and items and trinkets (their use spell stands in for the spell),
+-- and a Custom Icon's "Aura on this icon".
+local OVERLAY_KINDS = { spell = true, item = true, trinket = true, timer = true }
 Driver.OVERLAY_KINDS = OVERLAY_KINDS
 
 -- A spell icon's aura overlay draws glow 1 alone, on the overlay's button;

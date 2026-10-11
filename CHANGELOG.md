@@ -1,5 +1,26 @@
 # Arc Auras
 
+## 2.8.0
+
+Arc Auras in Korean, Custom Icons that show an aura and a cooldown, and No charges.
+
+### New Features
+
+- **Korean** - Arc Auras now shows in Korean on a Korean client. It is a first translation that Korean players can improve, and Settings has Use English for anyone who prefers English.
+- **Custom Icons show an aura and a cooldown** - A Custom Icon can show a debuff's duration and a spell's cooldown, with By State looks for Aura up, Timer running, On cooldown and Ready, each with its own glow and sound.
+- **Trap templates** - A trap icon, a trap slot, and a Hunter Traps group that shows only the traps you have out.
+
+### Improvements
+
+- **No charges** - A charge spell's last state is now called No charges (it was Depleted).
+- **Other languages** - Spell, item, class and power names show in your game's language, the options search finds accented and Cyrillic letters, and buttons fit longer words.
+- **Option labels** - A long label now wraps instead of being cut off.
+
+### Bug Fixes
+
+- **Bar fonts on Korean and Chinese clients** - Fonts without Korean or Chinese letters are no longer offered there, and a saved one shows in the game's font.
+- **Spell list on non-English clients** - Passive spells no longer slip into the spell picker.
+
 ## 2.7.0
 
 Edit your layouts right on your screen, make a whole layout bigger with one slider, and a new texture picker.

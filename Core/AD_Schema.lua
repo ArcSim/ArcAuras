@@ -270,7 +270,7 @@ Schema.CUSTOM_TRIGGER_GROUPS = {
         list = { "extra_attacks", "reactive", "health_low", "mana_low", "combo_points", "interrupted",
             "energize", "healed", "heal_crit" } },
     { key = "other", label = "Other",
-        list = { "combat_start", "combat_end", "target_changed", "totem_placed", "totem_gone", "ended", "chain" } },
+        list = { "combat_start", "combat_end", "target_changed", "target_died", "totem_placed", "totem_gone", "ended", "chain" } },
     { key = "cond", label = "Conditions", list = { "cond_on", "cond_off" } },
 }
 -- Your attacks on the target (UNIT_COMBAT on "target"); listed only once the
@@ -293,6 +293,7 @@ Schema.CUSTOM_TRIGGER_LABELS = {
     interrupted = "Your cast was interrupted", energize = "You gained a resource",
     healed = "You were healed", heal_crit = "You took a critical heal",
     combat_start = "You entered combat", combat_end = "You left combat", target_changed = "Your target changed",
+    target_died = "Your target died",
     totem_placed = "A totem was placed", totem_gone = "A totem is gone",
     ended = "This timer ended", chain = "Another Custom item's timer ended",
     target_dodge = "Your attack was dodged", target_parry = "Your attack was parried",
@@ -360,13 +361,17 @@ local SP  = { spell = true }
 -- reads as can't use only with its Mark it while it can't be used on)
 local SPI = { spell = true, item = true }
 -- what shows over a cooldown ("On this icon": an aura, a totem, a set
--- duration): spells, items and trinkets; with aura icons, the aura's look
-local SPX = { spell = true, item = true, trinket = true }
-local AAX = { spell = true, aura = true, item = true, trinket = true }
+-- duration): spells, items, trinkets and a Custom Icon's aura; with aura
+-- icons, the aura's look
+local SPX = { spell = true, item = true, trinket = true, timer = true }
+local AAX = { spell = true, aura = true, item = true, trinket = true, timer = true }
 local AU  = { aura = true }
 local TOT = { totem = true }
 local AA  = { spell = true, aura = true }
 local SPC = { special = true }
+local TIM = { timer = true }
+-- the aura's appear sound: aura icons, and a Custom Icon showing an aura
+local AU_TIM = { aura = true, timer = true }
 -- Every kind but aura: holder-only options (keep bright) mean nothing on an
 -- engine-drawn aura button.
 local NA  = { spell = true, item = true, trinket = true, timer = true, totem = true, ammo = true,
@@ -495,6 +500,20 @@ Schema.QueueShows = QueueShows
 local function ChargeShows(rec)
     local D = NS.DriverCooldown
     return D ~= nil and D.IsCharge ~= nil and D.IsCharge(rec)
+end
+
+-- A Custom Icon showing a spell's cooldown while its timer is idle: its Ready
+-- state (Drivers\AD_DriverCustom.lua).
+local function CdShows(rec)
+    return rec ~= nil and rec.kind == "timer" and type(rec.driver) == "table" and rec.driver.cdOn == true
+end
+Schema.CustomCdShows = CdShows
+
+-- An aura icon's appear sound, and a Custom Icon's while it shows an aura.
+local function AuraSoundShows(rec)
+    if rec == nil or rec.kind ~= "timer" then return true end
+    local ov = type(rec.driver) == "table" and rec.driver.overlay
+    return type(ov) == "table" and ov.on == true
 end
 
 -- "Show only when little time is left" needs the icon's own button.
@@ -1161,6 +1180,51 @@ Schema.icon = {
             kinds = SP, showIf = ChargeShows, label = "Recharging glow strata", dep = { field = "rechargeGlow" } },
         rechargeGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = SP, showIf = ChargeShows,
             label = "Recharging glow frame level", dep = { field = "rechargeGlow" } },
+        -- A Custom Icon with a cooldown on it: Ready, its timer idle and that
+        -- spell off cooldown, a look of its own.
+        idleAlpha = { d = 1, t = "num", min = 0, max = 1, kinds = TIM, showIf = CdShows, label = "Ready opacity" },
+        idleDesaturate = { d = false, t = "bool", kinds = TIM, showIf = CdShows, label = "Desaturate while ready" },
+        idleTintEnabled = { d = false, t = "bool", kinds = TIM, showIf = CdShows, label = "Ready tint" },
+        idleTintColor = { d = { 1, 1, 1, 1 }, t = "color", kinds = TIM, showIf = CdShows,
+            label = "Ready tint color", dep = { field = "idleTintEnabled" } },
+        idleGlow = { d = false, t = "bool", kinds = TIM, showIf = CdShows, label = "Glow while ready" },
+        idleGlowType = { d = "button", t = "enum", values = GLOW_STYLES, labels = GLOW_STYLE_LABELS, kinds = TIM,
+            showIf = CdShows, label = "Ready glow style", dep = { field = "idleGlow" } },
+        idleGlowColor = { d = { 0.95, 0.95, 0.32, 1 }, t = "color", kinds = TIM, showIf = CdShows,
+            label = "Ready glow color", dep = { field = "idleGlow" } },
+        idleGlowSpeed = { adv = "glow", d = 0.25, t = "num", min = 0.05, max = 1, kinds = TIM, showIf = CdShows,
+            label = "Ready glow speed",
+            dep = { { field = "idleGlow" }, { field = "idleGlowType", anyOf = GLOW_SPEED_STYLES } } },
+        idleGlowLines = { adv = "glow", d = 8, t = "int", min = 1, max = 16, kinds = TIM, showIf = CdShows,
+            label = "Ready glow lines", dep = { { field = "idleGlow" }, { field = "idleGlowType", value = "pixel" } } },
+        idleGlowThickness = { adv = "glow", d = 2, t = "int", min = 1, max = 20, kinds = TIM, showIf = CdShows,
+            label = "Ready glow thickness",
+            dep = { { field = "idleGlow" }, { field = "idleGlowType", value = "pixel" } } },
+        idleGlowLength = { adv = "glow", d = 0, t = "int", min = 0, max = 40, kinds = TIM, showIf = CdShows,
+            label = "Ready glow line length (0 = auto)",
+            dep = { { field = "idleGlow" }, { field = "idleGlowType", value = "pixel" } } },
+        idleGlowParticles = { adv = "glow", d = 4, t = "int", min = 1, max = 16, kinds = TIM, showIf = CdShows,
+            label = "Ready glow particles",
+            dep = { { field = "idleGlow" }, { field = "idleGlowType", value = "autocast" } } },
+        idleGlowScale = { adv = "glow", d = 1, t = "num", min = 0.5, max = 2, kinds = TIM, showIf = CdShows,
+            label = "Ready glow size",
+            dep = { { field = "idleGlow" }, { field = "idleGlowType", anyOf = GLOW_SIZE_STYLES } } },
+        idleGlowIntensity = { adv = "glow", d = 1, t = "num", min = 0.1, max = 1, kinds = TIM, showIf = CdShows,
+            label = "Ready glow intensity", dep = { field = "idleGlow" } },
+        idleGlowXOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = TIM, showIf = CdShows,
+            label = "Ready glow X offset", dep = { field = "idleGlow" } },
+        idleGlowYOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = TIM, showIf = CdShows,
+            label = "Ready glow Y offset", dep = { field = "idleGlow" } },
+        idleGlowMoveX = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = TIM, showIf = CdShows,
+            label = "Ready glow move X", dep = { field = "idleGlow" } },
+        idleGlowMoveY = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = TIM, showIf = CdShows,
+            label = "Ready glow move Y", dep = { field = "idleGlow" } },
+        idleGlowCombatOnly = { d = false, t = "bool", kinds = TIM, showIf = CdShows,
+            label = "Ready glow only in combat", dep = { field = "idleGlow" } },
+        idleGlowStrata = { adv = "glow", d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" },
+            kinds = TIM, showIf = CdShows, label = "Ready glow strata", dep = { field = "idleGlow" } },
+        idleGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = TIM, showIf = CdShows,
+            label = "Ready glow frame level", dep = { field = "idleGlow" } },
         -- A weapon enchant icon whose hand holds no weapon (a two-hander's off
         -- hand, a shield, bare hands): a state of its own, out of sight unless
         -- raised. Gear only changes out of combat or by a plain swap.
@@ -1307,7 +1371,20 @@ Schema.icon = {
     alerts = { push = true, kinds = { spell = true, item = true, trinket = true, timer = true, enchant = true,
         special = true, aura = true }, fields = {
         soundChannel = { d = "Master", t = "enum", values = { "Master", "SFX", "Music", "Ambience", "Dialog" },
-            labels = { Master = "Master (ignores the other sliders)", SFX = "Sound Effects", Music = "Music", Ambience = "Ambience", Dialog = "Dialog" },
+            -- the values are the game's channel keys; another language names
+            -- them with the game's own volume slider words, English keeps these
+            labels = (function()
+                local t = { Master = "Master (ignores the other sliders)", SFX = "Sound Effects", Music = "Music",
+                    Ambience = "Ambience", Dialog = "Dialog" }
+                local loc = GetLocale and GetLocale()
+                if loc == nil or loc == "enUS" or loc == "enGB" then return t end
+                local words = { Master = MASTER_VOLUME, SFX = FX_VOLUME, Music = MUSIC_VOLUME,
+                    Ambience = AMBIENCE_VOLUME, Dialog = DIALOG_VOLUME }
+                for k, w in pairs(words) do
+                    if type(w) == "string" and w ~= "" then t[k] = w end
+                end
+                return t
+            end)(),
             label = "Sound channel" },
         readySoundEnabled = { d = false, t = "bool", kinds = USE_CD, label = "Play a sound when ready" },
         readySound = { d = "", t = "sound", kinds = USE_CD, label = "Ready sound", dep = { field = "readySoundEnabled" } },
@@ -1321,6 +1398,14 @@ Schema.icon = {
         cooldownSpeech = { noDefault = true, inherit = false, d = "", t = "text", kinds = USE_CD, label = "Say when the cooldown starts",
             desc = "Spoken by the game's text to speech, in the voice Arc Auras speaks with. Empty says nothing.",
             dep = { field = "cooldownSoundEnabled" } },
+        -- a Custom Icon's Ready: its timer idle and its cooldown spell ready
+        idleSoundEnabled = { d = false, t = "bool", kinds = TIM, showIf = CdShows, label = "Play a sound when ready" },
+        idleSound = { d = "", t = "sound", kinds = TIM, showIf = CdShows, label = "Ready sound",
+            dep = { field = "idleSoundEnabled" } },
+        idleSpeech = { noDefault = true, inherit = false, d = "", t = "text", kinds = TIM, showIf = CdShows,
+            label = "Say when ready",
+            desc = "Spoken by the game's text to speech, in the voice Arc Auras speaks with. Empty says nothing.",
+            dep = { field = "idleSoundEnabled" } },
         -- A special icon's moments: the tracker's proc edge (NS.Special.Proc),
         -- and the draw its chance reads as 100%.
         procSoundEnabled = { d = false, t = "bool", kinds = SPC, label = "Play a sound on proc" },
@@ -1352,8 +1437,8 @@ Schema.icon = {
             dep = { field = "usableSoundEnabled" } },
         -- An aura icon's moments, played by the game (Drivers\AD_AuraSounds.lua):
         -- in combat too, for any caster's copy; `files`: a sound file, no kit.
-        auraGainSoundEnabled = { d = false, t = "bool", kinds = { aura = true }, label = "Play a sound when the aura appears" },
-        auraGainSound = { d = "", t = "sound", files = true, kinds = { aura = true }, label = "Appear sound",
+        auraGainSoundEnabled = { d = false, t = "bool", kinds = AU_TIM, showIf = AuraSoundShows, label = "Play a sound when the aura appears" },
+        auraGainSound = { d = "", t = "sound", files = true, kinds = AU_TIM, showIf = AuraSoundShows, label = "Appear sound",
             dep = { field = "auraGainSoundEnabled" } },
         auraStackSoundEnabled = { d = false, t = "bool", kinds = { aura = true }, label = "Play a sound when it gains a stack" },
         auraStackSound = { d = "", t = "sound", files = true, kinds = { aura = true }, label = "Stack sound",
@@ -1972,27 +2057,35 @@ function Schema.NativeGlowOn(sec, native, typeField)
             and Schema.GLOW_NATIVE_STYLES[S.Resolve(rec, sec, typeField)] == true
     end
 end
+-- Each glow lane's own name, the words its rows' labels start with; a label
+-- is one whole line per pattern (Schema.LANE_LABELS), never built from
+-- another label's words.
+Schema.GLOW_LANE_WORDS = { ready = "Glow", cooldown = "Cooldown glow", proc = "Proc glow",
+    usable = "Usable glow", warn = "Warning glow", toggle = "Toggle glow", assist = "Suggested glow",
+    range = "Out-of-range glow", recharge = "Recharging glow", totemRange = "Out of range glow",
+    idle = "Ready glow", active = "Active glow" }
+Schema.LANE_LABELS = { native = "%s in the game's own color", backing = "%s dark backing line" }
 do
     local lanes = { { "states", "ready" }, { "states", "cooldown" }, { "states", "proc" }, { "states", "usable" },
         { "states", "warn" }, { "states", "toggle" }, { "states", "assist" }, { "states", "range" },
-        { "states", "recharge" }, { "states", "totemRange" }, { "auraActive", "active" } }
+        { "states", "recharge" }, { "states", "totemRange" }, { "states", "idle" }, { "auraActive", "active" } }
     for _, ln in ipairs(lanes) do
         local sec, pre = ln[1], ln[2]
         local fields = Schema.icon[sec].fields
         local sw, ty = pre .. "Glow", pre .. "GlowType"
         local tdef = fields[ty]
         if tdef and fields[sw] then
-            local word = (tdef.label or "Glow style"):gsub("style$", "")
+            local word = Schema.GLOW_LANE_WORDS[pre] or ((tdef.label or "Glow style"):gsub("%s*style$", ""))
             local function Lane(t)
                 for _, k in ipairs({ "kinds", "showIf", "classOnly", "foreverOnly", "retailOnly" }) do
                     if t[k] == nil then t[k] = tdef[k] end
                 end
                 return t
             end
-            fields[pre .. "GlowNative"] = Lane({ d = false, t = "bool", label = word .. "in the game's own color",
+            fields[pre .. "GlowNative"] = Lane({ d = false, t = "bool", label = Schema.LANE_LABELS.native:format(word),
                 desc = "The game's own gold art, untinted, so the color steps aside. Intensity still applies.",
                 dep = { { field = sw }, { field = ty, anyOf = Schema.GLOW_NATIVE_STYLES } } })
-            fields[pre .. "GlowBacking"] = Lane({ adv = "glow", d = false, t = "bool", label = word .. "dark backing line",
+            fields[pre .. "GlowBacking"] = Lane({ adv = "glow", d = false, t = "bool", label = Schema.LANE_LABELS.backing:format(word),
                 desc = "A dim dark line along the edge, under the moving lines.",
                 dep = { { field = sw }, { field = ty, value = "pixel" } } })
             local on = Schema.NativeGlowOn(sec, pre .. "GlowNative", ty)
@@ -2539,6 +2632,9 @@ Schema.TYPE_LOOKS = {
     { key = "Poison", label = "Poison", color = { 0, 0.6, 0, 1 } },
     { key = "None", label = "No type", color = { 0.8, 0, 0, 1 }, noBadge = true },
 }
+-- a type's row labels: one whole line per pattern around the type's name
+Schema.TYPE_LABELS = { border = "%s border", color = "%s color", wash = "%s color wash", label = "%s label",
+    glow = "%s glow", hint = "A short word, like %s" }
 do
     local fields = Schema.iconGroup.typeLook.fields
     local dep = { { field = "looks", anyOf = { parts = true, full = true } },
@@ -2551,16 +2647,17 @@ do
             labels = { normal = "Normal look", color = "Your color", blizzard = "Blizzard border",
                 blizzardBadge = "Blizzard border with badge", badge = "Badge only" },
             valueIf = t.noBadge and { blizzardBadge = never, badge = never } or nil,
-            label = name .. " border",
+            label = Schema.TYPE_LABELS.border:format(name),
             desc = "Normal look keeps the group's border. Your color uses this type's color below. The Blizzard ones are the game's own debuff borders.",
             dep = dep }
-        fields["color" .. k] = { d = { t.color[1], t.color[2], t.color[3], 1 }, t = "color", label = name .. " color",
+        fields["color" .. k] = { d = { t.color[1], t.color[2], t.color[3], 1 }, t = "color", label = Schema.TYPE_LABELS.color:format(name),
             desc = "This type's border, color wash, label and glow use it.", dep = dep }
-        fields["wash" .. k] = { d = false, t = "bool", label = name .. " color wash",
+        fields["wash" .. k] = { d = false, t = "bool", label = Schema.TYPE_LABELS.wash:format(name),
             desc = "Tints the icon in this type's color. Color wash strength is under All.", dep = dep }
-        fields["label" .. k] = { d = "", t = "text", label = name .. " label", hint = "A short word, like " .. name:sub(1, 1),
+        fields["label" .. k] = { d = "", t = "text", label = Schema.TYPE_LABELS.label:format(name),
+            hint = Schema.TYPE_LABELS.hint:format(name:sub(1, 1)),
             desc = "A word on the icon in this type's color. Size and position are under All.", dep = dep }
-        fields["glow" .. k] = { d = false, t = "bool", label = name .. " glow",
+        fields["glow" .. k] = { d = false, t = "bool", label = Schema.TYPE_LABELS.glow:format(name),
             desc = "A soft glow around the icon in this type's color. Glow size is under All.", dep = dep }
     end
 end
@@ -3416,7 +3513,8 @@ Schema.bar = {
                 end
                 if rec.barKind == "cast" then return "the spell's name" end
                 if rec.barKind == "range" then return "the band's name" end
-                return rec.name or ""
+                -- the bar's own name, as the player typed it
+                return rec.name or "", true
             end },
         nameSize = { d = 11, t = "int", min = 6, max = 32, label = "Name text size" },
         -- Above the bar at its left end, so it never collides with the stack
@@ -3428,7 +3526,10 @@ Schema.bar = {
         namePinTarget = { noDefault = true, inherit = false, d = "", t = "text", label = "Name text pin target" },
         nameColor = { d = { 0.7, 0.78, 0.88, 1 }, t = "color", alpha = true, label = "Name color" },
         readyShow = { d = false, t = "bool", kinds = BK_CD, label = "Ready text" },
-        readyText = { inherit = false, d = "Ready", t = "text", kinds = BK_CD, label = "Ready text string", dep = { field = "readyShow" } },
+        -- trDefault: the shipped "Ready" shows translated in its box, as the
+        -- HUD draws it (Bars.ReadyWords); typed words stay as typed
+        readyText = { inherit = false, d = "Ready", t = "text", kinds = BK_CD, label = "Ready text string", dep = { field = "readyShow" },
+            trDefault = true },
         readyColor = { d = { 0.482, 0.847, 0.561, 1 }, t = "color", alpha = true, kinds = BK_CD, label = "Ready color", dep = { field = "readyShow" } },
         -- Per-text outlines; the ready text takes the duration text's styling.
         durOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = BK_DURC, label = "Duration outline" },

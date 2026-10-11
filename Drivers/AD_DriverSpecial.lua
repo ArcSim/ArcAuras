@@ -17,8 +17,15 @@ SP.pending = {}    -- [id] = state saved before a /reload, applied at Start
 -- [id] = { last, fracs, ver }: where each proc of a deck landed, for the deck bars
 SP.marks = {}
 
+-- A tracker's words (its Status) in the client's language, as written where
+-- the locale core is not loaded.
+function SP.Tr(s)
+    local L = NS.L
+    return L and L[s] or s
+end
+
 -- the deck readouts a display can ask for, by name
-SP.DECK_TOKENS = { "pos", "left", "drawn", "size", "procs", "procsLeft", "max", "chance", "viol" }
+SP.DECK_TOKENS ={ "pos", "left", "drawn", "size", "procs", "procsLeft", "max", "chance", "viol" }
 
 -- Talent and gear changes re-run a running tracker's gate; a tracker that names
 -- its own syncEvents follows only those, as each ProcTracker deck file did.

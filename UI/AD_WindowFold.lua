@@ -109,7 +109,7 @@ function Fold.SyncEdit()
     if not eb then return end
     local LOS = OnScreen()
     local open = LOS ~= nil and LOS.IsOpen() == true
-    eb.fs:SetText(open and "Done editing" or "Edit on screen")
+    eb.fs:SetText(AT.Tr(open and "Done editing" or "Edit on screen"))
     eb:SetWidth(math.ceil(eb.fs:GetStringWidth()) + 18)
     local can = open or Fold.EditTarget() ~= nil
     local edge = (eb._hot and can) and COL.arc or COL.line2
@@ -128,7 +128,8 @@ function Fold.Sync()
         chip:Hide()
         return
     end
-    chip.fs:SetText("Editing: |cff" .. AT.Hex(COL.arc) .. rec.name .. "|r")
+    -- the name is the player's: it fills the line as named
+    chip.fs:SetText(AT.Tr("Editing: %s"):format("|cff" .. AT.Hex(COL.arc) .. rec.name .. "|r"))
     chip:SetWidth(math.ceil(chip.fs:GetStringWidth()) + 16)
     chip:Show()
 end

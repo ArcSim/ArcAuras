@@ -6,6 +6,7 @@
 local ADDON, NS = ...
 local Options = NS.Options
 if not Options then return end
+local Tr = NS.AT.Tr
 
 local AP = {}
 Options.AuraPicker = AP
@@ -16,14 +17,63 @@ AP.PITCH = AP.CELL + AP.GAP
 AP.DIM = 0.45
 
 -- Ready-made auras any class can use. Every version of the buff rides one
--- icon, and anyone may cast it.
+-- icon, and anyone may cast it. retail: Forever has no such buff.
+-- show: the spells whose names the name stands for; tipFmt and tipIDs: the
+-- hover line, its spells named by the game on another language.
 AP.TEMPLATES = {
-    { key = "lust", name = "Bloodlust / Heroism", spellID = 2825, auraType = "buff", caster = "any",
+    { key = "lust", name = "Bloodlust / Heroism", spellID = 2825, auraType = "buff", caster = "any", retail = true,
+      show = { 2825, 32182 },
       find = "bloodlust heroism time warp primal rage fury of the aspects harrier's cry drums",
       tip = "Any lust on you: Bloodlust, Heroism, Time Warp, Primal Rage, Fury of the Aspects, Harrier's Cry and the drums, on one icon.",
+      tipFmt = "Any lust on you: %s and the drums, on one icon.",
+      tipIDs = { 2825, 32182, 80353, 264667, 390386, 466904 },
       ids = { 2825, 32182, 80353, 264667, 390386, 466904, 90355, 160452, 146555, 178207,
           230935, 256740, 309658, 381301, 444257, 1243972 } },
 }
+
+local function EnglishClient()
+    local loc = GetLocale and GetLocale()
+    return loc == nil or loc == "enUS" or loc == "enGB"
+end
+
+-- Lower case for matching, accented and Cyrillic capitals too (the options
+-- search's fold); the English letters alone without it.
+function AP.Fold(s)
+    local S = Options.Search
+    if S and S.Fold then return S.Fold(s) end
+    return tostring(s or ""):lower()
+end
+
+-- The game's names for these spells on this client, or nil when one has none.
+function AP.LiveNames(ids)
+    local f = C_Spell and C_Spell.GetSpellName
+    if not f then return nil end
+    local out = {}
+    for _, id in ipairs(ids or {}) do
+        local nm = f(id) -- raw-id: a template's own spells, for their names
+        if type(nm) ~= "string" or nm == "" or (issecretvalue and issecretvalue(nm)) then return nil end
+        out[#out + 1] = nm
+    end
+    return out
+end
+
+-- A template's name, hover line and search words: the English as written on
+-- an English client; on another, the game's names for its spells (English
+-- when it has none) and the English words still find it.
+function AP.Words(t)
+    if EnglishClient() then return t.name, t.tip, t.find end
+    local name, tip, find = t.name, t.tip, t.find
+    local shown = AP.LiveNames(t.show)
+    if shown then name = table.concat(shown, " / ") end
+    local named = t.tipFmt and AP.LiveNames(t.tipIDs)
+    if named then
+        local fmt = (NS.L and NS.L[t.tipFmt]) or t.tipFmt
+        tip = fmt:format(table.concat(named, ", "))
+    end
+    local all = AP.LiveNames(t.ids) or shown or {}
+    find = AP.Fold((find or "") .. " " .. table.concat(all, " "))
+    return name, tip, find
+end
 
 AP.TITLES = {
     tpl = "TEMPLATES",
@@ -37,13 +87,16 @@ function AP.TemplateEntries()
     local out = {}
     local f = C_Spell and C_Spell.GetSpellTexture
     for _, t in ipairs(AP.TEMPLATES) do
-        local tex = f and f(t.spellID) -- raw-id: a template's own art
-        if issecretvalue and issecretvalue(tex) then tex = nil end
-        local ids = {}
-        for i, id in ipairs(t.ids) do ids[i] = id end
-        out[#out + 1] = { template = true, key = t.key, name = t.name, spellID = t.spellID, ids = ids,
-            auraType = t.auraType, caster = t.caster, tip = t.tip, find = t.find,
-            texture = tex, known = true, shown = true }
+        if not (t.retail and NS.IsForever == true) then
+            local tex = f and f(t.spellID) -- raw-id: a template's own art
+            if issecretvalue and issecretvalue(tex) then tex = nil end
+            local ids = {}
+            for i, id in ipairs(t.ids) do ids[i] = id end
+            local name, tip, find = AP.Words(t)
+            out[#out + 1] = { template = true, key = t.key, name = name, en = t.name, spellID = t.spellID, ids = ids,
+                auraType = t.auraType, caster = t.caster, tip = tip, find = find,
+                texture = tex, known = true, shown = true }
+        end
     end
     AP.tpl = out
     return out
@@ -64,23 +117,24 @@ end
 -- the line under the Cooldown Manager's title when it gave no aura at all
 function AP.Note(parts, why)
     if #parts[2].list > 0 or #parts[3].list > 0 then return nil end
-    if why == "combat" then return "Leave combat to read your Cooldown Manager." end
-    return "Your Cooldown Manager lists no auras here."
+    if why == "combat" then return Tr("Leave combat to read your Cooldown Manager.") end
+    return Tr("Your Cooldown Manager lists no auras here.")
 end
 
 -- The name box's text: letters filter by name (a template by its own words
--- too); IDs keep every square and light the one they start with.
+-- too); IDs keep every square and light the one they start with. A letter of
+-- another script (Cyrillic, Hangul) counts too.
 function AP.Query(text)
     text = tostring(text or "")
-    if text:find("%a") then
-        return (text:lower():gsub("^%s+", ""):gsub("%s+$", "")), nil
+    if text:find("%a") or text:find("[\128-\255]") then
+        return (AP.Fold(text):gsub("^%s+", ""):gsub("%s+$", "")), nil
     end
     return nil, tonumber(text:match("%d+") or "")
 end
 
 function AP.Matches(e, query)
     if not query or query == "" then return true end
-    if (e.name or ""):lower():find(query, 1, true) then return true end
+    if AP.Fold(e.name or ""):find(query, 1, true) then return true end
     return e.find ~= nil and e.find:find(query, 1, true) ~= nil
 end
 
@@ -104,7 +158,8 @@ end
 -- unless a template says anyone). A template names the icon after itself.
 function AP.Fill(addState, e)
     addState.auraID = table.concat(e.ids, ", ")
-    addState.auraName = e.template and e.name or nil
+    -- the icon's stored name stays the template's English words
+    addState.auraName = e.template and (e.en or e.name) or nil
     local t = (e.auraType == "debuff") and "debuff" or "buff"
     addState.auraType = t
     addState.auraUnit = (t == "debuff") and "target" or "player"
@@ -122,7 +177,7 @@ function Options.AuraPickerRow(pg, owner, addState, vis, getText, onFill)
     label:SetFont(AT.FONT, 9, "")
     label:SetPoint("TOPLEFT", 10, -2)
     label:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
-    label:SetText("PICK AN AURA - click to fill")
+    label:SetText(Tr("PICK AN AURA - click to fill"))
     row._scroll, row._grid = AT.MakeScroll(row)
     row._scroll:SetPoint("TOPLEFT", 8, -AP.TOP)
     row._scroll:SetPoint("BOTTOMRIGHT", -12, AP.GAP)
@@ -132,7 +187,7 @@ function Options.AuraPickerRow(pg, owner, addState, vis, getText, onFill)
         local fs = grid:CreateFontString(nil, "OVERLAY")
         fs:SetFont(AT.FONT, 9, "")
         fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
-        fs:SetText(AP.TITLES[key])
+        fs:SetText(Tr(AP.TITLES[key]))
         fs:Hide()
         heads[i] = fs
     end
@@ -146,7 +201,7 @@ function Options.AuraPickerRow(pg, owner, addState, vis, getText, onFill)
     row._empty:SetFont(AT.FONT, 11, "")
     row._empty:SetPoint("LEFT", row._scroll, "TOPLEFT", 2, -AP.CELL / 2)
     row._empty:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
-    row._empty:SetText("Nothing here matches: the name search below still works.")
+    row._empty:SetText(Tr("Nothing here matches: the name search below still works."))
     row._empty:Hide()
     local cells = {}
     row._cells = cells
@@ -177,18 +232,21 @@ function Options.AuraPickerRow(pg, owner, addState, vis, getText, onFill)
             GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
             if e.template then
                 GameTooltip:SetText(e.name, COL.ink[1], COL.ink[2], COL.ink[3])
-                GameTooltip:AddLine(e.tip, COL.dim[1], COL.dim[2], COL.dim[3], true)
+                GameTooltip:AddLine(Tr(e.tip), COL.dim[1], COL.dim[2], COL.dim[3], true)
             else
                 GameTooltip:SetSpellByID(e.spellID) -- raw-id: a Cooldown Manager entry
             end
+            -- a template's words name its buffs; its IDs are no help there
             local n = #e.ids
-            GameTooltip:AddLine((n > 1 and "Spell IDs: " or "Spell ID: ")
-                .. table.concat(e.ids, ", ", 1, math.min(n, 12)) .. ((n > 12) and ", ..." or ""),
-                COL.arc[1], COL.arc[2], COL.arc[3], true)
+            if not e.template then
+                local ids = table.concat(e.ids, ", ", 1, math.min(n, 12)) .. ((n > 12) and ", ..." or "")
+                GameTooltip:AddLine((n > 1 and Tr("Spell IDs: %s") or Tr("Spell ID: %s")):format(ids),
+                    COL.arc[1], COL.arc[2], COL.arc[3], true)
+            end
             if not e.known then
-                GameTooltip:AddLine("Not learned", COL.dim[1], COL.dim[2], COL.dim[3])
+                GameTooltip:AddLine(Tr("Not learned"), COL.dim[1], COL.dim[2], COL.dim[3])
             elseif not e.shown then
-                GameTooltip:AddLine("Not shown by your Cooldown Manager", COL.dim[1], COL.dim[2], COL.dim[3])
+                GameTooltip:AddLine(Tr("Not shown by your Cooldown Manager"), COL.dim[1], COL.dim[2], COL.dim[3])
             end
             GameTooltip:Show()
         end)

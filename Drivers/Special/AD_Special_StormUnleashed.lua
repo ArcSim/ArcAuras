@@ -5,6 +5,7 @@ local ADDON, NS = ...
 if NS.IsForever == true then return end
 local SP = NS.Special
 if not SP then return end
+local Tr = SP.Tr
 
 local SU_GAIN_ID = 1252413
 local SU_ICON = 7636566
@@ -187,7 +188,7 @@ local function Load(t)
 end
 
 local function Status()
-    return suEnabled and "tracking" or "not talented"
+    return suEnabled and Tr("tracking") or Tr("not talented")
 end
 
 SP.Register({

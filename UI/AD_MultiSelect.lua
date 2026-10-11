@@ -5,6 +5,7 @@ local Options = NS.Options
 if not Options then return end
 local AT, Store = NS.AT, NS.Store
 local COL = AT.COL
+local Tr = AT.Tr
 local ui = Options.ui
 
 -- ids: the selection in click order; set: the same by id; items / n: the
@@ -25,8 +26,16 @@ local ICON_WORD = { spell = "cooldown", aura = "aura", item = "item", trinket = 
 local BAR_WORD = { cooldown = "cooldown", aura = "aura", timer = "custom", stack = "stack", swing = "swing",
     resource = "resource", health = "health", cast = "cast", enchant = "enchant", range = "range" }
 local TYPE_ORDER = { "group", "bar", "icon", "reminder" }
-local TYPE_WORD = { group = { "group", "groups" }, bar = { "bar", "bars" }, icon = { "icon", "icons" },
-    reminder = { "reminder", "reminders" } }
+
+-- "3 groups": a count and its noun, one whole line per number form.
+local function CountWords(t, n)
+    local one = n == 1
+    if t == "group" then return (one and Tr("%d group") or Tr("%d groups")):format(n) end
+    if t == "bar" then return (one and Tr("%d bar") or Tr("%d bars")):format(n) end
+    if t == "icon" then return (one and Tr("%d icon") or Tr("%d icons")):format(n) end
+    if t == "reminder" then return (one and Tr("%d reminder") or Tr("%d reminders")):format(n) end
+    return n .. " " .. t
+end
 
 -- The selection
 
@@ -97,7 +106,7 @@ function M.Summary()
     local parts = {}
     for _, t in ipairs(TYPE_ORDER) do
         local n = counts[t]
-        if n then parts[#parts + 1] = n .. " " .. TYPE_WORD[t][n == 1 and 1 or 2] end
+        if n then parts[#parts + 1] = CountWords(t, n) end
     end
     return table.concat(parts, ", ")
 end
@@ -117,8 +126,8 @@ function M.Words(fam)
         n = n + 1
     end
     local parts = {}
-    for _, k in ipairs(order) do parts[#parts + 1] = counts[k] .. " " .. k end
-    return n .. (fam == "bar" and " bars" or " icons") .. " (" .. table.concat(parts, ", ") .. ")"
+    for _, k in ipairs(order) do parts[#parts + 1] = counts[k] .. " " .. Tr(k) end
+    return (fam == "bar" and Tr("%d bars (%s)") or Tr("%d icons (%s)")):format(n, table.concat(parts, ", "))
 end
 
 -- "icon" when every record is an icon, "bar" when every one is a bar, else
@@ -423,8 +432,8 @@ end
 local function MarkText()
     if not M.mark then
         local c = COL.faint
-        M.mark = string.format(" |cff%02x%02x%02x(mixed)|r",
-            math.floor(c[1] * 255 + 0.5), math.floor(c[2] * 255 + 0.5), math.floor(c[3] * 255 + 0.5))
+        M.mark = string.format(" |cff%02x%02x%02x%s|r",
+            math.floor(c[1] * 255 + 0.5), math.floor(c[2] * 255 + 0.5), math.floor(c[3] * 255 + 0.5), Tr("(mixed)"))
     end
     return M.mark
 end
@@ -583,7 +592,7 @@ function M.Band(host, rec, fam)
         local first = Store.Get(rec._adIds[1])
         host._icon.tex:SetTexture(first and NS.Factory.GetTexture(first) or nil)
     end
-    band.name:SetText("Editing:  " .. M.Words(fam))
+    band.name:SetText(Tr("Editing:  %s"):format(M.Words(fam)))
     band.name:SetWidth(0)
     local row = band.row
     if row._h ~= band.h then
@@ -618,7 +627,9 @@ function M.MoveItems()
             end
         end
         if not allHere then
-            items[#items + 1] = { value = "L" .. lay.id, text = (iconsOnly and "Free in " or "") .. lay.name }
+            -- names are the player's: drawn as typed (raw), never translated
+            items[#items + 1] = { value = "L" .. lay.id, raw = true,
+                text = iconsOnly and Tr("Free in %s"):format(lay.name) or lay.name }
         end
         if iconsOnly then
             local groups = Store.ChildrenOf(lay)
@@ -632,7 +643,7 @@ function M.MoveItems()
                     if r.groupId ~= g.id then inside = false end
                 end
                 if takes and not inside then
-                    items[#items + 1] = { value = "G" .. g.id, text = lay.name .. " / " .. g.name }
+                    items[#items + 1] = { value = "G" .. g.id, text = lay.name .. " / " .. g.name, raw = true }
                 end
             end
         end
@@ -742,12 +753,13 @@ function M.DeleteText()
     local parts = {}
     for _, t in ipairs({ "icon", "reminder" }) do
         local k = inside[t]
-        if k > 0 then parts[#parts + 1] = k .. " " .. TYPE_WORD[t][k == 1 and 1 or 2] end
+        if k > 0 then parts[#parts + 1] = CountWords(t, k) end
     end
-    local text = "Delete " .. M.Summary() .. "?"
+    local text = Tr("Delete %s?"):format(M.Summary())
     if #parts > 0 then
-        text = text .. "\n" .. (groups == 1 and "The group takes its " or "The groups take their ")
-            .. table.concat(parts, " and ") .. " with " .. (groups == 1 and "it." or "them.")
+        local what = (#parts == 2) and Tr("%s and %s"):format(parts[1], parts[2]) or parts[1]
+        text = text .. "\n" .. (groups == 1 and Tr("The group takes its %s with it.")
+            or Tr("The groups take their %s with them.")):format(what)
     end
     return text
 end
@@ -852,8 +864,8 @@ function M.Fill(pane, header, win, kit)
             AT.CloseDropdown()
             local v = Pick()
             if v == 0 then
-                btn.fs:SetText("Pick one")
-                C_Timer.After(1.2, function() btn.fs:SetText(word) end)
+                btn:SetLabel("Pick one")
+                C_Timer.After(1.2, function() btn:SetLabel(word) end)
                 return
             end
             fn(v)
@@ -926,7 +938,7 @@ function M.Fill(pane, header, win, kit)
     end
     M.editBtn, M.dupBtn, M.exportBtn, M.deleteBtn, M.clearBtn = edit, dup, exp, del, clr
     local note = Line(pg, 20, 11, COL.dim, function() return M.SameFamily() == nil end)
-    note._adFS:SetText("Edit together needs icons only, or bars only.")
+    note._adFS:SetText(Tr("Edit together needs icons only, or bars only."))
     M.noteRow = note
     win:HookScript("OnHide", function() M.Clear() end)
 end
@@ -948,7 +960,7 @@ function M.Refresh()
         M.rev = M.rev + 1
     end
     local h = M.header
-    h.name:SetText(#M.ids .. " selected")
+    h.name:SetText(Tr("%d selected"):format(#M.ids))
     h.chip1:Hide()
     h.chip2:Hide()
     h.sub:SetText(M.Summary())

@@ -5,6 +5,7 @@ local ADDON, NS = ...
 if NS.IsForever == true then return end
 local SP = NS.Special
 if not SP then return end
+local Tr = SP.Tr
 
 local RIPTIDE_ID = 61295
 local ASC_RESTO = 114052
@@ -162,8 +163,8 @@ local function Load(t)
 end
 
 local function Status()
-    if not (registered and IsResto()) then return "needs Restoration" end
-    return HasDRE() and "tracking" or "tracking, talent not taken"
+    if not (registered and IsResto()) then return Tr("needs Restoration") end
+    return HasDRE() and Tr("tracking") or Tr("tracking, talent not taken")
 end
 
 SP.Register({

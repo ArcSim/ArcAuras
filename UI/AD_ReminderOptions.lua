@@ -3,6 +3,7 @@
 local ADDON, NS = ...
 local Options = NS.Options
 if not Options then return end
+local Tr = NS.AT.Tr
 
 -- The reminder editor's parts and state; its page is built on first use.
 local RP = { tab = "Triggers", pool = {}, TABS = { "Triggers", "Appearance", "Load Conditions" } }
@@ -52,22 +53,22 @@ end
 -- A button says what happened for a moment, then its own label again.
 function RP.Flash(btn, text)
     btn._label = btn._label or btn.fs:GetText()
-    btn.fs:SetText(text)
+    btn.fs:SetText(Tr(text))
     C_Timer.After(1.2, function() btn.fs:SetText(btn._label) end)
 end
 
--- A trigger in a few words, for the reminder list.
+-- A trigger in a few words, for the reminder list, as drawn.
 function RP.Words(t)
     local sec = ("%g"):format(tonumber(t.seconds) or 3)
-    if t.type == "after_ready" then return sec .. " s after ready" end
-    if t.type == "into_cooldown" then return sec .. " s after cast" end
-    if t.type == "enchant_missing" then return "When it's missing" end
+    if t.type == "after_ready" then return Tr("%s s after ready"):format(sec) end
+    if t.type == "into_cooldown" then return Tr("%s s after cast"):format(sec) end
+    if t.type == "enchant_missing" then return Tr("When it's missing") end
     if t.type == "enchant_expiring" then
-        return ("%g"):format(tonumber(t.seconds) or 60) .. " s before it runs out"
+        return Tr("%s s before it runs out"):format(("%g"):format(tonumber(t.seconds) or 60))
     end
-    if t.type == "enchant_charges" then return "At " .. (tonumber(t.count) or 5) .. " charges left" end
-    if t.type == "when_usable" then return t.ignoreCooldown and "When usable, cooldown ignored" or "When usable" end
-    return NS.Schema.REMINDER_TRIGGER_LABELS[t.type] or tostring(t.type)
+    if t.type == "enchant_charges" then return Tr("At %s charges left"):format(tonumber(t.count) or 5) end
+    if t.type == "when_usable" then return Tr(t.ignoreCooldown and "When usable, cooldown ignored" or "When usable") end
+    return Tr(NS.Schema.REMINDER_TRIGGER_LABELS[t.type] or tostring(t.type))
 end
 
 -- How many appearance settings the reminder sets itself.
@@ -100,10 +101,10 @@ end
 
 function RP.Summary(r)
     local list = r.triggers or {}
-    local s = list[1] and RP.Words(list[1]) or "no trigger"
-    if #list > 1 then s = s .. ", +" .. (#list - 1) .. " more" end
+    local s = list[1] and RP.Words(list[1]) or Tr("no trigger")
+    if #list > 1 then s = Tr("%s, +%d more"):format(s, #list - 1) end
     local R = NS.Reminders
-    if R and not R.Loaded(r) then s = s .. "  -  not loaded here" end
+    if R and not R.Loaded(r) then s = Tr("%s  -  not loaded here"):format(s) end
     return s
 end
 
@@ -111,8 +112,8 @@ end
 function RP.AuraSummary(r)
     local Store = NS.Store
     local a = Store.Resolve(r, "auraActive", "activeAlpha") or 1
-    local s = (a <= 0) and "Shows while the aura is missing" or "An aura icon: its Active opacity is above 0"
-    if not Store.IsLoaded(r) then s = s .. "  -  not loaded here" end
+    local s = Tr((a <= 0) and "Shows while the aura is missing" or "An aura icon: its Active opacity is above 0")
+    if not Store.IsLoaded(r) then s = Tr("%s  -  not loaded here"):format(s) end
     return s
 end
 
@@ -142,6 +143,19 @@ end
 
 local function Trim(v)
     return (tostring(v or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+-- At most n bytes, never ending inside a character (a Korean syllable is
+-- three bytes).
+function RP.Cut(s, n)
+    if #s <= n then return s end
+    local i = n + 1
+    while i > 1 do
+        local b = s:byte(i)
+        if b < 128 or b >= 192 then break end
+        i = i - 1
+    end
+    return s:sub(1, i - 1)
 end
 
 -- A typed spell: an ID, a pasted link, or a name from your spellbook.
@@ -282,7 +296,7 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
     cap:SetFont(NS.AT.FONT, 9, "")
     cap:SetPoint("TOPLEFT", 10, -2)
     cap:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
-    cap:SetText("FROM YOUR SPELLBOOK - click one, then Create Reminder")
+    cap:SetText(Tr("FROM YOUR SPELLBOOK - click one, then Create Reminder"))
     local scroll, inner = AT.MakeScroll(grid)
     scroll:SetPoint("TOPLEFT", 8, -TOP)
     scroll:SetPoint("BOTTOMRIGHT", -12, GAP)
@@ -318,8 +332,8 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
             if not e then return end
             GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
             GameTooltip:SetSpellByID(e.spellID) -- raw-id: a catalog entry
-            GameTooltip:AddLine("Spell ID: " .. e.spellID, COL.arc[1], COL.arc[2], COL.arc[3])
-            if b._have then GameTooltip:AddLine("This group reminds you of it already.", 1, 1, 1) end
+            GameTooltip:AddLine(Tr("Spell ID: %s"):format(e.spellID), COL.arc[1], COL.arc[2], COL.arc[3])
+            if b._have then GameTooltip:AddLine(Tr("This group reminds you of it already."), 1, 1, 1) end
             GameTooltip:Show()
         end)
         b:SetScript("OnLeave", function()
@@ -374,8 +388,8 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
         inner:SetSize(cols * PITCH - GAP, math.max(1, rows * PITCH - GAP))
         scroll:UpdateScroll()
         empty:SetShown(#results == 0)
-        empty:SetText((#all == 0) and "No spells listed yet: add one by ID below."
-            or "Nothing in your spellbook matches: a spell ID below still works.")
+        empty:SetText((#all == 0) and Tr("No spells listed yet: add one by ID below.")
+            or Tr("Nothing in your spellbook matches: a spell ID below still works."))
     end
 
     -- the picked spell and what the button will do with it
@@ -399,9 +413,9 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
         if not (g and id) then return end
         ptex:SetTexture(C_Spell.GetSpellTexture(id) or 134400)
         local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(id)
-        if type(nm) ~= "string" then nm = "Spell " .. id end
-        pfs:SetText(nm .. "  (ID " .. id .. ")")
-        make.fs:SetText(RP.Existing(g, "spell", id) and "Edit Reminder" or "Create Reminder")
+        if type(nm) ~= "string" then nm = Tr("Spell %s"):format(id) end
+        pfs:SetText(Tr("%s  (ID %s)"):format(nm, id))
+        make:SetLabel(RP.Existing(g, "spell", id) and "Edit Reminder" or "Create Reminder")
     end
     make:SetScript("OnClick", function()
         AT.CloseDropdown()
@@ -421,7 +435,7 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
     rescan:SetScript("OnClick", function()
         AT.CloseDropdown()
         if not NS.SpellCatalog then return end
-        RP.Flash(rescan, NS.SpellCatalog.Rescan() .. " spells")
+        RP.Flash(rescan, Tr("%s spells"):format(NS.SpellCatalog.Rescan()))
         AT.LayoutPage(pg)
     end)
     AT.Tooltip(rescan, "Rescan", "Reads your spellbook again, after you learn or swap spells. Skipped in combat.")
@@ -429,8 +443,8 @@ function Options.ReminderGroupRows(pg, ctx, tabFn, kit)
         if not NS.SpellCatalog then return end
         local all = NS.SpellCatalog.All()
         local shown = #NS.SpellCatalog.Search(RP.query, #all)
-        ifs:SetText((shown < #all) and ("Showing " .. shown .. " of " .. #all .. " spells")
-            or (#all .. " spells"))
+        ifs:SetText((shown < #all) and Tr("Showing %d of %d spells"):format(shown, #all)
+            or Tr("%s spells"):format(#all))
     end
     info.button = rescan
 
@@ -707,7 +721,7 @@ function RP.Build(kit)
         local r = Rec()
         if not r then return end
         icon.tex:SetTexture(NS.Factory.GetTexture(r))
-        name:SetText("Editing:  " .. (r.name or "?"))
+        name:SetText(Tr("Editing:  %s"):format(r.name or "?"))
     end
     RP.head = head
 
@@ -744,7 +758,7 @@ function RP.Build(kit)
         if not r then return end
         local d = r.driver or {}
         if r.kind == "enchant" then
-            wfs:SetText("Watches the " .. ((d.hand == "off") and "Off Hand" or "Main Hand") .. " enchant")
+            wfs:SetText((d.hand == "off") and Tr("Watches the Off Hand enchant") or Tr("Watches the Main Hand enchant"))
             return
         end
         local item = r.kind == "item"
@@ -756,8 +770,12 @@ function RP.Build(kit)
             nm = id and C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: the typed spell, for the editor's words
         end
         -- an item not cached yet has no name: the ID alone says which
-        nm = (type(nm) == "string" and nm ~= "") and (nm .. "  ") or ""
-        wfs:SetText("Watches the " .. (item and "item " or "spell ") .. nm .. "(ID " .. tostring(id) .. ")")
+        if type(nm) == "string" and nm ~= "" then
+            wfs:SetText((item and Tr("Watches the item %s  (ID %s)") or Tr("Watches the spell %s  (ID %s)"))
+                :format(nm, tostring(id)))
+        else
+            wfs:SetText((item and Tr("Watches the item (ID %s)") or Tr("Watches the spell (ID %s)")):format(tostring(id)))
+        end
     end
     AT.RowDesc(pg, "A trinket or other gear reminds you only while you wear it.", 20, function()
         local r = Rec()
@@ -826,7 +844,7 @@ function RP.Build(kit)
             end
         end
 
-        AT.Section(pg, "Trigger " .. i, { visibleFn = tv })
+        AT.Section(pg, Tr("Trigger %d"):format(i), { visibleFn = tv })
         AT.RowDropdown(pg, owner, "When does this trigger fire?",
             function()
                 local t = T()
@@ -947,7 +965,7 @@ function RP.Build(kit)
             end,
             function(v)
                 v = Trim(v)
-                Set(i, "tts", (v ~= "") and v:sub(1, 200) or nil)
+                Set(i, "tts", (v ~= "") and RP.Cut(v, 200) or nil)
             end,
             soundVis, "Text to speech: when set, it is spoken instead of the sound.", "Optional")
         local speak = AT.MakeSmallButton(trow, "Speak", 56)
@@ -1077,13 +1095,13 @@ function RP.Build(kit)
         st._sync = function()
             local n = RP.OwnLook(Rec())
             if n == 0 then
-                sfs:SetText("Follows the group's appearance.")
+                sfs:SetText(Tr("Follows the group's appearance."))
                 sfs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
                 sfs:SetPoint("RIGHT", -12, 0)
                 back:Hide()
             else
-                sfs:SetText((n == 1) and "1 setting differs from the group; a cyan bar marks it."
-                    or (n .. " settings differ from the group; a cyan bar marks each."))
+                sfs:SetText((n == 1) and Tr("1 setting differs from the group; a cyan bar marks it.")
+                    or Tr("%d settings differ from the group; a cyan bar marks each."):format(n))
                 sfs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
                 sfs:SetPoint("RIGHT", back, "LEFT", -8, 0)
                 back:Show()
@@ -1165,7 +1183,8 @@ function Options.RefreshReminderPane(group)
     kit.strip.add:ClearAllPoints()
     kit.strip.add:SetPoint("LEFT", 8 + #list * 37, 0)
     local cur = RP.Current(group)
-    local remTab = cur and ("Reminder: " .. (cur.name or "?")) or "Reminder: none"
+    -- the name is the player's: it fills the line, never goes to the translator
+    local remTab = cur and Tr("Reminder: %s"):format(cur.name or "?") or Tr("Reminder: none")
     kit.switch:Set({ "Group Settings", remTab }, (ui.grpMode == "grp") and "Group Settings" or remTab,
         function(tab)
             if tab == "Group Settings" then

@@ -9,6 +9,7 @@ local Options = NS.Options
 if not Options then return end
 local AT, Store = NS.AT, NS.Store
 local COL, WHITE = AT.COL, AT.WHITE
+local Tr = AT.Tr
 
 local TP = { group = "all", q = "", hover = nil }
 NS.TexturePicker = TP
@@ -151,26 +152,28 @@ local function Filtered()
         for _, it in ipairs(TP.ordered) do
             if it.name:lower():find(q, 1, true) then out[#out + 1] = it end
         end
-        return out, #out .. (#out == 1 and " match" or " matches") .. " for \"" .. TP.q .. "\" in every group",
-            "No texture has \"" .. TP.q .. "\" in its name."
+        -- the typed words are the player's: they fill the line as typed
+        return out, (#out == 1 and Tr("%d match for \"%s\" in every group")
+                or Tr("%d matches for \"%s\" in every group")):format(#out, TP.q),
+            Tr("No texture has \"%s\" in its name."):format(TP.q)
     end
     local g = TP.group
     if g == "fav" then
         local favs = UI().texFavs
         for _, it in ipairs(all) do if favs[it.name] then out[#out + 1] = it end end
         table.sort(out, Lower)
-        return out, "Favorites", "No favorites yet: click the star on a texture to keep it here."
+        return out, Tr("Favorites"), Tr("No favorites yet: click the star on a texture to keep it here.")
     elseif g == "recent" then
         local by = {}
         for _, it in ipairs(all) do by[it.name] = it end
         for _, n in ipairs(UI().texRecent) do if by[n] then out[#out + 1] = by[n] end end
-        return out, "Recently used", "Textures you use show here."
+        return out, Tr("Recently used"), Tr("Textures you use show here.")
     elseif g == "all" then
-        return TP.ordered, "All " .. #TP.ordered .. " textures", ""
+        return TP.ordered, Tr("All %d textures"):format(#TP.ordered), ""
     end
     for _, it in ipairs(all) do if it.src == g then out[#out + 1] = it end end
     table.sort(out, Lower)
-    return out, #out .. " from " .. g, ""
+    return out, Tr("%d from %s"):format(#out, g), ""
 end
 
 -- The window
@@ -206,7 +209,7 @@ local function SegButton(parent, text, w)
     AT.Skin(b, COL.well, COL.line2)
     b.fs = Font(b, 11)
     b.fs:SetPoint("CENTER", 0, 0)
-    b.fs:SetText(text)
+    b.fs:SetText(Tr(text))
     function b:SetLit(on)
         local bg, edge, ink = COL.well, COL.line2, COL.dim
         if on then bg, edge, ink = COL.sel, COL.arc, COL.ink end
@@ -264,7 +267,7 @@ local function ListRow(parent)
     AT.Skin(r.chip, CLEAR, GREEN_EDGE)
     r.chip.fs = Font(r.chip, 9, GREEN)
     r.chip.fs:SetPoint("CENTER", 0, 0)
-    r.chip.fs:SetText("In use")
+    r.chip.fs:SetText(Tr("In use"))
     r.bar = MakeBar(r, nil, ROW_BAR_H, 0.72)
     r.bar:SetPoint("LEFT", 4, 0)
     r.bar:EnableMouse(false)
@@ -440,7 +443,7 @@ local function Build()
     barc:SetPoint("RIGHT", white, "LEFT", 0, 0)
     local pin = Font(tools, 11, COL.dim)
     pin:SetPoint("RIGHT", barc, "LEFT", -10, 0)
-    pin:SetText("Preview in")
+    pin:SetText(Tr("Preview in"))
     local function lit()
         barc:SetLit(not TP.white)
         white:SetLit(TP.white)
@@ -462,7 +465,8 @@ local function Build()
     TP.gHost, TP.gContent = gHost, gContent
     TP.groupButtons = {}
     TP.fromLabel = Font(gContent, 10, COL.dim)
-    TP.fromLabel:SetText("FROM")
+    local from = Tr("From")
+    TP.fromLabel:SetText(from:find("[\128-\255]") and from or from:upper())
 
     -- the list
     local main = CreateFrame("Frame", nil, p)
@@ -601,7 +605,7 @@ local function LayoutGroups()
             end)
         end
         b.id = g[1]
-        b.fs:SetText(g[2])
+        b.fs:SetText(Tr(g[2]))
         local count = 0
         if g[3] then for _, it in ipairs(TP.items) do if it.src == g[1] then count = count + 1 end end
         elseif g[1] == "all" then count = #TP.ordered end
@@ -648,9 +652,9 @@ function TP.Open(ctx)
     for _, it in ipairs(TP.items) do TP.byName[it.name] = it end
     TP.q = ""
     TP.box:SetText("")
-    TP.hint:SetText("Search all " .. #TP.ordered .. " textures")
+    TP.hint:SetText(Tr("Search all %d textures"):format(#TP.ordered))
     TP.hint:Show()
-    TP.win.titleText:SetText(ctx.label or "Bar texture")
+    TP.win.titleText:SetText(Tr(ctx.label or "Bar texture"))
     TP.sub:SetText(ctx.barName or "")
     TP.litTint()
     -- beside the options window, where the board drew it

@@ -15,6 +15,14 @@ if not (Bars and K and Bars.RegisterKind) then return end
 local R = K.R
 local Schema = NS.Schema
 local TX = {}
+
+-- The client's words for the addon's own text, read when drawn (a bars-only
+-- load has no theme).
+local function Tr(s)
+    local AT = NS.AT
+    if AT and AT.Tr then return AT.Tr(s) end
+    return s
+end
 NS.TextElements = TX
 TX.KEY = "adbarstext"
 -- the range engine's owner prefix, one owner per element
@@ -1440,7 +1448,10 @@ function TX.SampleName(rec)
     local unit = rec.driver.unit or "player"
     local nm = UnitName and UnitName(unit)
     if not IsSecret(nm) and type(nm) == "string" and nm ~= "" then return nm end
-    return TX.SAMPLE_NAMES[unit] or "Name"
+    -- a party slot is one line with its number filled in
+    local n = unit:match("^party(%d)$")
+    if n then return Tr("Party %s"):format(n) end
+    return Tr(TX.SAMPLE_NAMES[unit] or "Name")
 end
 
 function TX.SampleText(e)
@@ -1494,35 +1505,38 @@ end
 function TX.Describe(rec)
     local s = TX.Source(rec)
     local d = rec.driver or {}
-    if s == "static" then return (d.text and d.text ~= "") and ('"' .. d.text .. '"') or "words" end
+    -- the card's line as drawn: the addon's words in the client's language, a
+    -- typed text and the game's names as they are; a label mid-line is its
+    -- lower-case English as a key of its own
+    if s == "static" then return (d.text and d.text ~= "") and ('"' .. d.text .. '"') or Tr("words") end
     if s == "spellText" or s == "auraText" then
         local nm = d.spellID and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(d.spellID) -- raw-id: the typed spell, as the editor shows it
         if IsSecret(nm) or type(nm) ~= "string" then nm = nil end
-        local what = nm or (d.spellID and tostring(d.spellID)) or ((s == "spellText") and "no spell" or "no aura")
+        local what = nm or (d.spellID and tostring(d.spellID)) or Tr((s == "spellText") and "no spell" or "no aura")
         local WL = (s == "spellText") and Schema.TEXT_SPELL_WHEN_LABELS or Schema.TEXT_AURA_WHEN_LABELS
-        local when = ((WL and WL[TX.When(rec)]) or ""):lower()
-        local words = (d.text and d.text ~= "") and ('"' .. d.text .. '"') or "no words yet"
+        local when = Tr(((WL and WL[TX.When(rec)]) or ""):lower())
+        local words = (d.text and d.text ~= "") and ('"' .. d.text .. '"') or Tr("no words yet")
         return words .. " (" .. what .. ", " .. when .. ")"
     end
     local L = Schema.TEXT_SOURCE_LABELS or {}
-    local base = L[s] or s
+    local base = Tr(L[s] or s)
     local unit = d.unit or "player"
     if (s == "health" or s == "name") and unit ~= "player" then
         local O = NS.Options
-        base = base .. " of " .. ((O and O.HealthUnitLabel and O.HealthUnitLabel(unit)) or tostring(unit))
+        base = Tr("%s of %s"):format(base, Tr((O and O.HealthUnitLabel and O.HealthUnitLabel(unit)) or tostring(unit)))
     end
     if s == "power" or s == "health" then
         local SL = Schema.TEXT_SHOW_LABELS or {}
-        base = base .. ", " .. (SL[d.show or "current"] or d.show or "current"):lower()
+        base = base .. ", " .. Tr((SL[d.show or "current"] or d.show or "current"):lower())
     elseif s == "spellCd" or s == "spellCharges" then
         local nm = d.spellID and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(d.spellID) -- raw-id: the typed spell, as the editor shows it
         if IsSecret(nm) then nm = nil end
-        base = base .. ": " .. (nm or (d.spellID and ("spell " .. d.spellID)) or "no spell")
+        base = base .. ": " .. (nm or (d.spellID and Tr("spell %s"):format(d.spellID)) or Tr("no spell"))
     elseif AURA[s] then
-        base = base .. ": " .. (d.spellID and tostring(d.spellID) or "no aura")
+        base = base .. ": " .. (d.spellID and tostring(d.spellID) or Tr("no aura"))
     elseif s == "rules" then
         local n = type(d.rules) == "table" and #d.rules or 0
-        base = base .. ", " .. n .. (n == 1 and " rule" or " rules")
+        base = base .. ", " .. (n == 1 and Tr("%d rule") or Tr("%d rules")):format(n)
     end
     return base
 end

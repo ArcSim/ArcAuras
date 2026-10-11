@@ -3,9 +3,17 @@
 local ADDON, NS = ...
 local Options = NS.Options
 if not Options then return end
+local Tr = NS.AT.Tr
 
 local TPO = {}
 Options.TextureElement = TPO
+
+-- Capitals only for plain Latin words: string.upper would split a multibyte
+-- letter, and other scripts have no capitals.
+local function Upper(s)
+    if type(s) ~= "string" or s:find("[\128-\255]") then return s end
+    return s:upper()
+end
 
 local function Trim(v)
     return (tostring(v or ""):gsub("^%s+", ""):gsub("%s+$", ""))
@@ -127,20 +135,20 @@ function TPO.ApplyPick(rec, v)
     end
 end
 
--- What a picture value is called: the spell's icon (empty), a library name, or
--- a picture of your own.
+-- What a picture value is called, as drawn: the spell's icon (empty), a
+-- library or media name as it is, or a picture of your own.
 function TPO.PictureName(v)
     v = tostring(v or "")
-    if v == "" then return "The spell's icon" end
+    if v == "" then return Tr("The spell's icon") end
     local n = tonumber(v)
     local nm = n and Options.TEXTURE_NAMES and Options.TEXTURE_NAMES[n]
     if nm then return nm end
     local s = Options.TEXTURE_SHEET_OF and Options.TEXTURE_SHEET_OF[v]
-    if s then return s.name .. " (animated)" end
+    if s then return Tr("%s (animated)"):format(s.name) end
     local m = TPO.MediaNames()[v]
     if m then return m end
-    if TPO.IsAtlas(v) then return "Atlas: " .. v end
-    return "Your own: " .. v
+    if TPO.IsAtlas(v) then return Tr("Atlas: %s"):format(v) end
+    return Tr("Your own: %s"):format(v)
 end
 
 -- What SetTexture takes for a value: the spell's icon when it is empty.
@@ -164,7 +172,7 @@ end
 -- The sidebar's and cards' one line.
 function Options.TextureWhat(rec)
     local T = TPO.Runtime()
-    return T and T.Describe(rec) or "texture"
+    return T and T.Describe(rec) or Tr("texture")
 end
 
 -- The editor tabs: Triggers only for a picture with custom triggers.
@@ -207,7 +215,7 @@ function TPO.BuildPicker()
     hint:SetFont(NS.AT.FONT, 11, "")
     hint:SetPoint("LEFT", 6, 0)
     hint:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
-    hint:SetText("Search by name or ID")
+    hint:SetText(Tr("Search by name or ID"))
     search:SetScript("OnTextChanged", function(self)
         hint:SetShown((self:GetText() or "") == "")
         TPO.LayoutPicker()
@@ -238,7 +246,7 @@ function TPO.BuildPicker()
     empty:SetFont(NS.AT.FONT, 12, "")
     empty:SetPoint("CENTER", host, "CENTER", 0, 0)
     empty:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
-    empty:SetText("No picture matches.")
+    empty:SetText(Tr("No picture matches."))
     empty:Hide()
     win:HookScript("OnHide", function() TPO.pick = nil end)
     TPO.win, TPO.searchBox, TPO.countFS, TPO.scroll, TPO.content, TPO.emptyFS = win, search, count, host, content, empty
@@ -347,7 +355,7 @@ function TPO.PickerGroups(p, q)
         local list = {}
         for _, pic in ipairs(g.pictures) do
             list[#list + 1] = { value = tostring(pic.id), name = pic.name, art = pic.id,
-                sub = g.name .. ", ID " .. pic.id, glow = g.glow }
+                sub = Tr("%s, ID %s"):format(Tr(g.name), pic.id), glow = g.glow }
         end
         out[#out + 1] = { name = g.name, list = list }
     end
@@ -355,7 +363,7 @@ function TPO.PickerGroups(p, q)
     for _, s in ipairs(Options.TEXTURE_SHEETS or {}) do
         if TPO.IsAtlas(s.atlas) then
             sheets[#sheets + 1] = { value = s.atlas, name = s.name, atlas = s.atlas, sheet = s,
-                sub = "Animated, " .. s.frames .. " frames", glow = s.glow }
+                sub = Tr("Animated, %s frames"):format(s.frames), glow = s.glow }
         end
     end
     if #sheets > 0 then out[#out + 1] = { name = "Animated", list = sheets } end
@@ -371,7 +379,7 @@ function TPO.PickerGroups(p, q)
         for _, name in ipairs(atl) do
             list[#list + 1] = { value = name, name = name, atlas = name, sub = "Atlas" }
         end
-        out[#out + 1] = { name = more and ("Atlases (first " .. TPO.ATLAS_CAP .. ")") or "Atlases",
+        out[#out + 1] = { name = more and Tr("Atlases (first %d)"):format(TPO.ATLAS_CAP) or "Atlases",
             list = list, atlases = true }
     end
     return out
@@ -403,7 +411,7 @@ function TPO.LayoutPicker()
             h:ClearAllPoints()
             h:SetPoint("TOPLEFT", TPO.content, "TOPLEFT", 0, -y)
             h:SetPoint("RIGHT", TPO.content, "RIGHT", 0, 0)
-            h.fs:SetText(g.name:upper())
+            h.fs:SetText(Upper(Tr(g.name)))
             h:Show()
             y = y + TPO.HEAD
             for i, it in ipairs(shown) do
@@ -448,8 +456,10 @@ function TPO.LayoutPicker()
     TPO.content:SetHeight(math.max(1, y))
     TPO.scroll:UpdateScroll()
     TPO.emptyFS:SetShown(found == 0)
-    local what = (q == "") and (total .. " pictures") or (found == 1 and "1 match" or (found .. " matches"))
-    TPO.countFS:SetText((p.what and p.what ~= "" and (p.what .. ": ") or "") .. what)
+    local what = (q == "") and Tr("%d pictures"):format(total)
+        or (found == 1 and Tr("1 match") or Tr("%d matches"):format(found))
+    -- p.what is a name (the player's) or a line already in the client's words
+    TPO.countFS:SetText((p.what and p.what ~= "") and Tr("%s: %s"):format(p.what, what) or what)
     p.laidFor = tostring(p.get() or "")
     return selY
 end
@@ -713,7 +723,7 @@ function Options.TextureAddRows(pg, owner, addState)
             return (Src() == "aura" or Src() == "spellCd") and ParseSpell(addState.texSpell or "") or nil
         end,
         blend = function() return addState.texBlend or "BLEND" end,
-        what = function() return "New texture" end,
+        what = function() return Tr("New texture") end,
         visible = vis,
     })
     local look = S.bar and S.bar.texlook and S.bar.texlook.fields or {}
@@ -883,7 +893,8 @@ function Options.TextureTrackRows(pg, ctx, trackVis, owner)
         function()
             local r = Rec()
             local DA = NS.DriverAura
-            if not (r and DA) then return {} end
+            -- no texture open: the unit its field reads
+            if not (r and DA) then return { { value = "player", text = Options.HealthUnitLabel("player") } } end
             return Options.AuraUnitItems(r.driver, nil, (DA.ShapeOf(r.driver)))
         end,
         auraVis)
@@ -1064,7 +1075,7 @@ function Options.TextureTrackRows(pg, ctx, trackVis, owner)
         local andFS = count:CreateFontString(nil, "OVERLAY")
         andFS:SetFont(AT.FONT, 12, "")
         andFS:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
-        andFS:SetText("and")
+        andFS:SetText(Tr("and"))
         andFS:SetPoint("LEFT", lo, "RIGHT", 8, 0)
         local hi = TPO.NumBox(count, function()
             local r = Rec()

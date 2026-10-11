@@ -10,6 +10,7 @@ local Options = NS.Options
 if not Options then return end
 local AT, Store, Schema = NS.AT, NS.Store, NS.Schema
 local COL = AT.COL
+local Tr = AT.Tr
 
 local D = { pages = {}, used = {}, epoch = 0, okCache = {}, looseCache = {} }
 Options.Defaults = D
@@ -69,13 +70,15 @@ D.WORDS = {
         special = K("Arc Proc bar", "Arc Proc bar", "Arc Proc bars", "Arc Proc bars"),
     },
     iconGroup = {
-        cooldown = K("CD Group", "CD group", "CD groups", "CD groups"),
+        cooldown = K("Icon Group", "icon group", "icon groups", "Icon groups"),
         aura = K("Aura Group", "aura group", "aura groups", "Aura groups"),
         reminder = K("Reminder Group", "reminder group", "reminder groups", "Reminder groups"),
     },
 }
 D.FAMILY_WORDS = { icon = { "icon", "icons", "The icon" }, bar = { "bar", "bars", "The bar" },
     iconGroup = { "group", "groups", "The group" } }
+-- An All row's title, whole so a translation never takes the noun apart.
+D.ALL_TITLE = { icon = "All icons", bar = "All bars", iconGroup = "All groups" }
 
 function D.Words(family, kind)
     local w = D.WORDS[family] and D.WORDS[family][kind]
@@ -235,10 +238,11 @@ function D.ArcValue(family, px, section, field)
     return v, false
 end
 
--- A value in its row's own words (a percent, a label, the empty pick's name).
+-- A value in its row's own words (a percent, a label, the empty pick's name),
+-- as drawn: words translated, numbers as they are.
 function D.Fmt(def, v, field)
     local t = def.t
-    if t == "bool" then return v and "On" or "Off" end
+    if t == "bool" then return Tr(v and "On" or "Off") end
     if t == "num" or t == "int" then
         v = tonumber(v) or 0
         if def.input then
@@ -250,16 +254,17 @@ function D.Fmt(def, v, field)
         if (def.step or 0.01) < 1 then return string.format("%.1f", v) end
         return string.format("%d", math.floor(v + 0.5))
     end
-    if t == "enum" then return (def.labels and def.labels[v]) or tostring(v) end
-    if t == "id" then return (tonumber(v) or 0) ~= 0 and tostring(v) or "None" end
-    if t == "sound" then return (v and v ~= "") and tostring(v) or "None" end
+    if t == "enum" then return Tr((def.labels and def.labels[v]) or tostring(v)) end
+    if t == "id" then return (tonumber(v) or 0) ~= 0 and tostring(v) or Tr("None") end
+    if t == "sound" then return (v and v ~= "") and tostring(v) or Tr("None") end
     if t == "text" then
         if v == nil or v == "" then
-            if def.media then return (Options.MEDIA_EMPTY and Options.MEDIA_EMPTY[field]) or "Flat" end
-            if def.font then return "Default" end
-            return "Empty"
+            if def.media then return Tr((Options.MEDIA_EMPTY and Options.MEDIA_EMPTY[field]) or "Flat") end
+            if def.font then return Tr("Default") end
+            return Tr("Empty")
         end
-        return tostring(v)
+        -- a shipped text (Ready) reads in the client's words; a media name stays
+        return Tr(tostring(v))
     end
     return tostring(v)
 end
@@ -281,16 +286,16 @@ local function PickArc(family, px, m)
     if def.showPick then
         local w = (def.pickWords and def.pickWords(px))
             or { up = "While the aura is up", missing = "While the aura is missing" }
-        if A(m.field) == true then return w.up end
-        if A(def.showPick) == true and w.missing then return w.missing end
-        return "Always"
+        if A(m.field) == true then return Tr(w.up) end
+        if A(def.showPick) == true and w.missing then return Tr(w.missing) end
+        return Tr("Always")
     end
     local one, two = Options.StateWords(px)
     local a, b = A(m.field) ~= false, A(def.statePick) ~= false
-    if a and b then return "Always" end
-    if a then return "While " .. one end
-    if b then return "While " .. two end
-    return "Never"
+    if a and b then return Tr("Always") end
+    if a then return Tr("While %s"):format(Tr(one)) end
+    if b then return Tr("While %s"):format(Tr(two)) end
+    return Tr("Never")
 end
 
 function D.RowChanged(family, px, m)
@@ -341,11 +346,18 @@ function D.Confirm(text, onYes)
         OnAccept = function() onYes() end })
 end
 
--- The ask in words: "N changes. M spell icons use the old values."
+-- The ask in words: "N changes. M spell icons use the old values." Each
+-- sentence is one whole line per count, so a translation can reorder it.
 function D.AskText(p, w)
     local c, n = p.changes, p.items
-    return c .. (c == 1 and " change. " or " changes. ") .. n .. " " .. (n == 1 and w.one or w.many)
-        .. (n == 1 and " uses" or " use") .. " the old " .. (c == 1 and "value." or "values.")
+    local first = (c == 1 and Tr("%d change.") or Tr("%d changes.")):format(c)
+    local line
+    if n == 1 then
+        line = c == 1 and Tr("%d %s uses the old value.") or Tr("%d %s uses the old values.")
+    else
+        line = c == 1 and Tr("%d %s use the old value.") or Tr("%d %s use the old values.")
+    end
+    return first .. " " .. line:format(n, Tr(n == 1 and w.one or w.many))
 end
 
 -- The words for a batch's items: the kind's while it reached one kind.
@@ -362,8 +374,9 @@ function D.AskPopup(batch, rec)
     if not p then return end
     local w = D.BatchWords(Store.FamilyOf(rec), Store.KindOf(rec), p)
     Popup("ARCUIV2_DEFAULTS_ASK", {
-        text = D.AskText(p, w) .. "\n\nChange them too, or keep the new default for new " .. w.many .. " only?",
-        button1 = "Change them too", button2 = "Only new ones",
+        text = D.AskText(p, w) .. "\n\n"
+            .. Tr("Change them too, or keep the new default for new %s only?"):format(Tr(w.many)),
+        button1 = Tr("Change them too"), button2 = Tr("Only new ones"),
         OnAccept = function() Store.AnswerDefaults(batch, true) Options.RefreshAll() end,
         OnCancel = function() Store.AnswerDefaults(batch, false) end,
     })
@@ -609,9 +622,10 @@ local function LinkButton(parent, text)
     b.fs:SetFont(AT.FONT, 10, "")
     b.fs:SetPoint("LEFT", 0, 0)
     b.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
-    b.fs:SetText(text)
+    local words = Tr(text)
+    b.fs:SetText(words)
     b:SetHeight(16)
-    b:SetWidth(math.ceil((b.fs:GetStringWidth() or 0) > 0 and b.fs:GetStringWidth() or (#text * 6)) + 2)
+    b:SetWidth(math.ceil((b.fs:GetStringWidth() or 0) > 0 and b.fs:GetStringWidth() or (AT.TextLen(words) * 6)) + 2)
     b:SetScript("OnEnter", function() b.fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3]) end)
     b:SetScript("OnLeave", function() b.fs:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3]) end)
     return b
@@ -655,8 +669,11 @@ function D.Decorate(row, family)
         D.Refresh()
     end)
     AT.Tooltip(reset, "Reset", function()
-        return "Back to Arc's value for this row" .. (row._adArcWord and (": " .. row._adArcWord) or "")
-            .. ". It asks whether the items you have change too."
+        if row._adArcWord then
+            return Tr("Back to Arc's value for this row: %s. It asks whether the items you have change too.")
+                :format(row._adArcWord)
+        end
+        return Tr("Back to Arc's value for this row. It asks whether the items you have change too.")
     end)
     local inner = row._sync
     row._sync = function()
@@ -672,19 +689,22 @@ function D.Decorate(row, family)
             if m.def.showPick or m.def.statePick then
                 word = PickArc(family, px, m)
             elseif byKind then
-                word = "by kind"
+                word = Tr("by kind")
             elseif m.def.t == "color" and type(v) == "table" then
                 swatch = v
             else
                 word = D.Fmt(m.def, v, m.field)
             end
-            words = word and ("Arc: " .. word) or "Arc:"
+            words = word and Tr("Arc: %s"):format(word) or Tr("Arc:")
         end
         row._adArcWord = word
-        if mixed then words = words and ("mixed   " .. words) or "mixed" end
+        if mixed then
+            local mx = Tr("mixed")
+            words = words and (mx .. "   " .. words) or mx
+        end
         if px._adKinds then
             local n = #Store.DefaultKinds(family, px._adKinds, m.section, m.field)
-            kinds:SetText(n == 1 and "1 kind" or (n .. " kinds"))
+            kinds:SetText(n == 1 and Tr("1 kind") or Tr("%d kinds"):format(n))
             kinds:Show()
         else
             kinds:Hide()
@@ -780,7 +800,7 @@ function D.BuildFamily(family, host)
     empty._fs:SetPoint("LEFT", 12, 0)
     empty._fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     empty._sync = function()
-        empty._fs:SetText(D.State().filter and "Nothing changed here yet." or "Nothing to set here.")
+        empty._fs:SetText(D.State().filter and Tr("Nothing changed here yet.") or Tr("Nothing to set here."))
     end
     P.empty = empty
 
@@ -938,21 +958,23 @@ function D.BuildFoot(family, pg, mine)
             local w = D.Words(family, c.entry.kind)
             local n = #Store.DefaultsItems(family, c.entry.kind)
             own = Own()
+            local word = Tr(n == 1 and w.one or w.many)
             if n == 0 then
-                text = "No " .. w.many .. " yet. New ones start with these."
+                text = Tr("No %s yet. New ones start with these."):format(Tr(w.many))
             elseif own > 0 then
-                text = n .. " " .. (n == 1 and (w.one .. " uses") or (w.many .. " use")) .. " these. " .. own
-                    .. (own == 1 and " keeps its own value for a row here." or " keep their own value for a row here.")
+                text = (n == 1 and Tr("%d %s uses these.") or Tr("%d %s use these.")):format(n, word) .. " "
+                    .. (own == 1 and Tr("%d keeps its own value for a row here.")
+                        or Tr("%d keep their own value for a row here.")):format(own)
             else
-                text = n .. " " .. (n == 1 and (w.one .. " uses these. It follows them.")
-                    or (w.many .. " use these. Each one follows them."))
+                text = (n == 1 and Tr("%d %s uses these. It follows them.")
+                    or Tr("%d %s use these. Each one follows them.")):format(n, word)
             end
         else
             local items = 0
             for _, k in ipairs(c.kinds) do items = items + #Store.DefaultsItems(family, k) end
             local f = D.FAMILY_WORDS[family]
-            text = "Reaches every kind with that row: " .. #c.kinds .. " kinds, " .. items .. " "
-                .. (items == 1 and f[1] or f[2]) .. "."
+            text = Tr("Reaches every kind with that row: %d kinds, %d %s.")
+                :format(#c.kinds, items, Tr(items == 1 and f[1] or f[2]))
         end
         fs:SetText(text)
         fs:SetTextColor((own > 0 and COL.ink or COL.dim)[1], (own > 0 and COL.ink or COL.dim)[2],
@@ -972,9 +994,10 @@ function D.BuildFoot(family, pg, mine)
         local w = D.Words(family, c.entry.kind)
         local one = own == 1
         local parts = D.PageParts(family, D.Ctx(family))
-        D.Confirm(own .. " " .. (one and w.one or w.many) .. (one and " has its own value" or " have their own values")
-            .. " for a row on this page. Reset " .. (one and "it so it follows" or "them so they follow")
-            .. " your defaults?", function()
+        local ask = one
+            and Tr("%d %s has its own value for a row on this page. Reset it so it follows your defaults?")
+            or Tr("%d %s have their own values for a row on this page. Reset them so they follow your defaults?")
+        D.Confirm(ask:format(own, Tr(one and w.one or w.many)), function()
             Store.DefaultsFollow(family, c.entry.kind, parts)
             D.Refresh()
         end)
@@ -1005,7 +1028,7 @@ function D.BuildFoot(family, pg, mine)
             if not (c and c.entry) then return { { value = "others", text = "Every other kind" } } end
             local list = D.CopyTargets(family, c.entry.kind)
             local f = D.FAMILY_WORDS[family]
-            local items = { { value = "others", text = "Every other kind of " .. f[2] .. " (" .. #list .. ")" } }
+            local items = { { value = "others", text = Tr("Every other kind of %s (%d)"):format(Tr(f[2]), #list) } }
             for _, k in ipairs(list) do items[#items + 1] = { value = k, text = D.Words(family, k).title } end
             return items
         end,
@@ -1056,7 +1079,7 @@ local function OrderStep(parent, text, on)
     f.fs = f:CreateFontString(nil, "OVERLAY")
     f.fs:SetFont(AT.FONT, 10, "")
     f.fs:SetPoint("LEFT", on and 6 or 0, 0)
-    f.fs:SetText(text)
+    f.fs:SetText(Tr(text))
     local c = on and COL.ink or COL.faint
     f.fs:SetTextColor(c[1], c[2], c[3])
     if on then
@@ -1119,7 +1142,7 @@ function D.BuildHead(parent)
         if not c then return end
         local n, w = D.KindChanges(c), D.HeadWords(c)
         if n == 0 then return end
-        D.Confirm("Put all " .. n .. " of your " .. w.one .. " defaults back to Arc's?", function()
+        D.Confirm(Tr("Put all %d of your %s defaults back to Arc's?"):format(n, Tr(w.one)), function()
             local px = D.Ctx(c.family)
             local batch = D.Batch(px)
             for _, k in ipairs(KindsOf(px)) do Store.ResetDefaults(c.family, k, nil, batch) end
@@ -1149,15 +1172,18 @@ function D.HeadWords(c)
     if c.entry then return D.Words(c.family, c.entry.kind) end
     local f = D.FAMILY_WORDS[c.family]
     local tab = c.tab
-    return K(tab.name, f[1], f[2], "All " .. f[2])
+    return K(tab.name, f[1], f[2], D.ALL_TITLE[c.family] or ("All " .. f[2]))
 end
 
 -- The order strip's last step: the item itself, in its own word (a text, a
--- texture, a wheel; else the family's).
+-- texture, a wheel; else the family's), whole for the translation.
 D.OWN_WORD = { text = true, texture = true, wheel = true }
+D.OWN_TITLE = { text = "The text", texture = "The texture", wheel = "The wheel" }
 function D.ItemWord(c)
     local kind = c.entry and c.entry.kind
-    if c.family == "bar" and kind and D.OWN_WORD[kind] then return "The " .. D.Words("bar", kind).one end
+    if c.family == "bar" and kind and D.OWN_WORD[kind] then
+        return D.OWN_TITLE[kind] or ("The " .. D.Words("bar", kind).one)
+    end
     return (D.FAMILY_WORDS[c.family] or { nil, nil, "The item" })[3]
 end
 
@@ -1180,9 +1206,9 @@ function D.SyncHead()
     local nx = shown and (6 + (pw or D.PREV) + 12) or 10
     h.name:ClearAllPoints()
     h.name:SetPoint("TOPLEFT", nx, -8)
-    h.name:SetText(w.title)
+    h.name:SetText(Tr(w.title))
     -- the strip, laid in whole units left to right
-    h.steps[4].fs:SetText(D.ItemWord(c))
+    h.steps[4].fs:SetText(Tr(D.ItemWord(c)))
     local x = nx
     for i = 1, 4 do
         local st = h.steps[i]
@@ -1203,11 +1229,11 @@ function D.SyncHead()
     if p then
         local bw = D.BatchWords(c.family, c.entry and c.entry.kind, p)
         h.ask:SetText(D.AskText(p, bw))
-        h.too.fs:SetText(p.items == 1 and "Change it too" or "Change them too")
-        local label = "Only new " .. bw.many
+        h.too:SetLabel(p.items == 1 and "Change it too" or "Change them too")
+        local label = Tr("Only new %s"):format(Tr(bw.many))
         h.only.fs:SetText(label)
         local lw = math.ceil(h.only.fs:GetStringWidth() or 0)
-        h.only:SetWidth(math.max(96, (lw > 0 and lw or #label * 6) + 20))
+        h.only:SetWidth(math.max(96, (lw > 0 and lw or AT.TextLen(label) * 6) + 20))
         h.ask:Show()
         h.too:Show()
         h.only:Show()
@@ -1225,7 +1251,7 @@ function D.SyncHead()
         for i = 1, 4 do h.steps[i]:Show() end
         for i = 1, 3 do h.chevs[i]:Show() end
         local n = D.KindChanges(c)
-        h.resetAll.fs:SetText("Reset all " .. n)
+        h.resetAll:SetLabel(Tr("Reset all %d"):format(n))
         h.resetAll:SetShown(n > 0)
     end
 end
@@ -1471,7 +1497,8 @@ function D.SyncList()
     if tab.all then
         local n = 0
         for _, k in ipairs(tab.all.kinds) do n = n + #Store.DefaultsChanged(tab.all.family, k) end
-        items[#items + 1] = { key = "all", text = "All " .. D.FAMILY_WORDS[tab.all.family][2], n = n, all = true }
+        items[#items + 1] = { key = "all", text = D.ALL_TITLE[tab.all.family]
+            or ("All " .. D.FAMILY_WORDS[tab.all.family][2]), n = n, all = true }
     end
     for _, e in ipairs(tab.entries) do
         items[#items + 1] = { key = D.EntryKey(e), text = D.Words(e.family, e.kind).name,
@@ -1482,7 +1509,7 @@ function D.SyncList()
     for i, it in ipairs(items) do
         local r = D.ListRow(i)
         r._key, r._all, r._sel = it.key, it.all, it.key == curKey
-        r.name:SetText(it.text)
+        r.name:SetText(Tr(it.text))
         r.count:SetText(it.n > 0 and tostring(it.n) or "")
         r:ClearAllPoints()
         r:SetPoint("TOPLEFT", list, "TOPLEFT", 4, y)
@@ -1583,7 +1610,7 @@ end
 
 function D.Fill(pane, header, win)
     D.pane, D.header, D.win = pane, header, win
-    header.name:SetText("Defaults")
+    header.name:SetText(Tr("Defaults"))
     header.chip1:Hide()
     header.chip2:Hide()
     D.BuildTabs()
@@ -1597,7 +1624,7 @@ function D.Fill(pane, header, win)
     word:SetFont(AT.FONT, 11, "")
     word:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     word:SetPoint("RIGHT", box, "LEFT", -6, 0)
-    word:SetText("Only what I changed")
+    word:SetText(Tr("Only what I changed"))
     local ww = math.ceil(word:GetStringWidth() or 0)
     fb:SetWidth((ww > 0 and ww or 110) + 30)
     fb:SetPoint("RIGHT", header, "RIGHT", -6, 0)

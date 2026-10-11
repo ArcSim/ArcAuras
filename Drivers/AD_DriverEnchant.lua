@@ -137,6 +137,17 @@ DE.TEMPLATE_LIST = {
 }
 DE.IMBUES = { rockbiter = true, flametongue = true, frostbrand = true, windfury = true }
 
+-- A template's name as shown: the English as written on an English client; on
+-- another, the game's name for its rank 1 spell, else the English. The
+-- template's `name` stays English: it names the records it makes.
+function DE.ShownName(t)
+    local loc = GetLocale and GetLocale()
+    if loc == nil or loc == "enUS" or loc == "enGB" or not t.spell then return t.name end
+    local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(t.spell) -- raw-id: a template's rank 1 spell
+    if type(nm) ~= "string" or nm == "" or (issecretvalue and issecretvalue(nm)) then return t.name end
+    return nm
+end
+
 -- The templates this client offers, each { key, name, label, ids }: any shaman
 -- imbue first (the four imbues' ranks together), then each one.
 function DE.Templates()
@@ -150,7 +161,8 @@ function DE.Templates()
     local out = { { key = "imbues", name = "Shaman Imbue", label = "Any shaman imbue, every rank", ids = all,
         class = "SHAMAN" } }
     for _, t in ipairs(DE.TEMPLATE_LIST) do
-        out[#out + 1] = { key = t.key, name = t.name, label = t.name .. ", every rank", ids = t.ids, spell = t.spell }
+        out[#out + 1] = { key = t.key, name = t.name, label = DE.ShownName(t) .. ", every rank", ids = t.ids,
+            spell = t.spell }
     end
     return out
 end

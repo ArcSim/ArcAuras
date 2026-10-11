@@ -137,18 +137,23 @@ local function MaybeFind(rec)
 end
 
 -- The Tracking tab's line under the buff's name.
+-- The editor's line, in the client's words (NS.AT read late: a driver-only
+-- load has no theme).
 function TR.StatusText(rec)
+    local AT = NS.AT
+    local Tr = (AT and AT.Tr) or function(s) return s end
     local name = TR.BuffName(rec)
-    if not name then return "Set the totem's spell ID first." end
+    if not name then return Tr("Set the totem's spell ID first.") end
     local ids = TR.IDs(rec)
     if ids then
-        return ("Out of range shows while the totem is out and %s is not on you (%d spell IDs)."):format(name, #ids)
+        return Tr("Out of range shows while the totem is out and %s is not on you (%d spell IDs).")
+            :format(name, #ids)
     end
-    if TR.Searching(rec) then return ("Looking up %s in the spell list..."):format(name) end
+    if TR.Searching(rec) then return Tr("Looking up %s in the spell list..."):format(name) end
     if rec.driver.rangeBuffFor == name then
-        return ("No buff named %s was found. Type the buff's name as its tooltip shows it."):format(name)
+        return Tr("No buff named %s was found. Type the buff's name as its tooltip shows it."):format(name)
     end
-    return ("%s is looked up when you turn an Out of range look on."):format(name)
+    return Tr("%s is looked up when you turn an Out of range look on."):format(name)
 end
 
 -- What the look holds

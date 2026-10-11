@@ -3,6 +3,7 @@
 local ADDON, NS = ...
 local Options = NS.Options
 if not Options then return end
+local Tr = NS.AT.Tr
 
 local SO = {}
 Options.Special = SO
@@ -33,9 +34,20 @@ function SO.ForClass(def)
     return def.class == nil or def.class == tag
 end
 
+-- A class tag's word: as the game names the class on another language, the
+-- tag in English words on an English client.
+function SO.ClassWord(tag)
+    local en = tag:sub(1, 1) .. tag:sub(2):lower()
+    local loc = GetLocale and GetLocale()
+    if loc == nil or loc == "enUS" or loc == "enGB" then return en end
+    local names = LOCALIZED_CLASS_NAMES_MALE
+    local nm = type(names) == "table" and names[tag]
+    return (type(nm) == "string" and nm ~= "") and nm or en
+end
+
 -- the class and spec words of a tracker
 function SO.WhoWords(def)
-    local words = def.class and (def.class:sub(1, 1) .. def.class:sub(2):lower()) or "Every class"
+    local words = def.class and SO.ClassWord(def.class) or Tr("Every class")
     if def.specs and #def.specs > 0 and GetSpecializationInfoForSpecID then
         local names = {}
         for _, id in ipairs(def.specs) do
@@ -121,7 +133,7 @@ function Options.SpecialAddRows(pg, owner, addState)
     cap:SetFont(NS.AT.FONT, 9, "")
     cap:SetPoint("TOPLEFT", 10, -2)
     cap:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
-    cap:SetText("ARC PROC - click one, then Create")
+    cap:SetText(Tr("ARC PROC - click one, then Create"))
     row._cells = {}
     local function Cell(i)
         local b = row._cells[i]
@@ -162,8 +174,8 @@ function Options.SpecialAddRows(pg, owner, addState)
             local b = Cell(i)
             b.tex:SetTexture(SI.ArtOf(it.def))
             b._adSpecialId, b._picked = it.id, it.id == cur
-            b._title = it.def.name
-            b._body = SO.WhoWords(it.def) .. ". " .. (SO.NOTES[it.id] or "")
+            b._title = Tr(it.def.name)
+            b._body = SO.WhoWords(it.def) .. ". " .. Tr(SO.NOTES[it.id] or "")
             b:ClearAllPoints()
             b:SetPoint("TOPLEFT", 8 + (i - 1) * (cell + gap), -top)
             b.Edge(b:IsMouseOver())
@@ -173,8 +185,8 @@ function Options.SpecialAddRows(pg, owner, addState)
     end
     SO.Line(pg, 22, function()
         local def = SO.Picked(addState)
-        if not def then return "Nothing picked yet: click an Arc Proc above." end
-        return def.name .. "  |cff8fa3b8" .. SO.WhoWords(def) .. "|r   " .. (SO.NOTES[addState.specialId] or "")
+        if not def then return Tr("Nothing picked yet: click an Arc Proc above.") end
+        return Tr(def.name) .. "  |cff8fa3b8" .. SO.WhoWords(def) .. "|r   " .. Tr(SO.NOTES[addState.specialId] or "")
     end, gridVis)
     AT.RowDesc(pg, "No Arc Proc is written for your class yet.", 20, function()
         return vis() and not SO.BarMode(addState) and #SO.Offered(addState) == 0
@@ -328,18 +340,22 @@ function Options.SpecialCreate(addState, dest, layoutId)
     return rec
 end
 
+-- The card line, as drawn: the tracker's name in the client's words.
 function Options.SpecialWhat(rec)
     local SI = NS.SpecialIcon
-    if SI then return SI.Words(rec) end
-    return "Arc Proc: " .. tostring(rec.driver and (rec.driver.tracker or rec.driver.special) or "unknown")
+    local def = SI and SI.Def and SI.Def(rec)
+    if def then return Tr("Arc Proc: %s"):format(Tr(def.name)) end
+    local id = (SI and SI.TrackerID and SI.TrackerID(rec)) or (rec.driver and (rec.driver.tracker or rec.driver.special))
+    return Tr("Arc Proc: %s"):format(tostring(id or "unknown"))
 end
 
 -- A deck bar's card line: its tracker's name.
 function Options.SpecialBarWhat(rec)
     local SI = NS.SpecialIcon
     local def = SI and SI.Def(rec)
-    if def then return def.name end
-    return tostring(rec.driver and (rec.driver.tracker or rec.driver.special) or "unknown Arc Proc")
+    if def then return Tr(def.name) end
+    local id = rec.driver and (rec.driver.tracker or rec.driver.special)
+    return id and tostring(id) or Tr("unknown Arc Proc")
 end
 
 -- A dim one-line row whose words come from textFn on every sync.
@@ -395,12 +411,13 @@ function Options.SpecialIconRows(pg, ctx, trackVis, owner)
     AT.Section(pg, "Arc Proc", { visibleFn = vis })
     Line(22, function()
         local def = Def()
-        if not def then return "Tracks an unknown Arc Proc: this icon came from a newer version." end
-        return "Tracks " .. def.name .. "  (" .. SO.WhoWords(def) .. ")"
+        if not def then return Tr("Tracks an unknown Arc Proc: this icon came from a newer version.") end
+        return Tr("Tracks %s  (%s)"):format(Tr(def.name), SO.WhoWords(def))
     end)
     Line(22, function()
         local r, S = Rec(), SI()
-        return (r and S) and ("Status: " .. S.Status(r)) or ""
+        -- Status comes in the client's words already
+        return (r and S) and Tr("Status: %s"):format(S.Status(r)) or ""
     end)
     local reset = AT.RowButton(pg, "Reset the count", function()
         local r, S = Rec(), SI()
@@ -520,6 +537,13 @@ SO.SHOWS = {
     chance = { { "{chance}", "The chance of a proc" } },
     viol = { { "{viol}", "Violations" } },
 }
+-- A special text's row labels, one pattern per row around the text's name.
+SO.STACK_LABELS = { stackText = "%s", stackFont = "%s font", stackSize = "%s size", stackColor = "%s color",
+    stackOutline = "%s outline", stackShadow = "%s shadow", stackShadowColor = "%s shadow color",
+    stackShadowX = "%s shadow X", stackShadowY = "%s shadow Y", stackAnchor = "%s anchor", stackX = "%s X",
+    stackY = "%s Y" }
+SO.LABEL_LABELS = { labelFont = "%s font", labelSize = "%s size", labelColor = "%s color",
+    labelAnchor = "%s anchor", labelX = "%s X", labelY = "%s Y", labelShowReady = "Show %s" }
 SO.TOKENS = "{left} {drawn} {size}: the deck. {procs} {procsLeft} {max}: its procs. {chance}: the chance. "
     .. "{viol}: violations. {count}: a counter."
 
@@ -596,21 +620,23 @@ function Options.SpecialTextTabs(api)
     end
     local STACK_LOOK = { "stackFont", "stackSize", "stackColor", "stackOutline", "stackShadow",
         "stackShadowColor", "stackShadowX", "stackShadowY", "stackAnchor", "stackX", "stackY" }
+    -- each row's label is one whole English line per pattern, drawn through
+    -- the translation as it is
     local function StackWords(word)
-        return { stackText = word, stackFont = word .. " font", stackSize = word .. " size",
-            stackColor = word .. " color", stackOutline = word .. " outline", stackShadow = word .. " shadow",
-            stackShadowColor = word .. " shadow color", stackShadowX = word .. " shadow X",
-            stackShadowY = word .. " shadow Y", stackAnchor = word .. " anchor", stackX = word .. " X", stackY = word .. " Y" }
+        local out = {}
+        for f, pat in pairs(SO.STACK_LABELS) do out[f] = pat:format(word) end
+        return out
     end
     local function LabelLook(suf)
         return { "labelFont" .. suf, "labelSize" .. suf, "labelColor" .. suf, "labelAnchor" .. suf,
             "labelX" .. suf, "labelY" .. suf, "labelShowReady" .. suf }
     end
     local function LabelWords(suf, word)
-        return { ["labelFont" .. suf] = word .. " font", ["labelSize" .. suf] = word .. " size",
-            ["labelColor" .. suf] = word .. " color", ["labelAnchor" .. suf] = word .. " anchor",
-            ["labelX" .. suf] = word .. " X", ["labelY" .. suf] = word .. " Y",
-            ["labelShowReady" .. suf] = "Show " .. word:lower() }
+        local out = {}
+        for base, pat in pairs(SO.LABEL_LABELS) do
+            out[base .. suf] = pat:format((base == "labelShowReady") and word:lower() or word)
+        end
+        return out
     end
     local PROC_COLORS = { "procColorMode", "procEmptyColor", "procHalfColor", "procFullColor" }
     local CHANCE_COLORS = { "chanceDecimals", "chanceColorMode", "chanceLowPct", "chanceHighPct",
@@ -701,12 +727,12 @@ function Options.SpecialBarRows(pg, ctx, trackVis)
     AT.Section(pg, "Arc Proc", { visibleFn = vis })
     SO.Line(pg, 22, function()
         local def = Def()
-        if not def then return "Tracks an unknown Arc Proc: this bar came from a newer version." end
-        return "Tracks " .. def.name .. "  (" .. SO.WhoWords(def) .. ")"
+        if not def then return Tr("Tracks an unknown Arc Proc: this bar came from a newer version.") end
+        return Tr("Tracks %s  (%s)"):format(Tr(def.name), SO.WhoWords(def))
     end, vis)
     SO.Line(pg, 22, function()
         local r, SI = Rec(), NS.SpecialIcon
-        return (r and SI) and ("Status: " .. SI.Status(r)) or ""
+        return (r and SI) and Tr("Status: %s"):format(SI.Status(r)) or ""
     end, vis)
     local reset = AT.RowButton(pg, "Reset the count", function()
         local r, SI = Rec(), NS.SpecialIcon
@@ -738,7 +764,7 @@ function Options.SpecialBarBlocks(sub, BarBlock, PushBar, pg, ctx, owner)
         SO.Line(pg, 20, function()
             local w = Words()
             if not (w and w.emptyColor and w.fullColor) then return "" end
-            return "Here no procs used means: " .. w.emptyColor .. "; all used: " .. w.fullColor .. "."
+            return Tr("Here no procs used means: %s; all used: %s."):format(Tr(w.emptyColor), Tr(w.fullColor))
         end, function()
             local w = vis() and Words()
             return (w and w.emptyColor and w.fullColor) and true or false
@@ -797,9 +823,9 @@ function Options.SetPiecesRows(pg, ctx, tabVisible, uiStore, owner)
         local r = ctx()
         local id, n = C.SetRule(r)
         if not id then
-            fs:SetText("No set rule.")
+            fs:SetText(Tr("No set rule."))
         else
-            fs:SetText(("Loads only while you wear at least %d of %s (%d worn now)."):format(
+            fs:SetText(Tr("Loads only while you wear at least %d of %s (%d worn now)."):format(
                 n, C.SetName(id), C.SetPiecesWorn(id)))
         end
     end

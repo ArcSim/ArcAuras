@@ -295,24 +295,50 @@ end
 -- hints are not read: Blizzard's Lua never reads them either. The target lane is a
 -- debuff for a harmful spell (Blizzard picks by the target's side; a helpful spell's aura
 -- sits on a friend, a harmful one's on an enemy). Returns NS.DriverAura's shape: the
--- entry's spell first, then the rest, as a set.
+-- picture's spell first (M.AuraIDs), then the rest, as a set.
 function M.AuraFor(info)
     if type(info) ~= "table" or M.HasFlag(info.flags, M.Flag("HideAura")) then return nil end
-    local ids, seen = {}, {}
-    local lists = { { info.spellID }, info.linkedSpellIDs or {}, { info.overrideTooltipSpellID }, { info.overrideSpellID } }
-    for _, l in ipairs(lists) do
-        for i = 1, #l do
-            local id = l[i]
-            if type(id) == "number" and id > 0 and not seen[id] then
-                seen[id] = true
-                ids[#ids + 1] = id
-            end
-        end
-    end
+    local ids = M.AuraIDs(info)
     if #ids == 0 then return nil end
-    local harmful = M.Harmful(info.spellID)
+    local harmful = M.Harmful(ids[1])
     return { caster = "mine", spellID = ids[1], spellIDs = (#ids > 1) and ids or nil,
         auraType = harmful and "debuff" or "buff", unit = "player", unit2 = "target" }
+end
+
+local function Spell(id)
+    return type(id) == "number" and id > 0 and id or nil
+end
+
+-- The picture Blizzard shows on an entry with no aura up (CooldownViewerItemData
+-- GetSpellTexture): the tooltip override's, else the entry's spell (the client follows
+-- its live override itself). An entry can rest on a spell that is not its aura (a spec's
+-- passive) and show its aura through the tooltip override.
+function M.ArtSpell(info)
+    return Spell(info.overrideTooltipSpellID) or Spell(info.spellID)
+end
+
+-- The name Blizzard shows (GetSpellID): the tooltip override, the override, the spell.
+function M.NameSpell(info)
+    return Spell(info.overrideTooltipSpellID) or Spell(info.overrideSpellID) or Spell(info.spellID)
+end
+
+-- The IDs Blizzard matches an entry's aura by (GetAssociatedAuraSpellPriority: linked,
+-- tooltip override, override, the entry's spell), the picture's first, as a set.
+function M.AuraIDs(info)
+    local ids, seen = {}, {}
+    local function Add(id)
+        id = Spell(id)
+        if id and not seen[id] then
+            seen[id] = true
+            ids[#ids + 1] = id
+        end
+    end
+    Add(M.ArtSpell(info))
+    Add(info.spellID)
+    for _, id in ipairs(info.linkedSpellIDs or {}) do Add(id) end
+    Add(info.overrideTooltipSpellID)
+    Add(info.overrideSpellID)
+    return ids
 end
 
 -- What Arc Auras builds for one entry in its merged category. Blizzard shows a
@@ -326,7 +352,7 @@ function M.PieceFor(info, cat)
     if tracked then
         local aura = M.AuraFor(info)
         if not aura then return nil end
-        return { kind = bar and "aurabar" or "aura", aura = aura, totem = not bar }
+        return { kind = bar and "aurabar" or "aura", aura = aura, totem = not bar, name = M.NameOf(M.NameSpell(info)) }
     end
     if type(info.equipSlot) == "number" then
         return { kind = "trinket", slot = info.equipSlot }
@@ -337,7 +363,10 @@ function M.PieceFor(info, cat)
     if type(info.spellID) ~= "number" then return nil end
     -- HideAura hides both: Blizzard checks the totem inside its aura test
     local aura = M.AuraFor(info)
-    return { kind = "spell", spellID = info.spellID, aura = aura, totem = aura ~= nil }
+    -- the tooltip override's picture over the spell's own, as Blizzard draws it
+    local art = M.ArtSpell(info)
+    return { kind = "spell", spellID = info.spellID, aura = aura, totem = aura ~= nil,
+        name = M.NameOf(M.NameSpell(info)), art = (art ~= info.spellID) and art or nil } -- raw-id: the same entry, not a match
 end
 
 -- the group buffs Blizzard offers, minus the ones the active layout hides
@@ -576,12 +605,17 @@ function M.NewIconFor(p, groupId)
             -- its totem first, then its aura
             if p.totem then d.overlay.totem = true end
         end
-        return S.NewIcon("spell", d, groupId, nil, M.NameOf(p.spellID) or ("Spell " .. p.spellID))
+        local rec = S.NewIcon("spell", d, groupId, nil, p.name or M.NameOf(p.spellID) or ("Spell " .. p.spellID))
+        if rec and p.art then
+            S.SetOverride(rec, "appearance", "customIcon", p.art)
+            S.SetOverride(rec, "appearance", "customIconFrom", "spell")
+        end
+        return rec
     end
     if p.kind == "aura" then
         local d = M.Copy(p.aura)
         if p.totem then d.totem = true end
-        return S.NewIcon("aura", d, groupId, nil, M.NameOf(d.spellID) or ("Aura " .. d.spellID))
+        return S.NewIcon("aura", d, groupId, nil, p.name or M.NameOf(d.spellID) or ("Aura " .. d.spellID))
     end
     if p.kind == "trinket" then
         return S.NewIcon("trinket", { slotID = p.slot }, groupId, nil, p.slot == 14 and "Trinket 2" or "Trinket 1")
@@ -669,7 +703,7 @@ function M.BuildBars(lay, part, geo, x, y)
         -- a bar watches one unit: a debuff's target, else you
         local unit = (a.auraType == "debuff") and "target" or "player"
         local d = { spellID = a.spellID, spellIDs = a.spellIDs, auraType = a.auraType, unit = unit, caster = a.caster }
-        local rec = S.NewBar(lay.id, "aura", d, M.NameOf(a.spellID) or ("Aura " .. a.spellID), "duration")
+        local rec = S.NewBar(lay.id, "aura", d, p.name or M.NameOf(a.spellID) or ("Aura " .. a.spellID), "duration")
         if rec then
             made = made + 1
             local step = (i - 1) * geo.pitch
@@ -709,6 +743,9 @@ function M.Build(look)
     for i, cat in ipairs(M.STACK) do rank[cat] = i end
     table.sort(plan, function(a, b) return (rank[a.viewer.cat] or 9) < (rank[b.viewer.cat] or 9) end)
     local lay = S.NewLayout("Cooldown Manager")
+    -- found again by this mark, never by its name: a rename or another
+    -- language keeps it
+    lay.cdmMirror = true
     lay.pos = { x = 0, y = 0 }
     local gap = M.STACK_GAP
     local top
@@ -794,12 +831,12 @@ function M.PickEntry(info, shown)
     if not a then return nil end
     local sid = info.spellID
     local f = C_Spell and C_Spell.GetSpellTexture
-    local tex = f and f(sid) -- raw-id: a Cooldown Manager entry
+    local tex = f and f(M.ArtSpell(info)) -- raw-id: a Cooldown Manager entry
     if not M.Plain(tex) then tex = nil end
     local ids = a.spellIDs or { a.spellID }
     local copy = {}
     for i = 1, #ids do copy[i] = ids[i] end
-    return { spellID = sid, ids = copy, name = M.NameOf(sid) or ("Spell " .. sid), texture = tex,
+    return { spellID = sid, ids = copy, name = M.NameOf(M.NameSpell(info)) or ("Spell " .. sid), texture = tex,
         auraType = a.auraType, known = info.isKnown == true, shown = shown == true }
 end
 

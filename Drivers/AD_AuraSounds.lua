@@ -72,12 +72,19 @@ function AS.Wanted(rec)
     local D = NS.DriverAura
     if not (D and D.ShapeOf) then return out end
     local d = rec.driver or {}
+    -- a Custom Icon sounds for the aura it shows, only while it shows one
+    if rec.kind == "timer" then
+        d = D.ShapeFor and D.ShapeFor(rec)
+        if not d then return out end
+    end
     -- the ids the icon watches: your rank of each while it follows your rank
     local ids = Store.TrackedAuraIDs(d)
     local unit = D.ShapeOf(d)
     local ch = Store.Resolve(rec, "alerts", "soundChannel") or "Master"
     for _, m in ipairs(AS.MOMENTS) do
-        if Store.Resolve(rec, "alerts", m.field .. "Enabled") == true then
+        -- a Custom Icon's aura sounds as it appears only (its Aura up)
+        local takes = rec.kind ~= "timer" or m.field == "auraGainSound"
+        if takes and Store.Resolve(rec, "alerts", m.field .. "Enabled") == true then
             local file = AS.File(Store.Resolve(rec, "alerts", m.field))
             local trig = Enum.UnitAuraSoundTrigger[m.trigger]
             if file ~= nil and trig ~= nil then
@@ -158,7 +165,8 @@ function AS.Queue() Events.Coalesce("adaurasnd_sync", AS.Sync) end
 -- runtime the same for its aura rules
 function AS.Attach(rec)
     local SN = NS.SoundItems
-    local takes = rec ~= nil and ((rec.type == "icon" and rec.kind == "aura") or (SN ~= nil and SN.Is(rec)))
+    local takes = rec ~= nil and ((rec.type == "icon" and (rec.kind == "aura" or rec.kind == "timer"))
+        or (SN ~= nil and SN.Is(rec)))
     if not (takes and Store.Get(rec.id) == rec) then return end
     AS.live[rec.id] = rec
     AS.Queue()

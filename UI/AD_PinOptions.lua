@@ -64,7 +64,7 @@ local function Word(row, text, anchor, gap)
     local fs = row:CreateFontString(nil, "OVERLAY")
     fs:SetFont(AT.FONT, 11, "")
     fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
-    fs:SetText(text)
+    fs:SetText(AT.Tr(text))
     fs:SetPoint("LEFT", anchor, "RIGHT", gap or 10, 0)
     return fs
 end
@@ -77,7 +77,7 @@ local function NameRow(pg, ctx, vis, i, rows)
     end
     local row = AT.AddRow(pg, AT.LAY.rowH, shows)
     rows[#rows + 1] = row
-    local lbl = AT.RowLabel(row, "Frame " .. i)
+    local lbl = AT.RowLabel(row, AT.Tr("Frame %d"):format(i))
     local function saved()
         local pin = PinAt(ctx, i)
         return pin and type(pin.frame) == "string" and pin.frame or ""
@@ -94,7 +94,7 @@ local function NameRow(pg, ctx, vis, i, rows)
     hint:SetPoint("RIGHT", -6, 0)
     hint:SetJustifyH("LEFT")
     hint:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
-    hint:SetText("e.g. PlayerFrame")
+    hint:SetText(AT.Tr("e.g. PlayerFrame"))
     local function syncHint() hint:SetShown((box:GetText() or "") == "") end
     box:SetScript("OnTextChanged", syncHint)
     AT.Tooltip(box, "Frame name", "The global name of a game frame, e.g. PlayerFrame or ElvUF_Player.")
@@ -160,7 +160,7 @@ local function NameRow(pg, ctx, vis, i, rows)
         local w = Shown()
         chip:SetShown(w ~= nil)
         if w then
-            chip.fs:SetText(w.text)
+            chip.fs:SetText(AT.Tr(w.text))
             AT.PaintPill(chip, chip.fs, w.col)
         end
     end

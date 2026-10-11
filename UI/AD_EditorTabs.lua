@@ -5,9 +5,18 @@ local Options = NS.Options
 if not Options then return end
 local AT, Store, Schema = NS.AT, NS.Store, NS.Schema
 local COL = AT.COL
+local Tr = AT.Tr
 
 local ET = {}
 Options.EditorTabs = ET
+
+-- Capitals only for plain Latin words: string.upper would split a multibyte
+-- letter, and other scripts have no capitals.
+local function Upper(s)
+    if type(s) ~= "string" or s:find("[\128-\255]") then return s end
+    return s:upper()
+end
+ET.Upper = Upper
 
 -- Values
 
@@ -50,13 +59,21 @@ end
 local Fold = {}
 Fold.__index = Fold
 
+-- Each fold's whole title, so a translation never fits a loose word into a
+-- sentence; a word not listed here reads "More <word> options".
+ET.FOLD_TITLES = { fade = "More fade options", frame = "More frame options", glow = "More glow options",
+    inset = "More inset options", text = "More text options", usability = "More usability options" }
+
 -- A fold row, "More <word> options" and a count, in the section open on pg.
 -- The rows the caller adds after it show while it is open. A plain fold: it
 -- opens and shuts on a click (the search opens it for a hit), and a changed
 -- value inside only shows in its tooltip.
 function ET.NewFold(pg, key, word, ctx)
     local f = setmetatable({ key = key, ctx = ctx, items = {}, pg = pg }, Fold)
-    local title = "More " .. ((type(word) == "string" and word ~= "") and (word .. " ") or "") .. "options"
+    local title = "More options"
+    if type(word) == "string" and word ~= "" then
+        title = ET.FOLD_TITLES[word] or ("More %s options"):format(word)
+    end
     f.title = title
     local row = AT.AddRow(pg, 24, function() return f:HeadShown() end)
     f.row = row
@@ -72,7 +89,7 @@ function ET.NewFold(pg, key, word, ctx)
     fs:SetFont(AT.FONT, 12, "")
     fs:SetPoint("LEFT", chev, "RIGHT", 4, 0)
     fs:SetWordWrap(false)
-    fs:SetText(title)
+    fs:SetText(Tr(title))
     local nb = CreateFrame("Frame", nil, row, "BackdropTemplate")
     nb:SetHeight(16)
     nb:SetPoint("LEFT", fs, "RIGHT", 8, 0)
@@ -264,7 +281,8 @@ ET.GLOW_WHEN = {
     toggle = function(rec)
         local id = rec.driver and tonumber(rec.driver.spellID)
         local name = id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: the typed spell, for the editor's words
-        return (name or "it") .. " is on"
+        if name then return Tr("%s is on"):format(name) end
+        return "it is on"
     end,
     warn = function(rec) return WARN_WORDS[Store.Resolve(rec, "states", "warnGlowWhen")] or "" end,
     assist = "the game's Assisted Highlight suggests it next",
@@ -361,6 +379,20 @@ local OVERLAY = { key = "overlay", label = "Aura active", when = "while its aura
 local OVERLAY_MISSING = { key = "overlayMissing", label = "Aura missing", when = "while its aura is down", overlay = true,
     grey = { A, "overlayDesatInactive" },
     labelFn = function(r) return ET.OverlayWords(r, "Aura missing", "Totem gone", "Duration over", "Totem and aura gone") end }
+-- A Custom Icon showing an aura (Tracking's "Aura on this icon"): the same
+-- look as a spell's, named Aura up, with the sound the game plays as it appears.
+local TIMER_AURA = {}
+for k, v in pairs(OVERLAY) do TIMER_AURA[k] = v end
+TIMER_AURA.labelFn = nil
+TIMER_AURA.label = "Aura up"
+TIMER_AURA.fx = { glow = { "auraActive.activeGlow" }, sound = { "alerts.auraGainSoundEnabled" }, art = { "art.active" } }
+-- A Custom Icon with an aura or a cooldown on it, and one with a cooldown.
+function ET.CustomPhased(r)
+    return Options.CustomPhased ~= nil and Options.CustomPhased(r) == true
+end
+function ET.CustomCd(r)
+    return r ~= nil and r.kind == "timer" and type(r.driver) == "table" and r.driver.cdOn == true
+end
 -- an item's row, while it is set to mark when it can't be used
 local ITEM_UNUSABLE = { showIf = function(r) return r ~= nil and Store.Resolve(r, S, "itemUsability") == true end }
 for k, v in pairs(UNUSABLE) do ITEM_UNUSABLE[k] = v end
@@ -375,8 +407,8 @@ local WARNING = { key = "warn", label = "Warning", when = "while the warning is 
     showIf = function(r) return FieldOn(r, S, "warnGlow") end,
     fx = { glow = { "states.warnGlow" } } }
 local function GBNobody(r) return r ~= nil and Store.Resolve(r, "groupBuff", "remind") == "nobody" end
--- A charge spell's cooldown state is every charge spent: Depleted, listed
--- after Recharging (Ready, Recharging, Depleted).
+-- A charge spell's cooldown state is every charge spent: No charges, listed
+-- after Recharging (Ready, Recharging, No charges).
 function ET.IsCharge(r)
     local D = NS.DriverCooldown
     return r ~= nil and D ~= nil and D.IsCharge ~= nil and D.IsCharge(r) == true
@@ -392,7 +424,7 @@ function ET.StanceOne(r)
 end
 local SPELL_COOLDOWN = {}
 for k, v in pairs(COOLDOWN) do SPELL_COOLDOWN[k] = v end
-SPELL_COOLDOWN.labelFn = function(r) return ET.IsCharge(r) and "Depleted" or "On cooldown" end
+SPELL_COOLDOWN.labelFn = function(r) return ET.IsCharge(r) and "No charges" or "On cooldown" end
 -- `timed`: the clock after a state's opacity, when that opacity starts
 -- (ET.TimePop). `on` switches it, `sec` the seconds, `before` the opacity
 -- until then; an aura also takes a share (`unit`, `pct`) and its length
@@ -411,7 +443,7 @@ ET.STATES = {
     spell = {
         READY,
         -- a charge spell with a charge left and another on its way: a state
-        -- with its own look, as Ready and Depleted have
+        -- with its own look, as Ready and No charges have
         { key = "recharge", label = "Recharging", when = "while a charge comes back",
           alpha = { S, "rechargeAlpha" },
           grey = { S, "rechargeDesaturate" }, tint = { S, "rechargeTintColor", on = "rechargeTintEnabled" },
@@ -475,14 +507,22 @@ ET.STATES = {
     item = { READY, COOLDOWN, ITEM_UNUSABLE, OUT_OF_STOCK, WARNING, OVERLAY, OVERLAY_MISSING },
     trinket = { READY, COOLDOWN, OUT_OF_STOCK, WARNING, OVERLAY, OVERLAY_MISSING },
     -- a Custom Icon: active per its Show as active while (the ready bucket),
-    -- else not active (the cooldown bucket); both can grey out
+    -- else not active (the cooldown bucket); both can grey out. With an aura
+    -- or a cooldown on it the rows follow what it shows: Aura up, Timer
+    -- running, On cooldown (the same cooldown bucket) and Ready (its own).
     timer = {
+        TIMER_AURA,
         { key = "active", label = "Active", when = "while it is active", alpha = READY.alpha,
           grey = READY.grey, tint = READY.tint, alphaTip = READY.alphaTip,
-          fx = { glow = { "states.readyGlow" } } },
+          labelFn = function(r) return ET.CustomPhased(r) and "Timer running" or "Active" end,
+          fx = { glow = { "states.readyGlow" }, sound = { "alerts.readySoundEnabled" } } },
         { key = "inactive", label = "Not active", when = "while it is not active", alpha = COOLDOWN.alpha,
           grey = COOLDOWN.grey, tint = COOLDOWN.tint,
-          fx = { glow = { "states.cooldownGlow" } } },
+          labelFn = function(r) return ET.CustomCd(r) and "On cooldown" or "Not active" end,
+          fx = { glow = { "states.cooldownGlow" }, sound = { "alerts.cooldownSoundEnabled" } } },
+        { key = "idle", label = "Ready", when = "while it is ready", showIf = function(r) return ET.CustomCd(r) end,
+          alpha = { S, "idleAlpha" }, grey = { S, "idleDesaturate" }, tint = { S, "idleTintColor", on = "idleTintEnabled" },
+          fx = { glow = { "states.idleGlow" }, sound = { "alerts.idleSoundEnabled" } } },
         WARNING,
     },
     totem = {
@@ -553,7 +593,9 @@ ET.STATES = {
 }
 
 local COLS = { "alpha", "grey", "tint" }
-local COL_WORD = { alpha = "opacity", grey = "grey out", tint = "tint" }
+-- a cell's tooltip, one whole line per column around the state's words
+local COL_TIP = { alpha = "%s: opacity", grey = "%s: grey out", tint = "%s: tint" }
+local COL_NONE = { alpha = "%s has no opacity look.", grey = "%s has no grey out look.", tint = "%s has no tint look." }
 local SLIDER_W, VALUE_W = 96, 40
 
 local function Def(section, field)
@@ -1118,7 +1160,7 @@ local function MakePair(ed, blk, field, ctx, owner, relay)
     lbl:SetFont(AT.FONT, 12, "")
     lbl:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
     lbl:SetWordWrap(false)
-    lbl:SetText(words)
+    lbl:SetText(Tr(words))
     P.label, P.words = lbl, words
     local function Get()
         local r = ctx()
@@ -1324,8 +1366,8 @@ local function BlockLine(ed, blk, ctx, owner, relay)
             local r = ctx()
             local when = blk.cardWhen
             if type(when) == "function" then when = r and when(r) end
-            local w = (type(when) == "string" and when ~= "") and ("When " .. when .. ". ") or ""
-            return w .. ((sdef and sdef.desc) or "Off keeps its settings, greyed out.")
+            local w = (type(when) == "string" and when ~= "") and (Tr("When %s."):format(Tr(when)) .. " ") or ""
+            return w .. Tr((sdef and sdef.desc) or "Off keeps its settings, greyed out.")
         end)
         B.check = cb
     end
@@ -1334,7 +1376,7 @@ local function BlockLine(ed, blk, ctx, owner, relay)
         nm:SetFont(AT.FONT, 12, "")
         nm:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
         nm:SetWordWrap(false)
-        nm:SetText(blk.lineName or blk.title or "")
+        nm:SetText(Tr(blk.lineName or blk.title or ""))
         B.name = nm
     end
     for i = blk.isCard and 2 or 1, #blk.fields do
@@ -1353,7 +1395,7 @@ local function BlockLine(ed, blk, ctx, owner, relay)
         local fs = mb:CreateFontString(nil, "OVERLAY")
         fs:SetFont(AT.FONT, 12, "")
         fs:SetPoint("LEFT", chev, "RIGHT", 4, 0)
-        fs:SetText("More")
+        fs:SetText(Tr("More"))
         mb:SetWidth(16 + Measure(fs) + 2)
         B.foldKey = "fx." .. blk.section .. "." .. blk.fields[1]
         local function Paint()
@@ -1545,7 +1587,7 @@ local function EditorRow(pg, T, ctx, vis, kind, st, owner, stateRow)
         for k, g in pairs(glyphs) do g:SetShown(k == fxKind) end
         local g = glyphs[fxKind]
         if g then g:SetColor(COL.arc) end
-        word:SetText(string.upper(ET.FX_WORD[fxKind] or ""))
+        word:SetText(Upper(Tr(ET.FX_WORD[fxKind] or "")))
         -- the notch over the open cell
         local cx = (T.fxX and T.fxX[fxKind] or T.c1) + 22 - 14
         notchO:ClearAllPoints()
@@ -1662,7 +1704,7 @@ local function EditorRow(pg, T, ctx, vis, kind, st, owner, stateRow)
         if text then
             note:ClearAllPoints()
             note:SetPoint("TOPLEFT", ed, "TOPLEFT", x0, y + BLOCK_GAP - 2)
-            note:SetText(text)
+            note:SetText(Tr(text))
             y = y - 16
         end
         -- the lines, or the head (its glyph, name and Done) when taller
@@ -1915,7 +1957,7 @@ function ET.TimePop(T)
     r2:SetPoint("LEFT", 0, 0)
     local w2a = Words(l2, 13, COL.ink)
     w2a:SetPoint("LEFT", r2, "RIGHT", 8, 0)
-    w2a:SetText("With")
+    w2a:SetText(Tr("With"))
     local b2, b2sync = NumberBox(l2, 30, function() return Get(TK("sec")) or 3 end, function(v)
         local lo, hi = Bounds(TK("sec"), 0.5, 600)
         Put(TK("sec"), math.max(lo, math.min(hi, v)))
@@ -1931,7 +1973,7 @@ function ET.TimePop(T)
     local l2l = Line(18)
     local wl = Words(l2l, 12, COL.dim)
     wl:SetPoint("LEFT", 22, 0)
-    wl:SetText("The aura lasts")
+    wl:SetText(Tr("The aura lasts"))
     local bl, blsync = NumberBox(l2l, 30, function()
         local v = tonumber(Get(TK("len"))) or 0
         return v > 0 and v or nil
@@ -1943,7 +1985,7 @@ function ET.TimePop(T)
     bl:SetPoint("LEFT", wl, "RIGHT", 6, 0)
     local wl2 = Words(l2l, 12, COL.dim)
     wl2:SetPoint("LEFT", bl, "RIGHT", 6, 0)
-    wl2:SetText("seconds")
+    wl2:SetText(Tr("seconds"))
     Tip(bl, "The aura lasts", "The game keeps an aura's length from addons, so seconds need it. A share needs none.")
 
     -- With [N] % of the aura left (30 % is a debuff's pandemic window)
@@ -1960,7 +2002,7 @@ function ET.TimePop(T)
     r3:SetPoint("LEFT", 0, 0)
     local w3a = Words(l3, 13, COL.ink)
     w3a:SetPoint("LEFT", r3, "RIGHT", 8, 0)
-    w3a:SetText("With")
+    w3a:SetText(Tr("With"))
     local b3, b3sync = NumberBox(l3, 30, function() return Get(TK("pct")) or 30 end, function(v)
         local lo, hi = Bounds(TK("pct"), 1, 99)
         Put(TK("pct"), math.max(lo, math.min(hi, math.floor(v + 0.5))))
@@ -1970,7 +2012,7 @@ function ET.TimePop(T)
     b3:SetPoint("LEFT", w3a, "RIGHT", 6, 0)
     local w3b = Words(l3, 13, COL.ink)
     w3b:SetPoint("LEFT", b3, "RIGHT", 6, 0)
-    w3b:SetText("% of the aura left")
+    w3b:SetText(Tr("% of the aura left"))
     Tip(b3, "Share of the aura left", "30 is a debuff's pandemic window. Needs no length.")
 
     -- Before that
@@ -1981,7 +2023,7 @@ function ET.TimePop(T)
     local w4 = Words(l4, 12, COL.dim)
     w4:SetPoint("LEFT", 0, 0)
     w4:SetWidth(74)
-    w4:SetText("Before that")
+    w4:SetText(Tr("Before that"))
     local s4, box4, s4sync = CompactSlider(l4, SLIDER_W, 0, 1, 0.01, true, nil,
         function() return Get(TK("before")) or 0 end,
         function(v)
@@ -2010,9 +2052,11 @@ function ET.TimePop(T)
         end
         local on = Get(t.on) == true
         local unit = t.unit and Get(t.unit) or "sec"
-        title:SetText(string.upper(ET.StateWord(r, st) or st.label) .. ": WHEN IT STARTS")
-        w1:SetText("Right away (" .. t.whole .. ")")
-        w2b:SetText(t.left)
+        title:SetText(Upper(Tr("%s: When it starts"):format(Tr(ET.StateWord(r, st) or st.label))))
+        w1:SetText(Tr("Right away (%s)"):format(Tr(t.whole)))
+        w2b:SetText(Tr(t.left))
+        -- a longer word than the column's 74 widens it, so it never cuts off
+        w4:SetWidth(math.max(74, Measure(w4)))
         r1:SetOn(not on)
         r2:SetOn(on and unit == "sec")
         r3:SetOn(on and unit == "pct")
@@ -2021,7 +2065,7 @@ function ET.TimePop(T)
         b3sync()
         s4sync()
         local note = on and ET.TimedGroupNote(r) or nil
-        w5:SetText(note or "")
+        w5:SetText(Tr(note or ""))
         local inner = math.max(Measure(title) + 8 + 16, 22 + Measure(w1),
             22 + Measure(w2a) + 6 + 30 + 6 + Measure(w2b), note and Measure(w5) or 0)
         local lines = { l1, l2 }
@@ -2101,7 +2145,7 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
         local r = ctx()
         if not (r and r.kind == kind) then return false end
         -- an icon's own words for the state (st.labelFn)
-        if st.labelFn and lbl then lbl:SetText(st.labelFn(r) or st.label) end
+        if st.labelFn and lbl then lbl:SetText(Tr(st.labelFn(r) or st.label)) end
         return RowShows(st, r)
     end)
     row._adStateRow = st
@@ -2121,7 +2165,7 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
     lbl:SetJustifyH("LEFT")
     lbl:SetWordWrap(false)
     lbl:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
-    lbl:SetText(st.label)
+    lbl:SetText(Tr(st.label))
     row._adLabel = lbl
     row._adCells = {}
 
@@ -2147,14 +2191,15 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
         dash:SetFont(AT.FONT, 12, "")
         dash:SetPoint("LEFT", 0, 0)
         dash:SetTextColor(COL.line2[1], COL.line2[2], COL.line2[3])
-        dash:SetText((c == "alpha" and st.never) or "-")
+        local never = c == "alpha" and st.never
+        dash:SetText(never and Tr(never) or "-")
         C.dash = dash
         local stateWord = st.when or ""
         -- a dash explains itself; a cell with controls leaves it to them
-        Tip(cell, st.label .. ": " .. COL_WORD[c], function()
+        Tip(cell, function() return Tr(COL_TIP[c]):format(Tr(st.label)) end, function()
             if C.has then return nil end
             if c == "alpha" and st.never then return st.neverTip end
-            return st.label .. " has no " .. COL_WORD[c] .. " look."
+            return Tr(COL_NONE[c]):format(Tr(st.label))
         end)
         if spec then
             local section, field = spec[1], spec[2]
@@ -2181,8 +2226,10 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
                     function() return Get(section, field) or (def and def.d) or 1 end,
                     function(v) Put(section, field, v) end)
                 s:SetPoint("LEFT", spec.on and 24 or 0, 0)
-                local body = (def and def.desc) or ("How visible the icon is " .. stateWord .. ". "
-                    .. (st.alphaTip or "0 hides it."))
+                local body = (def and def.desc) or function()
+                    return Tr("How visible the icon is %s."):format(Tr(stateWord)) .. " "
+                        .. Tr(st.alphaTip or "0 hides it.")
+                end
                 Tip(s, lab, body)
                 Tip(box, lab, body)
                 C.slider, C.box, C.refresh = s, box, refresh
@@ -2208,7 +2255,7 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
                         local word = ET.TimedWord(Rec(), st)
                         if not word then return "Right away. Click to make it wait for the last seconds." end
                         if not ET.TimedLive(Rec(), st) then return "Seconds need the aura's length: click to set it." end
-                        return "With " .. word .. " left. Click to change it."
+                        return Tr("With %s left. Click to change it."):format(word)
                     end)
                     C.clock = ck
                 end
@@ -2224,7 +2271,9 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
                 end)
                 cb:HookScript("OnEnter", function() cb:SetHover(true) end)
                 cb:HookScript("OnLeave", function() cb:SetHover(false) end)
-                Tip(cb, lab, (def and def.desc) or ("Greys the icon out " .. stateWord .. "."))
+                Tip(cb, lab, (def and def.desc) or function()
+                    return Tr("Greys the icon out %s."):format(Tr(stateWord))
+                end)
                 C.check = cb
             else
                 local x = 0
@@ -2242,7 +2291,9 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
                     cb:HookScript("OnEnter", function() cb:SetHover(true) end)
                     cb:HookScript("OnLeave", function() cb:SetHover(false) end)
                     Tip(cb, (ondef and ondef.label) or spec.on,
-                        (ondef and ondef.desc) or ("Colors the icon " .. stateWord .. "."))
+                        (ondef and ondef.desc) or function()
+                            return Tr("Colors the icon %s."):format(Tr(stateWord))
+                        end)
                     C.on = cb
                     x = 24
                 end
@@ -2251,7 +2302,9 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
                 -- no opacity slider: a tint's alpha belongs to the state opacity
                 PickColor(sw, function() return Get(section, field) or (def and def.d) or { 1, 1, 1, 1 } end,
                     function(v) Put(section, field, v) end, false, nil, Relay)
-                Tip(sw, lab, (def and def.desc) or ("The color " .. stateWord .. "."))
+                Tip(sw, lab, (def and def.desc) or function()
+                    return Tr("The color %s."):format(Tr(stateWord))
+                end)
                 C.swatch = sw
             end
         end
@@ -2291,7 +2344,7 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
         end)
         b:HookScript("OnEnter", function() b._hot = true b:_adPaint() end)
         b:HookScript("OnLeave", function() b._hot = nil b:_adPaint() end)
-        Tip(b, function() return ET.StateWord(Rec(), st) .. ": " .. ET.FX_WORD[fk] end, function()
+        Tip(b, function() return Tr(ET.StateWord(Rec(), st)) .. ": " .. Tr(ET.FX_WORD[fk]) end, function()
             local r = Rec()
             if not r then return nil end
             local parts = {}
@@ -2299,12 +2352,14 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
                 if f.kind == fk then
                     for _, key in ipairs(f.keys) do
                         local def = KeyDef(r, key)
-                        if def then parts[#parts + 1] = (def.title or key) .. (ET.FxLit(r, key) and ": on" or ": off") end
+                        if def then
+                            parts[#parts + 1] = Tr(ET.FxLit(r, key) and "%s: on" or "%s: off"):format(Tr(def.title or key))
+                        end
                     end
                 end
             end
             if #parts == 0 then return nil end
-            return table.concat(parts, ". ") .. ". Click to set it up here."
+            return Tr("%s. Click to set it up here."):format(table.concat(parts, ". "))
         end)
         b:Hide()
         fxCells[fk] = b
@@ -2429,13 +2484,13 @@ function ET.StateTable(pg, ctx, vis, owner)
     head._adStateHead = T
     local frame = TableEdges(head, true)
     local heads = {}
-    for i, text in ipairs({ "STATE", "OPACITY", "GREY OUT", "TINT" }) do
+    for i, text in ipairs({ "State", "Opacity", "Grey out", "Tint" }) do
         local fs = head:CreateFontString(nil, "OVERLAY")
         fs:SetFont(AT.FONT, 10, "")
         fs:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
         fs:SetJustifyH("LEFT")
         fs:SetWordWrap(false)
-        fs:SetText(text)
+        fs:SetText(Upper(Tr(text)))
         heads[i] = fs
     end
     -- an effect column's head: its glyph over its word
@@ -2447,7 +2502,7 @@ function ET.StateTable(pg, ctx, vis, owner)
         fs:SetFont(AT.FONT, 10, "")
         fs:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
         fs:SetWordWrap(false)
-        fs:SetText(string.upper(ET.FX_WORD[fk]))
+        fs:SetText(Upper(Tr(ET.FX_WORD[fk])))
         fxHeads[fk] = { glyph = g, fs = fs }
     end
     T.heads, T.fxHeads = heads, fxHeads

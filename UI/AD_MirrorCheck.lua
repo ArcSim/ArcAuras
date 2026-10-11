@@ -41,13 +41,24 @@ end
 
 -- Our side
 
--- the newest layout named "Cooldown Manager": the mirror's
+-- the mirror's layout: the newest one it marked (cdmMirror). One built before
+-- the mark is known once by its old English name, and marked.
+MC.OLD_NAME = "Cooldown Manager"
 function MC.Layout()
-    local best
+    local best, named
     if not (Store and Store.EachRecord) then return nil end
     Store.EachRecord(function(id, rec)
-        if rec.type == "layout" and rec.name == "Cooldown Manager" and (not best or id > best.id) then best = rec end
+        if rec.type ~= "layout" then return end
+        if rec.cdmMirror == true then
+            if not best or id > best.id then best = rec end
+        elseif rec.name == MC.OLD_NAME and (not named or id > named.id) then
+            named = rec
+        end
     end)
+    if not best and named then
+        named.cdmMirror = true
+        best = named
+    end
     return best
 end
 

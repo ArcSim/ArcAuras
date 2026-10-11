@@ -3,6 +3,7 @@
 local ADDON, NS = ...
 local Options = NS.Options
 if not Options then return end
+local Tr = NS.AT.Tr
 
 local SO = {}
 Options.Sound = SO
@@ -18,6 +19,19 @@ SO.PLAY_IN = {
 SO.AURA = { aura_gain = true, aura_stack = true, aura_lost = true }
 
 local function Trim(v) return (tostring(v or ""):gsub("^%s+", ""):gsub("%s+$", "")) end
+
+-- At most n bytes, never ending inside a character (a Korean syllable is
+-- three bytes).
+function SO.Cut(s, n)
+    if #s <= n then return s end
+    local i = n + 1
+    while i > 1 do
+        local b = s:byte(i)
+        if b < 128 or b >= 192 then break end
+        i = i - 1
+    end
+    return s:sub(1, i - 1)
+end
 
 -- The Add window
 
@@ -119,7 +133,7 @@ function Options.SoundAddRows(pg, owner, addState)
         function() return vis() and D().act == "sound" end, Relay)
     AT.RowInput(pg, "Say",
         function() return D().text or "" end,
-        function(v) D().text = (Trim(v) ~= "") and v:sub(1, 200) or nil end,
+        function(v) D().text = (Trim(v) ~= "") and SO.Cut(v, 200) or nil end,
         function() return vis() and D().act == "speak" end, "The line to speak.", nil, true)
 end
 
@@ -141,24 +155,30 @@ end
 
 -- The words: the card's line and the thumbnail
 
--- a rule's trigger as the line reads it: "you cast a spell (Revenge)"
+-- a rule's trigger as the line reads it: "you cast a spell (Revenge)". The
+-- trigger's own words mid-line are a key of their own ("you cast a spell"),
+-- so a translation picks its case; what follows (the spell) is as it reads.
 function SO.TriggerWords(r)
     local CU = NS.DriverCustom
     local w = (CU and CU.Words) and CU.Words(r) or tostring(r.when)
     w = w:match("^(.-) > ") or w
-    return w:sub(1, 1):lower() .. w:sub(2)
+    local function Low(s) return s:sub(1, 1):lower() .. s:sub(2) end
+    local S = NS.Schema
+    local L = S and S.CUSTOM_TRIGGER_LABELS and S.CUSTOM_TRIGGER_LABELS[r.when]
+    if type(L) == "string" and L ~= "" and w:sub(1, #L) == L then return Tr(Low(L)) .. w:sub(#L + 1) end
+    return Low(w)
 end
 
 function Options.SoundWhat(rec)
     local SN = NS.SoundItems
     local rules = SN and SN.Rules(rec) or {}
     local r = rules[1]
-    if not r then return "no rules yet" end
-    local out = ((r.act == "speak") and "speaks when " or "plays when ") .. SO.TriggerWords(r)
+    if not r then return Tr("no rules yet") end
+    local out = ((r.act == "speak") and Tr("speaks when %s") or Tr("plays when %s")):format(SO.TriggerWords(r))
     if #rules == 2 then
-        out = out .. ", and 1 more rule"
+        out = Tr("%s, and 1 more rule"):format(out)
     elseif #rules > 2 then
-        out = out .. (", and %d more rules"):format(#rules - 1)
+        out = Tr("%s, and %d more rules"):format(out, #rules - 1)
     end
     return out
 end

@@ -1,9 +1,9 @@
 -- AD_ImbueTooltip: a "With your weapon" line on weapon imbue and weapon stone
 -- tooltips (Rockbiter, Flametongue and Windfury Weapon; sharpening stones and
 -- weightstones): what each adds per hit and per second with the main-hand
--- weapon, worked from the numbers the tooltip itself prints, so it follows
--- the realm's own values (English text). Opt-in on Modules > Tooltip IDs.
--- The weapon reads are secret while unit stats are restricted: no line then.
+-- weapon, worked from the numbers the tooltip prints (the realm's own values),
+-- read through its language's words: no patterns for it, no line. Opt-in on
+-- Modules > Tooltip IDs. Secret weapon reads (stats restricted): no line.
 local ADDON, NS = ...
 
 local IT = {}
@@ -14,7 +14,10 @@ IT.MAIN_HAND = 16
 -- attack power per point of damage per second of swing
 IT.AP_PER_DPS = 14
 
--- The imbues by spell name; the stones are found by their text on any item.
+-- The imbues by name: every rank shares its rank 1 spell's name, which the
+-- game gives in the client's language; the English names stand in until it
+-- answers. The stones are found by their text on any item.
+IT.IMBUE_IDS = { rockbiter = 8017, flametongue = 8024, windfury = 8232 }
 IT.IMBUES = {
     ["Rockbiter Weapon"] = "rockbiter",
     ["Flametongue Weapon"] = "flametongue",
@@ -26,9 +29,37 @@ IT.PATTERNS = {
     windfury = "(%d+)%% chance of granting you (%d+) extra %a+ with (%d+) extra melee attack power",
     stones = { "sharp weapon damage by (%d+)", "damage of a blunt weapon by (%d+)" },
 }
+-- the patterns per client language; one missing here means no line there
+IT.PATTERNS_BY_LOCALE = { enUS = IT.PATTERNS, enGB = IT.PATTERNS }
 
 local function Secret(v)
     return issecretvalue ~= nil and issecretvalue(v)
+end
+
+-- The patterns for this client's words, or nil when there are none.
+function IT.Patterns()
+    local loc = GetLocale and GetLocale()
+    if loc == nil then return IT.PATTERNS end
+    return IT.PATTERNS_BY_LOCALE[loc]
+end
+
+-- An imbue's kind from its spell's name: this client's names (read from the
+-- rank 1 spells, kept once every one answered), else the English ones.
+function IT.KindOf(name)
+    if type(name) ~= "string" or Secret(name) then return nil end
+    if not IT.names then
+        local t, all = {}, true
+        local get = C_Spell and C_Spell.GetSpellName
+        for kind, id in pairs(IT.IMBUE_IDS) do
+            local n = get and get(id) -- raw-id: an imbue's rank 1, for its name
+            if type(n) == "string" and n ~= "" and not Secret(n) then t[n] = kind else all = false end
+        end
+        if all then IT.names = t end
+        if t[name] then return t[name] end
+    elseif IT.names[name] then
+        return IT.names[name]
+    end
+    return IT.IMBUES[name]
 end
 
 -- On only when switched on, and with the Tooltip IDs module it lives under.
@@ -68,9 +99,10 @@ end
 -- is high / 4 per second of swing; Windfury is an average (its chance x its
 -- extra attacks, each a main-hand hit with the extra attack power); a stone
 -- adds its number to every hit. Returns perHit, dps, avg (true = an average)
--- or nil when the text does not match.
+-- or nil when the text does not match or this client has no patterns.
 function IT.Gain(kind, text, speed, avgHit)
-    local P = IT.PATTERNS
+    local P = IT.Patterns()
+    if not P then return nil end
     if kind == "rockbiter" then
         local ap = tonumber(text:match(P.rockbiter))
         if not ap then return nil end
@@ -116,7 +148,7 @@ local function Clear(tooltip)
 end
 
 function IT.Append(tooltip, data)
-    if not IT.Enabled() then return end
+    if not IT.Enabled() or not IT.Patterns() then return end
     if not tooltip or (tooltip.IsForbidden and tooltip:IsForbidden()) then return end
     if type(data) ~= "table" or Secret(data.id) or data.id == nil then return end
     local kind
@@ -124,7 +156,7 @@ function IT.Append(tooltip, data)
     if D and data.type == D.Spell then
         local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(data.id) -- raw-id: a tooltip's own data ID
         if Secret(name) then return end
-        kind = name and IT.IMBUES[name]
+        kind = name and IT.KindOf(name)
     elseif D and data.type == D.Item then
         kind = "stone"
     end

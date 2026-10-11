@@ -4,9 +4,17 @@
 local ADDON, NS = ...
 local Options = NS.Options
 if not Options then return end
+local Tr = NS.AT.Tr
 
 local TR = {}
 Options.TalentPickerRetail = TR
+
+-- Capitals only for plain Latin words: string.upper would split a multibyte
+-- letter, and other scripts have no capitals.
+local function Upper(s)
+    if type(s) ~= "string" or s:find("[\128-\255]") then return s end
+    return s:upper()
+end
 
 TR.PAD, TR.HDR, TR.ICON, TR.BAND = 12, 24, 40, 18
 -- each panel's share of the canvas width, the two gutters aside
@@ -168,18 +176,18 @@ function TR.Node(i)
         local rk = e.rank or 0
         local taken = TR.Taken(e, node.entryID)
         if opt then
-            GameTooltip:AddLine("One option of a choice talent", 0.7, 0.78, 0.88)
-            GameTooltip:AddLine(taken and "This option is active" or "This option is not active",
+            GameTooltip:AddLine(Tr("One option of a choice talent"), 0.7, 0.78, 0.88)
+            GameTooltip:AddLine(Tr(taken and "This option is active" or "This option is not active"),
                 taken and 0.48 or 0.95, taken and 0.85 or 0.62, taken and 0.56 or 0.30)
         elseif e.maxRanks and e.maxRanks > 1 then
-            GameTooltip:AddLine(("Rank %d of %d"):format(rk, e.maxRanks), 0.7, 0.78, 0.88)
+            GameTooltip:AddLine(Tr("Rank %d of %d"):format(rk, e.maxRanks), 0.7, 0.78, 0.88)
         elseif taken then
-            GameTooltip:AddLine("Taken", 0.48, 0.85, 0.56)
+            GameTooltip:AddLine(Tr("Taken"), 0.48, 0.85, 0.56)
         else
-            GameTooltip:AddLine("Not taken", 0.95, 0.62, 0.30)
+            GameTooltip:AddLine(Tr("Not taken"), 0.95, 0.62, 0.30)
         end
         if node.dim then
-            GameTooltip:AddLine("This hero tree is not the one chosen.", 0.95, 0.62, 0.30)
+            GameTooltip:AddLine(Tr("This hero tree is not the one chosen."), 0.95, 0.62, 0.30)
         end
         -- the game's own talent text, the rank you have or the first
         local entryID = node.entryID or e.entryID
@@ -188,7 +196,7 @@ function TR.Node(i)
             GameTooltip:AppendInfo("GetTraitEntry", entryID, (taken and rk > 0) and rk or 1)
             if not opt and taken and e.maxRanks and rk < e.maxRanks then
                 GameTooltip:AddLine(" ")
-                GameTooltip:AddLine("Next rank:", 1, 1, 1)
+                GameTooltip:AddLine(Tr("Next rank:"), 1, 1, 1)
                 GameTooltip:AppendInfo("GetTraitEntry", entryID, rk + 1)
             end
         elseif e.spellID and C_Spell.GetSpellDescription then
@@ -206,23 +214,23 @@ function TR.Node(i)
         if rec and not one and not state then
             local s2, _, tc, ts = TR.Get(rec, e.nodeID)
             if s2 and ts and ts ~= pickSpec and Options.TalentClassLabel then
-                GameTooltip:AddLine("Picked for " .. Options.TalentClassLabel(tc or pickClass, ts)
-                    .. ": a click picks it for this spec instead.", 0.55, 0.65, 0.78, true)
+                GameTooltip:AddLine(Tr("Picked for %s: a click picks it for this spec instead.")
+                    :format(Options.TalentClassLabel(tc or pickClass, ts)), 0.55, 0.65, 0.78, true)
             end
         end
         if state == "req" then
-            GameTooltip:AddLine(not one and "Required: click to exclude it instead."
-                or (rec.noExclude and "Picked: click to drop it." or "Taken: click for Not taken instead."),
+            GameTooltip:AddLine(Tr(not one and "Required: click to exclude it instead."
+                or (rec.noExclude and "Picked: click to drop it." or "Taken: click for Not taken instead.")),
                 0.247, 0.788, 0.949)
         elseif state == "not" then
-            GameTooltip:AddLine(one and "Not taken: click to drop it." or "Excluded: click to drop the condition.",
+            GameTooltip:AddLine(Tr(one and "Not taken: click to drop it." or "Excluded: click to drop the condition."),
                 TR.RED[1], TR.RED[2], TR.RED[3])
         else
-            GameTooltip:AddLine(one and "Click to pick this talent." or "Click to require this talent.",
+            GameTooltip:AddLine(Tr(one and "Click to pick this talent." or "Click to require this talent."),
                 0.247, 0.788, 0.949)
         end
-        GameTooltip:AddLine("Right-click clears it.", 0.55, 0.65, 0.78)
-        GameTooltip:AddLine("Node " .. e.nodeID, 0.4, 0.47, 0.57)
+        GameTooltip:AddLine(Tr("Right-click clears it."), 0.55, 0.65, 0.78)
+        GameTooltip:AddLine(Tr("Node %s"):format(e.nodeID), 0.4, 0.47, 0.57)
         GameTooltip:Show()
     end)
     btn:SetScript("OnLeave", function()
@@ -260,19 +268,19 @@ function TR.Paint()
     if rec and rec.talentTarget then
         local pick = list[1]
         if not pick then
-            count:SetText("Nothing picked yet - click a talent to pick it"
-                .. (rec.noExclude and "." or ", again for Not taken."))
+            count:SetText(Tr(rec.noExclude and "Nothing picked yet - click a talent to pick it."
+                or "Nothing picked yet - click a talent to pick it, again for Not taken."))
         else
             local _, entry = TR.Get(rec, pick.nodeID)
-            count:SetText((pick.excluded and "Not taken: " or "Picked: ")
-                .. (Options.TalentPickName(pick.nodeID, entry) or ""))
+            count:SetText((pick.excluded and Tr("Not taken: %s") or Tr("Picked: %s"))
+                :format(Options.TalentPickName(pick.nodeID, entry) or ""))
         end
     elseif req + exc == 0 then
-        count:SetText("Nothing required yet - click a talent to require it, again to exclude it.")
+        count:SetText(Tr("Nothing required yet - click a talent to require it, again to exclude it."))
     else
         local parts = {}
-        if req > 0 then parts[#parts + 1] = req .. " required" end
-        if exc > 0 then parts[#parts + 1] = exc .. " excluded" end
+        if req > 0 then parts[#parts + 1] = Tr("%d required"):format(req) end
+        if exc > 0 then parts[#parts + 1] = Tr("%d excluded"):format(exc) end
         count:SetText(table.concat(parts, ", "))
     end
     for _, node in ipairs(nodes) do
@@ -407,12 +415,12 @@ function TR.Layout()
     -- of its own beside the spec tabs, and the canvas moves down for both
     local src = Options.TalentPickSource and Options.TalentPickSource(TR.Record(), pickClass, pickSpec) or {}
     if src.specID then pickSpec = src.specID end
-    note:SetText(src.note or "")
+    note:SetText(Tr(src.note or ""))
     note:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
     note:SetShown(src.note ~= nil)
     TR.Tabs(src.note ~= nil)
     canvas:SetPoint("TOPLEFT", 0, src.note and -44 or -28)
-    empty:SetText(src.empty or "No talent tree on this character yet.")
+    empty:SetText(Tr(src.empty or "No talent tree on this character yet."))
     local P
     if src.view then
         P = src.view.panels
@@ -451,13 +459,13 @@ function TR.Layout()
         p.box:ClearAllPoints()
         p.box:SetPoint("TOPLEFT", canvas, "TOPLEFT", l, 0)
         p.box:SetSize(col.w, ch)
-        p.name:SetText(string.upper(col.name or ""))
+        p.name:SetText(Upper(Tr(col.name or "")))
         p.box:Show()
         local bodyW = col.w - 2
         if col.hero then
             local n = #col.hero
             p.note:SetShown(n == 0)
-            if n == 0 then p.note:SetText(src.view and "No hero talents to show." or "No hero talents yet.") end
+            if n == 0 then p.note:SetText(Tr(src.view and "No hero talents to show." or "No hero talents yet.")) end
             local spent = 0
             local gap = 8
             local bandH = n > 0 and math.floor((bodyH - gap * (n - 1)) / n) or 0
@@ -472,10 +480,10 @@ function TR.Layout()
                 band.state:ClearAllPoints()
                 band.state:SetPoint("TOPRIGHT", canvas, "TOPLEFT", l + col.w - 8, -(top + 4))
                 if h.active then
-                    band.state:SetText("chosen")
+                    band.state:SetText(Tr("chosen"))
                     band.state:SetTextColor(0.48, 0.85, 0.56)
                 else
-                    band.state:SetText("not chosen")
+                    band.state:SetText(Tr("not chosen"))
                     band.state:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
                 end
                 band.state:Show()
@@ -483,12 +491,12 @@ function TR.Layout()
                     bandH - TR.BAND, not h.active, ni, hi, byID)
                 spent = spent + TR.Spent(h.list)
             end
-            p.pts:SetText(spent > 0 and (spent .. " points") or "")
+            p.pts:SetText(spent > 0 and Tr("%s points"):format(spent) or "")
         else
             p.note:Hide()
             ni, hi = TR.Place(col.list, col.bounds, l + 1, TR.HDR + 1, bodyW, bodyH, false, ni, hi, byID)
             local spent = TR.Spent(col.list)
-            p.pts:SetText(spent > 0 and (spent .. " points") or "")
+            p.pts:SetText(spent > 0 and Tr("%s points"):format(spent) or "")
         end
         l = l + col.w + TR.PAD
     end
@@ -558,7 +566,7 @@ function TR.Build()
     hint:SetFont(NS.AT.FONT, 11, "")
     hint:SetPoint("LEFT", 6, 0)
     hint:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
-    hint:SetText("Search talents")
+    hint:SetText(Tr("Search talents"))
     search:SetScript("OnTextChanged", function(self)
         query = self:GetText() or ""
         hint:SetShown(query == "")
@@ -616,7 +624,7 @@ function TR.Build()
     empty:SetFont(NS.AT.FONT, 12, "")
     empty:SetPoint("CENTER", 0, 0)
     empty:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
-    empty:SetText("No talent tree on this character yet.")
+    empty:SetText(Tr("No talent tree on this character yet."))
     empty:Hide()
 
     win:HookScript("OnShow", function() TR.Layout() end)

@@ -7,6 +7,7 @@
 local ADDON, NS = ...
 local Options = NS.Options
 if not Options then return end
+local Tr = NS.AT.Tr
 
 -- the stance driver at call time: the options may build before it answers
 local function Driver() return NS.DriverStance end
@@ -14,20 +15,21 @@ local function Driver() return NS.DriverStance end
 -- a stance's name, else its spell ID in words
 function Options.StanceName(sid)
     local D = Driver()
-    return (D and D.Name(sid)) or ("Spell " .. tostring(sid))
+    return (D and D.Name(sid)) or Tr("Spell %s"):format(tostring(sid))
 end
 
 -- The pick's list: "Pick a stance" until one is, your stance bar's entries by
--- name (each by its spell ID), and the pick when it is not on your bar.
+-- name (each by its spell ID), and the pick when it is not on your bar. The
+-- game's names are drawn as they are (raw).
 function Options.StanceItems(pick)
     local D = Driver()
     local out = {}
     if not pick then out[1] = { value = 0, text = "Pick a stance" } end
     for _, e in ipairs(D and D.BarList() or {}) do
-        out[#out + 1] = { value = e.sid, text = e.name or ("Spell " .. e.sid) }
+        out[#out + 1] = { value = e.sid, text = e.name or Tr("Spell %s"):format(e.sid), raw = true }
     end
     if pick and not (D and D.OnBar(pick)) then
-        out[#out + 1] = { value = pick, text = Options.StanceName(pick) .. " (not on your bar)" }
+        out[#out + 1] = { value = pick, text = Tr("%s (not on your bar)"):format(Options.StanceName(pick)), raw = true }
     end
     return out
 end
@@ -42,11 +44,11 @@ end
 
 -- The layout view's card line.
 function Options.StanceWhat(rec)
-    if NS.Store.Resolve(rec, "stance", "shows") ~= "one" then return "your current stance" end
+    if NS.Store.Resolve(rec, "stance", "shows") ~= "one" then return Tr("your current stance") end
     local D = Driver()
     local pick = D and D.Pick(rec)
-    if not pick then return "one stance, none picked yet" end
-    return "one stance: " .. Options.StanceName(pick)
+    if not pick then return Tr("one stance, none picked yet") end
+    return Tr("one stance: %s"):format(Options.StanceName(pick))
 end
 
 -- A new pick names the icon after it, as a totem's spell ID does; an empty

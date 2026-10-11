@@ -6,6 +6,13 @@ local ADDON, NS = ...
 local Options = NS.Options
 if not Options then return end
 
+-- the client's words, read when drawn (a load without the theme draws English)
+local function Tr(s)
+    local AT = NS.AT
+    if AT and AT.Tr then return AT.Tr(s) end
+    return s
+end
+
 local WO = {}
 Options.Wheel = WO
 
@@ -54,15 +61,15 @@ end
 -- The sidebar's words: how full it is and its key.
 function Options.WheelWhat(rec)
     local WH = NS.Wheels
-    if not WH then return "wheel" end
+    if not WH then return Tr("wheel") end
     local n, used, spots = WH.Count(rec), 0, WH.Spots(rec)
     for spot = 1, n do
         local s = spots[spot]
         if type(s) == "table" and tonumber(s.id) then used = used + 1 end
     end
     local key = WH.KeyOf(rec)
-    local kw = key and ((GetBindingText and GetBindingText(key)) or key) or "no key"
-    return ("%d of %d spots, %s"):format(used, n, kw)
+    local kw = key and ((GetBindingText and GetBindingText(key)) or key) or Tr("no key")
+    return Tr("%d of %d spots, %s"):format(used, n, kw)
 end
 
 -- the thumbnail: the first thing on the wheel
@@ -212,7 +219,7 @@ function WO.TemplateGrid(pg, vis, get, set, caption, toggle)
     cap:SetFont(NS.AT.FONT, 9, "")
     cap:SetPoint("TOPLEFT", 10, -2)
     cap:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
-    cap:SetText(caption)
+    cap:SetText(Tr(caption))
     row._cells = {}
     local function Cell(i)
         local b = row._cells[i]
@@ -252,7 +259,8 @@ function WO.TemplateGrid(pg, vis, get, set, caption, toggle)
             local b = Cell(i)
             b.tex:SetTexture((C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(t.art)) or 134400) -- raw-id: a template's fixed art
             b._key, b._picked = t.key, t.key == cur
-            b._title, b._body = t.name, t.desc .. " One you have not learned yet stays grey until you do."
+            b._title = Tr(t.name)
+            b._body = Tr(t.desc) .. " " .. Tr("One you have not learned yet stays grey until you do.")
             b:ClearAllPoints()
             b:SetPoint("TOPLEFT", 8 + (i - 1) * (cell + gap), -top)
             b.Edge(b:IsMouseOver())
@@ -349,8 +357,8 @@ function Editor:Tip(owner, spot)
     elseif GameTooltip.SetSpellByID then
         GameTooltip:SetSpellByID(e.eff)
     end
-    if not e.act then GameTooltip:AddLine("Not learned yet: it casts once you learn it.", 1, 0.5, 0.3, true) end
-    GameTooltip:AddLine("Drag it to move it. Right-click to take it off.", 0.55, 0.65, 0.78, true)
+    if not e.act then GameTooltip:AddLine(Tr("Not learned yet: it casts once you learn it."), 1, 0.5, 0.3, true) end
+    GameTooltip:AddLine(Tr("Drag it to move it. Right-click to take it off."), 0.55, 0.65, 0.78, true)
     GameTooltip:Show()
 end
 
@@ -497,7 +505,7 @@ function WO.EditorRow(pg, Rec, vis)
     hint:SetFont(NS.AT.FONT, 11, "")
     hint:SetPoint("LEFT", 6, 0)
     hint:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
-    hint:SetText("Search your spells")
+    hint:SetText(Tr("Search your spells"))
     search:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
     search:SetScript("OnEscapePressed", function(self) self:SetText("") self:ClearFocus() end)
     local scroll, grid = AT.MakeScroll(row)
@@ -550,7 +558,7 @@ function WO.EditorRow(pg, Rec, vis)
             if e and GameTooltip.SetSpellByID then
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
                 GameTooltip:SetSpellByID(e.spellID) -- raw-id: a catalog entry
-                GameTooltip:AddLine("Drag it onto a spot, or click to add it.", 0.55, 0.65, 0.78, true)
+                GameTooltip:AddLine(Tr("Drag it onto a spot, or click to add it."), 0.55, 0.65, 0.78, true)
                 GameTooltip:Show()
             end
         end)
@@ -584,7 +592,7 @@ function WO.EditorRow(pg, Rec, vis)
         grid:SetSize(gridW, math.max(1, rows * WO.PITCH - WO.GAP))
         scroll:UpdateScroll()
         empty:SetShown(#list == 0)
-        empty:SetText((#all == 0) and "No spells listed yet." or "No spell of yours matches.")
+        empty:SetText(Tr((#all == 0) and "No spells listed yet." or "No spell of yours matches."))
     end
     search:SetScript("OnTextChanged", function() FillGrid() end)
 
@@ -630,7 +638,7 @@ function Options.WheelRows(pg, ctx, vis, owner)
     local capturing = false
     local function KeyWords(r)
         local k = r and WH.KeyOf(r)
-        if not k then return "Not set" end
+        if not k then return Tr("Not set") end
         return (GetBindingText and GetBindingText(k)) or k
     end
     local function Stop()
@@ -665,11 +673,11 @@ function Options.WheelRows(pg, ctx, vis, owner)
         if button ~= "LeftButton" then return end
         -- a binding is set out of combat only
         if InCombatLockdown() then
-            kb.fs:SetText("Leave combat first")
+            kb.fs:SetText(Tr("Leave combat first"))
             return
         end
         capturing = true
-        kb.fs:SetText("Press a key...")
+        kb.fs:SetText(Tr("Press a key..."))
         kb:EnableKeyboard(true)
         kb:SetPropagateKeyboardInput(false)
         kb:SetScript("OnKeyDown", function(_, key)
@@ -691,7 +699,7 @@ function Options.WheelRows(pg, ctx, vis, owner)
         if not k then return nil end
         local other
         Store.EachRecord(function(id, o)
-            if id ~= r.id and WH.IsWheel(o) and WH.KeyOf(o) == k then other = o.name or "Another wheel" end
+            if id ~= r.id and WH.IsWheel(o) and WH.KeyOf(o) == k then other = o.name or Tr("Another wheel") end
         end)
         return other
     end
@@ -706,7 +714,7 @@ function Options.WheelRows(pg, ctx, vis, owner)
     clashFS:SetTextColor(WO.AMBER[1], WO.AMBER[2], WO.AMBER[3])
     clashRow._sync = function()
         local o = Clash(Rec())
-        clashFS:SetText(o and ("\"" .. o .. "\" has this key too: only one of them opens.") or "")
+        clashFS:SetText(o and Tr("\"%s\" has this key too: only one of them opens."):format(o) or "")
     end
 
     AT.Section(pg, "Spells and Items", { visibleFn = rvis })
@@ -742,7 +750,7 @@ function Options.WheelRows(pg, ctx, vis, owner)
         if w > 90 then noteFS:SetWidth(w - 24) end
         local c = edRow._full and WO.AMBER or COL.dim
         noteFS:SetTextColor(c[1], c[2], c[3])
-        noteFS:SetText(edRow._full and "The wheel is full: empty a spot first." or WO.HINT)
+        noteFS:SetText(Tr(edRow._full and "The wheel is full: empty a spot first." or WO.HINT))
         local want = math.max(20, math.floor((noteFS:GetStringHeight() or 12) + 8))
         if noteRow._h ~= want then
             noteRow._h = want

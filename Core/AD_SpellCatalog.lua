@@ -52,17 +52,61 @@ function Catalog.OwnCooldown(spellID)
     return ms > 0
 end
 
+-- Spells whose every copy stays out, matched by the name the game gives them
+-- in the client's language: skyriding moves (and the Dracthyr racial copies
+-- that share their names), battle pets, Revive Pet.
+Catalog.EXCLUDED_NAME_IDS = {
+    372608, 372610, 361584, 376743, 376744, 403216,
+    125439, 133994, 982,
+}
+-- The English name pieces, read on English clients only: other languages
+-- name these spells their own way.
+Catalog.EXCLUDED_WORDS = { "dragonriding", "skyriding", "skyward", "surge forward", "whirling",
+    "bronze timelock", "aerial halt", "battle pet", "revive pet" }
+
+-- read once: a spell's name is client data, there from login (an ID this
+-- client lacks has none)
+local excludedNames
+local function ExcludedNames()
+    if excludedNames then return excludedNames end
+    local t = {}
+    for _, id in ipairs(Catalog.EXCLUDED_NAME_IDS) do
+        local nm = C_Spell.GetSpellName(id) -- raw-id: an excluded spell, for its name
+        if type(nm) == "string" and nm ~= "" and not (issecretvalue and issecretvalue(nm)) then
+            t[nm:lower()] = true
+        end
+    end
+    excludedNames = t
+    return t
+end
+
+local function EnglishClient()
+    local loc = GetLocale and GetLocale()
+    return loc == nil or loc == "enUS" or loc == "enGB"
+end
+
+-- Holds the word the game puts under a passive spell, in the client's
+-- language (and the English one on an English client).
+local function SaysPassive(s)
+    if type(s) ~= "string" or (issecretvalue and issecretvalue(s)) then return false end
+    s = s:lower()
+    local w = SPELL_PASSIVE
+    if type(w) == "string" and w ~= "" and s:find(w:lower(), 1, true) then return true end
+    return EnglishClient() and s:find("passive", 1, true) ~= nil
+end
+
 local function ShouldExclude(spellID, name)
     if EXCLUDED_SPELLS[spellID] then return true end
     if RACIAL_SPELLS[spellID] and not Catalog.Known(spellID) then return true end
     if not name then return true end
     local n = name:lower()
-    if n:find("passive") then return true end
-    if n:find("dragonriding") or n:find("skyriding") then return true end
-    if n:find("skyward") or n:find("surge forward") then return true end
-    if n:find("whirling") or n:find("bronze timelock") then return true end
-    if n:find("aerial halt") then return true end
-    if n:find("battle pet") or n:find("revive pet") then return true end
+    if ExcludedNames()[n] then return true end
+    if SaysPassive(name) then return true end
+    if EnglishClient() then
+        for _, w in ipairs(Catalog.EXCLUDED_WORDS) do
+            if n:find(w, 1, true) then return true end
+        end
+    end
     return false
 end
 
@@ -72,7 +116,7 @@ local function AddSpell(seen, spellID, source)
     if not name then return end
     if C_Spell.IsSpellPassive and C_Spell.IsSpellPassive(spellID) then return end -- raw-id: a catalog entry
     local subtext = C_Spell.GetSpellSubtext and C_Spell.GetSpellSubtext(spellID) -- raw-id: a catalog entry
-    if subtext and subtext:lower():find("passive") then return end
+    if SaysPassive(subtext) then return end
     if ShouldExclude(spellID, name) then return end
     if C_Spell.GetSpellInfo and not C_Spell.GetSpellInfo(spellID) then return end -- raw-id: a catalog entry
 

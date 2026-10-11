@@ -13,6 +13,34 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "2.8.0",
+        intro = "Arc Auras in Korean, Custom Icons that show an aura and a cooldown, and No charges.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Korean",
+                    desc = "Arc Auras now shows in Korean on a Korean client. It is a first translation that Korean players can improve, and Settings has Use English for anyone who prefers English." },
+                { title = "Custom Icons show an aura and a cooldown",
+                    desc = "A Custom Icon can show a debuff's duration and a spell's cooldown, with By State looks for Aura up, Timer running, On cooldown and Ready, each with its own glow and sound." },
+                { title = "Trap templates",
+                    desc = "A trap icon, a trap slot, and a Hunter Traps group that shows only the traps you have out." },
+            } },
+            { header = "Improvements", items = {
+                { title = "No charges",
+                    desc = "A charge spell's last state is now called No charges (it was Depleted)." },
+                { title = "Other languages",
+                    desc = "Spell, item, class and power names show in your game's language, the options search finds accented and Cyrillic letters, and buttons fit longer words." },
+                { title = "Option labels",
+                    desc = "A long label now wraps instead of being cut off." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Bar fonts on Korean and Chinese clients",
+                    desc = "Fonts without Korean or Chinese letters are no longer offered there, and a saved one shows in the game's font." },
+                { title = "Spell list on non-English clients",
+                    desc = "Passive spells no longer slip into the spell picker." },
+            } },
+        },
+    },
+    {
         version = "2.7.0",
         intro = "Edit your layouts right on your screen, make a whole layout bigger with one slider, and a new texture picker.",
         sections = {
@@ -926,6 +954,34 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "2.8.0",
+        intro = "Arc Auras in Korean, Custom Icons that show an aura and a cooldown, and No charges.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Korean",
+                    desc = "Arc Auras now shows in Korean on a Korean client. It is a first translation that Korean players can improve, and Settings has Use English for anyone who prefers English." },
+                { title = "Custom Icons show an aura and a cooldown",
+                    desc = "A Custom Icon can show a debuff's duration and a spell's cooldown, with By State looks for Aura up, Timer running, On cooldown and Ready, each with its own glow and sound." },
+                { title = "Trap templates",
+                    desc = "A trap icon, a trap slot, and a Hunter Traps group that shows only the traps you have out." },
+            } },
+            { header = "Improvements", items = {
+                { title = "No charges",
+                    desc = "A charge spell's last state is now called No charges (it was Depleted)." },
+                { title = "Other languages",
+                    desc = "Spell, item, class and power names show in your game's language, the options search finds accented and Cyrillic letters, and buttons fit longer words." },
+                { title = "Option labels",
+                    desc = "A long label now wraps instead of being cut off." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Bar fonts on Korean and Chinese clients",
+                    desc = "Fonts without Korean or Chinese letters are no longer offered there, and a saved one shows in the game's font." },
+                { title = "Spell list on non-English clients",
+                    desc = "Passive spells no longer slip into the spell picker." },
+            } },
+        },
+    },
     {
         version = "2.7.0",
         intro = "Edit your layouts right on your screen, make a whole layout bigger with one slider, and a new texture picker.",

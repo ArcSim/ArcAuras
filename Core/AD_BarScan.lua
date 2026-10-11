@@ -10,12 +10,19 @@ NS.BarScan = BarScan
 -- in over slots 1-12 (see forever-stealth-page-swap), not bars of their own,
 -- so they get one shared label instead of eating bar numbers 7-10; the
 -- sequence picks back up at 7 for the real bars that follow.
-local function BarLabel(slot)
-    if slot >= 73 and slot <= 120 then
-        return "Action Bar 1 (form or stealth page)"
-    end
+-- The bar's number, nil on those pages: callers sort by it, never by the
+-- label, which is words.
+function BarScan.BarNumber(slot)
+    if type(slot) ~= "number" or slot < 1 then return nil end
+    if slot >= 73 and slot <= 120 then return nil end
     local n = math.floor((slot - 1) / 12) + 1
     if slot > 120 then n = n - 4 end
+    return n
+end
+
+local function BarLabel(slot)
+    local n = BarScan.BarNumber(slot)
+    if not n then return "Action Bar 1 (form or stealth page)" end
     return "Action Bar " .. n
 end
 

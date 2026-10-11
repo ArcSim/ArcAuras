@@ -1445,8 +1445,11 @@ function Driver.Attach(rec, f)
         elseif rec.kind == "enchant" and NS.DriverEnchant then
             NS.DriverEnchant.Attach(rec, f)
         elseif rec.kind == "timer" and NS.DriverCustom then
-            -- a Custom Icon: its rules feed it (Drivers\AD_DriverCustom.lua)
+            -- a Custom Icon: its rules feed it (Drivers\AD_DriverCustom.lua),
+            -- its "Aura on this icon" the engine's button over it, as a spell's
             NS.DriverCustom.Attach(rec, f)
+            if NS.DriverAura and NS.DriverAura.AttachOverlay then NS.DriverAura.AttachOverlay(rec, f) end
+            if NS.AuraSounds then NS.AuraSounds.Attach(rec) end
         elseif rec.kind == "special" and NS.SpecialIcon then
             -- a Special Aura: its tracker feeds it (Core\AD_SpecialIcon.lua)
             NS.SpecialIcon.Attach(rec, f)

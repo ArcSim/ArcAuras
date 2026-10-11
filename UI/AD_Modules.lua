@@ -7,6 +7,7 @@ local Options = NS.Options
 if not Options then return end
 local AT = NS.AT
 local COL = AT.COL
+local Tr = AT.Tr
 local Store = NS.Store
 
 local MOD = { list = {}, byKey = {}, pages = {}, cards = {} }
@@ -208,7 +209,7 @@ function MOD.MakeCard(parent, m)
     c.name:SetFont(AT.FONT, 13, "")
     c.name:SetPoint("TOPLEFT", box, "TOPRIGHT", 10, -3)
     c.name:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
-    c.name:SetText(m.name)
+    c.name:SetText(Tr(m.name))
     -- the search reads a card by its name
     c._colLabel = c.name
     c.state = c:CreateFontString(nil, "OVERLAY")
@@ -251,16 +252,16 @@ function MOD.PaintCard(c, seen)
     local on = avail and m.isOn() == true
     local edge = on and COL.arcDeep or COL.line
     c:SetBackdropBorderColor(edge[1], edge[2], edge[3], 1)
-    c.state:SetText(on and "ON" or "OFF")
+    c.state:SetText(Tr(on and "ON" or "OFF"))
     local sc = on and MOD.ON or COL.faint
     c.state:SetTextColor(sc[1], sc[2], sc[3])
     c.check:SetShown(avail)
     c.check:SetOn(on)
-    c.desc:SetText((not avail and m.unavailable) or m.desc or "")
+    c.desc:SetText(Tr((not avail and m.unavailable) or m.desc or ""))
     local badge = Options.NewBadge(MOD.NewKey(m), not seen)
     if badge then c.new:SetText(badge) end
     c.new:SetShown(badge ~= nil)
-    c.moved:SetText((badge and m.moved) or "")
+    c.moved:SetText(Tr((badge and m.moved) or ""))
     c.set._on = on
     MOD.PaintButton(c.set)
 end
@@ -311,7 +312,7 @@ function MOD.MakeBack(h)
     b.fs = b:CreateFontString(nil, "OVERLAY")
     b.fs:SetFont(AT.FONT, 12, "")
     b.fs:SetPoint("LEFT", b.chev, "RIGHT", 2, 0)
-    b.fs:SetText("Modules")
+    b.fs:SetText(Tr("Modules"))
     local function paint(hot)
         local c = hot and COL.ink or COL.arc
         b.fs:SetTextColor(c[1], c[2], c[3])
@@ -342,12 +343,12 @@ function MOD.SetHeader(m)
         b:SetWidth(14 + math.ceil(tw) + 4)
         b:Show()
         h.name:SetPoint("LEFT", b, "RIGHT", 10, 0)
-        h.name:SetText(m.name)
+        h.name:SetText(Tr(m.name))
         h._btns = { b }
     else
         b:Hide()
         h.name:SetPoint("LEFT", 4, 0)
-        h.name:SetText("Modules")
+        h.name:SetText(Tr("Modules"))
         h._btns = nil
     end
     Options.FitHeader(h)
@@ -366,7 +367,7 @@ end
 -- The list and every module's page, built into the host's pane once.
 function MOD.Fill(pane, header, win)
     MOD.pane, MOD.header, MOD.win = pane, header, win
-    header.name:SetText("Modules")
+    header.name:SetText(Tr("Modules"))
     header.chip1:Hide()
     header.chip2:Hide()
     MOD.MakeBack(header)
@@ -570,11 +571,11 @@ function MOD.RankRows(pg, m)
         local n, why = AR.UpgradeAll()
         local b = pg._upBtn
         if not b then return end
-        if n then b.fs:SetText(n == 1 and "Upgraded 1 button" or ("Upgraded " .. n .. " buttons"))
-        elseif why == "combat" then b.fs:SetText("Not in combat")
-        elseif why == "cursor" then b.fs:SetText("Empty your cursor first")
+        if n then b:SetLabel(n == 1 and "Upgraded 1 button" or Tr("Upgraded %d buttons"):format(n))
+        elseif why == "combat" then b:SetLabel("Not in combat")
+        elseif why == "cursor" then b:SetLabel("Empty your cursor first")
         else return end
-        C_Timer.After(1.6, function() b.fs:SetText("Upgrade all bars now") end)
+        C_Timer.After(1.6, function() b:SetLabel("Upgrade all bars now") end)
     end, function() return ranked() and m.isOn() end, 170)
     pg._upBtn = upRow.button
     if pg._upBtn then

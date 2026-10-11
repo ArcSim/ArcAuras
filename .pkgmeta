@@ -30,6 +30,8 @@ ignore:
   - Core/AD_ImportArcUIIcon.lua
   - UI/AD_ImportArcUIOptions.lua
   - Textures/ArcUI_Icon_128.tga
+  - Locales/enUS_keys.txt
+  - Locales/enUS_import.lua
   - Libs/LibCustomGlow-1.0/README.md
   - Libs/LibCustomGlow-1.0/cspell.json
   - Libs/LibCustomGlow-1.0/LibCustomGlow-1.0_old.xml

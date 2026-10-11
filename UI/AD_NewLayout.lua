@@ -236,9 +236,14 @@ function NL.ShowBig(card)
         big.notes:SetJustifyH("LEFT")
         big.notes:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     end
-    local notes = (t.notes and #t.notes > 0) and table.concat(t.notes, " ") or nil
+    local notes
+    if t.notes and #t.notes > 0 then
+        local said = {}
+        for i, n in ipairs(t.notes) do said[i] = AT.Tr(n) end
+        notes = table.concat(said, " ")
+    end
     if notes then
-        big.notes:SetText("What's new: " .. notes)
+        big.notes:SetText(AT.Tr("What's new: %s"):format(notes))
         big.notes:Show()
         big:SetHeight(NL.BIG_H + 16 + math.ceil(big.notes:GetStringHeight() or 14) + 10)
     else
@@ -282,7 +287,7 @@ function NL.MakeCard(parent, entry)
     -- a long title wraps onto a second line rather than being cut off; the
     -- description follows it down
     c.title:SetWordWrap(true)
-    c.title:SetText(entry.title)
+    c.title:SetText(AT.Tr(entry.title))
     c.desc = c:CreateFontString(nil, "OVERLAY")
     c.desc:SetFont(NS.AT.FONT, 11, "")
     c.desc:SetPoint("TOPLEFT", c.title, "BOTTOMLEFT", 0, -5)
@@ -290,7 +295,7 @@ function NL.MakeCard(parent, entry)
     c.desc:SetJustifyH("LEFT")
     c.desc:SetJustifyV("TOP")
     c.desc:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
-    c.desc:SetText(entry.desc)
+    c.desc:SetText(AT.Tr(entry.desc))
     -- An optional second action (Starter's "+ My Action Bars"): a slim button
     -- of its own, so the card's own click still just makes the plain layout.
     if entry.secondary then

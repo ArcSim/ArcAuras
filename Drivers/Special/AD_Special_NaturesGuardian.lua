@@ -5,6 +5,7 @@ local ADDON, NS = ...
 if NS.IsForever == true then return end
 local SP = NS.Special
 if not SP then return end
+local Tr = SP.Tr
 
 -- the heal effect is the id whose cooldown event fires; the passive talent never does
 local NG_EFFECT = 31616
@@ -148,9 +149,9 @@ local function Load(t)
 end
 
 local function Status()
-    if not ngEnabled then return "idle" end
-    if not HasNGTalent() then return "talent not taken" end
-    return ngOnCD and "on cooldown" or "ready"
+    if not ngEnabled then return Tr("idle") end
+    if not HasNGTalent() then return Tr("talent not taken") end
+    return ngOnCD and Tr("on cooldown") or Tr("ready")
 end
 
 SP.Register({

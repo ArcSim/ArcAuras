@@ -1954,22 +1954,27 @@ end
 function TP.Describe(rec)
     local s = TP.Source(rec)
     local d = rec.driver or {}
+    -- the card's line as drawn: the addon's words in the client's language,
+    -- the game's names and IDs as they are (NS.AT read late: a bars-only load
+    -- has no theme)
+    local AT = NS.AT
+    local Tr = (AT and AT.Tr) or function(w) return w end
     local L = Schema.TEXTURE_SOURCE_LABELS or {}
-    local base = L[s] or s
+    local base = Tr(L[s] or s)
     if s == "aura" then
-        base = base .. ": " .. (d.spellID and tostring(d.spellID) or "no aura")
+        base = base .. ": " .. (d.spellID and tostring(d.spellID) or Tr("no aura"))
     elseif s == "spellCd" then
         local nm = d.spellID and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(d.spellID) -- raw-id: the typed spell, as the editor shows it
         if IsSecret(nm) then nm = nil end
-        base = "Cooldown: " .. (nm or (d.spellID and ("spell " .. d.spellID)) or "no spell")
+        base = Tr("Cooldown: %s"):format(nm or (d.spellID and Tr("spell %s"):format(d.spellID)) or Tr("no spell"))
     elseif s == "health" then
         base = base .. ": " .. tostring(d.unit or "player")
     elseif s == "rules" then
         local n = type(d.rules) == "table" and #d.rules or 0
-        base = base .. ", " .. n .. (n == 1 and " rule" or " rules")
+        base = base .. ", " .. (n == 1 and Tr("%d rule") or Tr("%d rules")):format(n)
     end
     local mode = TP.Mode(rec)
-    if mode == "fill" then base = base .. ", fill" elseif mode == "ring" then base = base .. ", ring" end
+    if mode == "fill" then base = base .. ", " .. Tr("fill") elseif mode == "ring" then base = base .. ", " .. Tr("ring") end
     return base
 end
 

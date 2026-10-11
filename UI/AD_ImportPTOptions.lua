@@ -68,20 +68,22 @@ local function PaintFoot()
             if MP and MP.PartLive(c.key) then again = again + 1 end
         end
     end
+    local Tr = NS.AT.Tr
     local text, text2, col = "", "", COL.ink
     if said then
-        text, text2 = said.text or "", said.text2 or ""
+        text, text2 = Tr(said.text or ""), Tr(said.text2 or "")
         col = said.bad and { 1, 0.45, 0.4 } or { 0.498, 0.824, 0.557 }
     elseif icons + bars == 0 then
-        text, col = "Nothing ticked yet.", COL.dim
+        text, col = Tr("Nothing ticked yet."), COL.dim
     else
         local bits = {}
-        if icons > 0 then bits[#bits + 1] = icons .. (icons == 1 and " icon" or " icons") end
-        if bars > 0 then bits[#bits + 1] = bars .. (bars == 1 and " bar" or " bars") end
-        text = "Brings " .. table.concat(bits, " and ") .. " into a new ProcTracker layout."
+        if icons > 0 then bits[#bits + 1] = Tr(icons == 1 and "%d icon" or "%d icons"):format(icons) end
+        if bars > 0 then bits[#bits + 1] = Tr(bars == 1 and "%d bar" or "%d bars"):format(bars) end
+        local what = (#bits == 2) and Tr("%s and %s"):format(bits[1], bits[2]) or bits[1]
+        text = Tr("Brings %s into a new ProcTracker layout."):format(what)
         if again > 0 then
-            text2 = ((again == 1) and "1 of them is" or (again .. " of them are"))
-                .. " in Arc Auras already: importing again adds a second copy."
+            text2 = Tr(again == 1 and "%d of them is in Arc Auras already: importing again adds a second copy."
+                or "%d of them are in Arc Auras already: importing again adds a second copy."):format(again)
         end
     end
     W.sum:SetText(text)
@@ -110,10 +112,10 @@ function PW.Paint()
     for _, r in ipairs(W.rows) do r:Hide() end
     if not ok then
         if MP and not MP.Loaded() then
-            W.off:SetText("ArcUI ProcTracker is turned off, so its settings cannot be read. Turn it on and reload, then come back here.")
+            W.off:SetText(NS.AT.Tr("ArcUI ProcTracker is turned off, so its settings cannot be read. Turn it on and reload, then come back here."))
             W.onBtn:Show()
         else
-            W.off:SetText("ArcUI ProcTracker has no trackers set up to copy.")
+            W.off:SetText(NS.AT.Tr("ArcUI ProcTracker has no trackers set up to copy."))
         end
         W.off:Show()
         return
@@ -198,7 +200,7 @@ function PW.BuildPane(parent)
     pane = CreateFrame("Frame", nil, parent)
     W.note = Font(pane, 12, COL.ink)
     W.note:SetPoint("TOPLEFT", 4, -2)
-    W.note:SetText("Pick what comes over from Proc Tracker into a ProcTracker layout. You can import again any time.")
+    W.note:SetText(AT.Tr("Pick what comes over from Proc Tracker into a ProcTracker layout. You can import again any time."))
     W.boxes = {}
     for i, B in ipairs(PW.BOXES) do
         W.boxes[i] = Options.ImportKit.Box(pane, B[1])

@@ -140,6 +140,7 @@ function CU.Save(st)
         s.d = st.dur
         s.g = st.endAt
         s.e = wall + (st.endAt - now)
+        s.a = st.artSpell
     end
     if st.exp and #st.exp > 0 then
         s.x = {}
@@ -191,6 +192,8 @@ function CU.Restore(st)
             st.dur = d
             st.endAt = GetTime() + left
             st.start = st.endAt - d
+            local a = tonumber(s.a)
+            st.artSpell = (a and a > 0) and a or nil
             CU.ScheduleEnd(st)
         elseif st.rec.driver.clearOnEnd then
             CU.SetStacks(st, 0)
@@ -477,7 +480,9 @@ function CU.Guard(st, r)
     if r.stacksMax and st.stacks > r.stacksMax then return false end
     if r.withinRule then
         local at = st.last[r.withinRule]
-        if not at or GetTime() - at > (r.withinSecs or 1) then return false end
+        local recent = at ~= nil and GetTime() - at <= (r.withinSecs or 1)
+        -- "did not fire within": skips an echo the other rule's own event brings
+        if recent == (r.withinNot == true) then return false end
     end
     if r.timer == "running" and not CU.Running(st) then return false end
     if r.timer == "idle" and CU.Running(st) then return false end
@@ -532,11 +537,18 @@ function CU.Cue(st, r, i)
     return true
 end
 
-function CU.Act(st, r, i)
+function CU.Act(st, r, i, ctx)
     local act = r.act or "start"
     local changed = false
     if act == "start" then
         changed = CU.StartTimer(st, r.secs, r.mode or "restart")
+        -- "Art follows the spell that starts it": the cast that started it
+        if changed and r.when == "cast" and ctx and type(ctx.spellID) == "number"
+            and st.rec.driver.artFollow == true and st.artSpell ~= ctx.spellID then -- raw-id: the art changing, not a match
+            st.artSpell = ctx.spellID
+            local f = st.f
+            if f and NS.Factory and NS.Factory.GetTexture then f.icon:SetTexture(NS.Factory.GetTexture(st.rec)) end
+        end
     elseif act == "stop" then
         changed = CU.StopTimer(st)
     elseif act == "add" then
@@ -570,7 +582,7 @@ function CU.Fire(when, ctx)
                     and not (ctx and ctx.once and st.last[i] == ctx.once)
                     and CU.Matches(r, ctx, st) and CU.Guard(st, r) then
                     st.last[i] = GetTime()
-                    CU.Act(st, r, i)
+                    CU.Act(st, r, i, ctx)
                 end
             end
         end
@@ -588,12 +600,87 @@ end
 
 -- Painting
 
+-- A Custom Icon's cooldown while its timer is idle (Tracking's "Cooldown on
+-- this icon"): its typed spell, else the art's.
+function CU.CdSpell(rec)
+    local d = rec and rec.type == "icon" and rec.driver
+    if not (d and d.cdOn == true) then return nil end
+    local sid = tonumber(d.cdSpell) or tonumber(d.spellID)
+    return (sid and sid > 0) and math.floor(sid) or nil
+end
+
+function CU.WatchOwner(id) return "cu" .. tostring(id) end
+
+-- The shared spell watch (DriverCooldown.WatchSpell) tells ready from on
+-- cooldown with no secret read; a change repaints the icon.
+function CU.SyncCdWatch(st)
+    local D = NS.DriverCooldown
+    if not (D and D.WatchSpell) then return end
+    local sid = st.f and CU.CdSpell(st.rec)
+    if sid then
+        local id = st.id
+        D.WatchSpell(CU.WatchOwner(id), sid, nil, function()
+            local live = CU.items[id]
+            if live and live.f then CU.Paint(live) end
+        end)
+        st.cdSid = sid
+    elseif st.cdSid then
+        D.UnwatchSpell(CU.WatchOwner(st.id))
+        st.cdSid = nil
+    end
+end
+
+-- The art a following icon wears: the last spell whose cast started its timer.
+function CU.ArtSpell(id)
+    local st = CU.items[id]
+    return st and st.artSpell or nil
+end
+
+-- The spell's own cooldown on the icon: the game's duration object, which
+-- takes a secret time; the watch's rank (Follow my rank on Forever).
+function CU.PaintSpellCooldown(f, sid)
+    local eff = Store.TrackedSpellID(sid, NS.IsForever == true, false) or sid
+    local dur = C_Spell and C_Spell.GetSpellCooldownDuration and C_Spell.GetSpellCooldownDuration(eff, true)
+    if dur and f.cooldown.SetCooldownFromDurationObject then
+        f.cooldown:SetCooldownFromDurationObject(dur)
+    else
+        f.cooldown:Clear()
+    end
+end
+
+-- Entering a state plays its sound, never on a first paint (a login, a reload,
+-- an edit's re-attach): active = When the timer starts, inactive = When the
+-- timer ends (or, with a cooldown on, When the cooldown starts), ready = its own.
+CU.MOMENT_SOUND = { active = { "readySoundEnabled", "readySound" },
+    inactive = { "cooldownSoundEnabled", "cooldownSound" }, ready = { "idleSoundEnabled", "idleSound" } }
+function CU.Moment(st, m)
+    local was = st.moment
+    st.moment = m
+    if was == nil or was == m then return end
+    local s = CU.MOMENT_SOUND[m]
+    local D = NS.DriverCooldown
+    if s and D and D.PlayAlert then D.PlayAlert(st.rec, s[1], s[2]) end
+end
+
 function CU.PaintIcon(st)
     local f, rec = st.f, st.rec
     if not f then return end
     local F = NS.Factory
+    local active = CU.Active(st)
+    -- idle with a cooldown on it: that spell recharging, or Ready
+    local cooling, ready = false, false
+    if not active and st.cdSid then
+        local D = NS.DriverCooldown
+        if D and D.SpellState then
+            local r, rc, m = D.SpellState(CU.WatchOwner(st.id))
+            ready = r == true
+            cooling = rc == true or m == true
+        end
+    end
     if CU.Running(st) then
         f.cooldown:SetCooldown(st.start, st.dur)
+    elseif cooling then
+        CU.PaintSpellCooldown(f, st.cdSid)
     else
         f.cooldown:Clear()
     end
@@ -602,8 +689,9 @@ function CU.PaintIcon(st)
         if n == 0 and Store.Resolve(rec, "text", "stackShowZero") ~= true then n = "" end
         f.stackText:SetText(n)
     end
-    local active = CU.Active(st)
-    F.SetState(f, rec, not active, not active)
+    f._adIdleReady = ready or nil
+    F.SetState(f, rec, not active, not active and not ready)
+    CU.Moment(st, active and "active" or (ready and "ready" or "inactive"))
 end
 
 function CU.BarDone(e)
@@ -693,6 +781,7 @@ end
 function CU.Attach(rec, f)
     local st = Ensure(rec)
     st.f = f
+    CU.SyncCdWatch(st)
     CU.Paint(st)
     CU.QueueSync()
 end
@@ -701,6 +790,9 @@ function CU.Detach(id)
     local st = CU.items[id]
     if not st then return end
     st.f = nil
+    -- a re-attach paints its state without a sound
+    st.moment = nil
+    CU.SyncCdWatch(st)
     CU.QueueSync()
 end
 
@@ -1055,6 +1147,7 @@ end
 function CU.Sync()
     local live = {}
     local feedback, casts, petCasts, text, proc, target, totem = {}, false, false, false, false, false, false
+    local died = false
     local upd = false
     local watch, usable, conds = {}, {}, {}
     for id, st in pairs(CU.items) do
@@ -1093,6 +1186,8 @@ function CU.Sync()
                         text = true
                     elseif r.when == "target_changed" then
                         target = true
+                    elseif r.when == "target_died" then
+                        died = true
                     elseif CU.TOTEM_TRIGGERS[r.when] then
                         totem = true
                     elseif CU.COND_TRIGGERS[r.when] and CU.CondOK(r.cond) then
@@ -1133,6 +1228,8 @@ function CU.Sync()
     end)
     if any then CU.inCombat = InCombatLockdown() == true or CU.inCombat end
     CU.ArmSet("target", target, { "PLAYER_TARGET_CHANGED" }, function() CU.Fire("target_changed") end)
+    -- plain, no payload: the unit you have targeted died
+    CU.ArmSet("died", died, { "PLAYER_TARGET_DIED" }, function() CU.Fire("target_died") end)
     if totem and not CU.armed.totem then CU.ReadTotems() end
     CU.ArmSet("totem", totem, { "PLAYER_TOTEM_UPDATE" }, function(_, slot) CU.OnTotem(slot) end)
     CU.ArmSet("world", any, { "PLAYER_ENTERING_WORLD" }, function(_, login, reload)
@@ -1170,7 +1267,7 @@ function CU.RemoveRule(rec, i)
     -- a "within N seconds after rule Y" that named a later rule follows it
     for _, r in ipairs(rules) do
         if r.withinRule then
-            if r.withinRule == i then r.withinRule, r.withinSecs = nil, nil
+            if r.withinRule == i then r.withinRule, r.withinSecs, r.withinNot = nil, nil, nil
             elseif r.withinRule > i then r.withinRule = r.withinRule - 1 end
         end
     end
@@ -1215,10 +1312,10 @@ function CU.SetRule(rec, i, field, value)
             if r.act == "speak" then r.act = "sound" end
             if type(r.sound) == "string" and r.sound:sub(1, 4) == "kit:" then r.sound = nil end
             r.combat, r.talent, r.talentEntry, r.talentNot, r.spec, r.spellReady = nil, nil, nil, nil, nil, nil
-            r.stacksMin, r.stacksMax, r.withinRule, r.withinSecs, r.timer = nil, nil, nil, nil, nil
+            r.stacksMin, r.stacksMax, r.withinRule, r.withinSecs, r.withinNot, r.timer = nil, nil, nil, nil, nil, nil
         end
     end
-    if field == "withinRule" and value == nil then r.withinSecs = nil end
+    if field == "withinRule" and value == nil then r.withinSecs, r.withinNot = nil, nil end
     -- a choice belongs to its talent; no talent, no reverse
     if field == "talent" then
         r.talentEntry = nil
@@ -1252,7 +1349,11 @@ function CU.Words(r)
     if CU.COND_TRIGGERS[r.when] and r.cond then
         local C = NS.Conditions
         local d = C and C.ByKey and C.ByKey(r.cond)
-        L = L .. " (" .. ((d and d.text) or r.cond) .. ")"
+        -- the condition's words are option words: in the client's language
+        -- (the trigger's label in front stays English, the card swaps it)
+        local T = NS.L
+        local w = (d and d.text) or r.cond
+        L = L .. " (" .. ((d and d.text and T) and T[w] or w) .. ")"
     end
     local first = CU.AURA_TRIGGERS[r.when] and type(r.auraIDs) == "table" and r.auraIDs[1]
     if first then

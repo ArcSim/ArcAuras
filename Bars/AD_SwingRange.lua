@@ -56,20 +56,23 @@ function SR.CheckFor(rec)
     return nil
 end
 
--- What an empty spell box stands for.
+-- What an empty spell box stands for, drawn as given (the second return): a
+-- spell's name never goes to the translator, the words are translated here.
 function SR.SpellHint(rec)
     local sid = SR.DefaultSpell(rec)
     if not sid then
+        local L = NS.L
+        local function Tr(s) return L and L[s] or s end
         local RB = NS.RangeBars
         if ((rec.driver and rec.driver.swingType) or 0) ~= RANGED and RB and RB.MELEE_YD then
-            return "melee range (" .. RB.MELEE_YD .. " yd)"
+            return Tr("melee range (%s yd)"):format(RB.MELEE_YD), true
         end
-        return "none for this hand: type a spell"
+        return Tr("none for this hand: type a spell"), true
     end
     local CS = C_Spell
     local nm = CS and CS.GetSpellName and CS.GetSpellName(sid)
-    if IsSecret(nm) or type(nm) ~= "string" or nm == "" then return tostring(sid) end
-    return nm .. " (" .. sid .. ")"
+    if IsSecret(nm) or type(nm) ~= "string" or nm == "" then return tostring(sid), true end
+    return nm .. " (" .. sid .. ")", true
 end
 
 -- A live bar with the switch on; the preview never asks the engine.

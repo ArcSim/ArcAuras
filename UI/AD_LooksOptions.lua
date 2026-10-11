@@ -157,13 +157,14 @@ function Options.LooksRows(pg, ctx, vis, owner, withMode)
         local r, LK, k = Rec(), L(), Editing()
         if not (r and LK) then fs:SetText("") return end
         local mode = Mode()
+        local Tr = NS.AT.Tr
         if k == nil then
             if mode == "talent" and not r.looks.talentNode then
-                fs:SetText("Pick a talent, then the look to edit: with it or without it.")
+                fs:SetText(Tr("Pick a talent, then the look to edit: with it or without it."))
             elseif mode == "talent" then
-                fs:SetText("Changes below are the bar's own look. A talent look changes only what it sets.")
+                fs:SetText(Tr("Changes below are the bar's own look. A talent look changes only what it sets."))
             else
-                fs:SetText("Changes below are the bar's own look, for every power or spec without a look of its own.")
+                fs:SetText(Tr("Changes below are the bar's own look, for every power or spec without a look of its own."))
             end
             return
         end
@@ -171,10 +172,11 @@ function Options.LooksRows(pg, ctx, vis, owner, withMode)
         for _, it in ipairs(LK.Keys(r, mode)) do
             if it.value == k then name, when = it.text, it.line end
         end
+        -- when: words for the look's moment; name: the power, spec or talent
         if when then
-            fs:SetText("Changes below apply only " .. when .. ". Place and size stay the bar's.")
+            fs:SetText(Tr("Changes below apply only %s. Place and size stay the bar's."):format(Tr(when)))
         else
-            fs:SetText("Changes below apply only to " .. name .. ". Place and size stay the bar's.")
+            fs:SetText(Tr("Changes below apply only to %s. Place and size stay the bar's."):format(Tr(name)))
         end
     end
 

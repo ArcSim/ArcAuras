@@ -10,6 +10,14 @@ local R = K.R
 local RB = {}
 NS.RangeBars = RB
 
+-- The client's words for shipped text, read when drawn; NS.AT is looked up
+-- late, as a bars-only load has no theme.
+local function Tr(s)
+    local AT = NS.AT
+    if AT and AT.Tr then return AT.Tr(s) end
+    return s
+end
+
 RB.OWNER = "adrangebar"
 -- The editor preview shows each band this long, in seconds.
 RB.CYCLE = 1.5
@@ -97,6 +105,9 @@ else
         DEATHKNIGHT = 47541, SHAMAN = 188196, MAGE = 116, WARLOCK = 686, MONK = 117952, DRUID = 8921,
         DEMONHUNTER = 185123, EVOKER = 362969 }
 end
+-- A preset's band words ship with the addon: drawn in the client's words.
+for _, b in ipairs(RB.HUNTER) do b.shipped = true end
+
 -- A check's four kinds, as the band editor names them.
 RB.CHOICES = { "spellin", "spellout", "within", "beyond" }
 RB.CHOICE_TEXT = { spellin = "Spell in range", spellout = "Spell out of range",
@@ -173,14 +184,22 @@ function RB.PresetBands(rec, preset)
     local sid = RB.SpellFor(rec, preset)
     if preset == "melee" and not sid then
         return {
-            { text = "IN RANGE", color = GREEN, checks = { Yards(RB.MELEE_YD, true) } },
-            { text = "OUT OF RANGE", color = GREY, checks = { Yards(RB.MELEE_YD, false) } },
+            { text = "IN RANGE", color = GREEN, checks = { Yards(RB.MELEE_YD, true) }, shipped = true },
+            { text = "OUT OF RANGE", color = GREY, checks = { Yards(RB.MELEE_YD, false) }, shipped = true },
         }
     end
     return {
-        { text = "IN RANGE", color = GREEN, checks = { Spell(sid, true) } },
-        { text = "OUT OF RANGE", color = GREY, checks = { Spell(sid, false) } },
+        { text = "IN RANGE", color = GREEN, checks = { Spell(sid, true) }, shipped = true },
+        { text = "OUT OF RANGE", color = GREY, checks = { Spell(sid, false) }, shipped = true },
     }
+end
+
+-- A band's words as drawn: a preset's in the client's words, the player's own
+-- bands (stored on the record) exactly as they are.
+function RB.BandText(b)
+    local t = (b and b.text) or ""
+    if b and b.shipped then return Tr(t) end
+    return t
 end
 
 -- The bar's bands: its own list once edited, else its preset's.
@@ -256,7 +275,7 @@ local function SpellName(sid)
     local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(sid) -- raw-id: a typed check's spell, for the editor's words
     if issecretvalue and issecretvalue(nm) then nm = nil end
     if type(nm) == "string" and nm ~= "" then return nm end
-    return "spell " .. sid
+    return Tr("spell %s"):format(sid)
 end
 
 function RB.CheckChoice(k)
@@ -264,54 +283,59 @@ function RB.CheckChoice(k)
     return k.want and "within" or "beyond"
 end
 
+-- The editor's words for a check, a band, a bar: one whole line per case in
+-- the client's words, the spell name filled in.
 function RB.CheckWords(k)
     if k.kind == "spell" then
         local id = tonumber(k.id)
-        return (id and SpellName(id) or "a spell not picked yet") .. (k.want and " in range" or " out of range")
+        local nm = id and SpellName(id) or Tr("a spell not picked yet")
+        return (k.want and Tr("%s in range") or Tr("%s out of range")):format(nm)
     end
-    return (k.want and "within " or "beyond ") .. tostring(k.yd) .. " yd"
+    return (k.want and Tr("within %s yd") or Tr("beyond %s yd")):format(tostring(k.yd))
 end
 
 function RB.BandWords(b)
     local parts = {}
     for _, k in ipairs(b.checks or {}) do parts[#parts + 1] = RB.CheckWords(k) end
-    if #parts == 0 then return "No checks yet: this band never holds." end
+    if #parts == 0 then return Tr("No checks yet: this band never holds.") end
     return table.concat(parts, ", ")
 end
 
 -- The layout card's line.
 function RB.Describe(rec)
     local preset = RB.Preset(rec)
-    if preset == "hunter" then return "Hunter bands" end
-    if preset == "custom" then return ("Custom, %d bands"):format(#rec.driver.bands) end
+    if preset == "hunter" then return Tr("Hunter bands") end
+    if preset == "custom" then return Tr("Custom, %d bands"):format(#rec.driver.bands) end
     local sid = RB.SpellFor(rec, preset)
-    if preset == "melee" and not sid then return "Melee, " .. RB.MELEE_YD .. " yd" end
-    return (preset == "caster" and "Caster" or "Melee") .. ", " .. (sid and SpellName(sid) or "no spell")
+    if preset == "melee" and not sid then return Tr("Melee, %s yd"):format(RB.MELEE_YD) end
+    local nm = sid and SpellName(sid) or Tr("no spell")
+    return (preset == "caster" and Tr("Caster, %s") or Tr("Melee, %s")):format(nm)
 end
 
 -- The Tracking tab's line: what the bands check.
 function RB.CheckText(rec)
     local preset = RB.Preset(rec)
-    if preset == "hunter" then return RB.HUNTER_TEXT end
+    if preset == "hunter" then return Tr(RB.HUNTER_TEXT) end
     if preset == "custom" then
         local n = #rec.driver.bands
-        return ("Custom: %d band%s, nearest first."):format(n, n == 1 and "" or "s")
+        return (n == 1 and Tr("Custom: %d band, nearest first.") or Tr("Custom: %d bands, nearest first.")):format(n)
     end
     local sid = RB.SpellFor(rec, preset)
     if preset == "melee" and not sid then
-        return "In or out of melee range (" .. RB.MELEE_YD .. " yards), any class. A spell typed here replaces it."
+        return Tr("In or out of melee range (%s yards), any class. A spell typed here replaces it."):format(RB.MELEE_YD)
     end
-    if not sid then return "Type a spell: your class has no usual one for this preset." end
-    return "In or out of range of " .. SpellName(sid) .. "."
+    if not sid then return Tr("Type a spell: your class has no usual one for this preset.") end
+    return Tr("In or out of range of %s."):format(SpellName(sid))
 end
 
--- What an empty Spell box stands for.
+-- What an empty Spell box stands for, drawn as given (the second return): a
+-- spell's name never goes to the translator, the words are translated here.
 function RB.SpellHint(rec)
     local preset = RB.Preset(rec)
     local sid = RB.DefaultSpell(preset)
-    if sid then return SpellName(sid) .. " (" .. sid .. ")" end
-    if preset ~= "caster" then return "melee range (" .. RB.MELEE_YD .. " yd)" end
-    return "type a spell"
+    if sid then return SpellName(sid) .. " (" .. sid .. ")", true end
+    if preset ~= "caster" then return Tr("melee range (%s yd)"):format(RB.MELEE_YD), true end
+    return Tr("type a spell"), true
 end
 
 -- Editing: the first edit copies the preset into the bar's own bands, which then
@@ -321,9 +345,11 @@ local function Dirty(rec)
     if NS.Store and NS.Store.Dirty then NS.Store.Dirty("style", rec.id) end
 end
 
+-- A preset band becomes the player's in the words they saw, so its text never
+-- changes language when the bands turn into their own.
 local function Copy(b)
     local c = b.color or GREY
-    local nb = { text = b.text or "", color = { c[1], c[2], c[3], c[4] or 1 }, off = b.off, checks = {} }
+    local nb = { text = RB.BandText(b), color = { c[1], c[2], c[3], c[4] or 1 }, off = b.off, checks = {} }
     for _, k in ipairs(b.checks or {}) do
         nb.checks[#nb.checks + 1] = { kind = k.kind, id = k.id, yd = k.yd, want = k.want == true }
     end
@@ -360,8 +386,11 @@ end
 -- leaving it must not turn a preset into a copy.
 function RB.SetBandText(rec, i, text)
     local cur = RB.BandsOf(rec)[i]
-    text = tostring(text or ""):sub(1, 40)
-    if not cur or cur.text == text then return end
+    local S = NS.Store
+    text = tostring(text or "")
+    text = (S and S.CutText) and S.CutText(text, 40) or text:sub(1, 40)
+    -- the words the box showed (a preset's in the client's words) are no change
+    if not cur or cur.text == text or RB.BandText(cur) == text then return end
     RB.OwnBands(rec)[i].text = text
     Dirty(rec)
 end
@@ -389,7 +418,7 @@ function RB.AddBand(rec)
     local max = (NS.Schema and NS.Schema.RANGE_MAX_BANDS) or 8
     if #RB.BandsOf(rec) >= max then return end
     local list = RB.OwnBands(rec)
-    list[#list + 1] = { text = "NEW BAND", color = { CYAN[1], CYAN[2], CYAN[3], 1 }, checks = { Yards(40, true) } }
+    list[#list + 1] = { text = Tr("NEW BAND"), color = { CYAN[1], CYAN[2], CYAN[3], 1 }, checks = { Yards(40, true) } }
     Dirty(rec)
 end
 
@@ -615,7 +644,7 @@ function RB.LightCells(e, list, lit)
                 local on = i == lit
                 local col = b.color or GREY
                 c.bar:SetStatusBarColor(col[1], col[2], col[3], (col[4] or 1) * (on and 1 or dim))
-                c.fs:SetText(b.text or "")
+                c.fs:SetText(RB.BandText(b))
                 c.fs:SetTextColor(nc[1], nc[2], nc[3], (nc[4] or 1) * (on and 1 or RB.DIM_TEXT))
             end
         end
@@ -638,7 +667,7 @@ function RB.Paint(e, i)
     shell.fill:SetMinMaxValues(0, 1)
     shell.fill:SetValue(b and 1 or 0)
     shell.fill:SetStatusBarColor(c[1], c[2], c[3], c[4] or 1)
-    if not CustomName(rec) then K.SetRunText(shell, "name", (b and b.text) or "") end
+    if not CustomName(rec) then K.SetRunText(shell, "name", b and RB.BandText(b) or "") end
     local fs = shell.texts.name
     if fs and b and R(rec, "range", "textBandColor") == true then
         fs:SetTextColor(c[1], c[2], c[3], c[4] or 1)

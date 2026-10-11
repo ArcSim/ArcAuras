@@ -214,7 +214,10 @@ local function KindTexture(rec)
         local tex = id and C_Spell.GetSpellTexture(id)
         return tex or QUESTION_MARK
     elseif kind == "timer" then
-        local tex = d.spellID and C_Spell.GetSpellTexture(d.spellID) -- raw-id: the custom icon's art pick
+        -- "Art follows the spell that starts it": the last spell whose cast started the timer
+        local CU = NS.DriverCustom
+        local sid = (d.artFollow == true and CU and CU.ArtSpell and CU.ArtSpell(rec.id)) or d.spellID
+        local tex = sid and C_Spell.GetSpellTexture(sid) -- raw-id: the custom icon's art pick
         return tex or QUESTION_MARK
     elseif kind == "trinket" then
         local tex = d.slotID and GetInventoryItemTexture("player", d.slotID)
@@ -774,6 +777,7 @@ function Factory.Release(id)
         f._adTimedDur = nil
         f._adPureWand = nil
         f._adRecharging = nil
+        f._adIdleReady = nil
         f._adTipsOn = nil
         f._adProcLit = nil   -- nor the game's proc on the spell it showed
         f:Hide()
@@ -4363,6 +4367,9 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     -- Recharging: a charge spell with a charge left and another on its way
     -- (the driver's flag). Castable: ready, or recharging with that charge.
     local recharging = f._adRecharging == true
+    -- A Custom Icon's Ready: its timer idle and the spell it shows the cooldown
+    -- of off cooldown (Drivers\AD_DriverCustom.lua), a look of its own.
+    local idle = onCooldown and rec.kind == "timer" and f._adIdleReady == true
     local castable = not onCooldown or recharging
     -- the usability looks: while it can be cast, or only while ready when they wait for it
     local usabOK = castable
@@ -4380,8 +4387,10 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         f._adStateAlpha = 1
     else
         if recharging then
-            -- a look of its own, neither Ready's nor Depleted's
+            -- a look of its own, neither Ready's nor No charges'
             f._adStateAlpha = R("states", "rechargeAlpha") or 1
+        elseif idle then
+            f._adStateAlpha = R("states", "idleAlpha") or 1
         elseif onCooldown then
             f._adStateAlpha = R("states", "cooldownAlpha") or 1
         else
@@ -4455,6 +4464,9 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         and not (R("states", "readyGreyUsable") == true and f._adUsability ~= nil) then
         f.icon:SetDesaturated(true)
     end
+    if desatOK and idle and R("states", "idleDesaturate") == true then
+        f.icon:SetDesaturated(true)
+    end
     -- Grey only while usable holds Recharging's grey back the same way
     if desatOK and recharging and R("states", "rechargeDesaturate") == true
         and not (R("states", "readyGreyUsable") == true and f._adUsability ~= nil) then
@@ -4498,10 +4510,12 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     elseif castable and f._adToggled and R("states", "toggleTintEnabled") == true then
         tc = R("states", "toggleTintColor") or { 1, 0.35, 0.35, 1 }
     elseif recharging then
-        -- its own tint or none: never Ready's or Depleted's
+        -- its own tint or none: never Ready's or No charges'
         if R("states", "rechargeTintEnabled") == true then
             tc = R("states", "rechargeTintColor") or { 1, 0.85, 0.4, 1 }
         end
+    elseif idle then
+        if R("states", "idleTintEnabled") == true then tc = R("states", "idleTintColor") end
     elseif not onCooldown then
         if R("states", "readyTintEnabled") == true then tc = R("states", "readyTintColor") end
     elseif R("states", "cooldownTintEnabled") == true then
@@ -4556,6 +4570,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     Factory.UpdateCooldownGlow(f, rec)
     Factory.UpdateRangeGlow(f, rec)
     Factory.UpdateRechargeGlow(f, rec)
+    Factory.UpdateIdleGlow(f, rec)
     if f._adProcLit ~= nil then Factory.SetProcGlow(f, rec, f._adProcLit) end
     -- the border follows the art's final grey (our own texture: a plain read)
     Factory.BorderGrey(f, rec, f.icon.IsDesaturated ~= nil and f.icon:IsDesaturated() == true)
@@ -4894,6 +4909,30 @@ function Factory.SetChargeText(f, rec, sid, isCharge)
     end
 end
 
+-- The Edit chips' words, in the client's words at a size its letters can be
+-- read at: Korean and Chinese need more than the chips' 7 to 8 points. Returns
+-- the drawn width and whether the size went up, or nil for English, whose
+-- chips keep their set sizes.
+Factory.CHIP_CJK_MIN = 10
+function Factory.ChipText(fs, en, size)
+    local AT, L = NS.AT, NS.Locale
+    local words = (AT and AT.Tr) and AT.Tr(en) or en
+    local c = L and L.code
+    local cjk = c == "koKR" or c == "zhCN" or c == "zhTW"
+    fs:SetFont(STANDARD_TEXT_FONT, cjk and math.max(size, Factory.CHIP_CJK_MIN) or size, "OUTLINE")
+    fs:SetText(words)
+    if words == en and not cjk then return nil end
+    local w = (fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth()) or fs:GetStringWidth() or 0
+    return math.ceil(tonumber(w) or 0), cjk
+end
+
+-- An icon chip's size for its words: 24 x 12 for Edit, 32 for Editing; a
+-- longer word or a bigger letter grows it.
+function Factory.ChipSize(b, on)
+    local need, cjk = Factory.ChipText(b.fs, on and "Editing" or "Edit", 8)
+    b:SetSize(math.max(on and 32 or 24, need and (need + 6) or 0), cjk and 14 or 12)
+end
+
 -- Edit chip: a child button shown while the options panel is open. OnClick
 -- looks the record up through f._adRecId, as frames are reused across records.
 local function EnsureEditChip(f)
@@ -4906,9 +4945,8 @@ local function EnsureEditChip(f)
     bg:SetAllPoints()
     bg:SetColorTexture(0, 0, 0, 0.7)
     b.fs = b:CreateFontString(nil, "OVERLAY")
-    b.fs:SetFont(STANDARD_TEXT_FONT, 8, "OUTLINE")
     b.fs:SetPoint("CENTER", 0, 0)
-    b.fs:SetText("Edit")
+    Factory.ChipSize(b, false)
     b.fs:SetTextColor(1, 0.8, 0)
     b:SetScript("OnEnter", function(s) s.fs:SetTextColor(1, 1, 0.3) end)
     b:SetScript("OnLeave", function(s) s.fs:SetTextColor(1, 0.8, 0) end)
@@ -4942,8 +4980,7 @@ function Factory.SetEditing(f, on)
     local b = f._adEditBtn
     if not b or (b._adEditing or false) == on then return end
     b._adEditing = on
-    b:SetSize(on and 32 or 24, 12)
-    b.fs:SetText(on and "Editing" or "Edit")
+    Factory.ChipSize(b, on)
 end
 
 -- Lane stops and the ready glow
@@ -4976,6 +5013,7 @@ function Factory.StopGlow(f)
     Factory.StopReadyGlow(f)
     Factory.StopAuraGlow(f)
     Factory.StopCooldownGlow(f)
+    Factory.StopIdleGlow(f)
 end
 
 -- The Aura Active glow is drawn on the live engine button (SetAuraButtonGlow):
@@ -5140,6 +5178,60 @@ function Factory.UpdateRechargeGlow(f, rec)
     f._adRechargeSig = sig
 end
 
+-- A Custom Icon's Ready glow, key "adidle": lit while its timer is idle and
+-- the spell it shows the cooldown of is ready (the driver's f._adIdleReady):
+-- the cue to use it again. The options preview shows it while it is the lane on.
+function Factory.StopIdleGlow(f)
+    if not f._adIdleGlowOn then return end
+    StopLane(f, "adidle")
+    f._adIdleGlowOn = false
+    f._adIdleGlowSig = nil
+end
+
+function Factory.UpdateIdleGlow(f, rec)
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    local preview = f._adGlowLaneOnly == "idle"
+    local want = rec.kind == "timer"
+        and R("states", "idleGlow") == true
+        and f._adIdleReady == true and f._adOnCooldown == true
+        and R("appearance", "forceHideIcon") ~= true
+        and LaneAllowed(f, "idle") and not Factory.GlowHidden(f)
+    if want and not preview and R("states", "idleGlowCombatOnly") == true
+        and not InCombatLockdown() then
+        want = false
+    end
+    if not want then
+        Factory.StopIdleGlow(f)
+        return
+    end
+    local c = R("states", "idleGlowColor") or { 0.95, 0.95, 0.32, 1 }
+    local inten = R("states", "idleGlowIntensity") or 1
+    local color = { c[1], c[2], c[3], (c[4] or 1) * inten }
+    local gtype = DrawnGlowStyle(R("states", "idleGlowType") or "button", rec)
+    local speed = R("states", "idleGlowSpeed") or 0.25
+    local xo = R("states", "idleGlowXOffset") or 0
+    local yo = R("states", "idleGlowYOffset") or 0
+    local lines = R("states", "idleGlowLines") or 8
+    local th = R("states", "idleGlowThickness") or 2
+    local parts = R("states", "idleGlowParticles") or 4
+    local scale = R("states", "idleGlowScale") or 1
+    local lvl = (R("states", "idleGlowLevel") or GLOW_LEVEL) + Factory.Rise(rec)
+    local strata = R("states", "idleGlowStrata") or "inherit"
+    local len = R("states", "idleGlowLength") or 0
+    local mx = R("states", "idleGlowMoveX") or 0
+    local my = R("states", "idleGlowMoveY") or 0
+    local p = { color = color, speed = speed, lines = lines,
+        thickness = th, particles = parts, scale = scale, xo = xo, yo = yo,
+        level = lvl, strata = strata, length = len, mx = mx, my = my }
+    local sig = GlowSig(f, gtype, color, speed, lines, th, parts, scale, xo, yo, lvl, strata,
+        LaneExt(f, gtype, len, mx, my) .. LaneLook(rec, "states", "idleGlow", gtype, p, inten))
+    if f._adIdleGlowOn and f._adIdleGlowSig == sig then return end
+    Factory.StopIdleGlow(f)
+    StartLane(f, "adidle", gtype, p)
+    f._adIdleGlowOn = true
+    f._adIdleGlowSig = sig
+end
+
 -- The out-of-range glow, key "adr": lit while a castable spell's target is
 -- out of its range (a charge left counts), the state its alpha, grey and
 -- tint follow. The options preview shows it while it is the lane on.
@@ -5208,8 +5300,10 @@ function Factory.UpdateCooldownGlow(f, rec)
     local LCG = GetLCG()
     if not LCG then return end
     local R = function(s, k) return Store.Resolve(rec, s, k) end
-    -- Depleted's glow: a recharging charge spell has a glow of its own
-    local want = f._adOnCooldown == true and f._adRecharging ~= true and rec.kind ~= "aura"
+    -- No charges' glow: a recharging charge spell has a glow of its own, and
+    -- so has a Custom Icon's Ready
+    local want = f._adOnCooldown == true and f._adRecharging ~= true and f._adIdleReady ~= true
+        and rec.kind ~= "aura"
         and R("states", "cooldownGlow") == true
         and R("appearance", "forceHideIcon") ~= true
         and LaneAllowed(f, "cooldown") and not Factory.GlowHidden(f)

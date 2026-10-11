@@ -3,12 +3,55 @@
 local ADDON, NS = ...
 local Options = NS.Options
 if not Options then return end
+local Tr = NS.AT.Tr
 
 local CO = { showIf = {} }
 Options.Custom = CO
 
 local function Trim(v)
     return (tostring(v or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function EnglishClient()
+    local loc = GetLocale and GetLocale()
+    return loc == nil or loc == "enUS" or loc == "enGB"
+end
+
+-- At most n bytes, never ending inside a character (a Korean syllable is
+-- three bytes).
+function CO.Cut(s, n)
+    if #s <= n then return s end
+    local i = n + 1
+    while i > 1 do
+        local b = s:byte(i)
+        if b < 128 or b >= 192 then break end
+        i = i - 1
+    end
+    return s:sub(1, i - 1)
+end
+
+-- A template's name as shown: the English as written on an English client; on
+-- another, the game's name for its spell (showSpell) or item (showItem), else
+-- the English. `name` stays English: it names what the template makes.
+function CO.ShownName(t)
+    if EnglishClient() then return t.name end
+    local nm
+    if t.showSpell then
+        nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(t.showSpell) -- raw-id: a template's own spell
+    elseif t.showItem then
+        nm = C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(t.showItem)
+    end
+    if type(nm) ~= "string" or nm == "" or (issecretvalue and issecretvalue(nm)) then return t.name end
+    return nm
+end
+
+-- A template's class word ("Hunter") as the game names the class on this
+-- client, else as written.
+function CO.ClassWord(word)
+    if type(word) ~= "string" or EnglishClient() then return word end
+    local names = LOCALIZED_CLASS_NAMES_MALE
+    local nm = type(names) == "table" and names[(word:upper():gsub("%s", ""))]
+    return (type(nm) == "string" and nm ~= "") and nm or word
 end
 
 -- A typed spell: an ID, a pasted link, or the name of a spell you know.
@@ -45,11 +88,12 @@ function Options.CustomWhat(rec)
     local CU = NS.DriverCustom
     local rules = CU and CU.Rules(rec) or nil
     local n = rules and #rules or 0
-    local words = (n == 1) and "1 rule" or (n .. " rules")
+    local words = (n == 1) and Tr("1 rule") or Tr("%d rules"):format(n)
     if rec.type == "bar" then
-        return "Custom bar  -  " .. ((rec.barMode == "stack") and "stacks" or "timer") .. ", " .. words
+        return ((rec.barMode == "stack") and Tr("Custom bar  -  stacks, %s") or Tr("Custom bar  -  timer, %s"))
+            :format(words)
     end
-    return "custom icon, " .. words
+    return Tr("custom icon, %s"):format(words)
 end
 
 -- Ready-made Custom Bars (WoW Forever): picked in the Add window, made with
@@ -60,7 +104,7 @@ CO.TEMPLATES_FOREVER = {
     -- The debuff on you can't be tracked by spell ID, so the casts count it:
     -- each adds a stack (4 at most) and restarts its 8 s; the time running
     -- out, casting any other spell, or dying clears them all.
-    { key = "arcaneblast", class = "Mage", name = "Arcane Blast", art = 400574, mode = "stack",
+    { key = "arcaneblast", class = "Mage", name = "Arcane Blast", art = 400574, showSpell = 400574, mode = "stack",
       tip = "Your Arcane Blast stacks: up to 4, each cast restarts their 8 seconds; any other spell or dying clears them.",
       driver = { duration = 8, maxStacks = 4, clearOnEnd = true, showWhile = "stacks", rules = {
           { when = "cast", spellID = 400574, act = "add", restartToo = true, secs = 8 },
@@ -69,18 +113,146 @@ CO.TEMPLATES_FOREVER = {
       } } },
 }
 
+-- A hunter trap's minute on the ground. When it springs the game sends the
+-- trap's cooldown update again; the cast sends one too, so the stop skips the
+-- moment the start fires. One fire and one frost trap can be out at a time,
+-- so laying the other trap of its element removes this one.
+-- What a trap leaves on the mob, every rank (Forever's own Freezing Trap ID
+-- too): the debuff a trap icon shows while it is up.
+CO.TRAP_AURAS = {
+    [13795] = { 13797, 14298, 14299, 14300, 14301 },
+    [13813] = { 13812, 14314, 14315 },
+    [1499] = { 3355, 14308, 14309, 1324500 },
+    [13809] = { 13810 },
+}
+-- the debuff on your target, your own copy, the IDs as listed
+function CO.TrapOverlay(sids)
+    local ids = {}
+    for _, sid in ipairs(sids) do
+        for _, a in ipairs(CO.TRAP_AURAS[sid] or {}) do ids[#ids + 1] = a end
+    end
+    return { on = true, auraType = "debuff", unit = "target", caster = "mine", followRank = false,
+        spellID = ids[1], spellIDs = (#ids > 1) and ids or nil }
+end
+-- Armed for a minute, ends when it springs, and its debuff and cooldown after.
+function CO.TrapDriver(sid, rival)
+    return { duration = 60, cdOn = true, overlay = CO.TrapOverlay({ sid }), rules = {
+        { when = "cast", spellID = sid, act = "start", mode = "restart", secs = 60 },
+        { when = "spell_update", spellID = sid, act = "stop", withinRule = 1, withinSecs = 0.3, withinNot = true },
+        { when = "cast", spellID = rival, act = "stop" },
+    } }
+end
+-- One icon for an element's two traps: it wears the one you laid.
+function CO.TrapSlotDriver(sids)
+    return { duration = 60, cdOn = true, artFollow = true, overlay = CO.TrapOverlay(sids), rules = {
+        { when = "cast", spellID = sids[1], spellIDs = sids, act = "start", mode = "restart", secs = 60 },
+        { when = "spell_update", spellID = sids[1], spellIDs = sids, act = "stop",
+            withinRule = 1, withinSecs = 0.3, withinNot = true },
+    } }
+end
+-- On cooldown dims and greys it; Ready glows, the cue to lay it again.
+CO.TRAP_LOOKS = { states = { cooldownAlpha = 0.4, idleGlow = true } }
+
+for _, t in ipairs({
+    { key = "immolationtrap", name = "Immolation Trap", art = 13795, rival = 13813, rivalName = "Explosive Trap" },
+    { key = "explosivetrap", name = "Explosive Trap", art = 13813, rival = 13795, rivalName = "Immolation Trap" },
+    { key = "freezingtrap", name = "Freezing Trap", art = 1499, rival = 13809, rivalName = "Ice Trap" },
+    { key = "icetrap", name = "Ice Trap", art = 13809, rival = 1499, rivalName = "Freezing Trap" },
+    { key = "firetrap", name = "Fire Trap", art = 13795, slot = { 13795, 13813 },
+      tip = "Your fire trap, Immolation or Explosive: 60 seconds from laying it, then its burn on your target, its cooldown and Ready." },
+    { key = "frosttrap", name = "Frost Trap", art = 1499, slot = { 1499, 13809 },
+      tip = "Your frost trap, Freezing or Ice: 60 seconds from laying it, then its effect on your target, its cooldown and Ready." },
+}) do
+    t.which, t.class, t.o = "Icon", "Hunter", CO.TRAP_LOOKS
+    -- one trap is its spell; Fire Trap and Frost Trap are our own words
+    if not t.slot then t.showSpell = t.art end
+    t.driver = t.slot and CO.TrapSlotDriver(t.slot) or CO.TrapDriver(t.art, t.rival)
+    -- the whole English line per trap: the tooltip translates it as one key
+    t.tip = t.tip or ("Your %s: 60 seconds from laying it (%s replaces it), then its effect on your target, its cooldown and Ready.")
+        :format(t.name, t.rivalName)
+    t.rival, t.rivalName, t.slot = nil, nil, nil
+    CO.TEMPLATES_FOREVER[#CO.TEMPLATES_FOREVER + 1] = t
+end
+
+-- The Add window's Hunter Traps group (Forever): an Icon Group of the four
+-- traps that shows only what is out. Each is armed for a minute and, once it
+-- springs, runs its effect or ends (a freeze can break unseen); Not active is
+-- hidden and Close gaps closes the spots. The effect is timed from the spring,
+-- not read from the mob: the game shows a debuff only on your target or focus,
+-- and the group must keep it while you look elsewhere.
+-- burn: the effect is a debuff on the mob (ends with it); Ice Trap's is a
+-- patch of ice on the ground.
+CO.TRAP_GROUP = {
+    { name = "Immolation Trap", sid = 13795, rival = 13813, effect = 15, burn = true },
+    { name = "Explosive Trap", sid = 13813, rival = 13795, effect = 20, burn = true },
+    { name = "Freezing Trap", sid = 1499, rival = 13809 },
+    { name = "Ice Trap", sid = 13809, rival = 1499, effect = 30 },
+}
+function CO.TrapGroupDriver(e)
+    local function Spring(act)
+        return { when = "spell_update", spellID = e.sid, act = act, withinRule = 1, withinSecs = 0.3, withinNot = true }
+    end
+    if not e.effect then
+        return { duration = 60, spellID = e.sid, rules = {
+            { when = "cast", spellID = e.sid, act = "start", mode = "restart", secs = 60 },
+            Spring("stop"),
+            { when = "cast", spellID = e.rival, act = "stop" },
+        } }
+    end
+    -- its stacks mark the phase, never shown: 0 armed, 1 sprung
+    local spring = Spring("start")
+    spring.mode, spring.secs = "restart", e.effect
+    local mark = Spring("set")
+    mark.n = 1
+    local rules = {
+        { when = "cast", spellID = e.sid, act = "start", mode = "restart", secs = 60 },
+        { when = "cast", spellID = e.sid, act = "remove", n = 1 },
+        spring, mark,
+        -- the other trap of its element removes an armed trap, not a burn on a mob
+        { when = "cast", spellID = e.rival, act = "stop", stacksMax = 0 },
+    }
+    -- once sprung: your target dying ends a burn, leaving combat ends any
+    -- effect (the mob is dead or gone); an armed trap waits on either
+    if e.burn then rules[#rules + 1] = { when = "target_died", act = "stop", stacksMin = 1 } end
+    rules[#rules + 1] = { when = "combat_end", act = "stop", stacksMin = 1 }
+    return { duration = 60, spellID = e.sid, clearOnEnd = true, rules = rules }
+end
+function CO.TrapGroupCreate(addState, layoutId)
+    local Store = NS.Store
+    local nm = (type(addState.groupName) == "string") and addState.groupName:gsub("^%s+", ""):gsub("%s+$", "") or ""
+    local g = Store.NewGroup(layoutId, (nm ~= "") and nm or "Hunter Traps", "cooldown")
+    if not g then return nil end
+    Store.SetOverride(g, "arrangement", "dynamicLayout", true)
+    Store.SetOverride(g, "arrangement", "dynamicCollapse", "hidden")
+    Store.SetOverride(g, "arrangement", "cols", #CO.TRAP_GROUP)
+    for _, e in ipairs(CO.TRAP_GROUP) do
+        local r = Store.NewIcon("timer", CO.TrapGroupDriver(e), g.id, layoutId, e.name)
+        if r then
+            Store.SetOverride(r, "states", "cooldownAlpha", 0)
+            Store.SetOverride(r, "text", "stackText", false)
+            r.c.classes = { HUNTER = true }
+        end
+    end
+    Store.Dirty("tree")
+    return g
+end
+-- the template square under Add > Group > Icon Group
+CO.TEMPLATES_FOREVER[#CO.TEMPLATES_FOREVER + 1] = { key = "huntertraps", which = "Group", class = "Hunter",
+    name = "Hunter Traps", art = 13795, make = CO.TrapGroupCreate,
+    tip = "Your traps in a row: each shows while it is armed or burning, the rest close up." }
+
 -- Ready-made Custom Icons (retail): an item's buff as a timer from its use.
 -- The cast starts it, dying clears it.
 CO.TEMPLATES_RETAIL = {
     -- a second use while it runs keeps the first timer
-    { key = "puzzlebox", which = "Icon", name = "Algeth'ar Puzzle Box", art = 383781,
-      tip = "The Algeth'ar Puzzle Box's haste: 20 seconds from its use; dying clears it.",
+    { key = "puzzlebox", which = "Icon", name = "Algeth'ar Puzzle Box", art = 383781, showItem = 193701,
+      tip ="The Algeth'ar Puzzle Box's haste: 20 seconds from its use; dying clears it.",
       driver = { duration = 20, rules = {
           { when = "cast", spellID = 383781, act = "start", mode = "idle", secs = 20 },
           { when = "cond_on", cond = "dead", timer = "running", act = "reset" },
       } } },
-    { key = "lightspotential", which = "Icon", name = "Light's Potential", art = 1236616,
-      tip = "The Light's Potential potion: 30 seconds from the drink, each drink restarts it; dying clears it.",
+    { key = "lightspotential", which = "Icon", name = "Light's Potential", art = 1236616, showSpell = 1236616,
+      tip ="The Light's Potential potion: 30 seconds from the drink, each drink restarts it; dying clears it.",
       driver = { duration = 30, rules = {
           { when = "cast", spellID = 1236616, act = "start", mode = "restart", secs = 30 },
           { when = "cond_on", cond = "dead", timer = "running", act = "reset" },
@@ -111,6 +283,10 @@ end
 function CO.Pick(addState, key)
     local t = CO.Template(key)
     if not t then return false end
+    if t.which == "Group" then
+        addState.groupTemplate, addState.groupName = t.key, t.name
+        return true
+    end
     addState.customTemplate = t.key
     addState.customName, addState.customArt = t.name, tostring(t.art)
     if t.mode then addState.barMode = t.mode end
@@ -132,6 +308,7 @@ function CO.TemplateRow(pg, addState, vis, which)
     local AT, COL = NS.AT, NS.AT.COL
     local list = CO.Templates(which or "Bar")
     if #list == 0 then return nil end
+    local field = (which == "Group") and "groupTemplate" or "customTemplate"
     local row = AT.AddRow(pg, CO.PITCH + 8, vis)
     local cells = {}
     for i, t in ipairs(list) do
@@ -145,15 +322,17 @@ function CO.TemplateRow(pg, addState, vis, which)
         b.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
         b.tex:SetTexture(C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(t.art) or 134400) -- raw-id: a template's own art
         function b.Edge(hot)
-            local c = (addState.customTemplate == t.key and COL.arc) or (hot and COL.focus) or COL.line
+            local c = (addState[field] == t.key and COL.arc) or (hot and COL.focus) or COL.line
             b:SetBackdropBorderColor(c[1], c[2], c[3], 1)
         end
         b:SetScript("OnEnter", function()
             b.Edge(true)
             GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
-            GameTooltip:SetText(t.name, COL.ink[1], COL.ink[2], COL.ink[3])
-            if t.class then GameTooltip:AddLine(t.class .. " template", COL.arc[1], COL.arc[2], COL.arc[3]) end
-            GameTooltip:AddLine(t.tip, COL.dim[1], COL.dim[2], COL.dim[3], true)
+            GameTooltip:SetText(CO.ShownName(t), COL.ink[1], COL.ink[2], COL.ink[3])
+            if t.class then
+                GameTooltip:AddLine(Tr("%s template"):format(CO.ClassWord(t.class)), COL.arc[1], COL.arc[2], COL.arc[3])
+            end
+            GameTooltip:AddLine(Tr(t.tip), COL.dim[1], COL.dim[2], COL.dim[3], true)
             GameTooltip:Show()
         end)
         b:SetScript("OnLeave", function()
@@ -162,8 +341,10 @@ function CO.TemplateRow(pg, addState, vis, which)
         end)
         b:SetScript("OnClick", function()
             AT.CloseDropdown()
-            if addState.customTemplate == t.key then
-                addState.customTemplate = nil
+            if addState[field] == t.key then
+                addState[field] = nil
+                -- a group's name came with the pick and goes with it
+                if which == "Group" and addState.groupName == t.name then addState.groupName = nil end
             else
                 CO.Pick(addState, t.key)
             end
@@ -205,6 +386,23 @@ function Options.CustomAddRows(pg, owner, addState, which)
         "Question mark until set", true)
 end
 
+-- Add > Group > Icon Group: the ready-made groups' squares
+function Options.GroupTemplateRows(pg, addState)
+    CO.TemplateRow(pg, addState, function()
+        return addState.cat == "Group" and (addState.groupKind or "cooldown") == "cooldown"
+    end, "Group")
+end
+
+-- the picked group template, or nil; used once
+function Options.GroupTemplateMake(addState, layoutId)
+    local t = addState.groupTemplate and CO.Template(addState.groupTemplate, "Group")
+    addState.groupTemplate = nil
+    local g = t and t.make(addState, layoutId)
+    -- the next group starts unnamed, not under the template's name
+    addState.groupName = nil
+    return g
+end
+
 function CO.AddFields(addState, which)
     local name = Trim(addState.customName)
     if name == "" then name = (which == "Bar") and "Custom Bar" or "Custom Icon" end
@@ -222,7 +420,14 @@ function Options.CustomCreate(addState, dest, layoutId)
         d = CO.Copy(t.driver)
         d.spellID = art or t.art
     end
-    return NS.Store.NewIcon("timer", d, dest, layoutId, name)
+    local rec = NS.Store.NewIcon("timer", d, dest, layoutId, name)
+    -- a template's own looks (a trap's dim On cooldown and Ready glow)
+    if rec and t and t.o then
+        for sec, fields in pairs(t.o) do
+            for k, v in pairs(fields) do NS.Store.SetOverride(rec, sec, k, v) end
+        end
+    end
+    return rec
 end
 
 -- a picked template's rules and settings, its art unless another was typed;
@@ -249,7 +454,8 @@ function CO.TrackRows(pg, Rec, vis, owner, isBar)
         if r and E then E.SetDriver(r, field, value) end
         AT.LayoutPage(pg)
     end
-    AT.Section(pg, isBar and "Custom Bar" or "Custom Icon", { visibleFn = vis })
+    -- an icon's aura and cooldown sections stack beside it (CO.SourceRows)
+    AT.Section(pg, isBar and "Custom Bar" or "Custom Icon", { visibleFn = vis, side = (not isBar) and "L" or nil })
     AT.RowDesc(pg, "Its rules on the Triggers tab start its timer and count its stacks.", 20, vis)
     if isBar then
         AT.RowDropdown(pg, owner, "Shows",
@@ -295,6 +501,12 @@ function CO.TrackRows(pg, Rec, vis, owner, isBar)
         local r = Rec()
         nameFS:SetText(r and CO.SpellName(r.driver.spellID) or "")
     end
+    if not isBar then
+        AT.RowToggle(pg, "Art follows the spell that starts it",
+            function() local r = Rec() return r ~= nil and r.driver.artFollow == true end,
+            function(v) Set("artFollow", v or nil) end,
+            vis, "It wears the spell whose cast started its timer: one Fire Trap icon for whichever fire trap you laid.")
+    end
     -- The spell above gates the item as on a spell icon: Store.IsLoaded reads
     -- driver.onlyKnown with driver.spellID, so a change is a load pass.
     local function HasSpell()
@@ -324,6 +536,7 @@ function CO.TrackRows(pg, Rec, vis, owner, isBar)
             return HasSpell() and r.driver.onlyKnown == true and NS.IsForever == true
         end,
         "Waits for this exact rank (the spell ID above), not just any rank of the spell.")
+    if NS.Options.BuildYield then NS.Options.BuildYield() end
     AT.RowDropdown(pg, owner, "Show as active while",
         function()
             local r = Rec()
@@ -332,7 +545,7 @@ function CO.TrackRows(pg, Rec, vis, owner, isBar)
         function(v) Set("showWhile", (v ~= "timer") and v or nil) end,
         Items(S.CUSTOM_SHOW_WHILE, S.CUSTOM_SHOW_WHILE_LABELS), vis)
     AT.RowDesc(pg, isBar and "Active: the bar shows (Hide when inactive hides it otherwise)."
-        or "Conditions sets its Active and Not active looks. With no rules yet it shows as active.",
+        or "Conditions sets a look for each state it can be in.",
         20, vis)
     AT.RowInput(pg, "Default seconds",
         function()
@@ -387,6 +600,130 @@ function CO.TrackRows(pg, Rec, vis, owner, isBar)
         end,
         function(v) Set("clearOnEnd", v or nil) end,
         vis, "When the timer runs out, the stacks go back to 0 with it.")
+    if not isBar then CO.SourceRows(pg, Rec, vis, owner) end
+end
+
+-- A Custom Icon's right column: an aura the game shows over it while it is up
+-- (a spell icon's "On this icon" shape on driver.overlay, the engine's button,
+-- so it works in combat) and a spell's cooldown while its timer is idle.
+-- Offered only with the game's aura container for the aura.
+CO.AURA_UNITS = { "target", "focus", "mouseover", "player", "pet" }
+CO.AURA_UNIT_WORDS = { target = "Target", focus = "Focus", mouseover = "Mouseover", player = "Player", pet = "Pet" }
+function CO.SourceRows(pg, Rec, vis, owner)
+    local AT, Store, O = NS.AT, NS.Store, NS.Options
+    local function Ov()
+        local r = Rec()
+        local ov = r and r.driver and r.driver.overlay
+        return type(ov) == "table" and ov or nil
+    end
+    local function Dirty()
+        local r = Rec()
+        if r then Store.Dirty("style", r.id) end
+        AT.LayoutPage(pg)
+    end
+    local auraVis = function()
+        local DA = NS.DriverAura
+        return vis() and DA ~= nil and DA.IsAvailable ~= nil and DA.IsAvailable() == true
+    end
+    local auraOn = function()
+        local ov = Ov()
+        return auraVis() and ov ~= nil and ov.on == true
+    end
+    if O.BuildYield then O.BuildYield() end
+    AT.Section(pg, "Aura on this icon", { visibleFn = auraVis, side = "R" })
+    AT.RowToggle(pg, "Show an aura",
+        function() local ov = Ov() return ov ~= nil and ov.on == true end,
+        function(v)
+            local r = Rec()
+            if not (r and O and O.SetOverlayOn) then return end
+            O.SetOverlayOn(r, v)
+            -- the phase's rows on Conditions come and go with it
+            if O.RefreshAll then O.RefreshAll() end
+        end,
+        auraVis, "While the aura is up the game shows it over the icon: its time, and gone the moment it drops. Works in combat.")
+    AT.RowInput(pg, "Aura spell IDs",
+        function()
+            local ov = Ov()
+            return ov and table.concat(Store.AuraIDList(ov), ", ") or ""
+        end,
+        function(v)
+            local ov = Ov()
+            if not (ov and O and O.ParseSpellIDs) then return end
+            local ids = O.ParseSpellIDs(v)
+            if #ids == 0 then return end
+            O.SetAuraSpellIDs(ov, ids)
+            Dirty()
+        end,
+        auraOn, "The aura's spell IDs, separated by commas. A debuff usually has the ID of the spell that puts it up.",
+        "e.g. 13797")
+    AT.RowDropdown(pg, owner, "Unit",
+        function()
+            local ov = Ov()
+            return (ov and ov.unit) or "target"
+        end,
+        function(v)
+            local ov = Ov()
+            if not ov then return end
+            -- your target, focus or mouseover carries your debuff; you or your pet a buff
+            ov.unit = v
+            ov.auraType = (v == "player" or v == "pet") and "buff" or "debuff"
+            Dirty()
+        end,
+        function()
+            local out = {}
+            for _, u in ipairs(CO.AURA_UNITS) do out[#out + 1] = { value = u, text = CO.AURA_UNIT_WORDS[u] } end
+            return out
+        end,
+        auraOn)
+    AT.RowToggle(pg, "Only your own",
+        function() local ov = Ov() return ov ~= nil and ov.caster == "mine" end,
+        function(v)
+            local ov = Ov()
+            if not ov then return end
+            ov.caster = v and "mine" or nil
+            Dirty()
+        end,
+        auraOn, "Only your own copy of the aura shows, not another player's.")
+    if O.BuildYield then O.BuildYield() end
+    AT.Section(pg, "Cooldown on this icon", { visibleFn = vis, side = "R" })
+    AT.RowToggle(pg, "Show a cooldown",
+        function() local r = Rec() return r ~= nil and r.driver.cdOn == true end,
+        function(v)
+            local r, E = Rec(), NS.DriverCustom
+            if r and E then E.SetDriver(r, "cdOn", v or nil) end
+            if O and O.RefreshAll then O.RefreshAll() end
+        end,
+        vis, "While its timer is idle it shows this spell's cooldown, then its Ready look.")
+    local cdRow = AT.RowInput(pg, "Spell ID",
+        function()
+            local r = Rec()
+            return (r and r.driver.cdSpell) and tostring(r.driver.cdSpell) or ""
+        end,
+        function(v)
+            local r, E = Rec(), NS.DriverCustom
+            if not (r and E) then return end
+            local id = CO.ParseSpell(v)
+            if v ~= "" and not id then return end
+            E.SetDriver(r, "cdSpell", id)
+            AT.LayoutPage(pg)
+        end,
+        function() local r = Rec() return vis() and r ~= nil and r.driver.cdOn == true end,
+        "The spell whose cooldown it shows. Empty: the art's spell.",
+        "The art's spell")
+    local cdName = cdRow:CreateFontString(nil, "OVERLAY")
+    cdName:SetFont(NS.AT.FONT, 11, "")
+    cdName:SetPoint("LEFT", cdRow._colCtrl, "RIGHT", 8, 0)
+    cdName:SetPoint("RIGHT", cdRow, "RIGHT", -10, 0)
+    cdName:SetJustifyH("LEFT")
+    cdName:SetWordWrap(false)
+    cdName:SetTextColor(AT.COL.dim[1], AT.COL.dim[2], AT.COL.dim[3])
+    local cdSync = cdRow._sync
+    cdRow._sync = function()
+        cdSync()
+        local r = Rec()
+        local sid = r and (r.driver.cdSpell or r.driver.spellID)
+        cdName:SetText(sid and CO.SpellName(sid) or "")
+    end
 end
 
 -- Every custom item, for the "another item's timer ended" pick.
@@ -397,13 +734,15 @@ function CO.ChainItems(self)
         for _, m in ipairs(Store.MembersOf(lay)) do
             if m.type == "group" then
                 for _, ic in ipairs(Store.IconsOf(m)) do
+                    -- a name is the player's: drawn as typed (raw)
                     if ic.kind == "timer" and ic.id ~= self then
-                        out[#out + 1] = { value = ic.id, text = tostring(ic.name) .. " (icon)" }
+                        out[#out + 1] = { value = ic.id, text = Tr("%s (icon)"):format(tostring(ic.name)), raw = true }
                     end
                 end
             elseif (m.type == "icon" and m.kind == "timer") or (m.type == "bar" and m.barKind == "timer") then
                 if m.id ~= self then
-                    out[#out + 1] = { value = m.id, text = tostring(m.name) .. ((m.type == "bar") and " (bar)" or " (icon)") }
+                    out[#out + 1] = { value = m.id, raw = true,
+                        text = ((m.type == "bar") and Tr("%s (bar)") or Tr("%s (icon)")):format(tostring(m.name)) }
                 end
             end
         end
@@ -424,11 +763,13 @@ function CO.CondItems(r)
         for _, d in ipairs(C.VOCAB) do
             if d.cat == c.id and CU.CondOK(d.key) and (not d.class or d.class == class or d.key == cur) then
                 if d.key == cur then seen = true end
-                out[#out + 1] = { value = d.key, text = c.text .. ": " .. d.text }
+                out[#out + 1] = { value = d.key, text = Tr(c.text) .. ": " .. Tr(d.text), raw = true }
             end
         end
     end
-    if cur and not seen then out[#out + 1] = { value = cur, text = tostring(cur) .. " (not on this client)" } end
+    if cur and not seen then
+        out[#out + 1] = { value = cur, text = Tr("%s (not on this client)"):format(tostring(cur)), raw = true }
+    end
     return out
 end
 
@@ -456,10 +797,12 @@ function CO.ChoiceItems(nodeID, current)
     for _, opt in ipairs((e and e.entries) or {}) do
         if opt.entryID == current then seen = true end
         local yours = (e.rank or 0) > 0 and e.activeEntryID == opt.entryID
-        out[#out + 1] = { value = opt.entryID, text = tostring(opt.name) .. (yours and "  (yours)" or "") }
+        -- the game's talent names, already in the client's words
+        local nm = tostring(opt.name)
+        out[#out + 1] = { value = opt.entryID, text = yours and Tr("%s  (yours)"):format(nm) or nm, raw = true }
     end
     if current and current ~= 0 and not seen then
-        out[#out + 1] = { value = current, text = "Choice " .. current .. " (not in this tree)" }
+        out[#out + 1] = { value = current, text = Tr("Choice %s (not in this tree)"):format(current), raw = true }
     end
     return out
 end
@@ -478,10 +821,11 @@ function CO.TalentItems(current)
             for _, opt in ipairs(e.entries) do names[#names + 1] = tostring(opt.name) end
             name = table.concat(names, " / ")
         end
-        out[#out + 1] = { value = e.nodeID, text = name .. ((e.rank or 0) > 0 and "  (yours)" or "") }
+        out[#out + 1] = { value = e.nodeID, raw = true,
+            text = ((e.rank or 0) > 0) and Tr("%s  (yours)"):format(name) or name }
     end
     if current and current ~= 0 and not seen then
-        out[#out + 1] = { value = current, text = "Talent " .. current .. " (not in this tree)" }
+        out[#out + 1] = { value = current, text = Tr("Talent %s (not in this tree)"):format(current), raw = true }
     end
     return out
 end
@@ -497,11 +841,12 @@ function CO.SpecItems(current)
         local id, name = SI.GetSpecializationInfo(i)
         if type(id) == "number" and id > 0 then
             if id == current then seen = true end
-            out[#out + 1] = { value = id, text = (type(name) == "string" and name ~= "") and name or ("Spec " .. id) }
+            out[#out + 1] = { value = id, raw = true,
+                text = (type(name) == "string" and name ~= "") and name or Tr("Spec %s"):format(id) }
         end
     end
     if current and current ~= 0 and not seen then
-        out[#out + 1] = { value = current, text = "Spec " .. current .. " (another class)" }
+        out[#out + 1] = { value = current, text = Tr("Spec %s (another class)"):format(current), raw = true }
     end
     return out
 end
@@ -588,7 +933,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
         local api = { Rule = function() return Rule(i) end, Set = Set, Is = Is, rv = rv, Rec = Rec, Stamp = Stamp,
             i = i }
 
-        AT.Section(pg, "Rule " .. i, { visibleFn = vis })
+        AT.Section(pg, Tr("Rule %d"):format(i), { visibleFn = vis })
         local grpRow = AT.RowDropdown(pg, owner, "Trigger group",
             function() return GroupOf(Rule(i)) end,
             function(v)
@@ -654,7 +999,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
             local r = Rule(i)
             local nm = r and CO.SpellName(r.spellID) or ""
             local n = #CO.RuleSpells(r)
-            if n > 1 then nm = nm .. ((nm ~= "") and " " or "") .. ("+ %d more"):format(n - 1) end
+            if n > 1 then nm = nm .. ((nm ~= "") and " " or "") .. Tr("+ %d more"):format(n - 1) end
             nameFS:SetText(nm)
         end
         AT.RowDesc(pg, "Fires each time the game updates this spell's cooldown, and for some buffs as they come and go.",
@@ -829,16 +1174,24 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
                 if n and n >= 0 then Set("stacksMax", math.floor(math.min(999, n))) end
             end,
             gtv, "The item's own stacks, before this rule acts. Empty = no such condition.", "Any")
+        -- a negative value is the same rule with "did not fire" (withinNot)
         AT.RowDropdown(pg, owner, "Within seconds after rule",
             function()
                 local r = Rule(i)
-                return (r and r.withinRule) or 0
+                if not (r and r.withinRule) then return 0 end
+                return r.withinNot and -r.withinRule or r.withinRule
             end,
-            function(v) Set("withinRule", (v ~= 0) and v or nil) end,
+            function(v)
+                Set("withinRule", (v ~= 0) and math.abs(v) or nil)
+                if v ~= 0 then Set("withinNot", (v < 0) or nil) end
+            end,
             function()
                 local out = { { value = 0, text = "No such condition" } }
                 for k = 1, #Rules() do
-                    if k ~= i then out[#out + 1] = { value = k, text = "Rule " .. k } end
+                    if k ~= i then out[#out + 1] = { value = k, text = Tr("Rule %d"):format(k) } end
+                end
+                for k = 1, #Rules() do
+                    if k ~= i then out[#out + 1] = { value = -k, text = Tr("Not after rule %d"):format(k) } end
                 end
                 return out
             end,
@@ -856,7 +1209,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
                 local r = Rule(i)
                 return gv() and r.withinRule ~= nil
             end,
-            "How long after that rule last fired this one may fire. Enter applies it.")
+            "How long after that rule last fired this one may fire (Not after: may not fire). Enter applies it.")
         AT.RowDropdown(pg, owner, "Timer",
             function()
                 local r = Rule(i)
@@ -954,7 +1307,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
             end,
             function(v)
                 v = Trim(v)
-                Set("text", (v ~= "") and v:sub(1, 200) or nil)
+                Set("text", (v ~= "") and CO.Cut(v, 200) or nil)
             end,
             Is("act", "speak"), "Spoken by the game's text to speech, in the voice its options pick.", "What to say")
         local speak = AT.MakeSmallButton(trow, "Speak", 56)

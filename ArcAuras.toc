@@ -2,7 +2,7 @@
 ## Title: |cff3fc9f2Arc|r Auras
 ## Notes: Icons, icon groups and bars for your cooldowns, auras and resources, all set up from one panel. /arcauras or /arcui2
 ## Author: Arc
-## Version: 2.7.0
+## Version: 2.8.0
 ## IconTexture: Interface\AddOns\ArcAuras\Textures\ArcAuras_Icon_256
 ## SavedVariables: ArcAurasDB
 ## OptionalDeps: ArcUI, Masque
@@ -15,6 +15,8 @@ Libs\LibCustomGlow-1.0\LibCustomGlow-1.0.lua
 
 Core\AD_Forever.lua [ExcludeLoadGameType standard]
 Core\AD_Theme.lua
+Core\AD_Locale.lua
+Locales\koKR.lua
 Core\AD_Schema.lua
 Core\AD_Events.lua
 Core\AD_Perf.lua

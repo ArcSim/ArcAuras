@@ -238,7 +238,7 @@ function BGO.SpellSuggest(pg, visibleFn, getText, pick)
             if not e then return end
             GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
             GameTooltip:SetSpellByID(e.spellID) -- raw-id: a catalog entry
-            GameTooltip:AddLine("Spell ID: " .. e.spellID, COL.arc[1], COL.arc[2], COL.arc[3])
+            GameTooltip:AddLine(AT.Tr("Spell ID: %s"):format(e.spellID), COL.arc[1], COL.arc[2], COL.arc[3])
             GameTooltip:Show()
         end)
         b:SetScript("OnLeave", function()
@@ -265,8 +265,8 @@ function BGO.SpellSuggest(pg, visibleFn, getText, pick)
                 shown = shown + 1
                 b.tex:SetTexture(e.texture or 134400)
                 local mx = tonumber(e.maxCharges)
-                b.name:SetText((mx and mx > 1) and (e.name .. "  |cff" .. AT.Hex(COL.arc) .. "(" .. mx .. " charges)|r")
-                    or e.name)
+                b.name:SetText((mx and mx > 1)
+                    and (e.name .. "  |cff" .. AT.Hex(COL.arc) .. AT.Tr("(%d charges)"):format(mx) .. "|r") or e.name)
                 b.id:SetText(tostring(e.spellID))
                 b:Show()
             else
@@ -284,20 +284,21 @@ function BGO.SpellSuggest(pg, visibleFn, getText, pick)
         if text == lastText and not force then return end
         lastText = text
         if text == "" then
-            Show(nil, "TYPE THE SPELL'S NAME to pick it from your spellbook, or type its ID")
+            Show(nil, AT.Tr("TYPE THE SPELL'S NAME to pick it from your spellbook, or type its ID"))
             return
         end
         local id = tonumber(text)
         if id then
             local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: the ID typed in the box
-            Show(nil, nm and (id .. " is " .. nm) or (id .. " is no spell this game knows"))
+            Show(nil, nm and AT.Tr("%s is %s"):format(id, nm) or AT.Tr("%s is no spell this game knows"):format(id))
             return
         end
         local results = NS.SpellCatalog and NS.SpellCatalog.Search(text, BGO.SUG_N) or {}
         if #results == 0 then
-            Show(nil, "Nothing in your spellbook has that name: its spell ID still works")
+            Show(nil, AT.Tr("Nothing in your spellbook has that name: its spell ID still works"))
         else
-            Show(results, ("%d SPELL%s MATCH - click one to pick it"):format(#results, (#results == 1) and "" or "S"))
+            Show(results, ((#results == 1) and AT.Tr("%d SPELL MATCH - click one to pick it")
+                or AT.Tr("%d SPELLS MATCH - click one to pick it")):format(#results))
         end
     end
     -- every re-layout re-judges, but only a changed field searches again

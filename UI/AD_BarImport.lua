@@ -114,8 +114,10 @@ end
 -- nothing goes to Buffs.
 function BI.CreateStarter(rows, cooldownGroupId, utilityGroupId)
     local cdRows, utilRows = {}, {}
+    local num = NS.BarScan and NS.BarScan.BarNumber
     for _, r in ipairs(rows) do
-        if r.entry.bar == "Action Bar 1" then cdRows[#cdRows + 1] = r
+        -- by the slot's bar number: the label is words another language changes
+        if num and num(r.entry.slot) == 1 then cdRows[#cdRows + 1] = r
         else utilRows[#utilRows + 1] = r end
     end
     local a = BI.CreateInto(cdRows, cooldownGroupId)
@@ -162,7 +164,7 @@ local function MakeCell(parent, row, onToggle)
             GameTooltip:SetSpellByID(e.id) -- raw-id: a bar being imported
         end
         if row.tracked then
-            GameTooltip:AddLine("Already in this layout", COL.dim[1], COL.dim[2], COL.dim[3])
+            GameTooltip:AddLine(AT.Tr("Already in this layout"), COL.dim[1], COL.dim[2], COL.dim[3])
         end
         GameTooltip:Show()
     end)
@@ -219,7 +221,8 @@ local function OpenPicker(rows, onCreate)
     local function SyncCount()
         local n = 0
         for _, r in ipairs(rows) do if r.ticked then n = n + 1 end end
-        createBtn.fs:SetText(n == 0 and "Create" or ("Create " .. n .. (n == 1 and " Icon" or " Icons")))
+        createBtn.fs:SetText(n == 0 and AT.Tr("Create")
+            or (n == 1 and AT.Tr("Create %d Icon") or AT.Tr("Create %d Icons")):format(n))
         createBtn:SetEnabled(n > 0)
     end
     BuildGrid(pg, rows, SyncCount)
@@ -263,18 +266,30 @@ function BI.OpenForGroup(group)
     OpenPicker(rows, function(pickedRows) BI.CreateInto(pickedRows, group.id) end)
 end
 
+-- A starter layout's Cooldowns and Utility groups, by their stamped role.
+function BI.StarterGroups(layoutRec)
+    local starterRows = Store.STARTER_ROWS or {}
+    local byRole = {}
+    for i, mid in ipairs(layoutRec.members or {}) do
+        local g = Store.Get(mid)
+        local role = g and g.starterRole
+        -- a group from before the stamp: its template row by place, stamped once
+        local row = starterRows[i]
+        if g and role == nil and row and row.role and g.type == "group" and g.groupKind == row.kind then
+            role = row.role
+            g.starterRole = role
+        end
+        if role and not byRole[role] then byRole[role] = mid end
+    end
+    return byRole.cooldowns, byRole.utility
+end
+
 -- The Starter card's second button: Action Bar 1 to Cooldowns, everything
 -- else to Utility, nothing to Buffs.
 function BI.OpenForStarter(layoutRec)
     if InCombatLockdown() then return end
     if not layoutRec then return end
-    local starterRows = Store.STARTER_ROWS
-    local cdId, utilId
-    for i, mid in ipairs(layoutRec.members or {}) do
-        local row = starterRows and starterRows[i]
-        if row and row.name == "Cooldowns" then cdId = mid end
-        if row and row.name == "Utility" then utilId = mid end
-    end
+    local cdId, utilId = BI.StarterGroups(layoutRec)
     if not (cdId and utilId) then return end
     local rows, reason = BI.Rows(layoutRec.id)
     if not rows then return end

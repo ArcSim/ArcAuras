@@ -12,6 +12,7 @@ local AT, Store, Events = NS.AT, NS.Store, NS.Events
 local COL = AT.COL
 local ui = Options.ui
 local WHITE = AT.WHITE
+local Tr = AT.Tr
 
 local LOS = { open = false, pool = {}, more = {}, ate = {} }
 Options.LayoutOnScreen = LOS
@@ -545,7 +546,7 @@ function LOS.BuildHUD()
     pr:EnableMouse(true)
     pr:SetClampedToScreen(true)
     pr.fs = Text(pr, 12, COL.ink)
-    pr.fs:SetText(ASK)
+    pr.fs:SetText(Tr(ASK))
     pr.use = Button(pr, "Use as center", 22, 12, function() LOS.UseCenter() end)
     Primary(pr.use)
     -- the board's quiet button: the answer that changes nothing
@@ -570,7 +571,9 @@ function LOS.BuildToolbar()
 
     -- row 1: the mode's label, the name and count on the left, Scale on the right
     tb.mode = Text(tb, 12, COL.arc)
-    tb.mode:SetText("EDIT ON SCREEN")
+    -- capitals only for plain Latin words
+    local mode = Tr("Edit on screen")
+    tb.mode:SetText(mode:find("[\128-\255]") and mode or mode:upper())
     tb.mode:SetPoint("LEFT", tb, "TOPLEFT", 15, r1)
     -- the layout being edited, a pick of every layout drawn here; its pullout
     -- hangs off the toolbar, so it draws over it at its strata
@@ -649,7 +652,7 @@ function LOS.BuildToolbar()
     s:SetScript("OnMouseUp", function() LOS.End("track") end)
     tb.slider = s
     tb.scaleLbl = Text(tb, 14, COL.dim)
-    tb.scaleLbl:SetText("Scale")
+    tb.scaleLbl:SetText(Tr("Scale"))
     tb.scaleLbl:SetPoint("RIGHT", s, "LEFT", -10, 0)
 
     -- row 2: the hint on the left; Undo, Redo, a rule, Center, names, Done
@@ -833,7 +836,7 @@ end
 local function Widest(fs, words)
     local keep, w = fs:GetText(), 0
     for _, s in ipairs(words) do
-        fs:SetText(s)
+        fs:SetText(Tr(s))
         w = math.max(w, Width(fs))
     end
     fs:SetText(keep)
@@ -877,7 +880,7 @@ end
 function LOS.SyncToolbar(layout)
     local tb = LOS.toolbar
     if tb.pick then tb.pick.Refresh() else tb.name:SetText(layout.name or "") end
-    tb.count.fs:SetText(LOS.Count(layout) .. " elements")
+    tb.count.fs:SetText(Tr("%s elements"):format(LOS.Count(layout)))
     local v = LOS.GetScale(layout)
     tb.scaleText:SetText(Pct(v))
     tb.settingUp = true
@@ -887,7 +890,7 @@ function LOS.SyncToolbar(layout)
     local x, y = LOS.GetPos(layout)
     if not tb.xBox:HasFocus() then tb.xBox:SetText(tostring(math.floor(x + 0.5))) end
     if not tb.yBox:HasFocus() then tb.yBox:SetText(tostring(math.floor(y + 0.5))) end
-    tb.names.fs:SetText(LOS.NamesOn() and "Hide names" or "Show names")
+    tb.names.fs:SetText(Tr(LOS.NamesOn() and "Hide names" or "Show names"))
     local LT = LOS.Tools
     local hint = HINT
     if LT and LT.pickFor ~= nil then
@@ -895,7 +898,7 @@ function LOS.SyncToolbar(layout)
     elseif Store.Locked(layout) then
         hint = HINT_LOCKED
     end
-    tb.hint:SetText(hint)
+    tb.hint:SetText(Tr(hint))
     tb.undo:SetAlpha(LOS.CanStep("CanUndo") and 1 or UNDO_DIM)
     tb.redo:SetAlpha(LOS.CanStep("CanRedo") and 1 or UNDO_DIM)
     LOS.LayoutToolbar()

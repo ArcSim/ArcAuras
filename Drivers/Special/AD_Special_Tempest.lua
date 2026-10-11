@@ -5,6 +5,7 @@ local ADDON, NS = ...
 if NS.IsForever == true then return end
 local SP = NS.Special
 if not SP then return end
+local Tr = SP.Tr
 
 local TEMPEST_BUFF = 454015
 local TEMPEST_CAST = 452201
@@ -192,7 +193,7 @@ local function Load(t)
 end
 
 local function Status()
-    return tempEnabled and "tracking" or "not talented"
+    return tempEnabled and Tr("tracking") or Tr("not talented")
 end
 
 SP.Register({

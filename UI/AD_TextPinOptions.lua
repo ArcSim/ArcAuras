@@ -103,8 +103,8 @@ function Options.TextPinRows(pg, ctx, vis, family, section, toKey, targetKey, ow
             AT.LayoutPage(pg)
         end, r, true)
         if not ok then
-            pick.button.fs:SetText("Not in combat")
-            C_Timer.After(2, function() pick.button.fs:SetText("Pick Frame") end)
+            pick.button.fs:SetText(NS.AT.Tr("Not in combat"))
+            C_Timer.After(2, function() pick.button.fs:SetText(NS.AT.Tr("Pick Frame")) end)
         end
     end, pinned, 110, "Pick it on screen")
     AT.Tooltip(pick.button, "Pick Frame",

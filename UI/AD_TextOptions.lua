@@ -11,6 +11,19 @@ local function Trim(v)
     return (tostring(v or ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
+-- At most n bytes, never ending inside a character (a Korean syllable is
+-- three bytes); the store cuts this text at the same byte count.
+function TO.Cut(s, n)
+    if #s <= n then return s end
+    local i = n + 1
+    while i > 1 do
+        local b = s:byte(i)
+        if b < 128 or b >= 192 then break end
+        i = i - 1
+    end
+    return s:sub(1, i - 1)
+end
+
 local function Items(values, labels)
     local out = {}
     for _, v in ipairs(values or {}) do out[#out + 1] = { value = v, text = (labels and labels[v]) or tostring(v) } end
@@ -240,8 +253,16 @@ end
 function TO.TriggerItems(kind, cur)
     local ok = Offered()
     local out = {}
+    local listed = false
     for _, t in ipairs(TO.TRIGGERS[kind] or {}) do
-        if t == cur or TO.TriggerOK(kind, t, ok) then out[#out + 1] = { value = t, text = TO.TRIGGER_LABELS[t] } end
+        if t == cur or TO.TriggerOK(kind, t, ok) then
+            out[#out + 1] = { value = t, text = TO.TRIGGER_LABELS[t] }
+            if t == cur then listed = true end
+        end
+    end
+    -- cur stays listed by its words, so the field never shows a raw key
+    if cur and not listed and TO.TRIGGER_LABELS[cur] then
+        out[#out + 1] = { value = cur, text = TO.TRIGGER_LABELS[cur] }
     end
     return out
 end
@@ -251,9 +272,15 @@ function TO.InfoItems(cur)
     local ok = Offered()
     local labels = NS.Schema.TEXT_SOURCE_LABELS or {}
     local out = {}
+    local listed = false
     for _, s in ipairs(TO.INFO) do
-        if s == cur or ok[s] then out[#out + 1] = { value = s, text = labels[s] or s } end
+        if s == cur or ok[s] then
+            out[#out + 1] = { value = s, text = labels[s] or s }
+            if s == cur then listed = true end
+        end
     end
+    -- a source that is no info kind (no text open) still shows its words
+    if cur and not listed and labels[cur] then out[#out + 1] = { value = cur, text = labels[cur] } end
     return out
 end
 
@@ -403,7 +430,7 @@ end
 -- The sidebar's and cards' one line.
 function Options.TextWhat(rec)
     local T = TO.Runtime()
-    return T and T.Describe(rec) or "text"
+    return T and T.Describe(rec) or NS.AT.Tr("text")
 end
 
 local function ParseSpell(text)
@@ -486,7 +513,7 @@ function TO.AddDriver(a)
     local s, trig = d.source, TO.TriggerOf(d)
     if kind == "custom" then
         local words = Trim(a.textWords)
-        d.text = (words ~= "") and words:sub(1, 120) or nil
+        d.text = (words ~= "") and TO.Cut(words, 120) or nil
     end
     if trig == "spell" then
         d.spellID = ParseSpell(a.textSpell)
@@ -725,7 +752,7 @@ function Options.TextTrackRows(pg, ctx, trackVis, owner, kit)
         end,
         function(v)
             v = Trim(v)
-            Set("text", (v ~= "") and v:sub(1, 120) or nil)
+            Set("text", (v ~= "") and TO.Cut(v, 120) or nil)
         end,
         KindIs("custom"), "What it says. Enter applies it.", "e.g. READY")
 
@@ -738,7 +765,7 @@ function Options.TextTrackRows(pg, ctx, trackVis, owner, kit)
         function(v)
             if v ~= Trig() then Retyped(function(d) TO.SetTrigger(d, v) end) end
         end,
-        function() return TO.TriggerItems(Kind(), Trig()) end, driven, relayout)
+        function() return TO.TriggerItems(Kind(), Trig() or "none") end, driven, relayout)
     trigRow._adMeta = { family = "bar", section = "textel", field = "textTrigger",
         def = { label = "Trigger" }, baseVis = driven }
     local trigSync = trigRow._sync
@@ -838,7 +865,8 @@ function Options.TextTrackRows(pg, ctx, trackVis, owner, kit)
         function()
             local r = Rec()
             local DA = NS.DriverAura
-            if not (r and DA) then return {} end
+            -- no text open: the unit its field reads
+            if not (r and DA) then return { { value = "player", text = Options.HealthUnitLabel("player") } } end
             return Options.AuraUnitItems(r.driver, nil, (DA.ShapeOf(r.driver)))
         end,
         auraVis)
@@ -886,7 +914,8 @@ function Options.TextTrackRows(pg, ctx, trackVis, owner, kit)
                 Set("when", (v ~= ((w == "spell") and "ready" or "up")) and v or nil)
             end
         end,
-        function() return TO.ShowWhenItems(WhenKind()) end,
+        -- no Show when of its own reads as a spell's ("ready"): that list
+        function() return TO.ShowWhenItems(WhenKind() or "spell") end,
         function() return vis() and WhenKind() ~= nil end, relayout)
     -- "When little time is left": the aura glows' own rows
     local function TimeVis()

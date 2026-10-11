@@ -1086,9 +1086,15 @@ local function EnsureBarChrome(f)
     chip:SetBackdropColor(0.05, 0.10, 0.13, 0.95)
     chip:SetBackdropBorderColor(BAR_CYAN[1], BAR_CYAN[2], BAR_CYAN[3], 0.9)
     chip.fs = chip:CreateFontString(nil, "OVERLAY")
-    chip.fs:SetFont(STANDARD_TEXT_FONT, 7, "OUTLINE")
     chip.fs:SetPoint("CENTER", 0, 0)
-    chip.fs:SetText("EDIT")
+    if Factory and Factory.ChipText then
+        -- the client's word; a longer word or a bigger letter grows the chip
+        local need, cjk = Factory.ChipText(chip.fs, "EDIT", 7)
+        if need then chip:SetSize(Snap(math.max(24, need + 6)), Snap(cjk and 14 or 10)) end
+    else
+        chip.fs:SetFont(STANDARD_TEXT_FONT, 7, "OUTLINE")
+        chip.fs:SetText("EDIT")
+    end
     chip.fs:SetTextColor(BAR_CYAN[1], BAR_CYAN[2], BAR_CYAN[3])
     chip:SetScript("OnClick", function()
         local r = Store.Get(f._adRecId)
@@ -1108,11 +1114,17 @@ local function PaintBarChip(chip, on, rec)
     if (chip._adEditing or false) == on and chip._adK == k then return end
     chip._adEditing, chip._adK = on, k
     local c = on and EDIT_YELLOW or BAR_CYAN
-    chip:SetSize(Snap(on and 36 or 24, k), Snap(10, k))
+    local word = on and "EDITING" or "EDIT"
+    local need, cjk
+    if Factory and Factory.ChipText then
+        need, cjk = Factory.ChipText(chip.fs, word, 7)
+    else
+        chip.fs:SetText(word)
+    end
+    chip:SetSize(Snap(math.max(on and 36 or 24, need and (need + 6) or 0), k), Snap(cjk and 14 or 10, k))
     chip:ClearAllPoints()
     chip:SetPoint("TOPRIGHT", chip:GetParent(), "TOPRIGHT", -Snap(2, k), -Snap(2, k))
     chip:SetBackdropBorderColor(c[1], c[2], c[3], 0.9)
-    chip.fs:SetText(on and "EDITING" or "EDIT")
     chip.fs:SetTextColor(c[1], c[2], c[3])
 end
 
@@ -2440,7 +2452,7 @@ function Engine.GroupBox(gid)
 end
 
 -- The short word the panel's map and the on-screen outlines name an element by.
-local GROUP_WORD = { cooldown = "CD Group", aura = "Aura Group", reminder = "Reminders" }
+local GROUP_WORD = { cooldown = "Icon Group", aura = "Aura Group", reminder = "Reminders" }
 local BAR_WORD = { cooldown = "CD Bar", aura = "Aura Bar", swing = "Swing Bar", resource = "Resource",
     health = "Health", cast = "Castbar", enchant = "Enchant", range = "Range", text = "Text",
     texture = "Texture", wheel = "Wheel", special = "Proc Bar", sound = "Sound", timer = "Timer",

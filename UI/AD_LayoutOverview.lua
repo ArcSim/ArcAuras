@@ -7,8 +7,16 @@
 local _, NS = ...
 local AT = NS.AT
 local COL = AT.COL
+local Tr = AT.Tr
 local Store = NS.Store
 local Options = NS.Options
+
+-- Capitals only for plain Latin words: string.upper would split a multibyte
+-- letter, and other scripts have no capitals.
+local function Upper(s)
+    if type(s) ~= "string" or s:find("[\128-\255]") then return s end
+    return s:upper()
+end
 
 local OV = {}
 Options.LayoutOverview = OV
@@ -301,7 +309,7 @@ function Options.ChipPickRow(pg, items, get, set, vis, opts)
         lbl:SetFont(AT.FONT, 12, "")
         lbl:SetPoint("LEFT", 10, 0)
         lbl:SetWordWrap(false)
-        lbl:SetText(opts.label)
+        lbl:SetText(Tr(opts.label))
         holder:SetPoint("LEFT", lbl, "RIGHT", 12, 0)
     elseif not opts.column then
         holder:SetPoint("LEFT", 10, 0)
@@ -314,8 +322,9 @@ function Options.ChipPickRow(pg, items, get, set, vis, opts)
         c.fs = c:CreateFontString(nil, "OVERLAY")
         c.fs:SetFont(AT.FONT, 11, "")
         c.fs:SetPoint("CENTER", 0, 0)
-        c.fs:SetText(it.text)
-        local w = TextW(c.fs, #it.text * 6) + 18
+        local words = Tr(it.text)
+        c.fs:SetText(words)
+        local w = TextW(c.fs, AT.TextLen(words) * 6) + 18
         c:SetWidth(w)
         c:SetPoint("LEFT", x, 0)
         x = x + w + 6
@@ -364,7 +373,7 @@ function OV.NoteRow(pg, text, vis, side)
     fs:SetWordWrap(true)
     row._adText = fs
     row._sync = function()
-        fs:SetText((type(text) == "function") and text() or text)
+        fs:SetText(Tr((type(text) == "function") and text() or text))
         fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
         local w = row:GetWidth() or 0
         if w < 60 then
@@ -393,10 +402,11 @@ function OV.MoveRow(pg, sel, vis, repaint)
     -- one width for every word it shows, so Center beside it never shifts
     local mw = 0
     for _, s in ipairs({ "Edit on screen", "Done editing", "Lock position" }) do
-        move.fs:SetText(s)
-        mw = math.max(mw, TextW(move.fs, #s * 6))
+        local words = Tr(s)
+        move.fs:SetText(words)
+        mw = math.max(mw, TextW(move.fs, AT.TextLen(words) * 6))
     end
-    move.fs:SetText("Edit on screen")
+    move.fs:SetText(Tr("Edit on screen"))
     move:SetWidth(math.max(110, mw + 22))
     move:SetPoint("LEFT", 10, 0)
     local center = AT.MakeSmallButton(row, "Center", 64)
@@ -438,7 +448,7 @@ function OV.MoveRow(pg, sel, vis, repaint)
     end)
     row._sync = function()
         forget:SetShown(OV.CenterSet(sel()))
-        move.fs:SetText(OV.MoveWord())
+        move.fs:SetText(Tr(OV.MoveWord()))
         if OV.Moving() then
             Lit()
         else
@@ -459,7 +469,7 @@ function OV.NudgeRow(pg, sel, vis, repaint)
     holder:SetHeight(20)
     local x = 0
     local arrows = {}
-    local function Arrow(glyph, dx, dy, word)
+    local function Arrow(glyph, dx, dy, title)
         local b = CreateFrame("Button", nil, holder, "BackdropTemplate")
         b:SetSize(20, 20)
         AT.Skin(b, COL.well, COL.line2)
@@ -480,14 +490,14 @@ function OV.NudgeRow(pg, sel, vis, repaint)
         end)
         b:SetScript("OnEnter", function(s) s:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1) end)
         b:SetScript("OnLeave", function(s) s:SetBackdropBorderColor(COL.line2[1], COL.line2[2], COL.line2[3], 1) end)
-        AT.Tooltip(b, "Nudge " .. word, "Moves the layout one pixel. Shift-click moves it ten.")
+        AT.Tooltip(b, title, "Moves the layout one pixel. Shift-click moves it ten.")
         arrows[#arrows + 1] = b
         return b
     end
-    Arrow("<", -1, 0, "left")
-    Arrow("^", 0, 1, "up")
-    Arrow("v", 0, -1, "down")
-    Arrow(">", 1, 0, "right")
+    Arrow("<", -1, 0, "Nudge left")
+    Arrow("^", 0, 1, "Nudge up")
+    Arrow("v", 0, -1, "Nudge down")
+    Arrow(">", 1, 0, "Nudge right")
     x = x + 6
     local function Box(word, axis)
         local fs = holder:CreateFontString(nil, "OVERLAY")
@@ -569,7 +579,17 @@ function OV.Box(st, i)
     b:SetScript("OnClick", function(s) OV.Pick(st, s._id) end)
     b:SetScript("OnEnter", function(s) s:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1) end)
     b:SetScript("OnLeave", function(s) OV.PaintBox(st, s) end)
-    AT.Tooltip(b, function() return b._name end, function() return b._kindWord end)
+    -- the theme's tooltip look, its title the element's name as the player
+    -- typed it (a name never goes to the translator)
+    b:HookScript("OnEnter", function(s)
+        local body = b._kindWord
+        if type(body) ~= "string" or body == "" then return end
+        GameTooltip:SetOwner(s, "ANCHOR_RIGHT")
+        GameTooltip:AddLine(b._name or "", 1, 1, 1)
+        GameTooltip:AddLine(Tr(body), 0.75, 0.82, 0.92, true)
+        GameTooltip:Show()
+    end)
+    b:HookScript("OnLeave", function() GameTooltip:Hide() end)
     st.boxes[i] = b
     return b
 end
@@ -795,10 +815,12 @@ function OV.Paint(st)
         r:SetPoint("TOPRIGHT", st.list, "TOPRIGHT", 0, -y)
         r.mark:SetVertexColor(c[1], c[2], c[3], 1)
         r.name:SetText(el.name or "?")
-        r.pill.fs:SetText(string.upper(word))
+        -- the pill fits its drawn words, so a longer language never spills
+        local pillWords = Upper(Tr(word))
+        r.pill.fs:SetText(pillWords)
         r.pill.fs:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
         r.pill:SetBackdropBorderColor(COL.line2[1], COL.line2[2], COL.line2[3], 1)
-        r.pill:SetWidth(TextW(r.pill.fs, #word * 5) + 10)
+        r.pill:SetWidth(TextW(r.pill.fs, AT.TextLen(pillWords) * 5) + 10)
         r._id = el.id
         OV.PaintListRow(st, r)
         r:Show()
@@ -813,7 +835,7 @@ function OV.Paint(st)
     st.host:SetHeight(math.max(1, math.min(listH, room)))
     st.host:UpdateScroll()
     if selEl then
-        st.edit.fs:SetText("Edit " .. (selEl.name or "?"))
+        st.edit.fs:SetText(Tr("Edit %s"):format(selEl.name or "?"))
         st.edit:SetWidth(math.min(colW, TextW(st.edit.fs, 60) + 24))
         st.edit:Show()
     else
@@ -855,7 +877,7 @@ function OV.MapRow(pg, env, vis, restFn)
     st.cap = col:CreateFontString(nil, "OVERLAY")
     st.cap:SetFont(AT.FONT, 10, "")
     st.cap:SetPoint("TOPLEFT", 0, 0)
-    st.cap:SetText("IN THIS LAYOUT")
+    st.cap:SetText(Upper(Tr("In this layout")))
     local host, list = AT.MakeScroll(col)
     host:SetPoint("TOPLEFT", 0, -18)
     host:SetPoint("TOPRIGHT", 0, -18)
@@ -864,7 +886,7 @@ function OV.MapRow(pg, env, vis, restFn)
     st.empty = col:CreateFontString(nil, "OVERLAY")
     st.empty:SetFont(AT.FONT, 11, "")
     st.empty:SetPoint("TOPLEFT", 0, -20)
-    st.empty:SetText("Nothing in this layout yet.")
+    st.empty:SetText(Tr("Nothing in this layout yet."))
     st.empty:Hide()
     st.edit = AT.MakeSmallButton(col, "Edit", 80)
     st.edit:SetPoint("TOPLEFT", host, "BOTTOMLEFT", 0, -6)
@@ -936,7 +958,7 @@ function OV.NamesToggle(pg, sec, vis, repaint)
     local fs = t:CreateFontString(nil, "OVERLAY")
     fs:SetFont(AT.FONT, 11, "")
     fs:SetPoint("LEFT", cb, "RIGHT", 6, 0)
-    fs:SetText("Show names on screen")
+    fs:SetText(Tr("Show names on screen"))
     fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     t:SetWidth(18 + 6 + TextW(fs, 120) + 2)
     t:SetScript("OnClick", Flip)

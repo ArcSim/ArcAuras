@@ -9,6 +9,7 @@ if not Options then return end
 function Options.RangeBandRows(pg, ctx, vis, owner)
     local AT = NS.AT
     local COL = AT.COL
+    local Tr = AT.Tr
     local maxB = (NS.Schema and NS.Schema.RANGE_MAX_BANDS) or 8
     local maxC = (NS.Schema and NS.Schema.RANGE_MAX_CHECKS) or 4
     local function Rec()
@@ -20,6 +21,26 @@ function Options.RangeBandRows(pg, ctx, vis, owner)
         return r and NS.RangeBars.BandsOf(r) or {}
     end
     local function Band(i) return Bands()[i] end
+    -- a check's kind field keeps its English width and grows to the longest
+    -- choice in a longer language, so no choice is cut off
+    local KIND_W = 150
+    local measure
+    local function FitKind(dd, items)
+        if not measure then
+            measure = pg:CreateFontString(nil, "ARTWORK")
+            measure:SetFont(AT.FONT, 11, "")
+            measure:Hide()
+        end
+        local widest = 0
+        for _, it in ipairs(items) do
+            measure:SetText(Tr(it.text) or "")
+            local tw = (measure.GetUnboundedStringWidth and measure:GetUnboundedStringWidth())
+                or measure:GetStringWidth() or 0
+            if type(tw) == "number" and tw > widest then widest = tw end
+        end
+        local want = math.max(KIND_W, math.ceil(widest) + 30)
+        if (dd:GetWidth() or 0) ~= want then dd:SetWidth(want) end
+    end
     -- an edit, then the page again at once (the store's refresh comes a frame later)
     local function Edit(fn)
         local r = Rec()
@@ -39,13 +60,13 @@ function Options.RangeBandRows(pg, ctx, vis, owner)
         end
         if Options.BuildYield then Options.BuildYield() end
         local row = AT.AddRow(pg, 24, function() return vis() and Check() ~= nil end)
-        local lbl = AT.RowLabel(row, "Check " .. j)
-        local kind = AT.MakeDropdown(owner, row, 150,
-            function()
-                local RB, items = NS.RangeBars, {}
-                for _, c in ipairs(RB and RB.CHOICES or {}) do items[#items + 1] = { value = c, text = RB.CHOICE_TEXT[c] } end
-                return items
-            end,
+        local lbl = AT.RowLabel(row, Tr("Check %d"):format(j))
+        local function KindItems()
+            local RB, items = NS.RangeBars, {}
+            for _, c in ipairs(RB and RB.CHOICES or {}) do items[#items + 1] = { value = c, text = RB.CHOICE_TEXT[c] } end
+            return items
+        end
+        local kind = AT.MakeDropdown(owner, row, KIND_W, KindItems,
             function()
                 local k = Check()
                 return k and NS.RangeBars.CheckChoice(k)
@@ -78,7 +99,7 @@ function Options.RangeBandRows(pg, ctx, vis, owner)
             function()
                 local items = {}
                 for _, y in ipairs((NS.Schema and NS.Schema.RANGE_YARDS) or {}) do
-                    items[#items + 1] = { value = y, text = y .. " yd" }
+                    items[#items + 1] = { value = y, text = Tr("%s yd"):format(y) }
                 end
                 return items
             end,
@@ -96,6 +117,7 @@ function Options.RangeBandRows(pg, ctx, vis, owner)
         AT.Tooltip(del, "Remove", "Removes this check from the band.")
         row._colLabel, row._colCtrl = lbl, kind
         row._sync = function()
+            FitKind(kind, KindItems())
             kind.Refresh()
             local k = Check()
             local spell = k ~= nil and k.kind == "spell"
@@ -111,11 +133,12 @@ function Options.RangeBandRows(pg, ctx, vis, owner)
     for i = 1, maxB do
         if Options.BuildYield then Options.BuildYield() end
         local bandVis = function() return vis() and Band(i) ~= nil end
-        AT.Section(pg, "Band " .. i, { visibleFn = bandVis })
+        AT.Section(pg, Tr("Band %d"):format(i), { visibleFn = bandVis })
+        -- a preset band's words as the bar draws them; the player's own as typed
         AT.RowInput(pg, "Band text",
             function()
                 local b = Band(i)
-                return b and b.text or ""
+                return b and NS.RangeBars.BandText(b) or ""
             end,
             function(v) Edit(function(RB, r) RB.SetBandText(r, i, v) end) end,
             bandVis, "What the bar says while the target is in this band.")

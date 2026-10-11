@@ -8,7 +8,7 @@ local AT = {}
 -- Other addons carry copies of this file, generated from it by the
 -- arc-theme-sync tool, which compares this number to find stale copies.
 -- Bump it on every change and never edit a copy.
-AT.VERSION = 29
+AT.VERSION = 31
 
 -- The addon this copy loads in: a palette's font file sits in its folder.
 local THEME_ADDON = ...
@@ -65,6 +65,45 @@ AT.LAY = {
 
 local COL, WHITE, LAY = AT.COL, AT.WHITE, AT.LAY
 
+-- Translation hook. An addon sets AT.L to its lookup; every string a caller
+-- hands the theme goes through it where it is drawn, so the caller's keys,
+-- tab names and stored values stay English. Words with no translation come
+-- back as they were.
+AT.L = function(s) return s end
+
+-- AT.L for anything: only a non-empty string reaches the hook, and a hook
+-- that answers with no string leaves the words as they were.
+local function Tr(s)
+    if type(s) ~= "string" or s == "" then return s end
+    local r = AT.L(s)
+    if type(r) ~= "string" then return s end
+    return r
+end
+AT.Tr = Tr
+
+-- Characters, not bytes: a Korean syllable is three bytes.
+local function TextLen(s)
+    if type(s) ~= "string" then return 0 end
+    if type(strlenutf8) == "function" then return strlenutf8(s) end
+    local _, n = s:gsub("[^\128-\191]", "")
+    return n
+end
+AT.TextLen = TextLen
+
+-- string.upper changes only the 26 Latin letters and can split a multibyte
+-- one, so words holding any other letter keep their own case.
+local function Upper(s)
+    if type(s) ~= "string" or s:find("[\128-\255]") then return s end
+    return s:upper()
+end
+
+-- A font string's full width, never its cut-off one; 0 when unmeasured.
+local function TextW(fs)
+    local w = (fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth()) or fs:GetStringWidth()
+    if type(w) ~= "number" then return 0 end
+    return w
+end
+
 -- Drawing rules a palette can switch. A palette may also set mute: category
 -- colours lose that share of their saturation (see Mute below).
 AT.LOOK = {
@@ -75,8 +114,23 @@ AT.LOOK = {
     pill = "outline",    -- or "soft": a wash of the pill's colour, no edge
     sliderFill = false,  -- a slider's track fills up to its thumb
 }
+-- A forced language (GAME_LOCALE) on another client needs that language's
+-- game font: the client's own lacks its glyphs. Every client ships these.
+local LANG_FONT = { koKR = "Fonts\\2002.TTF", zhCN = "Fonts\\ARKai_T.ttf",
+    zhTW = "Fonts\\blei00d.TTF", ruRU = "Fonts\\FRIZQT___CYR.TTF" }
+local function Forced()
+    local g = GAME_LOCALE
+    return type(g) == "string" and g or nil
+end
+local function TextLang() return Forced() or GetLocale() end
+local function BaseFont()
+    local forced = Forced()
+    if forced and forced ~= GetLocale() and LANG_FONT[forced] then return LANG_FONT[forced] end
+    return STANDARD_TEXT_FONT
+end
+AT.BaseFont = BaseFont
 -- Every panel text's font; a palette can name a file of its own.
-AT.FONT = STANDARD_TEXT_FONT
+AT.FONT = BaseFont()
 AT.PALETTE = "classic"
 AT._muted = {}
 
@@ -176,9 +230,9 @@ function AT.UsePalette(name)
     for k in pairs(AT.LOOK) do AT.LOOK[k] = nil end
     for k, v in pairs(base.look) do AT.LOOK[k] = v end
     for k, v in pairs(p.look or {}) do AT.LOOK[k] = v end
-    AT.FONT = STANDARD_TEXT_FONT
+    AT.FONT = BaseFont()
     local cjk = { koKR = true, zhCN = true, zhTW = true }
-    if p.font and THEME_ADDON and not cjk[GetLocale()] then
+    if p.font and THEME_ADDON and not cjk[TextLang()] then
         local path = "Interface\\AddOns\\" .. THEME_ADDON .. "\\" .. p.font
         if FontLoads(path) then AT.FONT = path end
     end
@@ -190,11 +244,11 @@ end
 function AT.PaletteFont(name)
     local p = AT.PALETTES[name]
     local cjk = { koKR = true, zhCN = true, zhTW = true }
-    if p and p.font and THEME_ADDON and not cjk[GetLocale()] then
+    if p and p.font and THEME_ADDON and not cjk[TextLang()] then
         local path = "Interface\\AddOns\\" .. THEME_ADDON .. "\\" .. p.font
         if FontLoads(path) then return path end
     end
-    return STANDARD_TEXT_FONT
+    return BaseFont()
 end
 
 -- A window's finish: "flat", or "soft" (a light top and a shaded foot)
@@ -491,7 +545,31 @@ function AT.MakeCheckbox(parent)
     return c
 end
 
+-- A button's words never spill past its edges: it grows past the width it was
+-- given when its text needs more (a longer language) and keeps that width
+-- otherwise. A width the caller set since the last fit, or minW, becomes the
+-- new floor. Words fit while they keep 2 clear of each edge; a button that has
+-- to grow gives them 8 a side.
+local BTN_FIT, BTN_PAD = 4, 16
+local function FitButton(b, minW)
+    local cur = b:GetWidth() or 0
+    if minW then b._atMinW = minW
+    elseif b._atW ~= nil and cur ~= b._atW then b._atMinW = cur end
+    local tw = TextW(b.fs)
+    local w = b._atMinW or cur
+    if tw > 0 and math.ceil(tw) + BTN_FIT > w then w = math.ceil(tw) + BTN_PAD end
+    if w ~= cur then b:SetWidth(w) end
+    b._atW = w
+    -- Words can measure 0 right after the font is set: fit again on show.
+    local t = b.fs:GetText()
+    if tw <= 0 and type(t) == "string" and t ~= "" and not b._atFitHook then
+        b._atFitHook = true
+        b:HookScript("OnShow", FitButton)
+    end
+end
+
 -- Raised button: navy fill and a steel border, cyan only on hover.
+-- b:SetLabel(text, minW) changes the words and fits the button to them.
 function AT.MakeSmallButton(parent, label, w)
     local b = CreateFrame("Button", nil, parent, "BackdropTemplate")
     b:SetSize(w or 92, 22); Skin(b, COL.btn, COL.steel)
@@ -502,7 +580,13 @@ function AT.MakeSmallButton(parent, label, w)
     b.fs:SetFont(AT.FONT, 11, "")
     b.fs:SetPoint("CENTER")
     b.fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
-    b.fs:SetText(label or "")
+    b.fs:SetText(Tr(label) or "")
+    b._atMinW = w or 92
+    FitButton(b)
+    function b:SetLabel(text, minW)
+        self.fs:SetText(Tr(text) or "")
+        FitButton(self, minW)
+    end
     b:SetScript("OnEnter", function()
         b:SetBackdropColor(COL.btnHover[1], COL.btnHover[2], COL.btnHover[3], 1)
         b:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
@@ -682,6 +766,13 @@ function AT.MakeSplitter(parent, axis, cb)
     return s
 end
 
+-- An item's words as drawn: translated unless the item says raw = true (a
+-- name the player typed). Its value is never touched.
+local function ItemText(it)
+    if it.raw then return it.text end
+    return Tr(it.text)
+end
+
 function AT.MakeDropdown(owner, parent, w, itemsFn, get, set, onSelect)
     local b = CreateFrame("Button", nil, parent, "BackdropTemplate")
     b:SetSize(w or LAY.fieldW, 20); Skin(b, COL.well)
@@ -710,7 +801,7 @@ function AT.MakeDropdown(owner, parent, w, itemsFn, get, set, onSelect)
         end
         local widest = 0
         for _, it in ipairs(items or itemsFn() or {}) do
-            fs:SetText(it.text or "")
+            fs:SetText(ItemText(it) or "")
             local tw = (fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth())
                 or fs:GetStringWidth() or 0
             if tw > widest then widest = tw end
@@ -731,7 +822,7 @@ function AT.MakeDropdown(owner, parent, w, itemsFn, get, set, onSelect)
         local items = itemsFn() or {}
         SizeToItems(items)
         for _, it in ipairs(items) do
-            if it.value == cur then vf:SetText(it.text) return end
+            if it.value == cur then vf:SetText(ItemText(it)) return end
         end
         vf:SetText(cur ~= nil and tostring(cur) or "")
     end
@@ -772,7 +863,7 @@ function AT.MakeDropdown(owner, parent, w, itemsFn, get, set, onSelect)
             for i = 1, vis do
                 local it, ib = items[i + off], rows[i]
                 if it then
-                    ib.t:SetText(it.text)
+                    ib.t:SetText(ItemText(it))
                     if it.value == get() then ib.t:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
                     else ib.t:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3]) end
                     ib:SetScript("OnClick", function()
@@ -978,7 +1069,7 @@ function AT.CreateWindow(globalName, opts)
     Skin(bar, COL.panel)
     local t1 = bar:CreateFontString(nil, "OVERLAY")
     t1:SetFont(AT.FONT, 14, ""); t1:SetPoint("LEFT", 12, 0)
-    t1:SetText(opts.title or AT.Brand("Arc", " Addon"))
+    t1:SetText(Tr(opts.title) or AT.Brand("Arc", " Addon"))
     if opts.version then
         local ver = bar:CreateFontString(nil, "OVERLAY")
         ver:SetFont(AT.FONT, 10, "")
@@ -1056,7 +1147,8 @@ function AT.CreateWindow(globalName, opts)
 end
 
 -- Chip tabs on one continuous cyan line. tabs = { "General", "Alerts" }; the
--- caller makes each pages[name] with NewPage. Returns select(name).
+-- caller makes each pages[name] with NewPage. Returns select(name). A chip
+-- shows its name through AT.L; p._tabs, pages and select keep the name.
 function AT.AddTabs(p, tabs, pages, y)
     y = y or -34
     p._tabs = {}
@@ -1109,7 +1201,7 @@ function AT.AddTabs(p, tabs, pages, y)
         local tb = CreateFrame("Button", nil, p, "BackdropTemplate")
         tb:SetHeight(24)
         local fs = tb:CreateFontString(nil, "OVERLAY")
-        fs:SetFont(AT.FONT, 12, ""); fs:SetPoint("CENTER"); fs:SetText(name)
+        fs:SetFont(AT.FONT, 12, ""); fs:SetPoint("CENTER"); fs:SetText(Tr(name))
         tb:SetWidth(math.max(70, (fs:GetStringWidth() or 40) + 22))
         tb:SetPoint("TOPLEFT", x, y); x = x + tb:GetWidth() + 3
         tb:SetScript("OnClick", function() AT.CloseDropdown(); select(name) end)
@@ -1199,7 +1291,9 @@ function AT.RowLabel(row, text)
     local fs = row:CreateFontString(nil, "OVERLAY")
     fs:SetFont(AT.FONT, 12, ""); fs:SetPoint("LEFT", 10, 0)
     fs:SetWordWrap(false); fs:SetJustifyH("LEFT")
-    fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3]); fs:SetText(text)
+    fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3]); fs:SetText(Tr(text))
+    -- the column pass may wrap it (LayRows): its anchors are known
+    fs._atRowLabel = true
     return fs
 end
 
@@ -1215,14 +1309,14 @@ function AT.NewChip(parent, text)
     c.fs:SetPoint("CENTER", 0, 0)
     AT.PaintPill(c, c.fs, COL.arc)
     function c:SetText(t)
-        t = t or "NEW"
+        t = Tr(t or "NEW")
         local fs = self.fs
         fs:SetText(t)
         local w = (fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth())
             or fs:GetStringWidth() or 0
         local guessed = false
         if type(w) ~= "number" or w <= 0 then
-            w = #t * 8 * 0.62
+            w = TextLen(t) * 8 * 0.62
             guessed = true
         end
         local cw = math.ceil(w) + 8
@@ -1237,8 +1331,8 @@ end
 -- so it hides their bottom edges; the selected one sits above it (+3) with no
 -- bottom edge, opening into the page below. Chips wrap when the strip is too
 -- narrow. Set() is pooled and idempotent: call it from a _sync.
--- Set(names, active, onClick, fontSize, badges): badges is optional, a map of
--- chip name to mark text, and puts that mark inside the chip after its label.
+-- Set(names, active, onClick, fontSize, badges): optional badges map a chip's
+-- name to a mark inside it. Chips show names through AT.L; all else keys on them.
 function AT.TabRow(parent)
     local strip = CreateFrame("Frame", nil, parent)
     strip._tabs = {}
@@ -1355,12 +1449,13 @@ function AT.TabRow(parent)
                 if name then
                     tb:SetHeight(chipH)
                     tb.fs:SetFont(AT.FONT, fontSize or 12, "")
-                    tb.fs:SetText(name)
+                    local shown = Tr(name)
+                    tb.fs:SetText(shown)
                     -- A FontString can measure 0 right after SetFont:
                     -- estimate, and count it as a guess.
                     local sw = tb.fs:GetStringWidth()
                     if type(sw) == "number" and sw <= 0 then
-                        sw = #name * (fontSize or 12) * 0.55
+                        sw = TextLen(shown) * (fontSize or 12) * 0.55
                         guessed = true
                     end
                     local w = math.floor((sw or 40) + 24 + 0.5)
@@ -1478,8 +1573,8 @@ function AT.Tooltip(region, title, body)
         if type(t) == "function" then t = t() end
         if type(t) ~= "string" then t = "" end
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:AddLine(t, 1, 1, 1)
-        GameTooltip:AddLine(b, 0.75, 0.82, 0.92, true)
+        GameTooltip:AddLine(Tr(t), 1, 1, 1)
+        GameTooltip:AddLine(Tr(b), 0.75, 0.82, 0.92, true)
         GameTooltip:Show()
     end)
     region:HookScript("OnLeave", function() GameTooltip:Hide() end)
@@ -1488,7 +1583,8 @@ end
 -- opts = { visibleFn, side = "L"/"R", ctrlX, collapsible = false, store = table }
 -- A collapsible section has a clickable header bar, arrow on the left; shut,
 -- it keeps a cyan underline. Its open/shut state is saved in `store` (any
--- table you own) under the title.
+-- table you own) under the title. The title shows through AT.L; sec.key keeps
+-- the words as passed, the key the store uses.
 function AT.Section(pg, text, opts)
     opts = opts or {}
     local titled = (text ~= nil and text ~= "")
@@ -1499,6 +1595,7 @@ function AT.Section(pg, text, opts)
     local sec = {
         box = box, rows = {}, visibleFn = opts.visibleFn, side = opts.side,
         ctrlX = opts.ctrlX or LAY.ctrl, collapsed = false, f = 1, store = opts.store,
+        key = text,
     }
     if titled and opts.collapsible then
         -- A collapsible section is a real box: something you open and shut
@@ -1510,7 +1607,7 @@ function AT.Section(pg, text, opts)
         local title = bar:CreateFontString(nil, "OVERLAY")
         title:SetFont(AT.FONT, 11, "")
         title:SetPoint("LEFT", arrow, "RIGHT", 6, 0)
-        title:SetTextColor(COL.title[1], COL.title[2], COL.title[3]); title:SetText(text)
+        title:SetTextColor(COL.title[1], COL.title[2], COL.title[3]); title:SetText(Tr(text))
         local rule = bar:CreateTexture(nil, "OVERLAY")
         rule:SetTexture(WHITE)
         rule:SetVertexColor(COL.rule[1], COL.rule[2], COL.rule[3], 1)
@@ -1572,7 +1669,7 @@ function AT.Section(pg, text, opts)
         local title = band:CreateFontString(nil, "OVERLAY")
         title:SetFont(AT.FONT, 11, "")
         title:SetPoint("LEFT", 10, 0)
-        title:SetTextColor(COL.title[1], COL.title[2], COL.title[3]); title:SetText(text)
+        title:SetTextColor(COL.title[1], COL.title[2], COL.title[3]); title:SetText(Tr(text))
         Skin(box, COL.box, COL.line)
         sec.band, sec.title = band, title
         sec.boxed = true
@@ -1580,7 +1677,7 @@ function AT.Section(pg, text, opts)
         local t = pg:CreateFontString(nil, "OVERLAY")
         t:SetFont(AT.FONT, 10, "")
         t:SetTextColor(COL.title[1], COL.title[2], COL.title[3])
-        t:SetText(string.upper(text))
+        t:SetText(Upper(Tr(text)))
         sec.title = t
         -- A 10px title alone doesn't read as a boundary, so a hairline under
         -- it spans the section and gives the block a visible top edge.
@@ -1668,6 +1765,40 @@ function AT.MakeScrollable(pg)
     return pg
 end
 
+-- A label too long for the capped column wraps onto more lines and its row
+-- grows to hold them, rather than losing its end; it goes back to one line
+-- once it fits. Only AT.RowLabel labels, whose anchors are known.
+local function FitLabel(r, col)
+    local fs = r._colLabel
+    if not fs._atRowLabel then return end
+    local avail = col - 16
+    local wrap = avail > 20 and TextW(fs) > avail + 0.5
+    -- a row its own code re-sized since the last fit: that is its height now
+    if r._atWrapH ~= nil and r._h ~= r._atWrapH then r._atBaseH = r._h end
+    if wrap then
+        local baseH = r._atBaseH or r._h
+        r._atBaseH = baseH
+        fs:ClearAllPoints()
+        fs:SetPoint("LEFT", 10, 0)
+        fs:SetWidth(avail)
+        fs:SetWordWrap(true)
+        local h = fs:GetStringHeight()
+        if type(h) ~= "number" then h = 0 end
+        local want = math.max(baseH, math.ceil(h + 10))
+        if r._h ~= want then r._h = want; r:SetHeight(want) end
+        r._atWrapH = want
+        fs._atWrapped = true
+    elseif fs._atWrapped then
+        fs._atWrapped = nil
+        fs:SetWordWrap(false)
+        fs:ClearAllPoints()
+        fs:SetPoint("LEFT", 10, 0)
+        fs:SetWidth(0)
+        if r._atBaseH and r._h == r._atWrapH then r._h = r._atBaseH; r:SetHeight(r._h) end
+        r._atBaseH, r._atWrapH = nil, nil
+    end
+end
+
 -- One section's rows inside its box: each row's _sync, the label column, the
 -- rows top down, the controls on the column. bw: the box's width when the
 -- caller knows it (a card), else measured. synced: the rows' _sync already ran
@@ -1692,15 +1823,6 @@ local function LayRows(pg, sec, side, bw, synced)
             if not col or w > col then col = w end
         end
     end
-    local by = -2
-    for _, row in ipairs(sec.rows) do
-        if (not row._visibleFn) or row._visibleFn() then
-            row:ClearAllPoints()
-            row:SetPoint("TOPLEFT", sec.box, "TOPLEFT", 6, by)
-            row:SetPoint("TOPRIGHT", sec.box, "TOPRIGHT", -6, by)
-            row:Show(); by = by - row._h
-        else row:Hide() end
-    end
     if col then
         -- An anchored frame has no width until the client lays it out, so on
         -- the first pass the box measures 0. Derive it from the page (sized by
@@ -1714,6 +1836,7 @@ local function LayRows(pg, sec, side, bw, synced)
         end
         -- Still unknown: ask for one more pass on the next frame.
         if bw <= 60 then pg._sizeUnresolved = true end
+        local capped = false
         if bw > 60 then
             -- Cap the column so the widest control fits: the box clips its
             -- children, so an overhanging one is cut off.
@@ -1725,8 +1848,29 @@ local function LayRows(pg, sec, side, bw, synced)
                 end
             end
             local cap = bw - widest - 12
-            if col > cap then col = math.max(12, cap) end
+            if col > cap then col = math.max(12, cap); capped = true end
         end
+        -- Only a capped column can be too narrow for a label; a label wrapped
+        -- on an earlier pass goes back to one line once it fits.
+        for _, r in ipairs(sec.rows) do
+            local fs = r._colLabel
+            if fs and r._colCtrl and (capped or fs._atWrapped)
+                and ((not r._visibleFn) or r._visibleFn()) then
+                FitLabel(r, col)
+            end
+        end
+    end
+    -- Rows go down after the labels: a wrapped label makes its row taller.
+    local by = -2
+    for _, row in ipairs(sec.rows) do
+        if (not row._visibleFn) or row._visibleFn() then
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", sec.box, "TOPLEFT", 6, by)
+            row:SetPoint("TOPRIGHT", sec.box, "TOPRIGHT", -6, by)
+            row:Show(); by = by - row._h
+        else row:Hide() end
+    end
+    if col then
         for _, r in ipairs(sec.rows) do
             if r._colCtrl then
                 r._colCtrl:ClearAllPoints()
@@ -1738,7 +1882,8 @@ local function LayRows(pg, sec, side, bw, synced)
                 elseif r._colFill then
                     r._colCtrl:SetPoint("RIGHT", r._colFill, "LEFT", -8, 0)
                 end
-                if r._colLabel then r._colLabel:SetPoint("RIGHT", r, "LEFT", col - 6, 0) end
+                local fs = r._colLabel
+                if fs and not fs._atWrapped then fs:SetPoint("RIGHT", r, "LEFT", col - 6, 0) end
             end
         end
     end
@@ -1889,8 +2034,8 @@ function AT.LayoutPage(pg)
             if sec.title then sec.title:Hide() end
             if sec.hr then sec.hr:Hide() end
             sec.box:Hide()
-            if side == "L" then pairTopY, pairBottomY = y, y
-            elseif side == "R" then pairTopY, pairBottomY = nil, nil end
+            -- a hidden right section leaves the column to the next one
+            if side == "L" then pairTopY, pairBottomY = y, y end
         else
             -- A section with every row hidden paints nothing: no title, no
             -- empty box, no gap.
@@ -1904,8 +2049,7 @@ function AT.LayoutPage(pg)
                 if sec.title then sec.title:Hide() end
                 if sec.hr then sec.hr:Hide() end
                 sec.box:Hide()
-                if side == "L" then pairTopY, pairBottomY = y, y
-                elseif side == "R" then pairTopY, pairBottomY = nil, nil end
+                if side == "L" then pairTopY, pairBottomY = y, y end
             else
             local topY = (side == "R" and pairTopY) or y
             local hdrH = 0
@@ -1949,8 +2093,15 @@ function AT.LayoutPage(pg)
             sec.box:SetHeight(shownH)
             local bottom = boxTop - (sec.box:IsShown() and shownH or 0) - LAY.gap
             if side == "L" then pairTopY, pairBottomY, y = topY, bottom, bottom
-            elseif side == "R" then y = math.min(pairBottomY or bottom, bottom); pairTopY, pairBottomY = nil, nil
-            else y = bottom end
+            elseif side == "R" then
+                -- right sections in a row stack in the right column; the page
+                -- goes on under the lower of the two columns
+                y = math.min(pairBottomY or bottom, bottom)
+                pairTopY, pairBottomY = bottom, y
+            else
+                y = bottom
+                pairTopY, pairBottomY = nil, nil
+            end
             end
         end
     end
@@ -2017,7 +2168,7 @@ function AT.Card(pg, spec)
     title:SetJustifyH("LEFT")
     title:SetWordWrap(false)
     title:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
-    title:SetText(spec.title or "")
+    title:SetText(Tr(spec.title or ""))
     local note = head:CreateFontString(nil, "OVERLAY")
     note:SetFont(AT.FONT, 11, "")
     note:SetPoint("RIGHT", -8, 0)
@@ -2082,7 +2233,7 @@ function AT.CardMethods:Sync()
     self.check:SetOn(on)
     local b = on and COL.arcDeep or COL.line
     self.box:SetBackdropBorderColor(b[1], b[2], b[3], 1)
-    self.note:SetText(self:NoteText())
+    self.note:SetText(Tr(self:NoteText()))
     for _, r in ipairs(self.sec.rows) do
         if r ~= self.head then r:SetAlpha(on and 1 or AT.CARD_DIM) end
     end
@@ -2150,9 +2301,14 @@ function AT.RowInput(pg, label, get, set, visibleFn, desc, hint, live)
         hintFS:SetJustifyH("LEFT")
         hintFS:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
     end
+    -- A hint function's second return true draws its words as given (a name
+    -- the player typed, a spell's name); every other hint is translated.
     local function syncHint()
         if not hintFS then return end
-        hintFS:SetText(((type(hint) == "function") and hint()) or hint or "")
+        local h, raw
+        if type(hint) == "function" then h, raw = hint() else h = hint end
+        h = h or ""
+        hintFS:SetText(raw == true and h or Tr(h))
         hintFS:SetShown((box:GetText() or "") == "")
     end
     syncHint()
@@ -2409,7 +2565,7 @@ function AT.RowDesc(pg, text, h, visibleFn)
     fs:SetPoint("TOPLEFT", 10, -2)
     fs:SetJustifyH("LEFT"); fs:SetJustifyV("TOP")
     fs:SetWordWrap(true)
-    fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3]); fs:SetText(text)
+    fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3]); fs:SetText(Tr(text))
     -- The text wraps and the row grows to hold it (h is a minimum). The width
     -- comes from the page: the row itself is unsized on the first pass.
     row._minH = h or LAY.descH
@@ -2443,7 +2599,7 @@ function AT.AddDiscordFooter(p, globalName)
     hint:SetFont(AT.FONT, 11, "")
     hint:SetPoint("LEFT", b, "RIGHT", 10, 0)
     hint:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
-    hint:SetText("Questions or help? Join the Arc UI Discord")
+    hint:SetText(Tr("Questions or help? Join the Arc UI Discord"))
     b:SetScript("OnEnter", function()
         b:SetBackdropBorderColor(COL.blurple[1], COL.blurple[2], COL.blurple[3], 1)
     end)
@@ -2458,7 +2614,7 @@ function AT.AddDiscordFooter(p, globalName)
             local t = d:CreateFontString(nil, "OVERLAY")
             t:SetFont(AT.FONT, 12, ""); t:SetPoint("TOP", 0, -10)
             t:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
-            t:SetText("Press Ctrl+C to copy, then open it in your browser")
+            t:SetText(Tr("Press Ctrl+C to copy, then open it in your browser"))
             local eb = CreateFrame("EditBox", nil, d, "BackdropTemplate")
             eb:SetSize(272, 22); eb:SetPoint("TOP", 0, -32); Skin(eb, COL.well)
             eb:SetFont(AT.FONT, 12, ""); eb:SetTextInsets(6, 6, 0, 0)

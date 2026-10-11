@@ -9,6 +9,7 @@ local LOS = Options and Options.LayoutOnScreen
 if not LOS then return end
 local AT, Store = NS.AT, NS.Store
 local COL, WHITE = AT.COL, AT.WHITE
+local Tr = AT.Tr
 local UIK = LOS.UI
 
 local LT = { handles = {}, links = {}, overlays = {} }
@@ -140,7 +141,7 @@ function LT.SizeWords(id)
     if not s then return nil end
     local _, show = LT.Units(id)
     if show <= 0 then show = 1 end
-    if s.icon then return "Icon size " .. Round(s.icon / show), s end
+    if s.icon then return Tr("Icon size %s"):format(Round(s.icon / show)), s end
     return Round(s.w / show) .. " x " .. Round(s.h / show), s
 end
 
@@ -310,7 +311,10 @@ function LT.MoveTo(d, dx, dy)
             dy, d.gy = dy + by.d, by.at
             words[#words + 1] = by.word
         end
-        if #words > 0 then d.snapText = "Lines up with " .. table.concat(words, " and ") end
+        if #words > 0 then
+            local both = (#words == 2) and Tr("%s and %s"):format(words[1], words[2]) or words[1]
+            d.snapText = Tr("Lines up with %s"):format(both)
+        end
     end
     if d.dx == dx and d.dy == dy and d.shown then return end
     -- a refused preview (a lock the press could not see) holds the drag
@@ -1021,7 +1025,7 @@ function LT.SyncBanner()
         bn.fs:SetPoint("CENTER")
         LT.banner = bn
     end
-    bn.fs:SetText("Click what " .. LT.Name(id) .. " should anchor to. Esc cancels.")
+    bn.fs:SetText(Tr("Click what %s should anchor to. Esc cancels."):format(LT.Name(id)))
     bn:SetScale(tb:GetScale() or 1)
     local P = AT.Px(bn)
     local function S(v) return math.floor(v / P + 0.5) end
@@ -1034,7 +1038,7 @@ end
 
 local function Text(parent, size, col, words)
     local fs = UIK.Text(parent, size, col)
-    if words then fs:SetText(words) end
+    if words then fs:SetText(Tr(words)) end
     return fs
 end
 
@@ -1256,7 +1260,7 @@ function LT.LayStrip(id)
     local text, color = LT.KindOf(id)
     st.swatch:SetBackdropColor(color[1], color[2], color[3], 1)
     st.name:SetText(LT.Name(id))
-    st.kind.fs:SetText(text)
+    st.kind.fs:SetText(Tr(text))
     local info = LT.AnchorInfo(id)
     local u = Store.UI()
     local from = "From the center point"
@@ -1265,7 +1269,7 @@ function LT.LayStrip(id)
     elseif u and u.posFrom == "screen" then
         from = "From the middle of your screen"
     end
-    st.from:SetText(from)
+    st.from:SetText(Tr(from))
     local mx, my = LT.Measure(id)
     st.xBox.fs:SetText(mx and tostring(Round(mx)) or "")
     st.yBox.fs:SetText(my and tostring(Round(my)) or "")
@@ -1278,16 +1282,17 @@ function LT.LayStrip(id)
     local side, align
     if info and info.to ~= "other" then
         side, align = LT.SideOf(info.src, info.dst)
-        local word = (info.to == "point") and "the center point" or (info.name or LT.Name(info.to))
-        st.target:SetText(side and word or ("on " .. word))
+        -- a name as named; the center point in the client's words
+        local word = (info.to == "point") and Tr("the center point") or (info.name or LT.Name(info.to))
+        st.target:SetText(side and word or Tr("on %s"):format(word))
         for _, b in ipairs(st.sides) do LT.PaintChip(b, b.side == side) end
         for i, a in ipairs(LT.LineUps(side)) do
             st.lines[i].align = a
-            st.lines[i].fs:SetText(LINE_LABEL[a])
+            st.lines[i].fs:SetText(Tr(LINE_LABEL[a]))
             LT.PaintChip(st.lines[i], a == align)
         end
     elseif info then
-        st.other:SetText("Anchored to " .. (info.name or "another frame"))
+        st.other:SetText(Tr("Anchored to %s"):format(info.name or Tr("another frame")))
     end
     PlaceStrip(st, function(P)
         local function S(v) return math.floor(v / P + 0.5) end
@@ -1393,9 +1398,9 @@ function LT.LayPins(st, pins, gid, W, top, P)
         local row = st.pinRows[i]
         if not row then break end
         row.name:SetText(e.pin.frame)
-        row.side:SetText(LT.PinSide(e.pin))
+        row.side:SetText(Tr(LT.PinSide(e.pin)))
         local w = LT.PinWord(gid, e.i)
-        row.word:SetText(w and w.text or "")
+        row.word:SetText(Tr(w and w.text or ""))
         local c = (w and w.col) or COL.faint
         row.word:SetTextColor(c[1], c[2], c[3])
         local ew = S(UIK.Width(row.name)) + inner + S(UIK.Width(row.side))
@@ -1404,7 +1409,7 @@ function LT.LayPins(st, pins, gid, W, top, P)
         local rest = #pins - i
         local keep = 0
         if rest > 0 then
-            st.more:SetText("+" .. rest .. " more")
+            st.more:SetText(Tr("+%d more"):format(rest))
             keep = gap + S(UIK.Width(st.more))
         end
         if used + sep + ew + keep > room then break end
@@ -1419,7 +1424,7 @@ function LT.LayPins(st, pins, gid, W, top, P)
         if hasWord then items[#items + 1] = words(row.word) end
     end
     if shown < #pins then
-        st.more:SetText("+" .. (#pins - shown) .. " more")
+        st.more:SetText(Tr("+%d more"):format(#pins - shown))
         items[#items + 1] = words(st.more)
     end
     local band = top + 1
@@ -1446,9 +1451,9 @@ function LT.LayMulti(picks)
     local mt = LT.multi
     local names = {}
     for _, id in ipairs(picks) do names[#names + 1] = LT.Name(id) end
-    mt.count:SetText(#picks .. " picked")
+    mt.count:SetText(Tr("%d picked"):format(#picks))
     mt.names:SetText(table.concat(names, ", "))
-    mt.del.fs:SetText("Delete " .. #picks)
+    mt.del.fs:SetText(Tr("Delete %d"):format(#picks))
     LT.PaintDelete(mt.del, picks)
     PlaceStrip(mt, function(P)
         local function S(v) return math.floor(v / P + 0.5) end
@@ -1476,7 +1481,11 @@ end
 
 local MANY = "ARCUIV2_ONSCREEN_DELETE"
 local LOCKED_TIP = "Locked: unlock it to delete it."
-local INSIDE_WORD = { icon = { "icon", "icons" }, reminder = { "reminder", "reminders" } }
+-- what a group takes with it, a count and its noun: one whole line per form
+local INSIDE_WORD = {
+    icon = function(k) return (k == 1 and Tr("%d icon") or Tr("%d icons")):format(k) end,
+    reminder = function(k) return (k == 1 and Tr("%d reminder") or Tr("%d reminders")):format(k) end,
+}
 
 -- a lock on any of ids (the record, its group or its layout)
 function LT.AnyLocked(ids)
@@ -1547,12 +1556,13 @@ function LT.DeleteText(ids)
     local parts = {}
     for _, t in ipairs({ "icon", "reminder" }) do
         local k = inside[t]
-        if k > 0 then parts[#parts + 1] = k .. " " .. INSIDE_WORD[t][k == 1 and 1 or 2] end
+        if k > 0 then parts[#parts + 1] = INSIDE_WORD[t](k) end
     end
-    local text = "Delete " .. #ids .. " elements?"
+    local text = Tr("Delete %d elements?"):format(#ids)
     if #parts > 0 then
-        text = text .. "\n" .. (groups == 1 and "The group takes its " or "The groups take their ")
-            .. table.concat(parts, " and ") .. " with " .. (groups == 1 and "it." or "them.")
+        local what = (#parts == 2) and Tr("%s and %s"):format(parts[1], parts[2]) or parts[1]
+        text = text .. "\n" .. (groups == 1 and Tr("The group takes its %s with it.")
+            or Tr("The groups take their %s with them.")):format(what)
     end
     return text
 end

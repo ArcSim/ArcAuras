@@ -271,25 +271,30 @@ function UB.Translate(rec)
 end
 
 -- The Tracking tab's line under the switch.
+-- The note as drawn: whole lines in the client's words, the rules' names
+-- filled in (NS.AT read late: a bars-only load has no theme).
 function UB.Note(rec)
+    local AT = NS.AT
+    local Tr = (AT and AT.Tr) or function(s) return s end
     local _, followed, dropped = UB.Translate(rec)
     local C = NS.Conditions
     local function Words(list)
         local out = {}
         for _, k in ipairs(list) do
             local d = C and C.ByKey and C.ByKey(k)
-            out[#out + 1] = (k == "range" and "Target range rule") or (d and d.text) or k
+            out[#out + 1] = Tr((k == "range" and "Target range rule") or (d and d.text) or k)
         end
         return table.concat(out, ", ")
     end
     if #followed == 0 and #dropped == 0 then
-        return "Left click targets the unit and right click opens its menu, in combat too; the click area shows while the unit exists."
+        return Tr("Left click targets the unit and right click opens its menu, in combat too; the click area shows while the unit exists.")
     end
     local s = ""
-    if #followed > 0 then s = "In combat the click area follows: " .. Words(followed) .. "." end
+    if #followed > 0 then s = Tr("In combat the click area follows: %s."):format(Words(followed)) end
     if #dropped > 0 then
-        s = s .. (s ~= "" and " " or "") .. Words(dropped) .. (#dropped == 1 and " hides" or " hide")
-            .. " the bar but not its click area until combat ends."
+        local line = (#dropped == 1 and Tr("%s hides the bar but not its click area until combat ends.")
+            or Tr("%s hide the bar but not its click area until combat ends.")):format(Words(dropped))
+        s = s .. (s ~= "" and " " or "") .. line
     end
     return s
 end

@@ -484,13 +484,26 @@ end
 -- the families a layout's inh can carry (Schema family keys)
 local LAYOUT_FAMILIES = { icon = true, iconGroup = true, bar = true }
 
+-- At most n bytes, and never half a letter: a cut inside a multibyte letter
+-- (a Korean syllable is three bytes) backs off to that letter's start.
+function Store.CutText(s, n)
+    if #s <= n then return s end
+    local i = n + 1
+    while i > 1 do
+        local b = s:byte(i)
+        if b < 128 or b >= 192 then break end
+        i = i - 1
+    end
+    return s:sub(1, i - 1)
+end
+
 -- one stored value against its schema field: the typed coercion Normalize
 -- gives a record's overrides and a layout's values alike (nil = drop it)
 local function CleanValue(def, v)
     if def.t == "id" then return tonumber(v) end
     if def.t == "text" or def.t == "sound" then
         if type(v) ~= "string" then return nil end
-        if #v > 120 then return v:sub(1, 120) end
+        if #v > 120 then return Store.CutText(v, 120) end
         return v
     end
     if def.t == "num" or def.t == "int" then
@@ -1274,7 +1287,7 @@ function Store.KeepOldBands(rec)
 end
 
 -- Recharging became a state with its own look (rec.v 5). It used to copy
--- Depleted's look, or Ready's with the old Wait for no charges, and had its
+-- No charges' look, or Ready's with the old Wait for no charges, and had its
 -- own opacity only while switched on. A save from before keeps what it showed:
 -- the copied opacity, tint, grey out and glow go into Recharging's own fields,
 -- then the two retired switches go.
@@ -1310,7 +1323,7 @@ function Store.KeepRechargeLook(rec)
         Put("rechargeTintEnabled", true)
         Put("rechargeTintColor", Val(from .. "TintColor"))
     end
-    -- Depleted's grey out never reached a recharging icon (it waits for the last charge)
+    -- No charges' grey out never reached a recharging icon (it waits for the last charge)
     if from == "ready" and Val("readyDesaturate") == true then Put("rechargeDesaturate", true) end
     if Val("rechargeGlow") ~= true and Val(from .. "Glow") == true then
         for _, s in ipairs({ "", "Type", "Color", "CombatOnly", "Intensity", "Length", "Level", "Lines",
@@ -3661,6 +3674,10 @@ end
 
 -- derived badge text: no conditions = Shared; else the spec names
 function Store.BadgeText(rec)
+    -- the words as drawn: the addon's in the client's language (NS.AT read
+    -- late: a core-only load has no theme), the game's names as they are
+    local AT = NS.AT
+    local Tr = (AT and AT.Tr) or function(s) return s end
     local c = rec.c
     local parts = {}
     if c.classes then
@@ -3668,9 +3685,9 @@ function Store.BadgeText(rec)
         local n = 0
         for _ in pairs(c.classes) do n = n + 1 end
         if n == 0 then
-            parts[#parts + 1] = "nowhere"
+            parts[#parts + 1] = Tr("nowhere")
         elseif n > 3 then
-            parts[#parts + 1] = n .. " classes"
+            parts[#parts + 1] = Tr("%d classes"):format(n)
         else
             for tag in pairs(c.classes) do
                 local nm
@@ -3689,9 +3706,9 @@ function Store.BadgeText(rec)
         local n = 0
         for _ in pairs(c.specs) do n = n + 1 end
         if n == 0 then
-            parts[#parts + 1] = "nowhere"
+            parts[#parts + 1] = Tr("nowhere")
         elseif n > 4 then
-            parts[#parts + 1] = n .. " specs"
+            parts[#parts + 1] = Tr("%d specs"):format(n)
         else
             local names = {}
             local byID = GetSpecializationInfoForSpecID or GetSpecializationInfoByID
@@ -3711,9 +3728,9 @@ function Store.BadgeText(rec)
     if c.roles and not Specless() then
         local words = { TANK = "Tank", HEALER = "Healer", DAMAGER = "Damage" }
         local names = {}
-        for role in pairs(c.roles) do names[#names + 1] = words[role] or role end
+        for role in pairs(c.roles) do names[#names + 1] = Tr(words[role] or role) end
         table.sort(names)
-        parts[#parts + 1] = (#names == 0) and "nowhere" or table.concat(names, ", ")
+        parts[#parts + 1] = (#names == 0) and Tr("nowhere") or table.concat(names, ", ")
     end
     if c.heroes and not Specless() then
         local n, names = 0, {}
@@ -3721,25 +3738,25 @@ function Store.BadgeText(rec)
         for id in pairs(c.heroes) do
             n = n + 1
             local nm = cat and cat.HeroName and cat.HeroName(id)
-            names[#names + 1] = nm or ("hero " .. id)
+            names[#names + 1] = nm or Tr("hero %s"):format(id)
         end
         if n == 0 then
-            parts[#parts + 1] = "nowhere"
+            parts[#parts + 1] = Tr("nowhere")
         elseif n > 2 then
-            parts[#parts + 1] = n .. " hero trees"
+            parts[#parts + 1] = Tr("%d hero trees"):format(n)
         else
             table.sort(names)
             parts[#parts + 1] = table.concat(names, ", ")
         end
     end
-    if c.chars then parts[#parts + 1] = "chars" end
+    if c.chars then parts[#parts + 1] = Tr("chars") end
     if c.factions then
         local list = {}
-        for fac in pairs(c.factions) do list[#list + 1] = fac end
+        for fac in pairs(c.factions) do list[#list + 1] = Tr(fac) end
         table.sort(list)
-        parts[#parts + 1] = (#list == 0) and "nowhere" or table.concat(list, ", ")
+        parts[#parts + 1] = (#list == 0) and Tr("nowhere") or table.concat(list, ", ")
     end
-    if #parts == 0 then return "Shared", false end
+    if #parts == 0 then return Tr("Shared"), false end
     return table.concat(parts, ", "), true
 end
 
@@ -3813,10 +3830,12 @@ end
 -- where cooldown rows usually sit. Offsets and icon sizes are for a screen
 -- 1080 units tall and scale with this one, so the column lands in the same
 -- place at any UI scale.
+-- role: stamped on the group (starterRole), how it is found again whatever
+-- its name says
 local STARTER_ROWS = {
-    { name = "Cooldowns", kind = "cooldown", y = -275, size = 42 },
-    { name = "Utility", kind = "cooldown", y = -320, size = 36 },
-    { name = "Buffs", kind = "aura", y = -365, size = 32 },
+    { name = "Cooldowns", role = "cooldowns", kind = "cooldown", y = -275, size = 42 },
+    { name = "Utility", role = "utility", kind = "cooldown", y = -320, size = 36 },
+    { name = "Buffs", role = "buffs", kind = "aura", y = -365, size = 32 },
 }
 -- the New Layout page draws the template's preview from these
 Store.STARTER_ROWS = STARTER_ROWS
@@ -3830,6 +3849,7 @@ function Store.NewStarterLayout(name)
     local k = h / 1080
     for _, row in ipairs(STARTER_ROWS) do
         local g = Store.NewGroup(rec.id, row.name, row.kind)
+        g.starterRole = row.role
         g.pos = { x = 0, y = math.floor(row.y * k + 0.5) }
         local px = math.floor(row.size * k + 0.5)
         Store.SetOverride(g, "arrangement", "iconWidth", px)
@@ -4138,7 +4158,7 @@ function Store.CleanRangeBands(list)
         if type(b) == "table" and #out < maxB then
             local c = type(b.color) == "table" and b.color or {}
             local nb = {
-                text = (type(b.text) == "string") and b.text:sub(1, 40) or "",
+                text = (type(b.text) == "string") and Store.CutText(b.text, 40) or "",
                 color = { Unit(c[1], 0.5), Unit(c[2], 0.5), Unit(c[3], 0.5), Unit(c[4], 1) },
                 off = (b.off == true) or nil,
                 checks = {},
@@ -4561,7 +4581,10 @@ function Store.CleanRules(list)
                 text = Str(r.text, 200),
                 quiet = Num(r.quiet, 0, 3600),
             }
-            if c.withinRule then c.withinSecs = Num(r.withinSecs, 0.1, 600) or 1 end
+            if c.withinRule then
+                c.withinSecs = Num(r.withinSecs, 0.1, 600) or 1
+                c.withinNot = (r.withinNot == true) and true or nil
+            end
             -- the spells a trigger hears past its first: the list keeps the
             -- first in front and is set only for two or more
             if c.spellID and type(r.spellIDs) == "table" then
@@ -4618,6 +4641,12 @@ function Store.CleanCustom(d, isBar)
     d.stackTimers = (d.stackTimers == true) and true or nil
     local ic = tonumber(d.idleCount)
     d.idleCount = (ic and ic >= 1) and math.floor(math.min(ic, 999)) or nil
+    -- a Custom Icon's cooldown while its timer is idle (no spell: the art's),
+    -- kept while switched off; its art following the spell that starts it
+    d.cdOn = (not isBar and d.cdOn == true) and true or nil
+    local cs = tonumber(d.cdSpell)
+    d.cdSpell = (not isBar and cs and cs > 0) and math.floor(cs) or nil
+    d.artFollow = (not isBar and d.artFollow == true) and true or nil
     local ok = false
     for _, v in ipairs(Schema.CUSTOM_SHOW_WHILE) do
         if d.showWhile == v then ok = true end
@@ -4650,7 +4679,7 @@ for _, w in ipairs(Schema.TEXT_SPELL_WHEN or {}) do TEXT_WHEN_SET.spellText[w] =
 for _, w in ipairs(Schema.TEXT_AURA_WHEN or {}) do TEXT_WHEN_SET.auraText[w] = true end
 function Store.CleanText(d)
     if not TEXT_SOURCE_SET[d.source] then d.source = "static" end
-    d.text = (type(d.text) == "string" and d.text ~= "") and d.text:sub(1, 120) or nil
+    d.text = (type(d.text) == "string" and d.text ~= "") and Store.CutText(d.text, 120) or nil
     local whenSet = TEXT_WHEN_SET[d.source]
     if not (whenSet and whenSet[d.when]) then d.when = nil end
     -- "When little time is left": a share of the aura (1-99%), or seconds
@@ -5087,7 +5116,7 @@ function Store.Rename(id, name)
     if not rec then return false end
     name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
     if name == "" then return false end
-    if #name > 60 then name = name:sub(1, 60) end
+    if #name > 60 then name = Store.CutText(name, 60) end
     if rec.name == name then return true end
     rec.name = name
     Store.Dirty("tree", id)

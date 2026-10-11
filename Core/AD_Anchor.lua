@@ -1160,11 +1160,20 @@ function Anchor.DependentsOf(rec)
     return out
 end
 
+-- The panel's words, as drawn: the addon's in the client's language, one
+-- whole line per case with the name filled in (NS.AT read late: a core-only
+-- load has no theme).
+local function Tr(s)
+    local AT = NS.AT
+    if AT and AT.Tr then return AT.Tr(s) end
+    return s
+end
+
 -- a slot's words: "Bar: Mana", "Frame: ElvUF_Player", "Action button: Moonfire"
 local function TargetWords(kind, id, name)
-    if kind == "frame" then return "Frame: " .. (name or "?") end
+    if kind == "frame" then return Tr("Frame: %s"):format(name or "?") end
     local t = Store.Get(id or 0)
-    return (PREFIX_WORD[kind] or "") .. ": " .. ((t and t.name) or "?")
+    return Tr("%s: %s"):format(Tr(PREFIX_WORD[kind] or ""), (t and t.name) or "?")
 end
 function Anchor.SlotWords(rec, s)
     if s == 1 then
@@ -1172,9 +1181,9 @@ function Anchor.SlotWords(rec, s)
         if SPELL_KIND[kind] then
             local SA = NS.SpellAnchor
             local p = SA and SA.Parse(R(rec, "anchorTargetFrame"))
-            local what = (kind == "action") and "Action button" or "Cooldown Manager icon"
-            if p and p.cid then return what .. ": cooldown ID " .. p.cid end
-            if p then return what .. ": " .. (SA.NameOf(p.list[1]) or ("spell " .. p.list[1])) end
+            local what = Tr((kind == "action") and "Action button" or "Cooldown Manager icon")
+            if p and p.cid then return Tr("%s: cooldown ID %s"):format(what, p.cid) end
+            if p then return Tr("%s: %s"):format(what, SA.NameOf(p.list[1]) or Tr("spell %s"):format(p.list[1])) end
             return what
         end
         return TargetWords(kind, R(rec, "anchorTargetId"), R(rec, "anchorTargetFrame"))
@@ -1187,76 +1196,77 @@ end
 -- a one-line summary for the panel: what this is actually pinned to now
 function Anchor.DescribePick(rec)
     if not (rec and Anchor.IsEnabled(rec)) then
-        return "Free: it sits at its own Position."
+        return Tr("Free: it sits at its own Position.")
     end
     -- a list: which slot holds it, and the ones before it that are away
     if Anchor.SlotCount(rec) > 1 then
         local t, _, n = Anchor.Effective(rec)
-        if not t then return "None of its anchors is there: it sits at its own Position." end
-        local line = "On anchor " .. (n + 1) .. ", " .. (Anchor.SlotWords(rec, n + 1) or "?") .. "."
-        if n == 1 then return line .. " Anchor 1 is not there." end
-        if n > 1 then return line .. " Anchors 1 to " .. n .. " are not there." end
+        if not t then return Tr("None of its anchors is there: it sits at its own Position.") end
+        local line = Tr("On anchor %d, %s."):format(n + 1, Anchor.SlotWords(rec, n + 1) or "?")
+        if n == 1 then return line .. " " .. Tr("Anchor 1 is not there.") end
+        if n > 1 then return line .. " " .. Tr("Anchors 1 to %d are not there."):format(n) end
         return line
     end
     if Anchor.IsPlatePick(rec) then
         if Editing() then
-            return "Pins to your target's nameplate. The preview above shows it on a stand-in; place it with the offsets."
+            return Tr("Pins to your target's nameplate. The preview above shows it on a stand-in; place it with the offsets.")
         end
         if Anchor.TargetPlate() then
-            return "Pinned to your target's nameplate. Place it with the offsets below."
+            return Tr("Pinned to your target's nameplate. Place it with the offsets below.")
         end
-        return "Pins to your target's nameplate. Nothing targeted now: hidden while you play."
+        return Tr("Pins to your target's nameplate. Nothing targeted now: hidden while you play.")
     end
     if Anchor.IsMousePick(rec) then
         if Editing() then
-            return "Follows your mouse cursor while you play. While this window is open it sits at its own spot; set where it sits next to the cursor with My point and the offsets."
+            return Tr("Follows your mouse cursor while you play. While this window is open it sits at its own spot; set where it sits next to the cursor with My point and the offsets.")
         end
-        return "Follows your mouse cursor."
+        return Tr("Follows your mouse cursor.")
     end
     if Anchor.IsSpellPick(rec) then
         local SA = NS.SpellAnchor
         local p = SA and SA.Parse(R(rec, "anchorTargetFrame"))
-        if not p then return "No spell entered yet, so it stays at its own spot." end
+        if not p then return Tr("No spell entered yet, so it stays at its own spot.") end
         local t = Anchor.ResolveTarget(rec)
         if p.cid then
             if R(rec, "anchorTargetKind") ~= "cdm" then
-                return "A cooldown ID names a Cooldown Manager icon, so it stays at its own spot."
+                return Tr("A cooldown ID names a Cooldown Manager icon, so it stays at its own spot.")
             end
-            if t then return "On the Cooldown Manager icon with cooldown ID " .. p.cid .. "." end
-            return "No Cooldown Manager icon with cooldown ID " .. p.cid .. " is shown now, so it stays at its own spot."
+            if t then return Tr("On the Cooldown Manager icon with cooldown ID %s."):format(p.cid) end
+            return Tr("No Cooldown Manager icon with cooldown ID %s is shown now, so it stays at its own spot."):format(p.cid)
         end
-        local nm = SA.NameOf(p.list[1]) or ("spell " .. p.list[1])
+        local nm = SA.NameOf(p.list[1]) or Tr("spell %s"):format(p.list[1])
         if R(rec, "anchorTargetKind") == "action" then
             if t then
                 local n = t.GetName and t:GetName()
                 if Secret(n) or type(n) ~= "string" then n = nil end
-                return "On the action button holding " .. nm .. (n and (" (" .. n .. ")") or "") .. "."
+                if n then return Tr("On the action button holding %s (%s)."):format(nm, n) end
+                return Tr("On the action button holding %s."):format(nm)
             end
-            return nm .. " is not on a shown action button now, so it stays at its own spot."
+            return Tr("%s is not on a shown action button now, so it stays at its own spot."):format(nm)
         end
-        if t then return "On the Cooldown Manager icon for " .. nm .. "." end
-        return nm .. " is not in your Cooldown Manager now, so it stays at its own spot."
+        if t then return Tr("On the Cooldown Manager icon for %s."):format(nm) end
+        return Tr("%s is not in your Cooldown Manager now, so it stays at its own spot."):format(nm)
     end
     if Anchor.IsFramePick(rec) then
         local n = R(rec, "anchorTargetFrame")
         if type(n) ~= "string" or n == "" then
-            return "Named frame: no name entered yet, so it stays free."
+            return Tr("Named frame: no name entered yet, so it stays free.")
         end
         local why = Anchor.FrameProblem(_G[n])
-        if why == "missing" then return "No frame called " .. n .. " exists, so it stays free." end
-        if why == "plate" then return n .. " is a nameplate, so it stays free." end
-        if why then return "The game protects " .. n .. ", so it stays free." end
+        if why == "missing" then return Tr("No frame called %s exists, so it stays free."):format(n) end
+        if why == "plate" then return Tr("%s is a nameplate, so it stays free."):format(n) end
+        if why then return Tr("The game protects %s, so it stays free."):format(n) end
         local t = Anchor.ResolveTarget(rec)
-        if t == nil then return n .. " is hidden now, so it stays free." end
+        if t == nil then return Tr("%s is hidden now, so it stays free."):format(n) end
         local shown = t:IsShown()
         if not Secret(shown) and not shown then
-            return "Anchored to the frame " .. n .. ". It is hidden now, so this stays where it sits."
+            return Tr("Anchored to the frame %s. It is hidden now, so this stays where it sits."):format(n)
         end
-        return "Anchored to the frame " .. n .. "."
+        return Tr("Anchored to the frame %s."):format(n)
     end
     local t = Store.Get(R(rec, "anchorTargetId") or 0)
-    if not t then return "That anchor target no longer exists, so it stays free." end
-    return "Anchored to " .. (t.name or "it") .. "."
+    if not t then return Tr("That anchor target no longer exists, so it stays free.") end
+    return Tr("Anchored to %s."):format(t.name or Tr("it"))
 end
 
 -- /arcui plate: what the nameplate pin sees on this client, including whether

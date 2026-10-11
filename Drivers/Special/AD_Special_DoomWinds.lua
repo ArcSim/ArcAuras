@@ -5,6 +5,7 @@ local ADDON, NS = ...
 if NS.IsForever == true then return end
 local SP = NS.Special
 if not SP then return end
+local Tr = SP.Tr
 
 local DW_CDM_ID = 82621
 local DW_CAST_ID = 384352
@@ -415,9 +416,12 @@ local function CDMTracking()
 end
 
 local function Status()
-    if not dwEnabled then return "not talented" end
-    if wolfMode then return "wolf path (" .. (ActiveWolfTalent() or "wolf talent") .. ")" end
-    return CDMTracking() and "Cooldown Manager path, bound" or "Cooldown Manager path, no Doom Winds icon found"
+    if not dwEnabled then return Tr("not talented") end
+    if wolfMode then
+        local wolf = ActiveWolfTalent()
+        return Tr("wolf path (%s)"):format(wolf and Tr(wolf) or Tr("wolf talent"))
+    end
+    return CDMTracking() and Tr("Cooldown Manager path, bound") or Tr("Cooldown Manager path, no Doom Winds icon found")
 end
 
 SP.Register({

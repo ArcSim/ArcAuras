@@ -128,26 +128,33 @@ function TA.Arm()
 end
 
 -- The status line under a text's pin rows.
+-- The editor's line, in the client's words: one whole line per case, the
+-- frame or spell name filled in (NS.AT read late: a core-only load has no theme).
 function TA.Describe(kind, spec)
     if not TA.Pinned(kind) then return "" end
+    local AT = NS.AT
+    local Tr = (AT and AT.Tr) or function(s) return s end
     local SA = NS.SpellAnchor
     if kind == "frame" then
-        if type(spec) ~= "string" or spec == "" then return "Type a frame name or pick one." end
-        if TA.Target(kind, spec) then return "On " .. spec .. "." end
-        return spec .. " is not shown, so it sits on its own spot."
+        if type(spec) ~= "string" or spec == "" then return Tr("Type a frame name or pick one.") end
+        if TA.Target(kind, spec) then return Tr("On %s."):format(spec) end
+        return Tr("%s is not shown, so it sits on its own spot."):format(spec)
     end
     local p = SA and SA.Parse(spec)
     if not p then
-        return kind == "cdm" and "Type a spell or a cooldown ID, or pick an icon." or "Type a spell or pick a button."
+        return Tr(kind == "cdm" and "Type a spell or a cooldown ID, or pick an icon." or "Type a spell or pick a button.")
     end
-    if p.cid and kind ~= "cdm" then return "A cooldown ID names a Cooldown Manager icon." end
-    local what
+    if p.cid and kind ~= "cdm" then return Tr("A cooldown ID names a Cooldown Manager icon.") end
+    local on = TA.Target(kind, spec)
     if p.cid then
-        what = "icon with cooldown ID " .. p.cid
-    else
-        local nm = SA.NameOf(p.list[1]) or ("spell " .. tostring(p.list[1]))
-        what = ((kind == "action") and "action button with " or "Cooldown Manager icon of ") .. nm
+        return (on and Tr("On the icon with cooldown ID %s.")
+            or Tr("No icon with cooldown ID %s is shown, so it sits on its own spot.")):format(p.cid)
     end
-    if TA.Target(kind, spec) then return "On the " .. what .. "." end
-    return "No " .. what .. " is shown, so it sits on its own spot."
+    local nm = SA.NameOf(p.list[1]) or Tr("spell %s"):format(tostring(p.list[1]))
+    if kind == "action" then
+        return (on and Tr("On the action button with %s.")
+            or Tr("No action button with %s is shown, so it sits on its own spot.")):format(nm)
+    end
+    return (on and Tr("On the Cooldown Manager icon of %s.")
+        or Tr("No Cooldown Manager icon of %s is shown, so it sits on its own spot.")):format(nm)
 end

@@ -5,9 +5,17 @@
 local ADDON, NS = ...
 local Options = NS.Options
 if not Options then return end
+local Tr = NS.AT.Tr
 
 local RSO = {}
 Options.ResStateOptions = RSO
+
+-- Capitals only for plain Latin words: string.upper would split a multibyte
+-- letter, and other scripts have no capitals.
+local function Upper(s)
+    if type(s) ~= "string" or s:find("[\128-\255]") then return s end
+    return s:upper()
+end
 
 -- The states, in the Add pick's order: a spell's, an aura's, the power's.
 -- The aura ones need the aura engine (missing: the client that can draw a
@@ -102,35 +110,47 @@ end
 -- the words a spell ID is shown by
 local function SpellName(id)
     local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id) -- raw-id: the typed ID, for the row's words
-    return (type(nm) == "string" and nm ~= "") and nm or ("spell " .. tostring(id))
+    return (type(nm) == "string" and nm ~= "") and nm or Tr("spell %s"):format(tostring(id))
 end
 
--- A row in words: what holds it.
+-- A spell state's line, with the spells' names or without: one whole line each.
+RSO.SPELL_WORDS = {
+    usable = { "%s is usable", "A spell is usable" }, ready = { "%s is ready", "A spell is ready" },
+    recharging = { "%s is recharging", "A spell is recharging" },
+    cooldown = { "%s is on cooldown", "A spell is on cooldown" },
+}
+
+-- A row in words, as drawn: what holds it.
 function RSO.Label(r)
     local w = r and r.when or "enough"
     local function Names()
-        local out = {}
-        for _, sid in ipairs(r.rowSpells or {}) do out[#out + 1] = SpellName(sid) end
-        return (#out > 0) and table.concat(out, " or ") or nil
+        local n
+        for _, sid in ipairs(r.rowSpells or {}) do
+            n = n and Tr("%s or %s"):format(n, SpellName(sid)) or SpellName(sid)
+        end
+        return n
     end
     if w == "enough" then
         local n = Names()
-        return n and ("Enough for " .. n) or "Enough power for a spell"
+        return n and Tr("Enough for %s"):format(n) or Tr("Enough power for a spell")
     end
-    local spellWord = { usable = " is usable", ready = " is ready", recharging = " is recharging",
-        cooldown = " is on cooldown" }
-    if spellWord[w] then return (Names() or "A spell") .. spellWord[w] end
+    local sw = RSO.SPELL_WORDS[w]
+    if sw then
+        local n = Names()
+        return n and Tr(sw[1]):format(n) or Tr(sw[2])
+    end
     if w == "up" or w == "missing" then
         local ids = NS.Store.AuraIDList(r)
-        local nm = ids[1] and SpellName(ids[1]) or "An aura"
+        if not ids[1] then return Tr((w == "up") and "An aura is up" or "An aura is missing") end
+        local nm = SpellName(ids[1])
         if #ids > 1 then nm = nm .. " (+" .. (#ids - 1) .. ")" end
-        return nm .. ((w == "up") and " is up" or " is missing")
+        return ((w == "up") and Tr("%s is up") or Tr("%s is missing")):format(nm)
     end
     if w == "below" or w == "above" then
         local v = tostring(r.value or 0) .. (r.units and "" or "%")
-        return ((w == "below") and "Power at or below " or "Power at or above ") .. v
+        return ((w == "below") and Tr("Power at or below %s") or Tr("Power at or above %s")):format(v)
     end
-    return "Full power"
+    return Tr("Full power")
 end
 
 -- The colour picker on a cell: a pick writes, a cancel puts back what was
@@ -302,7 +322,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         lbl:SetFont(AT.FONT, 11, "")
         lbl:SetPoint("TOPLEFT", 10, -7)
         lbl:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
-        lbl:SetText("Preview as")
+        lbl:SetText(Tr("Preview as"))
         local chips = {}
         local function Paint(b)
             local on, hot = b._on, b._hot
@@ -357,7 +377,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
                 if it then
                     local b = Chip(j)
                     b._pt, b._on = it.value, it.value == cur
-                    b.fs:SetText(it.text or "")
+                    b.fs:SetText(Tr(it.text or ""))
                     local c = it.color or { 1, 1, 1 }
                     b.sq:SetVertexColor(c[1], c[2], c[3], 1)
                     local w = math.ceil(StrW(b.fs)) + 34
@@ -387,16 +407,16 @@ function Options.ResStateRows(pg, ctx, vis, owner)
     do
         local fs = Faint(head)
         fs:SetPoint("LEFT", 44, 0)
-        fs:SetText("STATE")
-        local words = { fill = "FILL", text = "TEXT", mark = "COST MARK", glow = "GLOW" }
+        fs:SetText(Upper(Tr("State")))
+        local words = { fill = "Fill", text = "Text", mark = "Cost mark", glow = "Glow" }
         for k, word in pairs(words) do
             local h = Faint(head)
             h:SetPoint("LEFT", Cell(head, k), "LEFT", 0, 0)
-            h:SetText(word)
+            h:SetText(Upper(Tr(word)))
         end
         forHead = Faint(head)
         forHead:SetPoint("LEFT", Cell(head, "power"), "LEFT", 0, 0)
-        forHead:SetText("FOR")
+        forHead:SetText(Upper(Tr("For")))
     end
     Stamp(head, "resStates", "How the bar looks in each state")
     -- the open row follows the sub-tab into the preview
@@ -489,7 +509,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
             local g = Row(i)
             if not g then return nil end
             if g.power == nil then return "Holds on every power." end
-            return "Holds only while the bar shows " .. (PowerInfo(Rec(), g.power)) .. "."
+            return Tr("Holds only while the bar shows %s."):format(Tr((PowerInfo(Rec(), g.power))))
         end)
 
         -- fill and texts: a swatch, "keep" while the row leaves the bar's own
@@ -500,7 +520,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
             sw:RegisterForClicks("LeftButtonUp", "RightButtonUp")
             local keep = Faint(sw, 9)
             keep:SetPoint("CENTER", 0, 0)
-            keep:SetText("keep")
+            keep:SetText(Tr("keep"))
             local dash = (key == "fill")
                 and Dash(cell, "Fill color", "An aura row colors one continuous fill, four rows at most: not pips, runes or essence.")
                 or Dash(cell, "Text color", "An aura row cannot color the texts.")
@@ -517,9 +537,9 @@ function Options.ResStateRows(pg, ctx, vis, owner)
                     Edit(function(S, rec) S.SetRow(rec, i, key, v) end)
                 end)
             end)
-            local word = (key == "fill") and "fill" or "texts"
-            AT.Tooltip(sw, (key == "fill") and "Fill color" or "Text color",
-                "Click to pick the " .. word .. " color while this row holds. Right-click to keep the bar's own.")
+            AT.Tooltip(sw, (key == "fill") and "Fill color" or "Text color", (key == "fill")
+                and "Click to pick the fill color while this row holds. Right-click to keep the bar's own."
+                or "Click to pick the texts color while this row holds. Right-click to keep the bar's own.")
             return { sw = sw, keep = keep, dash = dash, cell = cell }
         end
         local fillC, textC = ColorCell("fill"), ColorCell("text")
@@ -544,7 +564,8 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         local glow = AT.MakeDropdown(owner, glowCell, C.glow.w,
             function()
                 local r, g = Rec(), Row(i)
-                if not (r and g) then return {} end
+                -- no row: Off, the word its field reads
+                if not (r and g) then return { RSO.GLOWS[1] } end
                 local max = (NS.Schema and NS.Schema.BAR_GLOW_SLOTS) or 3
                 -- a bar draws three glows: a fourth row can only stay off
                 if not g.glow and CRm().GlowCount(r) >= max then return { RSO.GLOWS[1] } end
@@ -598,7 +619,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
             if on then
                 local name, c
                 if g.power ~= nil then name, c = PowerInfo(r, g.power) end
-                forFs:SetText(name or RSO.FOR_ALL)
+                forFs:SetText(Tr(name or RSO.FOR_ALL))
                 local ink = name and COL.ink or COL.dim
                 forFs:SetTextColor(ink[1], ink[2], ink[3])
                 local e = c or COL.line2
@@ -652,16 +673,16 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         lbl:SetFont(AT.FONT, 13, "")
         lbl:SetPoint("LEFT", 44, 0)
         lbl:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
-        lbl:SetText("Normal")
+        lbl:SetText(Tr("Normal"))
         local fillCell = Cell(normal, "fill")
         local sub = Faint(normal, 11)
         sub:SetPoint("LEFT", lbl, "RIGHT", 8, 0)
         sub:SetPoint("RIGHT", fillCell, "LEFT", -8, 0)
         sub:SetJustifyH("LEFT")
-        sub:SetText("the bar's own colors")
+        sub:SetText(Tr("the bar's own colors"))
         local fillW = Faint(normal, 11)
         fillW:SetPoint("LEFT", fillCell, "LEFT", 0, 0)
-        fillW:SetText("own")
+        fillW:SetText(Tr("own"))
         -- an Automatic bar: the fill the previewed power shows
         local sw = AT.MakeSwatch(fillCell, 40, 16)
         sw:SetPoint("LEFT", 0, 0)
@@ -673,19 +694,19 @@ function Options.ResStateRows(pg, ctx, vis, owner)
             line:SetHeight(AT.Hairline(normal))
             local r = Rec()
             local follow = r and Store.Resolve(r, "rescolors", "resTextFill") == true
-            textW:SetText(follow and "fill" or "own")
+            textW:SetText(Tr(follow and "fill" or "own"))
             local on = ForPower(r)
             local cr, cg, cb, ca
             if on then
                 local pt = PreviewPower()
                 local name, c = PowerInfo(r, pt)
                 local byPower = Store.Resolve(r, "resource", "usePowerColor") ~= false
-                sub:SetText(byPower and ("the power color, " .. name) or "the fill color")
+                sub:SetText(byPower and Tr("the power color, %s"):format(Tr(name)) or Tr("the fill color"))
                 if NS.Bars.FillColorOf then cr, cg, cb, ca = NS.Bars.FillColorOf(r, pt) end
                 if cr == nil and c then cr, cg, cb, ca = c[1], c[2], c[3], 1 end
                 if cr ~= nil then sw:SetColor({ cr, cg, cb }, ca or 1) end
             else
-                sub:SetText("the bar's own colors")
+                sub:SetText(Tr("the bar's own colors"))
             end
             fillW:SetShown(not (on and cr ~= nil))
             sw:SetShown(on and cr ~= nil)
@@ -728,7 +749,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         forWord:SetFont(AT.FONT, 11, "")
         forWord:SetPoint("LEFT", dd, "RIGHT", 8, 0)
         forWord:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
-        forWord:SetText("for")
+        forWord:SetText(Tr("for"))
         local forDD = AT.MakeDropdown(owner, add, 120,
             function() return ForItems(Rec()) end,
             AddFor,
@@ -844,11 +865,11 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         local t = edSec and edSec.title
         if not (g and t) then return end
         local words = RSO.Label(g)
-        t:SetText(edSec.boxed and words or string.upper(words))
+        t:SetText(edSec.boxed and words or Upper(words))
         local r = Rec()
         local on = ForPower(r)
         if on then
-            tag.fs:SetText((g.power ~= nil) and (PowerInfo(r, g.power)) or RSO.FOR_ALL)
+            tag.fs:SetText(Tr((g.power ~= nil) and (PowerInfo(r, g.power)) or RSO.FOR_ALL))
             tag:SetWidth(math.ceil(StrW(tag.fs)) + 10)
         end
         tag:SetShown(on)
@@ -904,7 +925,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         chips._colCtrl = col
         local none = Faint(chips, 11)
         none:SetPoint("LEFT", col, "LEFT", 0, 0)
-        none:SetText("No spell yet: add one below.")
+        none:SetText(Tr("No spell yet: add one below."))
         local btns = {}
         chips._sync = function()
             local g = SelRow()

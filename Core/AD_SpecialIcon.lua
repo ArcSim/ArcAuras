@@ -16,6 +16,12 @@ local SUFFIX = { "", "2", "3", "4", "5", "6" }
 
 local function Hub() return NS.Special end
 
+-- words in the client's language, as written where the locale core is not loaded
+local function Tr(s)
+    local L = NS.L
+    return L and L[s] or s
+end
+
 function SI.TrackerID(rec)
     local d = rec and rec.driver
     return d and (d.tracker or d.special) or nil
@@ -44,9 +50,10 @@ function SI.Texture(rec)
     return SI.ArtOf(SI.Def(rec))
 end
 
+-- in the client's words: a tracker's Status() translates its own
 function SI.Status(rec)
     local def = SI.Def(rec)
-    if not def then return "unknown Arc Proc" end
+    if not def then return Tr("unknown Arc Proc") end
     if def.Status then return def.Status() or "" end
     return ""
 end
@@ -349,32 +356,35 @@ function SI.Readout(rec)
     local def = SI.Def(rec)
     if not (read and def) then return "" end
     if def.isTimer then
-        if read.active then return ("Cooling down, %d s left"):format(math.floor((tonumber(read.remaining) or 0) + 0.5)) end
-        return "Ready"
+        if read.active then return Tr("Cooling down, %d s left"):format(math.floor((tonumber(read.remaining) or 0) + 0.5)) end
+        return Tr("Ready")
     end
     local parts = {}
     if tonumber(read.size) and tonumber(read.pos) then
-        parts[#parts + 1] = ("Deck %d / %d"):format(read.pos, read.size)
+        parts[#parts + 1] = Tr("Deck %d / %d"):format(read.pos, read.size)
     end
     if tonumber(read.max) and tonumber(read.procs) then
-        parts[#parts + 1] = ("procs %d / %d"):format(read.procs, read.max)
+        parts[#parts + 1] = Tr("procs %d / %d"):format(read.procs, read.max)
     end
     local chance = SI.Expand("{chance}", read, rec, def)
-    if chance ~= "" then parts[#parts + 1] = "chance " .. chance end
+    if chance ~= "" then parts[#parts + 1] = Tr("chance %s"):format(chance) end
     return table.concat(parts, ", ")
 end
 
+-- a tracker's name in the client's words; a record's own name as typed
 function SI.Tooltip(rec)
     local def = SI.Def(rec)
-    GameTooltip:SetText(def and def.name or rec.name or "Arc Proc")
+    GameTooltip:SetText(def and Tr(def.name) or rec.name or "Arc Proc")
     local status = SI.Status(rec)
     if status ~= "" then GameTooltip:AddLine(status, 0.7, 0.7, 0.7) end
     local line = SI.Readout(rec)
     if line ~= "" then GameTooltip:AddLine(line, 1, 1, 1) end
 end
 
--- The sidebar's and cards' one line for a special icon.
+-- The sidebar's and cards' one line for a special icon, in the client's words.
 function SI.Words(rec)
     local def = SI.Def(rec)
-    return "Arc Proc: " .. (def and def.name or tostring(SI.TrackerID(rec) or "unknown"))
+    if def then return Tr("Arc Proc: %s"):format(Tr(def.name)) end
+    local id = SI.TrackerID(rec)
+    return Tr("Arc Proc: %s"):format(id and tostring(id) or Tr("unknown"))
 end

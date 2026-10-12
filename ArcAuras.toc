@@ -2,7 +2,7 @@
 ## Title: |cff3fc9f2Arc|r Auras
 ## Notes: Icons, icon groups and bars for your cooldowns, auras and resources, all set up from one panel. /arcauras or /arcui2
 ## Author: Arc
-## Version: 2.8.0
+## Version: 2.9.0
 ## IconTexture: Interface\AddOns\ArcAuras\Textures\ArcAuras_Icon_256
 ## SavedVariables: ArcAurasDB
 ## OptionalDeps: ArcUI, Masque
@@ -29,6 +29,7 @@ Core\AD_Anchor.lua
 Core\AD_SpellAnchor.lua
 Core\AD_TextAnchor.lua
 Core\AD_Conditions.lua
+Core\AD_OwnLooks.lua
 Core\AD_SpellCatalog.lua
 Core\AD_BarScan.lua
 Core\AD_SpellNames.lua

@@ -17,7 +17,8 @@
 --           members={iconId,...} (a reminder group's are reminder ids and
 --           its aura reminders' icon ids)
 --   icon:   kind, driver={...}, and groupId + gpos={row,col} in a group,
---           or layoutId + pos={x,y} when free
+--           or layoutId + pos={x,y} when free; ownLooks = { { state, when,
+--           alpha, grey, tint, tintColor, glow }, ... } (Core\AD_OwnLooks.lua)
 --   reminder: groupId (a reminder group), kind="spell"|"item"|"enchant",
 --           driver={spellID|itemID|hand}, triggers={...} (Store.CleanTriggers)
 --   bar:    layoutId, barKind, barMode, driver={...}, pos={x,y}; a wheel
@@ -634,6 +635,133 @@ function Store.CleanLooks(rec, fam)
     if not keep then rec.looks = nil end
 end
 
+-- Own looks (Core\AD_OwnLooks.lua) of one icon kind cleaned: a state the kind
+-- offers, at least one known condition, an opacity 0-1, switches true or
+-- false and a colour of numbers 0-1, only the columns the state has. A value
+-- left out is the state's own. Bad entries go; an empty list stays one (it
+-- means none, not "follow"), a list of nothing but bad entries goes. nil for
+-- a kind with none.
+function Store.CleanLookList(kind, list)
+    local states = kind and Schema.OWN_LOOK_STATES and Schema.OWN_LOOK_STATES[kind]
+    if type(list) ~= "table" or not states then return nil end
+    if next(list) == nil then return {} end
+    local okKey = {}
+    for _, k in ipairs(Schema.OWN_LOOK_CONDITIONS) do okKey[k] = true end
+    local function Unit(v)
+        if type(v) ~= "number" or v ~= v then return nil end
+        return math.max(0, math.min(1, v))
+    end
+    local function Bool(v)
+        if v == true or v == false then return v end
+        return nil
+    end
+    local out = {}
+    for _, l in ipairs(list) do
+        if #out < Schema.OWN_LOOK_MAX and type(l) == "table" and type(l.state) == "string" and states[l.state] then
+            local when, seen = {}, {}
+            for _, k in ipairs(type(l.when) == "table" and l.when or {}) do
+                if type(k) == "string" and okKey[k] and not seen[k] then
+                    seen[k] = true
+                    when[#when + 1] = k
+                end
+            end
+            if #when > 0 then
+                local st = states[l.state]
+                local look = { state = l.state, when = when }
+                if st.a then look.alpha = Unit(l.alpha) end
+                if st.g then look.grey = Bool(l.grey) end
+                if st.t then
+                    look.tint = Bool(l.tint)
+                    local c = l.tintColor
+                    if type(c) == "table" and Unit(c[1]) and Unit(c[2]) and Unit(c[3]) then
+                        look.tintColor = { Unit(c[1]), Unit(c[2]), Unit(c[3]), Unit(c[4]) or 1 }
+                    end
+                end
+                if st.glow then look.glow = Bool(l.glow) end
+                out[#out + 1] = look
+            end
+        end
+    end
+    return (#out > 0) and out or nil
+end
+
+-- An icon's own list, or a layout's per icon kind (rec.ownLooks[kind]);
+-- anything else has none.
+function Store.CleanOwnLooks(rec)
+    local v = rec.ownLooks
+    if v == nil then return end
+    if rec.type == "icon" then
+        rec.ownLooks = Store.CleanLookList(rec.kind, v)
+    elseif rec.type == "layout" and type(v) == "table" then
+        local out = {}
+        for kind, list in pairs(v) do
+            local l = type(kind) == "string" and Store.CleanLookList(kind, list) or nil
+            if l then out[kind] = l end
+        end
+        rec.ownLooks = (next(out) ~= nil) and out or nil
+    else
+        rec.ownLooks = nil
+    end
+end
+
+-- A layout's own looks for an icon kind: what its icons of that kind wear
+-- while they hold no list of their own (an empty one is none).
+function Store.LayoutOwnLooks(layout, kind)
+    local lo = layout and kind and layout.ownLooks
+    local l = type(lo) == "table" and lo[kind] or nil
+    return type(l) == "table" and l or nil
+end
+
+-- Sets (nil drops) that list, as given. True when the stored table changed.
+function Store.SetLayoutOwnLooks(layout, kind, list)
+    if not (layout and layout.type == "layout" and kind and Schema.OWN_LOOK_STATES[kind]) then return false end
+    local lo = type(layout.ownLooks) == "table" and layout.ownLooks or {}
+    local old = lo[kind]
+    if type(list) ~= "table" then list = nil end
+    lo[kind] = list
+    layout.ownLooks = (next(lo) ~= nil) and lo or nil
+    if old ~= list then Store.Dirty("style") end
+    return old ~= list
+end
+
+-- The own looks an icon follows without a list of its own: its layout's for
+-- its kind, else the Defaults page's; and where they come from.
+function Store.InheritedOwnLooks(rec)
+    local kind = rec and rec.kind
+    if not kind then return nil, nil end
+    local l = Store.LayoutOwnLooks(Store.LayoutOf(rec), kind)
+    if l then return l, "layout" end
+    l = Store.DefaultOwnLooks and Store.DefaultOwnLooks(kind)
+    if l then return l, "defaults" end
+    return nil, nil
+end
+
+-- Two lists of looks alike, entry by entry; none and an empty list are alike.
+function Store.SameLooks(a, b)
+    if type(a) ~= "table" or #a == 0 then a = nil end
+    if type(b) ~= "table" or #b == 0 then b = nil end
+    if a == nil or b == nil then return a == b end
+    if #a ~= #b then return false end
+    local function Same(x, y)
+        if type(x) ~= "table" or type(y) ~= "table" then return x == y end
+        for k, v in pairs(x) do
+            if not Same(v, y[k]) then return false end
+        end
+        for k in pairs(y) do
+            if x[k] == nil then return false end
+        end
+        return true
+    end
+    for i = 1, #a do
+        if not Same(a[i], b[i]) then return false end
+    end
+    return true
+end
+
+-- The part a page's parts carry to take an icon kind's own looks in (Defaults
+-- page: Make them follow, reset, copy).
+Store.OWN_LOOKS_PART = "ownLooks"
+
 -- An aura group's full look per type (rec.fullLooks[type][section][field],
 -- Store.TypeLookProxy) cleaned like overrides: known types, the fields a
 -- type's look may carry (Schema.TYPE_FULL_FIELDS); empty ones go.
@@ -838,11 +966,17 @@ function Store.Normalize()
     -- them: their retired keys are folded here.
     local nd = DB.newDefaults and DB.newDefaults["iconGroup:cooldown"]
     if nd and nd.arrangement then FoldDynamicCooldowns(nd.arrangement) end
-    for _, bucket in pairs(DB.newDefaults or {}) do
+    for key, bucket in pairs(DB.newDefaults or {}) do
         if type(bucket) == "table" then
             FoldAbbrevIn(bucket.text)
             FoldGCDSwipeIn(bucket.swipe)
             FoldUsabilityTintIn(bucket.states)
+            -- an icon kind's own looks; none is no list here (nothing to follow below it)
+            if bucket.ownLooks ~= nil then
+                local kind = type(key) == "string" and key:match("^icon:(.+)$")
+                local l = kind and Store.CleanLookList(kind, bucket.ownLooks)
+                bucket.ownLooks = (l and #l > 0) and l or nil
+            end
         end
     end
     -- A reminder lives only in a reminder group, and a reminder group holds
@@ -1122,6 +1256,7 @@ function Store.Normalize()
         end
         Store.CleanLooks(rec, family and Schema[family])
         Store.CleanTypeLooks(rec)
+        Store.CleanOwnLooks(rec)
     end
     -- a custom item's saved runtime state goes with its record
     if type(DB.runtime) == "table" then
@@ -1983,6 +2118,75 @@ do
         return b
     end
 
+    -- a change counted once per batch, and its kind
+    function DF.Count(b, key, fk)
+        if not b then return end
+        if not b.fields[fk] then
+            b.fields[fk] = true
+            b.nFields = b.nFields + 1
+        end
+        if not b.kinds[key] then
+            b.kinds[key] = true
+            b.nKinds = b.nKinds + 1
+        end
+    end
+
+    -- "icon:<kind>", made once per kind (the lookup runs on every state write)
+    DF.iconKey = setmetatable({}, { __index = function(t, kind)
+        local v = "icon:" .. tostring(kind)
+        t[kind] = v
+        return v
+    end })
+
+    -- An icon kind's own looks on the Defaults page (Core\AD_OwnLooks.lua): a
+    -- list in the kind's bucket, nil while none is saved (the shipped: none).
+    function Store.DefaultOwnLooks(kind)
+        if kind == nil then return nil end
+        local b = DB.newDefaults[DF.iconKey[kind]]
+        local l = b and b.ownLooks
+        return type(l) == "table" and l or nil
+    end
+
+    -- Sets (nil or empty drops) the kind's own looks, as SetDefaultValue sets a
+    -- value: each icon that read the old list through the defaults (no list of
+    -- its own, none from its layout) keeps it as its own, filed under `batch`.
+    -- True when it changed.
+    function Store.SetDefaultOwnLooks(kind, list, batch)
+        if not (kind and Schema.OWN_LOOK_STATES and Schema.OWN_LOOK_STATES[kind]) then return false end
+        local key = DF.iconKey[kind]
+        local old = Store.DefaultOwnLooks(kind)
+        local new = (type(list) == "table" and #list > 0) and DF.Copy(list) or nil
+        if Store.SameLooks(old, new) then return false end
+        local followers = {}
+        for _, r in pairs(DB.records) do
+            if r.type == "icon" and r.kind == kind and r.ownLooks == nil then
+                local _, src = Store.InheritedOwnLooks(r)
+                if src ~= "layout" then followers[#followers + 1] = r end
+            end
+        end
+        local bucket = DB.newDefaults[key]
+        if new then
+            bucket = bucket or {}
+            DB.newDefaults[key] = bucket
+            bucket.ownLooks = new
+        elseif bucket then
+            bucket.ownLooks = nil
+            if next(bucket) == nil then DB.newDefaults[key] = nil end
+        end
+        local b = DF.Batch(batch)
+        for _, r in ipairs(followers) do
+            -- none before is pinned as an empty list: none, not "follow"
+            r.ownLooks = DF.Copy(old) or {}
+            if b then
+                b.pins[#b.pins + 1] = { id = r.id, looks = true, v = DF.Copy(old) or {} }
+                b.pinned[r.id] = true
+            end
+        end
+        DF.Count(b, key, key .. "|ownLooks")
+        Store.Dirty("style")
+        return true
+    end
+
     -- Sets (nil drops) one saved default of a kind: push sections only, never
     -- a noDefault field (only dropping an old one), stored only where it
     -- differs from the shipped value. Each item of the kind whose look it would
@@ -2089,9 +2293,18 @@ do
         local n = 0
         for _, p in ipairs(b.pins) do
             local r = DB.records[p.id]
-            local o = r and r.o[p.section]
+            local o = (r and not p.looks) and r.o[p.section] or nil
             local cur = o and o[p.field]
-            if cur ~= nil and SameValue(cur, p.v) then
+            -- an own-looks pin: the list the icon was given, while it still holds it
+            local lc = (p.looks and r) and r.ownLooks or nil
+            if lc ~= nil and Store.SameLooks(lc, p.v) then
+                r.ownLooks = nil
+                if not follow and not Store.SameLooks((Store.InheritedOwnLooks(r)), lc) then
+                    r.ownLooks = lc
+                else
+                    n = n + 1
+                end
+            elseif cur ~= nil and SameValue(cur, p.v) then
                 o[p.field] = nil
                 if not follow and not SameValue(Store.Resolve(r, p.section, p.field), cur) then
                     o[p.field] = cur
@@ -2123,27 +2336,37 @@ do
                 end
             end
         end
+        -- an icon kind's own looks count as one (the shipped value is none)
+        if family == "icon" and Store.DefaultOwnLooks(kind) then out[#out + 1] = { Store.OWN_LOOKS_PART } end
         return out
     end
 
-    -- Every saved default of a kind back to the shipped value (asks through `batch`).
+    -- Every saved default of a kind back to the shipped value (asks through
+    -- `batch`); an icon kind's own looks too, with no parts or the own-looks part.
     function Store.ResetDefaults(family, kind, parts, batch)
         local n = 0
         local bucket = DB.newDefaults[family .. ":" .. tostring(kind)]
         if not bucket then return 0 end
-        local list = {}
+        local list, looks = {}, parts == nil
         if parts then
             for _, p in ipairs(parts) do
-                for _, f in ipairs(p.fields) do list[#list + 1] = { p.section, f } end
+                if p.section == Store.OWN_LOOKS_PART then
+                    looks = true
+                else
+                    for _, f in ipairs(p.fields) do list[#list + 1] = { p.section, f } end
+                end
             end
         else
             for section, vals in pairs(bucket) do
-                for field in pairs(type(vals) == "table" and vals or {}) do list[#list + 1] = { section, field } end
+                if section ~= Store.OWN_LOOKS_PART then
+                    for field in pairs(type(vals) == "table" and vals or {}) do list[#list + 1] = { section, field } end
+                end
             end
         end
         for _, e in ipairs(list) do
             if Store.SetDefaultValue(family, kind, e[1], e[2], nil, batch) then n = n + 1 end
         end
+        if looks and family == "icon" and Store.SetDefaultOwnLooks(kind, nil, batch) then n = n + 1 end
         return n
     end
 
@@ -2156,6 +2379,15 @@ do
             local hit = false
             if k ~= from then
                 for _, p in ipairs(parts or {}) do
+                    if p.section == Store.OWN_LOOKS_PART then
+                        -- the looks whose state the kind has; none of them: the kind keeps its own
+                        local have = family == "icon" and Store.DefaultOwnLooks(from)
+                        local l = have and Store.CleanLookList(k, DF.Copy(have))
+                        if family == "icon" and Schema.OWN_LOOK_STATES[k] and (not have or (l and #l > 0)) then
+                            Store.SetDefaultOwnLooks(k, l, batch)
+                            hit = true
+                        end
+                    end
                     for _, f in ipairs(p.fields) do
                         local def, sec = DF.Field(family, p.section, f)
                         if def and sec.push and not def.noDefault and Schema.Applies(def, sec, k) then
@@ -2180,6 +2412,12 @@ do
         for _, r in ipairs(Store.DefaultsItems(family, kind)) do
             local inh, hit = InhOf(r), false
             for _, p in ipairs(parts or {}) do
+                -- an icon's own list where its layout hands it none
+                if p.section == Store.OWN_LOOKS_PART and family == "icon" and r.ownLooks ~= nil
+                    and select(2, Store.InheritedOwnLooks(r)) ~= "layout" then
+                    hit = true
+                    if drop then r.ownLooks = nil end
+                end
                 local o = r.o[p.section]
                 local li = inh and inh[p.section]
                 local tv = tpl[p.section]
@@ -5837,6 +6075,18 @@ function Store.Export(ids, keep)
             if lay and not seen[lay.id] then BakeLook(rec, orig) end
             -- so do the maker's own saved defaults, which no string carries
             if orig then BakeDefaults(rec, orig, lay and seen[lay.id] and lay or nil) end
+            -- an icon's inherited own looks likewise: its layout's when that
+            -- stays home, the defaults' unless the layout that goes has a list
+            if orig and orig.type == "icon" and orig.ownLooks == nil then
+                local ll = Store.LayoutOwnLooks(lay, orig.kind)
+                local bake
+                if ll then
+                    if not seen[lay.id] then bake = ll end
+                else
+                    bake = Store.DefaultOwnLooks(orig.kind)
+                end
+                if bake then rec.ownLooks = CopyDeep(bake) end
+            end
         end
         DropPersonal(rec)
     end
@@ -6140,7 +6390,7 @@ end
 -- center and pin are the player's own spot like its pos: Size & Position,
 -- which starts off.
 local PART_OF_KEY = { name = "names", driver = "tracking", triggers = "tracking", kind = "tracking",
-    barKind = "tracking", barMode = "tracking", groupKind = "tracking",
+    barKind = "tracking", barMode = "tracking", groupKind = "tracking", ownLooks = "showhide",
     scale = "position", strata = "position", strataShift = "position", centerSet = "position",
     pin = "position" }
 

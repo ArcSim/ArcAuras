@@ -247,12 +247,12 @@ local GLOW_WORDS = { Type = "Style", Native = "Game's own color", Color = "Color
     TimeSec = "Under this many seconds left", AuraLength = "The aura lasts (seconds)",
     Speed = "Speed", Lines = "Lines", Thickness = "Thickness", Length = "Line length (0 = auto)",
     Backing = "Dark backing line", Particles = "Particles", Intensity = "Intensity", Scale = "Size",
-    XOffset = "X offset", YOffset = "Y offset", MoveX = "Move X", MoveY = "Move Y", Strata = "Strata",
+    FadeOut = "Fade out (seconds)", XOffset = "X offset", YOffset = "Y offset", MoveX = "Move X", MoveY = "Move Y", Strata = "Strata",
     Level = "Frame level" }
 -- switch, when it fires, look, gates, then the tuning (the tuning folds away)
 local GLOW_ORDER = { "When", "TimeUnit", "TimePct", "TimeSec", "AuraLength", "Type", "Native", "Color",
     "CombatOnly", "For", "Speed", "Lines", "Thickness", "Length", "Backing", "Particles", "Intensity", "Scale",
-    "XOffset", "YOffset", "MoveX", "MoveY", "Strata", "Level" }
+    "FadeOut", "XOffset", "YOffset", "MoveX", "MoveY", "Strata", "Level" }
 
 -- When each glow card fires, in plain words for its header.
 local WARN_WORDS = { ammo = "your ammo runs low", petHealth = "your pet's health is low",
@@ -2473,13 +2473,895 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
     return row
 end
 
+-- Own looks
+
+-- A state's own looks while a condition holds (Core\AD_OwnLooks.lua, reached
+-- at call time): a row each under the state, drawn as the state's row is,
+-- then a green row that adds one. Look rows are made when a record first
+-- needs them, so a table without looks draws as it always did.
+local LOOK_H, ADD_H = 34, 23
+-- a look's words sit further in than its state's, after the joint line
+local LOOK_X, JOINT_X = 26, 17
+-- up, down and x after the effect columns
+local CTL_BTN, CTL_GAP = 17, 3
+local CTL_W = 3 * CTL_BTN + 2 * CTL_GAP
+-- the rail's "+ Add New" green
+local GREEN = { 0.482, 0.847, 0.561 }
+
+-- One icon's table, the Defaults page's kind (the looks its icons take) and
+-- several icons at once (the lead's rows, each edit made on all of them):
+-- the last two need the engine's inheritance and its writes over many.
+local function LooksOn(r)
+    local OL = NS.OwnLooks
+    if not (r and OL and OL.List) then return false end
+    if r._adMulti then return r.type == "icon" and OL.AddMany ~= nil end
+    if r._adDefaults then return not r._adKinds and OL.Effective ~= nil end
+    return true
+end
+ET.LooksOn = LooksOn
+
+-- The record whose looks the rows list: the first of several icons.
+local function Owner(r)
+    if r and r._adMulti then return Store.Get(r._adIds[1]) end
+    return r
+end
+ET.LookOwner = Owner
+
+-- The icons of several, in the order they were picked.
+local function Picked(r)
+    local out = {}
+    for _, id in ipairs(r._adIds or {}) do
+        local x = Store.Get(id)
+        if x then out[#out + 1] = x end
+    end
+    return out
+end
+
+-- The record's looks under a state, top first.
+local function LooksOf(r, st)
+    if not LooksOn(r) then return {} end
+    local o = Owner(r)
+    return (o and NS.OwnLooks.List(o, st.key)) or {}
+end
+
+-- A listed look's place in the record's list, and the look.
+local function LookAt(e)
+    if type(e) ~= "table" then return nil, nil end
+    return e.index or e[1], e.look or e[2]
+end
+
+-- Two looks for the same state while the same conditions hold, in any order.
+local function SameLook(a, b)
+    if not (a and b) or a.state ~= b.state then return false end
+    local wa, wb = a.when or {}, b.when or {}
+    if #wa ~= #wb then return false end
+    local set = {}
+    for _, k in ipairs(wa) do set[k] = true end
+    for _, k in ipairs(wb) do
+        if not set[k] then return false end
+    end
+    return true
+end
+ET.SameLook = SameLook
+
+-- How many of several icons have this look, of how many.
+local function LookOnMany(r, look)
+    local recs, n = Picked(r), 0
+    for _, x in ipairs(recs) do
+        for _, e in ipairs(NS.OwnLooks.List(x, look.state) or {}) do
+            local _, l = LookAt(e)
+            if SameLook(l, look) then
+                n = n + 1
+                break
+            end
+        end
+    end
+    return n, #recs
+end
+
+-- The quiet words after a look's name: on how many of several icons it is,
+-- or where an icon's inherited look comes from (the layout's name raw).
+local function LookTag(r, e)
+    local _, look = LookAt(e)
+    if not look then return "" end
+    if r._adMulti then
+        local n, m = LookOnMany(r, look)
+        return n < m and Tr("on %d of %d"):format(n, m) or ""
+    end
+    local from = type(e) == "table" and e.source
+    if from == "defaults" then return Tr("from Defaults") end
+    if from == "layout" then
+        local lay = Store.LayoutOf(r)
+        return Tr("from %s"):format(lay and lay.name or "?")
+    end
+    return ""
+end
+
+-- The kind's own row for a state another kind's table names (several icons).
+local function StateOf(rec, st)
+    for _, s in ipairs(ET.STATES[rec.kind] or {}) do
+        if s.key == st.key then return s end
+    end
+    return st
+end
+
+-- A look's writes: on the record (the engine copies an inherited list into
+-- it first), or on the matching look of every icon picked.
+local function LookSet(r, idx, field, v)
+    local OL = NS.OwnLooks
+    if r._adMulti then
+        if OL.SetMatching then OL.SetMatching(Picked(r), Owner(r), idx, field, v) end
+    elseif OL.Set then
+        OL.Set(r, idx, field, v)
+    end
+end
+local function LookRemove(r, idx)
+    local OL = NS.OwnLooks
+    if r._adMulti then
+        if OL.RemoveMatching then OL.RemoveMatching(Picked(r), Owner(r), idx) end
+    elseif OL.Remove then
+        OL.Remove(r, idx)
+    end
+end
+local function LookMove(r, idx, dir)
+    local OL = NS.OwnLooks
+    if r._adMulti then
+        if OL.MoveMatching then OL.MoveMatching(Picked(r), Owner(r), idx, dir) end
+    elseif OL.Move then
+        OL.Move(r, idx, dir)
+    end
+end
+-- a new look starts as each icon's own look of the state
+local function LookAdd(r, st, condKey)
+    local OL = NS.OwnLooks
+    if r._adMulti then
+        OL.AddMany(Picked(r), st.key, condKey, function(rec) return ET.LookCopy(rec, StateOf(rec, st)) end)
+    elseif OL.Add then
+        OL.Add(r, st.key, condKey, ET.LookCopy(r, st))
+    end
+end
+
+-- The columns a look of the state can set on the record: the cells the state
+-- row draws that the engine lets a look take over (OL.Spec: an aura's Active
+-- is the game's button, so it has none), and the glow (its keys). An aura's
+-- Missing glows can only be turned off, so that cell waits for one that is on.
+local OFFER_KEY = { alpha = "a", grey = "g", tint = "t" }
+local function LookCols(r, st)
+    local has = { any = false }
+    local OL = NS.OwnLooks
+    r = Owner(r)
+    if not r then return has end
+    local offer = OL and OL.Offered and OL.Offered(r, st.key) and OL.Spec(r, st.key)
+    if not offer then return has end
+    for _, c in ipairs(COLS) do
+        local spec = st[c]
+        if spec and offer[OFFER_KEY[c]] and Applies(r, spec[1], spec[2]) then
+            has[c] = true
+            has.any = true
+        end
+    end
+    if offer.glow then
+        local offOnly = offer.glow[1] == "missing"
+        for _, f in ipairs(ET.FxFor(r, st)) do
+            if f.kind == "glow" then
+                local lit = false
+                for _, key in ipairs(f.keys) do
+                    if ET.FxLit(r, key) then lit = true end
+                end
+                if lit or not offOnly then
+                    has.glow = f.keys
+                    has.any = true
+                end
+            end
+        end
+    end
+    return has
+end
+
+-- The state's look as its row's cells show it: where a new look starts, so
+-- nothing changes until it is edited. An opacity whose switch is off is the
+-- state keeping its opacity, so a copy leaves it out; shown: the slider's
+-- value anyway, for a look row that leaves it to the state.
+function ET.LookCopy(r, st, shown)
+    r = Owner(r)
+    local has = LookCols(r, st)
+    local out = {}
+    if not r then return out end
+    if has.alpha then
+        local s = st.alpha
+        local def = Def(s[1], s[2])
+        if shown or not s.on or Store.Resolve(r, s[1], s.on) == true then
+            out.alpha = Store.Resolve(r, s[1], s[2]) or (def and def.d) or 1
+        end
+        -- a hidden Missing look draws at 0 whatever its opacity says, so a
+        -- new look must not show the icon
+        if s[1] == "auraMissing" and s[2] == "missingAlpha"
+            and Store.Resolve(r, "auraMissing", "showWhileMissing") == false then
+            out.alpha = 0
+        end
+    end
+    if has.grey then out.grey = Store.Resolve(r, st.grey[1], st.grey[2]) == true end
+    if has.tint then
+        local s = st.tint
+        out.tint = (s.on == nil) or Store.Resolve(r, s[1], s.on) == true
+        local c = Store.Resolve(r, s[1], s[2]) or { 1, 1, 1 }
+        out.tintColor = { c[1] or 1, c[2] or 1, c[3] or 1 }
+    end
+    if has.glow then
+        local on = false
+        for _, key in ipairs(has.glow) do
+            if ET.FxLit(r, key) then on = true end
+        end
+        out.glow = on
+    end
+    return out
+end
+
+-- A look's conditions in the engine's words ("no target"), translated there.
+function ET.LookWords(look)
+    local OL = NS.OwnLooks
+    return (OL and OL.Label and look and OL.Label(look)) or ""
+end
+
+-- "+ Add a Missing look while...", "an" before a vowel.
+local VOWEL = { A = true, E = true, I = true, O = true, U = true }
+function ET.AddLookWords(r, st)
+    local w = ET.StateWord(r, st) or st.label
+    if VOWEL[w:sub(1, 1):upper()] then return Tr("+ Add an %s look while..."):format(Tr(w)) end
+    return Tr("+ Add a %s look while..."):format(Tr(w))
+end
+
+-- A look's glow lights in its state's glow colour: the first one on, else
+-- the first one's, else the accent.
+local function LookGlowColor(r, keys)
+    local first
+    for _, key in ipairs(keys or {}) do
+        local def = KeyDef(r, key)
+        for _, f in ipairs(def and def.fields or {}) do
+            if f:find("Color", 1, true) then
+                local c = Store.Resolve(r, def.section, f)
+                if type(c) == "table" then
+                    if ET.FxLit(r, key) then return c end
+                    first = first or c
+                end
+                break
+            end
+        end
+    end
+    return first or COL.arc
+end
+
+-- A tooltip of one line (the theme's wants a body too).
+local function TipLine(region, text)
+    region:HookScript("OnEnter", function(self)
+        local t = text
+        if type(t) == "function" then t = t() end
+        if type(t) ~= "string" or t == "" then return end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine(Tr(t), 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    region:HookScript("OnLeave", function() GameTooltip:Hide() end)
+end
+
+-- A quiet square button for a look row's arrows and x.
+local function LookButton(row)
+    local b = CreateFrame("Button", nil, row, "BackdropTemplate")
+    b:SetSize(CTL_BTN, CTL_BTN)
+    AT.Skin(b, COL.btn, COL.line2)
+    b:HookScript("OnEnter", function() b:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1) end)
+    b:HookScript("OnLeave", function() b:SetBackdropBorderColor(COL.line2[1], COL.line2[2], COL.line2[3], 1) end)
+    return b
+end
+
+-- A look cell's switch, lit under the mouse as the state rows' are.
+local function Checkbox(parent, onClick)
+    local cb = AT.MakeCheckbox(parent)
+    cb:SetPoint("LEFT", 0, 0)
+    cb:SetScript("OnClick", onClick)
+    cb:HookScript("OnEnter", function() cb:SetHover(true) end)
+    cb:HookScript("OnLeave", function() cb:SetHover(false) end)
+    return cb
+end
+
+-- One own look's row under its state: its name joined to the state by a
+-- line, the state's cells (a dash where the state has none), its glow,
+-- then up and down (on hover, with two or more) and x. i: its place under
+-- the state. Made on demand, right above the state's add row.
+local function LookRow(T, slot, i)
+    local pg, sec, st, kind, ctx = T.pg, T.sec, slot.st, slot.kind, T.ctx
+    local function Entry()
+        local r = ctx()
+        if not (r and r.kind == kind) then return nil, nil end
+        return r, LooksOf(r, st)[i]
+    end
+    local was = pg._curSection
+    pg._curSection = sec
+    local row = AT.AddRow(pg, LOOK_H, function()
+        if not T.vis() then return false end
+        local r = ctx()
+        if not (r and r.kind == kind) or not slot.srow._visibleFn() then return false end
+        return LooksOf(r, st)[i] ~= nil
+    end)
+    pg._curSection = was
+    -- AddRow put it last: it belongs right above the state's add row
+    local list = (sec and sec.rows) or pg._rows
+    table.remove(list)
+    local at = #list + 1
+    for k, r in ipairs(list) do
+        if r == slot.add then
+            at = k
+            break
+        end
+    end
+    table.insert(list, at, row)
+    row._adOwnLook, row._adLookIndex = slot, i
+    local frame = TableEdges(row, false)
+    local jv, jh = Strip(row), Strip(row)
+    jv:SetVertexColor(COL.steel[1], COL.steel[2], COL.steel[3], 1)
+    jh:SetVertexColor(COL.steel[1], COL.steel[2], COL.steel[3], 1)
+    local nameA = row:CreateFontString(nil, "OVERLAY")
+    nameA:SetFont(AT.FONT, 12, "")
+    nameA:SetPoint("LEFT", LOOK_X, 0)
+    nameA:SetJustifyH("LEFT")
+    nameA:SetWordWrap(false)
+    local nameB = row:CreateFontString(nil, "OVERLAY")
+    nameB:SetFont(AT.FONT, 12, "")
+    nameB:SetPoint("LEFT", nameA, "RIGHT", 0, 0)
+    nameB:SetJustifyH("LEFT")
+    nameB:SetWordWrap(false)
+    -- where an inherited look comes from, or on how many of several icons
+    local tag = row:CreateFontString(nil, "OVERLAY")
+    tag:SetFont(AT.FONT, 10, "")
+    tag:SetPoint("LEFT", nameB, "RIGHT", 8, 0)
+    tag:SetJustifyH("LEFT")
+    tag:SetWordWrap(false)
+    tag:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
+    row._adLabel, row._adWords, row._adTag = nameA, nameB, tag
+
+    local function Look()
+        local _, e = Entry()
+        local _, look = LookAt(e)
+        return look
+    end
+    -- a field as the row shows it: the look's own, else its state's
+    local function Val(field)
+        local r, e = Entry()
+        local _, look = LookAt(e)
+        if not look then return nil end
+        if look[field] ~= nil then return look[field] end
+        return ET.LookCopy(r, st, true)[field]
+    end
+    local function Put(field, v)
+        local r, e = Entry()
+        local idx = LookAt(e)
+        if idx and NS.OwnLooks then LookSet(r, idx, field, v) end
+    end
+    local function Relay() AT.LayoutPage(pg) end
+    local function Name()
+        local r = ctx()
+        local look = Look()
+        if not (r and look) then return "" end
+        return Tr(ET.StateWord(r, st)) .. ", " .. ET.LookWords(look)
+    end
+    -- the name's parts set, and their width, for the table's first column
+    row._adNameW = function()
+        local r, e = Entry()
+        local _, look = LookAt(e)
+        if not (r and look) then return 0 end
+        nameA:SetText(Tr(ET.StateWord(r, st)) .. ", ")
+        nameB:SetText(ET.LookWords(look))
+        local words = LookTag(r, e)
+        tag:SetText(words)
+        tag:SetShown(words ~= "")
+        return Measure(nameA) + Measure(nameB) + (words ~= "" and (8 + Measure(tag)) or 0)
+    end
+    local function Click(field)
+        return function()
+            AT.CloseDropdown()
+            local v = Val(field) ~= true
+            Put(field, v)
+            PlaySound(v and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON
+                or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF, "Master")
+            Relay()
+        end
+    end
+
+    local hoverables = {}
+    local cells = {}
+    row._adCells = cells
+    for _, c in ipairs(COLS) do
+        local spec = st[c]
+        local cell = CreateFrame("Frame", nil, row)
+        cell:SetHeight(24)
+        cell:EnableMouse(true)
+        hoverables[#hoverables + 1] = cell
+        local C = { frame = cell, col = c, spec = spec }
+        cells[c] = C
+        local dash = cell:CreateFontString(nil, "OVERLAY")
+        dash:SetFont(AT.FONT, 12, "")
+        dash:SetPoint("LEFT", 0, 0)
+        dash:SetTextColor(COL.line2[1], COL.line2[2], COL.line2[3])
+        local never = c == "alpha" and st.never
+        dash:SetText(never and Tr(never) or "-")
+        C.dash = dash
+        local function Title() return Tr(COL_TIP[c]):format(Name()) end
+        Tip(cell, Title, function()
+            if C.has then return nil end
+            if c == "alpha" and st.never then return st.neverTip end
+            return Tr(COL_NONE[c]):format(Tr(st.label))
+        end)
+        if spec and c == "alpha" then
+            local s, box, refresh = OpacityCell(cell, function() return Val("alpha") or 1 end,
+                function(v) Put("alpha", v) end)
+            -- where the state's slider sits, after its switch when it has one
+            s:SetPoint("LEFT", spec.on and 24 or 0, 0)
+            local body = function() return Tr("How visible the icon is while this look shows. 0 hides it.") end
+            Tip(s, Title, body)
+            Tip(box, Title, body)
+            C.slider, C.box, C.refresh = s, box, refresh
+            hoverables[#hoverables + 1] = s
+            hoverables[#hoverables + 1] = box
+        elseif spec and c == "grey" then
+            local cb = Checkbox(cell, Click("grey"))
+            Tip(cb, Title, function() return Tr("Greys the icon out while this look shows.") end)
+            C.check = cb
+            hoverables[#hoverables + 1] = cb
+        elseif spec then
+            local x = 0
+            local body = function() return Tr("Colors the icon while this look shows.") end
+            if spec.on then
+                local cb = Checkbox(cell, Click("tint"))
+                Tip(cb, Title, body)
+                C.on = cb
+                hoverables[#hoverables + 1] = cb
+                x = 24
+            end
+            local sw = AT.MakeSwatch(cell, 30, 14)
+            sw:SetPoint("LEFT", x, 0)
+            PickColor(sw, function()
+                local v = Val("tintColor") or { 1, 1, 1 }
+                return { v[1] or 1, v[2] or 1, v[3] or 1, v[4] }
+            end, function(v) Put("tintColor", { v[1], v[2], v[3] }) end, false, nil, Relay)
+            Tip(sw, Title, body)
+            C.swatch = sw
+            hoverables[#hoverables + 1] = sw
+        end
+    end
+
+    -- its glow: lit in the state's glow colour while on, a plus while off
+    local gb = CreateFrame("Button", nil, row, "BackdropTemplate")
+    gb:SetSize(32, 24)
+    AT.Skin(gb, COL.box, COL.line)
+    local lit = ET.Glyph(gb, "glow")
+    lit:SetPoint("CENTER", 0, 0)
+    local plus = ET.Glyph(gb, "add")
+    plus:SetPoint("CENTER", 0, 0)
+    gb._adLit, gb._adAdd = lit, plus
+    function gb:_adPaint()
+        local on = self._adOn
+        local fillC = on and COL.panel or COL.box
+        local edge = self._hot and COL.arc or (on and COL.line2 or COL.line)
+        self:SetBackdropColor(fillC[1], fillC[2], fillC[3], 1)
+        self:SetBackdropBorderColor(edge[1], edge[2], edge[3], (on or self._hot) and 1 or 0.6)
+    end
+    gb:SetScript("OnClick", Click("glow"))
+    gb:HookScript("OnEnter", function() gb._hot = true gb:_adPaint() end)
+    gb:HookScript("OnLeave", function() gb._hot = nil gb:_adPaint() end)
+    Tip(gb, function() return Name() .. ": " .. Tr(ET.FX_WORD.glow) end,
+        function() return Tr("On: it glows while this look shows. Click to switch it.") end)
+    gb:Hide()
+    row._adGlow = gb
+    hoverables[#hoverables + 1] = gb
+
+    -- up and down swap it with its neighbour under the state; x removes it
+    local up, down, x = LookButton(row), LookButton(row), LookButton(row)
+    local cu, cd = AT.MakeChevron(up), AT.MakeChevron(down)
+    cu:SetPoint("CENTER", 0, 0)
+    cu:SetDir("up")
+    cu:SetColor(COL.chev)
+    cd:SetPoint("CENTER", 0, 0)
+    cd:SetDir("down")
+    cd:SetColor(COL.chev)
+    local xf = x:CreateFontString(nil, "OVERLAY")
+    xf:SetFont(AT.FONT, 10, "")
+    xf:SetPoint("CENTER", 0, 1)
+    xf:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+    xf:SetText("x")
+    local function Move(dir)
+        AT.CloseDropdown()
+        local r, e = Entry()
+        local idx = LookAt(e)
+        local to = i + dir
+        if not (idx and NS.OwnLooks) or to < 1 or to > #LooksOf(r, st) then return end
+        LookMove(r, idx, dir)
+        Relay()
+    end
+    up:SetScript("OnClick", function() Move(-1) end)
+    down:SetScript("OnClick", function() Move(1) end)
+    x:SetScript("OnClick", function()
+        AT.CloseDropdown()
+        local r, e = Entry()
+        local idx = LookAt(e)
+        if idx and NS.OwnLooks then LookRemove(r, idx) end
+        Relay()
+    end)
+    local order = function() return Tr("The top look wins when several hold.") end
+    Tip(up, function() return Tr("Move up") end, order)
+    Tip(down, function() return Tr("Move down") end, order)
+    TipLine(x, function() return Tr("Remove this look") end)
+    up:Hide()
+    down:Hide()
+    row._adUp, row._adDown, row._adX = up, down, x
+    for _, b in ipairs({ up, down, x }) do hoverables[#hoverables + 1] = b end
+
+    -- the arrows show while the mouse is anywhere on the row
+    local function Hover()
+        local on = row._adMany == true and row:IsMouseOver() and true or false
+        up:SetShown(on)
+        down:SetShown(on)
+    end
+    row._adHover = Hover
+    row:EnableMouse(true)
+    row:SetScript("OnEnter", Hover)
+    row:SetScript("OnLeave", Hover)
+    for _, f in ipairs(hoverables) do
+        f:HookScript("OnEnter", Hover)
+        f:HookScript("OnLeave", Hover)
+    end
+
+    row._sync = function()
+        local r = ctx()
+        local look = Look()
+        if not (look and T.c1) then return end
+        local n = #LooksOf(r, st)
+        frame(T.full or T.w)
+        -- the joint: down from the row above, to the middle on the last look
+        local px = AT.Hairline(row)
+        jv:ClearAllPoints()
+        jv:SetPoint("TOPLEFT", JOINT_X, 1)
+        jv:SetSize(px, (i == n) and (LOOK_H / 2 + 1) or (LOOK_H + 2))
+        jh:ClearAllPoints()
+        jh:SetPoint("TOPLEFT", JOINT_X, -LOOK_H / 2)
+        jh:SetSize(LOOK_X - 3 - JOINT_X, px)
+        -- the state's words a step under its own, the condition's in the accent
+        nameA:SetTextColor((COL.ink[1] + COL.dim[1]) / 2, (COL.ink[2] + COL.dim[2]) / 2,
+            (COL.ink[3] + COL.dim[3]) / 2)
+        nameB:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+        row._adNameW()
+        local has = LookCols(r, st)
+        local xs = { alpha = T.c1, grey = T.c2, tint = T.c3 }
+        local ws = { alpha = T.w1, grey = T.w2, tint = T.w3 }
+        for _, c in ipairs(COLS) do
+            local C = cells[c]
+            C.frame:ClearAllPoints()
+            C.frame:SetPoint("LEFT", xs[c], 0)
+            C.frame:SetWidth(ws[c])
+            C.has = has[c] == true and C.spec ~= nil
+            C.dash:SetShown(not C.has)
+            for _, w in ipairs({ C.on or false, C.slider or false, C.box or false, C.check or false, C.swatch or false }) do
+                if w then w:SetShown(C.has) end
+            end
+            if C.has then
+                if C.refresh then C.refresh() end
+                if C.check then C.check:SetOn(Val("grey") == true) end
+                if C.on then C.on:SetOn(Val("tint") == true) end
+                if C.swatch then
+                    local v = Val("tintColor") or { 1, 1, 1 }
+                    C.swatch:SetColor({ v[1] or 1, v[2] or 1, v[3] or 1 })
+                end
+            end
+        end
+        local gx = T.fxX and T.fxX.glow
+        if has.glow and gx then
+            local on = Val("glow") == true
+            gb._adOn = on
+            gb:_adPaint()
+            lit:SetShown(on)
+            plus:SetShown(not on)
+            if on then lit:SetColor(LookGlowColor(r, has.glow)) end
+            plus:SetColor(COL.line2)
+            gb:ClearAllPoints()
+            gb:SetPoint("LEFT", gx + 6, 0)
+            gb:Show()
+        else
+            gb:Hide()
+        end
+        local cx = T.ctlX or (T.w - 10)
+        row._adMany = n >= 2
+        up:ClearAllPoints()
+        up:SetPoint("LEFT", cx, 0)
+        down:ClearAllPoints()
+        down:SetPoint("LEFT", cx + CTL_BTN + CTL_GAP, 0)
+        x:ClearAllPoints()
+        x:SetPoint("LEFT", cx + (row._adMany and 2 * (CTL_BTN + CTL_GAP) or 0), 0)
+        up:SetAlpha(i == 1 and 0.35 or 1)
+        down:SetAlpha(i == n and 0.35 or 1)
+        Hover()
+    end
+
+    -- found by its name, as the state rows are by their cells
+    row._adSearch = function()
+        if not Look() then return {} end
+        return { Name() }
+    end
+    return row
+end
+
+-- The conditions a look can wait on, grouped as the condition list groups
+-- them, in the engine's order.
+local function LookGroups()
+    local OL, C = NS.OwnLooks, NS.Conditions
+    local cats = {}
+    for _, c in ipairs(C and C.CATEGORIES or {}) do cats[c.id] = c.text end
+    local out, by = {}, {}
+    for _, c in ipairs(OL and OL.CONDITIONS or {}) do
+        local d = C and C.ByKey and C.ByKey(c.key)
+        local cat = c.cat or (d and d.cat) or "other"
+        local g = by[cat]
+        if not g then
+            g = { title = cats[cat] or "Other", items = {} }
+            by[cat] = g
+            out[#out + 1] = g
+        end
+        g.items[#g.items + 1] = c
+    end
+    return out
+end
+
+local PICK_W, PICK_PAD, PICK_HEAD_H, PICK_ITEM_H = 128, 3, 17, 19
+
+-- The condition pick under an add row: two columns of groups, on the window
+-- as a dropdown's list is (a section box clips its children). One per table.
+function ET.LookPick(T)
+    if T.lookPick then return T.lookPick end
+    local p = CreateFrame("Frame", nil, T.owner or T.head:GetParent(), "BackdropTemplate")
+    AT.Skin(p, COL.panel, COL.line2)
+    p:EnableMouse(true)
+    p:Hide()
+    T.lookPick = p
+    p._heads, p._items = {}, {}
+    local function Head(n)
+        local fs = p._heads[n]
+        if not fs then
+            fs = p:CreateFontString(nil, "OVERLAY")
+            fs:SetFont(AT.FONT, 9, "")
+            fs:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
+            fs:SetJustifyH("LEFT")
+            fs:SetWordWrap(false)
+            p._heads[n] = fs
+        end
+        return fs
+    end
+    local function Item(n)
+        local b = p._items[n]
+        if not b then
+            b = CreateFrame("Button", nil, p)
+            b:SetHeight(PICK_ITEM_H)
+            b:SetHighlightTexture(AT.WHITE)
+            b:GetHighlightTexture():SetVertexColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 0.5)
+            b.t = b:CreateFontString(nil, "OVERLAY")
+            b.t:SetFont(AT.FONT, 11, "")
+            b.t:SetPoint("LEFT", 14, 0)
+            b.t:SetJustifyH("LEFT")
+            b.t:SetWordWrap(false)
+            b:SetScript("OnClick", function(self)
+                local pick, key = p._onPick, self._adKey
+                AT.CloseDropdown()
+                if pick and key then pick(key) end
+            end)
+            p._items[n] = b
+        end
+        return b
+    end
+    -- The groups in two columns, the first taking groups until it holds
+    -- half the conditions; each column as wide as its words need.
+    function p:Fill()
+        local groups = LookGroups()
+        local total = 0
+        for _, g in ipairs(groups) do total = total + #g.items end
+        local cols, n1, second = { {}, {} }, 0, false
+        for _, g in ipairs(groups) do
+            if not second and n1 >= total / 2 and #cols[1] > 0 then second = true end
+            local c = second and cols[2] or cols[1]
+            c[#c + 1] = g
+            if not second then n1 = n1 + #g.items end
+        end
+        for _, fs in ipairs(self._heads) do fs:Hide() end
+        for _, b in ipairs(self._items) do b:Hide() end
+        local ink = { (COL.ink[1] + COL.dim[1]) / 2, (COL.ink[2] + COL.dim[2]) / 2, (COL.ink[3] + COL.dim[3]) / 2 }
+        local nh, ni, x, h = 0, 0, 0, 0
+        for _, col in ipairs(cols) do
+            if #col > 0 then
+                local w, y, made = PICK_W, PICK_PAD, {}
+                for _, g in ipairs(col) do
+                    nh = nh + 1
+                    local fs = Head(nh)
+                    fs:SetText(Upper(Tr(g.title)))
+                    w = math.max(w, Measure(fs) + 8 + 9)
+                    made[#made + 1] = { fs = fs, y = y }
+                    y = y + PICK_HEAD_H
+                    for _, c in ipairs(g.items) do
+                        ni = ni + 1
+                        local b = Item(ni)
+                        b._adKey = c.key
+                        b.t:SetText(Tr(c.text))
+                        b.t:SetTextColor(ink[1], ink[2], ink[3])
+                        w = math.max(w, Measure(b.t) + 14 + 9)
+                        made[#made + 1] = { b = b, y = y }
+                        y = y + PICK_ITEM_H
+                    end
+                end
+                for _, m in ipairs(made) do
+                    if m.fs then
+                        m.fs:ClearAllPoints()
+                        m.fs:SetPoint("LEFT", self, "TOPLEFT", x + 8, -(m.y + PICK_HEAD_H / 2))
+                        m.fs:Show()
+                    else
+                        m.b:ClearAllPoints()
+                        m.b:SetPoint("TOPLEFT", self, "TOPLEFT", x, -m.y)
+                        m.b:SetWidth(w)
+                        m.b:Show()
+                    end
+                end
+                x = x + w
+                h = math.max(h, y)
+            end
+        end
+        self:SetSize(math.max(PICK_W, x), h + PICK_PAD)
+    end
+    -- Opens under the add row, or over it when the page has no room below.
+    function p:Open(btn, onPick, pg)
+        self._owner, self._onPick = btn, onPick
+        self:Fill()
+        self:ClearAllPoints()
+        self:SetFrameLevel(btn:GetFrameLevel() + 50)
+        local bb, pb = btn:GetBottom(), pg and pg:GetBottom()
+        local bs, ps = btn:GetEffectiveScale() or 1, pg and pg:GetEffectiveScale() or 1
+        local room = (bb and pb) and (bb * bs - pb * ps) / bs or nil
+        if room and room < self:GetHeight() + 4 then
+            self:SetPoint("BOTTOMLEFT", btn, "TOPLEFT", 0, 3)
+        else
+            self:SetPoint("TOPLEFT", btn, "BOTTOMLEFT", 0, -3)
+        end
+        self:Show()
+        AT.openDropdown = self
+    end
+    -- a click anywhere else shuts it (its add row toggles it itself)
+    p:SetScript("OnShow", function(self) self:RegisterEvent("GLOBAL_MOUSE_DOWN") end)
+    p:SetScript("OnHide", function(self)
+        self:UnregisterEvent("GLOBAL_MOUSE_DOWN")
+        local b = self._owner
+        self._owner, self._onPick = nil, nil
+        if AT.openDropdown == self then AT.openDropdown = nil end
+        if b and b._adPaint then b._adPaint() end
+    end)
+    p:SetScript("OnEvent", function(self, _, button)
+        if button ~= "LeftButton" and button ~= "RightButton" then return end
+        if self:IsMouseOver() or (self._owner and self._owner:IsMouseOver()) then return end
+        AT.CloseDropdown()
+    end)
+    return p
+end
+
+-- The green row under a state's looks: "+ Add a <state> look while..." and
+-- the pick it opens; a pick adds a look that starts as the state's look.
+-- Only a state with a column a look can set has one; drawn on first show.
+local function AddLookRow(pg, T, ctx, vis, kind, st, srow)
+    local slot = { kind = kind, st = st, srow = srow, rows = {} }
+    local row = AT.AddRow(pg, ADD_H, function()
+        if not vis() then return false end
+        local r = ctx()
+        if not (r and r.kind == kind and LooksOn(r)) or not srow._visibleFn() then return false end
+        -- the Defaults page draws every state; a state only some icons have
+        -- (Recharging, Toggled on) gets its looks on those icons, which keeps
+        -- the page within its height
+        if r._adDefaults and st.showIf and st.showIf(r) ~= true then return false end
+        -- at the engine's cap a pick could add nothing (an inherited list
+        -- counts: the add copies it first)
+        local max, OL, o = Schema.OWN_LOOK_MAX, NS.OwnLooks, Owner(r)
+        local list = (OL.Effective and o and OL.Effective(o)) or (o and o.ownLooks)
+        if max and type(list) == "table" and #list >= max then return false end
+        return LookCols(r, st).any
+    end)
+    slot.add = row
+    row._adLookAdd = slot
+    T.slots[#T.slots + 1] = slot
+    local frame, btn
+    local function Build()
+        frame = TableEdges(row, false)
+        btn = CreateFrame("Button", nil, row, "BackdropTemplate")
+        btn:SetHeight(17)
+        btn:SetPoint("LEFT", LOOK_X, 0)
+        AT.Skin(btn, COL.btn, GREEN)
+        local fs = btn:CreateFontString(nil, "OVERLAY")
+        fs:SetFont(AT.FONT, 11, "")
+        fs:SetPoint("LEFT", 2, 0)
+        fs:SetJustifyH("LEFT")
+        fs:SetWordWrap(false)
+        fs:SetTextColor(GREEN[1], GREEN[2], GREEN[3])
+        btn.fs = fs
+        -- bare words at rest; the rail's add look under the mouse or while its pick is open
+        function btn._adPaint()
+            local p = T.lookPick
+            local hot = btn._hot or (p ~= nil and p:IsShown() and p._owner == btn)
+            btn:SetBackdropColor(COL.btn[1], COL.btn[2], COL.btn[3], hot and 1 or 0)
+            btn:SetBackdropBorderColor(GREEN[1], GREEN[2], GREEN[3], hot and 1 or 0)
+        end
+        btn:SetScript("OnEnter", function() btn._hot = true btn._adPaint() end)
+        btn:SetScript("OnLeave", function() btn._hot = nil btn._adPaint() end)
+        btn:SetScript("OnClick", function()
+            local p = ET.LookPick(T)
+            if p:IsShown() and p._owner == btn then
+                AT.CloseDropdown()
+                return
+            end
+            AT.CloseDropdown()
+            p:Open(btn, function(key)
+                local r = ctx()
+                if r and r.kind == kind and LooksOn(r) then LookAdd(r, st, key) end
+                AT.LayoutPage(pg)
+            end, pg)
+            btn._adPaint()
+        end)
+        Tip(btn, function() return Tr("Own look") end,
+            function() return Tr("It starts as this state's look. When several hold, the top one wins.") end)
+        btn._adPaint()
+        row._adAddButton = btn
+        row:HookScript("OnHide", function()
+            local p = T.lookPick
+            if p and p:IsShown() and p._owner == btn then AT.CloseDropdown() end
+        end)
+    end
+    row._sync = function()
+        local r = ctx()
+        if not (r and r.kind == kind and T.c1 and LooksOn(r)) then return end
+        if not btn then Build() end
+        frame(T.full or T.w)
+        btn.fs:SetText(ET.AddLookWords(r, st))
+        btn:SetWidth(Measure(btn.fs) + 4)
+    end
+    return slot
+end
+
+-- Where one icon with its own looks takes them from once it follows again:
+-- "layout" or "defaults" while that holds looks, else nil.
+function ET.LookFollowFrom(r)
+    local OL = NS.OwnLooks
+    if not (r and not r._adMulti and not r._adDefaults and LooksOn(r) and OL.Effective and OL.Follow) then
+        return nil
+    end
+    local _, src = OL.Effective(r)
+    if src ~= "own" or not Store.InheritedOwnLooks then return nil end
+    local list, from = Store.InheritedOwnLooks(r)
+    return (type(list) == "table" and #list > 0) and from or nil
+end
+
 -- The table: a header row, then one row per state of the record's kind, each
 -- with its editor row under it. It joins the section open on pg and spans
 -- its width; vis gates the whole table. owner: the window a dropdown opens over.
 function ET.StateTable(pg, ctx, vis, owner)
-    local T = { rows = {}, editors = {}, owner = owner }
+    local T = { rows = {}, editors = {}, owner = owner, slots = {} }
+    -- what an own look's row needs to join the table later
+    T.pg, T.sec, T.ctx, T.vis = pg, pg._curSection, ctx, vis
+    -- Rows for the record's own looks, made before they show: the head runs
+    -- first in its section, so a layout pass sees them.
+    function T.GrowLooks(r)
+        if not LooksOn(r) then return end
+        for _, slot in ipairs(T.slots) do
+            if slot.kind == r.kind then
+                local n = #LooksOf(r, slot.st)
+                while #slot.rows < n do
+                    slot.rows[#slot.rows + 1] = LookRow(T, slot, #slot.rows + 1)
+                end
+            end
+        end
+    end
     local head = AT.AddRow(pg, 36, function()
-        return vis() and ET.StatesFor(ctx()) ~= nil
+        local on = vis() and ET.StatesFor(ctx()) ~= nil
+        -- the search walks rows without a layout pass
+        if on and Indexing() then T.GrowLooks(ctx()) end
+        return on
     end)
     head._adStateHead = T
     local frame = TableEdges(head, true)
@@ -2511,6 +3393,7 @@ function ET.StateTable(pg, ctx, vis, owner)
     -- column shows while a row has that effect.
     head._sync = function()
         local r = ctx()
+        if r then T.GrowLooks(r) end
         local lw = Measure(heads[1])
         local hasOn, hasClock = false, false
         local has = {}
@@ -2524,6 +3407,18 @@ function ET.StateTable(pg, ctx, vis, owner)
                 if tm and r and tm.ok(r) == true and Applies(r, tm[1], tm.on) then hasClock = true end
                 if r then
                     for _, f in ipairs(ET.FxFor(r, row._adStateRow)) do has[f.kind] = true end
+                end
+            end
+        end
+        -- an own look's name starts further in than its state's
+        local anyLook = false
+        for _, slot in ipairs(r and T.slots or {}) do
+            if slot.kind == r.kind then
+                for _, lr in ipairs(slot.rows) do
+                    if lr._visibleFn() then
+                        anyLook = true
+                        lw = math.max(lw, LOOK_X - 14 + lr._adNameW())
+                    end
                 end
             end
         end
@@ -2556,6 +3451,18 @@ function ET.StateTable(pg, ctx, vis, owner)
             end
         end
         T.w = x + 12
+        -- a look's arrows and x after the effect columns
+        T.ctlX = T.w - 10
+        if anyLook then T.w = math.max(T.w, T.ctlX + CTL_W + 12) end
+        -- Follow defaults at the head's right end, clear of the effect heads
+        local from = ET.LookFollowFrom(r)
+        if from then
+            local b = T.Follow()
+            b._adFrom = from
+            b.fs:SetText(from == "layout" and Tr("Follow layout") or Tr("Follow defaults"))
+            b:SetWidth(math.max(104, Measure(b.fs) + 16))
+            T.w = math.max(T.w, x + 12 + b:GetWidth() + 10)
+        end
         -- the box spans the section (the next pass, once the width is known)
         local rw = head:GetWidth() or 0
         if rw <= 60 then pg._sizeUnresolved = true end
@@ -2565,15 +3472,39 @@ function ET.StateTable(pg, ctx, vis, owner)
             heads[i]:ClearAllPoints()
             heads[i]:SetPoint("BOTTOMLEFT", head, "BOTTOMLEFT", hx[i], 6)
         end
+        if T.follow then
+            T.follow:ClearAllPoints()
+            T.follow:SetPoint("RIGHT", head, "LEFT", T.full - 10, 0)
+            T.follow:SetShown(from ~= nil)
+        end
         frame(T.full)
     end
     T.head = head
+    -- made on first need, so a table without own looks draws as it did
+    function T.Follow()
+        if T.follow then return T.follow end
+        local b = AT.MakeQuietButton(head, "Follow defaults", 104)
+        b:SetScript("OnClick", function()
+            AT.CloseDropdown()
+            local r, OL = ctx(), NS.OwnLooks
+            if r and OL and OL.Follow and ET.LookFollowFrom(r) then OL.Follow(r) end
+            AT.LayoutPage(pg)
+        end)
+        Tip(b, function() return b._adFrom == "layout" and Tr("Follow layout") or Tr("Follow defaults") end,
+            function()
+                return b._adFrom == "layout" and Tr("Drops this icon's own looks, so it takes the ones its layout sets.")
+                    or Tr("Drops this icon's own looks, so it takes the ones its defaults set.")
+            end)
+        T.follow = b
+        return b
+    end
     for _, kind in ipairs(Schema.ICON_KINDS) do
         for _, st in ipairs(ET.STATES[kind] or {}) do
             Options.BuildYield()
             local srow = StateRow(pg, T, ctx, vis, kind, st, owner)
             Options.BuildYield()
             T.editors[#T.editors + 1] = EditorRow(pg, T, ctx, vis, kind, st, owner, srow)
+            AddLookRow(pg, T, ctx, vis, kind, st, srow)
         end
     end
     ET.lastTable = T

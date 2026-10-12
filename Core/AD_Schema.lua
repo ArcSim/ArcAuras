@@ -419,6 +419,36 @@ Schema.LOOK_MODES = { "power", "spec", "talent" }
 Schema.LOOK_SKIP = { size = true, frame = true, anchor = true, behavior = true, mouse = true }
 Schema.PIN_LABELS = { own = "Its own spot", frame = "A named frame", action = "An action button",
     cdm = "A Cooldown Manager icon" }
+-- An icon's own looks (Core\AD_OwnLooks.lua, rec.ownLooks): per kind, the
+-- states one can take over and what each state has: a opacity, g grey out,
+-- t tint, glow its glow switches in the states section (the first one shows
+-- when a look turns the glow on and none is). An aura's Active look is drawn
+-- by the game's button, which can't be restyled in combat, so an aura offers
+-- only Missing; its "missing" glow is the Missing glows, which a look can only
+-- turn off. The conditions are ones the game lets us read in combat.
+Schema.OWN_LOOK_CONDITIONS = { "inCombat", "outOfCombat", "hasTarget", "noTarget", "targetHostile",
+    "solo", "raid", "instance", "encounter", "mounted" }
+Schema.OWN_LOOK_MAX = 30
+do
+    local function St(glow, a, g, t) return { a = a ~= false, g = g ~= false, t = t ~= false, glow = glow } end
+    local READY = St({ "readyGlow", "usableGlow" })
+    local COOLDOWN = St({ "cooldownGlow" })
+    local PLAIN = St(nil)
+    Schema.OWN_LOOK_STATES = {
+        spell = { ready = READY, recharge = St({ "rechargeGlow" }), cooldown = COOLDOWN, unusable = PLAIN,
+            nomana = PLAIN, range = St({ "rangeGlow" }), toggle = St({ "toggleGlow" }) },
+        item = { ready = READY, cooldown = COOLDOWN, unusable = PLAIN, out = PLAIN },
+        trinket = { ready = READY, cooldown = COOLDOWN },
+        ammo = { ready = St(nil, true, false, false), out = PLAIN },
+        timer = { active = St({ "readyGlow" }), inactive = COOLDOWN, idle = St({ "idleGlow" }) },
+        totem = { active = St({ "readyGlow" }), missing = PLAIN },
+        enchant = { active = St({ "readyGlow" }), missing = PLAIN, noweapon = St(nil, true, false, false) },
+        special = { ready = St({ "readyGlow" }), cooldown = COOLDOWN },
+        groupbuff = { lacking = St(nil, true, false, false), covered = St(nil, true, true, false) },
+        stance = { active = St({ "readyGlow" }), inactive = PLAIN },
+        aura = { missing = St({ "missing" }) },
+    }
+end
 -- The classes that shoot a wand; the wand rows show only there.
 local WAND_CLASSES = { PRIEST = true, MAGE = true, WARLOCK = true }
 
@@ -2046,8 +2076,8 @@ Schema.icon = {
 -- (DriverAura); in a Dynamic aura group the row's button draws them.
 -- Every icon glow lane gets two look switches: the game's own colour on a
 -- button or proc glow (its gold art untinted, so the lane's colour steps
--- aside) and the pixel glow's dark backing line. Its offsets and moves reach
--- 50 and its frame level 100.
+-- aside) and the pixel glow's dark backing line, plus the button glow's fade
+-- out. Its offsets and moves reach 50 and its frame level 100.
 Schema.GLOW_NATIVE_STYLES = { button = true, proc = true, procloop = true, pandemic = true }
 Schema.GLOW_NATIVE_GATED = {}
 function Schema.NativeGlowOn(sec, native, typeField)
@@ -2064,7 +2094,8 @@ Schema.GLOW_LANE_WORDS = { ready = "Glow", cooldown = "Cooldown glow", proc = "P
     usable = "Usable glow", warn = "Warning glow", toggle = "Toggle glow", assist = "Suggested glow",
     range = "Out-of-range glow", recharge = "Recharging glow", totemRange = "Out of range glow",
     idle = "Ready glow", active = "Active glow" }
-Schema.LANE_LABELS = { native = "%s in the game's own color", backing = "%s dark backing line" }
+Schema.LANE_LABELS = { native = "%s in the game's own color", backing = "%s dark backing line",
+    fade = "%s fade out (seconds)" }
 do
     local lanes = { { "states", "ready" }, { "states", "cooldown" }, { "states", "proc" }, { "states", "usable" },
         { "states", "warn" }, { "states", "toggle" }, { "states", "assist" }, { "states", "range" },
@@ -2088,6 +2119,13 @@ do
             fields[pre .. "GlowBacking"] = Lane({ adv = "glow", d = false, t = "bool", label = Schema.LANE_LABELS.backing:format(word),
                 desc = "A dim dark line along the edge, under the moving lines.",
                 dep = { { field = sw }, { field = ty, value = "pixel" } } })
+            -- the aura's Active glow draws its own button art, which has no fade
+            if pre ~= "active" then
+                fields[pre .. "GlowFadeOut"] = Lane({ adv = "glow", d = 0, t = "num", min = 0, max = 1, step = 0.05,
+                    fmt = "%g", label = Schema.LANE_LABELS.fade:format(word),
+                    desc = "How long the button glow takes to fade when it stops. 0: it goes at once.",
+                    dep = { { field = sw }, { field = ty, value = "button" } } })
+            end
             local on = Schema.NativeGlowOn(sec, pre .. "GlowNative", ty)
             local cdef = fields[pre .. "GlowColor"]
             if cdef then

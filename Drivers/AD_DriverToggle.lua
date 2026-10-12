@@ -178,6 +178,7 @@ end
 function DT.StateSet(rec)
     return DT.R(rec, "toggleAlphaEnabled") == true or DT.R(rec, "toggleDesaturate") == true
         or DT.R(rec, "toggleTintEnabled") == true or DT.R(rec, "queueShort") == true
+        or (NS.OwnLooks ~= nil and NS.OwnLooks.Has(rec, "toggle"))
 end
 
 -- A set toggle look is followed on a toggle spell, and on a spell that may be
@@ -256,7 +257,8 @@ end
 function DT.Apply(f, rec)
     local only = f._adGlowLaneOnly
     local preview = only == "toggle"
-    local want = DT.IsToggle(rec) and DT.R(rec, "toggleGlow") == true and (only == nil or preview)
+    local want = DT.IsToggle(rec) and NS.Factory.LookGlow(f, "toggleGlow", DT.R(rec, "toggleGlow") == true)
+        and (only == nil or preview)
         and Store.Resolve(rec, "appearance", "forceHideIcon") ~= true
         and (preview or DT.On(rec))
     if not want then

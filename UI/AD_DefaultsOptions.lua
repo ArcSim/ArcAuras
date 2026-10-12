@@ -486,6 +486,10 @@ function D.StateParts(px)
     end
     if not (ET and px and not px._adKinds and ET.StatesFor(px)) then return out end
     for _, p in ipairs(ET.StateParts(px)) do add(p.section, p.fields) end
+    -- the kind's own looks (Core\AD_OwnLooks.lua): the store's follow, reset
+    -- and copy take them in with this part
+    local OL = NS.OwnLooks
+    if OL and OL.PART and OL.Effective and px._adFamily == "icon" then add(OL.PART.section, {}) end
     local shows = ET.blockShows
     if shows then
         for _, list in pairs(ET.FX_BLOCKS) do
@@ -521,6 +525,11 @@ function D.SectionParts(family, s, px, out, bySec)
     end
     if s.state then
         for _, p in ipairs(D.StateParts(px)) do
+            -- a part with no fields (the own looks) goes in whole
+            if #p.fields == 0 and not bySec[p.section] then
+                bySec[p.section] = { section = p.section, fields = {}, has = {} }
+                out[#out + 1] = bySec[p.section]
+            end
             for _, f in ipairs(p.fields) do add(p.section, f) end
         end
         return out, bySec
@@ -537,10 +546,15 @@ function D.SectionParts(family, s, px, out, bySec)
     return out, bySec
 end
 
--- How many fields of these parts differ from the shipped value.
+-- How many fields of these parts differ from the shipped value; the own-looks
+-- part (the state table's) is one while the kind holds own looks, as the
+-- store counts them.
 function D.CountChanged(family, px, parts)
     local n = 0
     for _, p in ipairs(parts) do
+        if p.section == Store.OWN_LOOKS_PART then
+            if not px._adKinds and Store.DefaultOwnLooks and Store.DefaultOwnLooks(px._adKind) then n = n + 1 end
+        end
         for _, f in ipairs(p.fields) do
             if D.Changed(family, px, p.section, f) then n = n + 1 end
         end
@@ -857,7 +871,8 @@ function D.BuildFamily(family, host)
                 ET.StateTable(pg, ctx, vis, D.win)
                 P.stateTable = ET.lastTable
                 ET.lastTable = editorTable
-                -- the filter shows the table while a state's look or effect changed
+                -- the filter shows the table while a state's look or effect
+                -- changed, or the kind holds own looks (D.StateParts)
                 for i = first, #pg._sections do
                     for _, row in ipairs(pg._sections[i].rows) do
                         local inner = row._visibleFn

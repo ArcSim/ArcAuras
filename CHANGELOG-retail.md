@@ -1,5 +1,18 @@
 # Arc Auras
 
+## 2.9.0
+
+Own looks for any state, and a fade setting for button glows.
+
+### New Features
+
+- **Own looks** - Give any state its own look while something is true, like Missing with no target or Ready in combat (Conditions > By State).
+- **Button glow fade out** - Set how long a button glow fades when it stops. By default it stops at once.
+
+### Bug Fixes
+
+- **Button glow on hidden icons** - A hidden icon no longer leaves its button glow fading behind.
+
 ## 2.8.0
 
 Arc Auras in Korean, Custom Icons that show an aura and a cooldown, and No charges.

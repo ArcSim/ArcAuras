@@ -108,10 +108,30 @@ function AR.MissMode(rec)
     local DA = NS.DriverAura
     if not (DA and DA.EraserAvailable and DA.EraserAvailable()) then return nil end
     local R = function(s, k) return Store.Resolve(rec, s, k) end
-    if R("auraMissing", "showWhileMissing") ~= true then return nil end
-    if (R("auraMissing", "missingAlpha") or 1) <= 0 then return nil end
+    -- an own Missing look that shows it takes its stage whatever holds now:
+    -- the row can't be rebuilt in combat when a condition moves
+    local OL = NS.OwnLooks
+    if not (OL and OL.ShowsMissing(rec)) then
+        if R("auraMissing", "showWhileMissing") ~= true then return nil end
+        if (R("auraMissing", "missingAlpha") or 1) <= 0 then return nil end
+    end
     if (R("auraActive", "activeAlpha") or 1) <= 0 then return "missing" end
     return "both"
+end
+
+-- The Missing look a member wears now, as Factory.SetState's aura path paints
+-- it: its alpha and grey, and the own look in play (Core\AD_OwnLooks.lua) or nil.
+function AR.MissLook(rec)
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    local a = (R("auraMissing", "showWhileMissing") == false) and 0 or (R("auraMissing", "missingAlpha") or 1)
+    local desat = R("auraMissing", "missingDesaturate") ~= false
+    local OL = NS.OwnLooks
+    local LM = OL ~= nil and OL.Active(rec, "missing") or nil
+    if LM then
+        if LM.alpha ~= nil then a = LM.alpha end
+        if LM.grey ~= nil then desat = LM.grey end
+    end
+    return a, desat, LM
 end
 
 -- One container following `unit` with one parked aura group. Its buttons are
@@ -636,7 +656,7 @@ function AR.PaintLook(p, rec, w, h)
         p.look = look
     end
     local kS = h / 36
-    local ma = R("auraMissing", "missingAlpha") or 1
+    local ma, desat, LM = AR.MissLook(rec)
     local hide = R("appearance", "forceHideIcon") == true
     local art = look.art
     art:SetTexture(F.GetTexture(rec))
@@ -652,8 +672,19 @@ function AR.PaintLook(p, rec, w, h)
         F.SkinArt(art, rec, plan, st, w, h)
         F.SkinLayers(plan, st, st, st, art, w, h, ma, hide)
     end
-    art:SetDesaturated(R("auraMissing", "missingDesaturate") ~= false)
+    art:SetDesaturated(desat)
     art:SetAlpha(ma)
+    -- an own look's tint; the vertex alpha carries the dim, and the art is
+    -- white again once no look tints it
+    if (LM and LM.tint ~= nil) or look.tinted then
+        local c = LM and LM.tint and (LM.tintColor or R("auraMissing", "missingTintColor") or { 0.5, 0.5, 0.5, 1 })
+        if c then
+            art:SetVertexColor(c[1], c[2], c[3], ma)
+        else
+            art:SetVertexColor(1, 1, 1, ma)
+        end
+        look.tinted = c and true or nil
+    end
     art:SetShown(not hide)
     if R("appearance", "borderEnabled") and not hide then
         F.PaintBorderEdges(look.edges, st, rec, ma)
@@ -697,12 +728,29 @@ function AR.PaintGlows(p, combat)
         gh._adOptIn = AR.OPT_IN
         look.glow = gh
     end
-    gh:SetAlpha(Store.Resolve(rec, "auraMissing", "missingAlpha") or 1)
+    local ma, _, LM = AR.MissLook(rec)
+    gh:SetAlpha(ma)
+    -- an own look with no glow turns the While missing glows off (never on)
+    local off = LM ~= nil and LM.glow == false
     for k = 1, n do
         local suf = (k > 1) and tostring(k) or ""
-        local on = not hide and F.HolderGlowOn(rec, k)
+        local on = not hide and F.HolderGlowOn(rec, k) and not (off and not F.AlwaysGlowOn(rec, k))
             and (combat == true or Store.Resolve(rec, "auraActive", "activeGlowCombatOnly" .. suf) ~= true)
         F.SetAuraButtonGlow(gh, rec, on, p.cfg.iconW, p.cfg.iconH, 1, k, p.lvl + 1)
+    end
+end
+
+-- An own look's conditions moved (Core\AD_OwnLooks.lua): the member's Missing
+-- look and glows on its stage again. Our own layers only, so it runs in combat.
+function AR.RepaintLook(id)
+    local DA = NS.DriverAura
+    local combat = DA ~= nil and DA.InCombat ~= nil and DA.InCombat()
+    for _, rt in pairs(AR.runtimes) do
+        local p = rt.pieces and rt.pieces[id]
+        if p and p.stage and p.rec and p.cfg then
+            AR.PaintLook(p, p.rec, p.cfg.iconW, p.cfg.iconH)
+            AR.PaintGlows(p, combat)
+        end
     end
 end
 

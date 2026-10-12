@@ -57,8 +57,10 @@ local function HolderPx(entry)
     return px
 end
 
--- True when a visible missing look sits under the button; raw settings, so no preview alpha floor.
+-- True when a visible missing look sits under the button; raw settings, so no
+-- preview alpha floor. An own Missing look that shows it counts, whatever holds now.
 function Driver.GhostShown(rec)
+    if rec ~= nil and NS.OwnLooks and NS.OwnLooks.ShowsMissing(rec) then return true end
     return rec ~= nil and Store.Resolve(rec, "auraMissing", "showWhileMissing") ~= false
         and (Store.Resolve(rec, "auraMissing", "missingAlpha") or 1) > 0
 end

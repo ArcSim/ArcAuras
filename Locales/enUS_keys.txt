@@ -84,6 +84,7 @@
 %s color wash
 %s dark backing line
 %s elements
+%s fade out (seconds)
 %s glow
 %s has an update. Click to update this layout; your own sizes and positions stay.
 %s has no grey out look.
@@ -150,6 +151,8 @@
 + Add New
 + Add Reminder
 + Add Trigger
++ Add a %s look while...
++ Add an %s look while...
 + Add band
 + Add color
 + Add health text
@@ -676,6 +679,7 @@ Color when power is
 Colors and badges
 Colors and badges keeps the game's order. Full look per type also gives each type its own size, swipe, texts and glows, in the order you pick.
 Colors the icon %s.
+Colors the icon while this look shows.
 Column (1:2)
 Columns
 Columns of frames
@@ -705,6 +709,7 @@ Cooldown glow X offset
 Cooldown glow Y offset
 Cooldown glow color
 Cooldown glow dark backing line
+Cooldown glow fade out (seconds)
 Cooldown glow frame level
 Cooldown glow in the game's own color
 Cooldown glow intensity
@@ -948,6 +953,8 @@ Drag: move this button
 Drain: the time left
 Drawn on screen while this window is open, with an "unloaded" tag. It loads on: %s. Click to hide it again.
 Drop sound
+Drops this icon's own looks, so it takes the ones its defaults set.
+Drops this icon's own looks, so it takes the ones its layout sets.
 Duplicate
 Duration
 Duration anchor
@@ -1121,6 +1128,8 @@ Focus
 Fold
 Fold in half
 Folds the layouts list away - the editor gets the full window width.
+Follow defaults
+Follow layout
 Follow my rank
 Follows the group's appearance.
 Follows your equipped ammo. Nothing to set here.
@@ -1201,6 +1210,7 @@ Glow Y offset
 Glow adds the picture's light to what is behind it: black turns see-through. Picking art made for it sets it.
 Glow color
 Glow dark backing line
+Glow fade out (seconds)
 Glow for
 Glow frame level
 Glow in the game's own color
@@ -1243,6 +1253,7 @@ Grey out the picture
 Grey out while out of totem range
 Grey the dim copy
 Greys the icon out %s.
+Greys the icon out while this look shows.
 Grid
 Group
 Group Editing
@@ -1341,6 +1352,7 @@ How every Arc Auras countdown shows part of a second: icons, aura bars, timer ba
 How far the glow reaches past the icon: 1 sits on its edge.
 How it looks in each state
 How long the bar takes to fade away when a cast ends (after the hold, when that is on). 0 = it goes at once.
+How long the button glow takes to fade when it stops. 0: it goes at once.
 How long the timer runs, and each stack when stacks run out on their own, when a rule gives no seconds. Enter applies it.
 How many
 How many nameplates get a row, in the order the game numbers them. Each one keeps a set of frames ready.
@@ -1351,6 +1363,7 @@ How the bar looks in each state
 How visible the icon is %s.
 How visible the icon is on cooldown until On cooldown's opacity starts.
 How visible the icon is while the aura is up, until Active's opacity starts.
+How visible the icon is while this look shows. 0 hides it.
 Hunter bands
 I don't know this spell
 I know this spell
@@ -1449,6 +1462,7 @@ Inset
 Interrupted color
 It lasts (seconds)
 It sits on the first one that is on screen, top to bottom.
+It starts as this state's look. When several hold, the top one wins.
 It starts out of combat, or after a /reload.
 It wears the spell whose cast started its timer: one Fire Trap icon for whichever fire trap you laid.
 Item
@@ -1849,6 +1863,7 @@ On unit
 On use (when cast)
 On: every Arc Proc resets the moment a key starts, so a reset is never missed. Off: on the gate drop, which keeps the skip working.
 On: icons pack (Show while missing ones too). Off: every aura keeps its spot.
+On: it glows while this look shows. Click to switch it.
 On: the debuffs start on the line after the buffs. Off: they follow straight on.
 On: this opacity while none is left. Off: it keeps its opacity.
 On: this trigger has its own pulse duration and animation tuning. Off drops them, and the reminder's apply.
@@ -1903,6 +1918,7 @@ Out of range glow X offset
 Out of range glow Y offset
 Out of range glow color
 Out of range glow dark backing line
+Out of range glow fade out (seconds)
 Out of range glow in the game's own color
 Out of range glow intensity
 Out of range glow line length (0 = auto)
@@ -1926,6 +1942,7 @@ Out-of-range glow X offset
 Out-of-range glow Y offset
 Out-of-range glow color
 Out-of-range glow dark backing line
+Out-of-range glow fade out (seconds)
 Out-of-range glow frame level
 Out-of-range glow in the game's own color
 Out-of-range glow intensity
@@ -1957,6 +1974,7 @@ Override timing and tuning
 Overview
 Own color for channels
 Own color when it can't be interrupted
+Own look
 PACK INFO
 PASTE A STRING
 PICK AN AURA - click to fill
@@ -2124,6 +2142,7 @@ Proc glow X offset
 Proc glow Y offset
 Proc glow color
 Proc glow dark backing line
+Proc glow fade out (seconds)
 Proc glow frame level
 Proc glow in the game's own color
 Proc glow intensity
@@ -2195,6 +2214,7 @@ Ready glow X offset
 Ready glow Y offset
 Ready glow color
 Ready glow dark backing line
+Ready glow fade out (seconds)
 Ready glow frame level
 Ready glow in the game's own color
 Ready glow intensity
@@ -2244,6 +2264,7 @@ Recharging glow X offset
 Recharging glow Y offset
 Recharging glow color
 Recharging glow dark backing line
+Recharging glow fade out (seconds)
 Recharging glow frame level
 Recharging glow in the game's own color
 Recharging glow intensity
@@ -2279,6 +2300,7 @@ Remove last resource text
 Remove last stack picture
 Remove last threshold
 Remove stacks
+Remove this look
 Remove this trigger
 Removes this check from the band.
 Rename
@@ -2630,6 +2652,7 @@ Suggested glow X offset
 Suggested glow Y offset
 Suggested glow color
 Suggested glow dark backing line
+Suggested glow fade out (seconds)
 Suggested glow frame level
 Suggested glow in the game's own color
 Suggested glow intensity
@@ -2796,6 +2819,7 @@ The timer is not running
 The timer is running
 The timer runs
 The timer runs or stacks are above 0
+The top look wins when several hold.
 The totem or guardian slot to watch. The icon lights while anything is in it. A shaman's slots hold: %s.
 The tracked item, or several: the icon shows the first one you carry and can use. Retargeting keeps every setting and position.
 The tracked spell. Retargeting re-keys the driver and keeps every setting and position.
@@ -2879,6 +2903,7 @@ Toggle glow X offset
 Toggle glow Y offset
 Toggle glow color
 Toggle glow dark backing line
+Toggle glow fade out (seconds)
 Toggle glow frame level
 Toggle glow in the game's own color
 Toggle glow intensity
@@ -2975,6 +3000,7 @@ Usable glow X offset
 Usable glow Y offset
 Usable glow color
 Usable glow dark backing line
+Usable glow fade out (seconds)
 Usable glow frame level
 Usable glow in the game's own color
 Usable glow intensity
@@ -3034,6 +3060,7 @@ Warning glow X offset
 Warning glow Y offset
 Warning glow color
 Warning glow dark backing line
+Warning glow fade out (seconds)
 Warning glow frame level
 Warning glow in the game's own color
 Warning glow intensity
@@ -3284,6 +3311,8 @@ excluded
 excluded, taken
 fill
 for
+from %s
+from Defaults
 game says %s
 group
 groups, bars and icons
@@ -3336,6 +3365,7 @@ nothing ticked yet
 nowhere
 off
 on
+on %d of %d
 on %s
 on cooldown
 one stance, none picked yet

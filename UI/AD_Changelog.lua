@@ -13,6 +13,22 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "2.9.0",
+        intro = "Own looks for any state, and a fade setting for button glows.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Own looks",
+                    desc = "Give any state its own look while something is true, like Missing with no target or Ready in combat (Conditions > By State)." },
+                { title = "Button glow fade out",
+                    desc = "Set how long a button glow fades when it stops. By default it stops at once." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Button glow on hidden icons",
+                    desc = "A hidden icon no longer leaves its button glow fading behind." },
+            } },
+        },
+    },
+    {
         version = "2.8.0",
         intro = "Arc Auras in Korean, Custom Icons that show an aura and a cooldown, and No charges.",
         sections = {
@@ -954,6 +970,22 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "2.9.0",
+        intro = "Own looks for any state, and a fade setting for button glows.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Own looks",
+                    desc = "Give any state its own look while something is true, like Missing with no target or Ready in combat (Conditions > By State)." },
+                { title = "Button glow fade out",
+                    desc = "Set how long a button glow fades when it stops. By default it stops at once." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Button glow on hidden icons",
+                    desc = "A hidden icon no longer leaves its button glow fading behind." },
+            } },
+        },
+    },
     {
         version = "2.8.0",
         intro = "Arc Auras in Korean, Custom Icons that show an aura and a cooldown, and No charges.",

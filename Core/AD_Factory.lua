@@ -4272,7 +4272,7 @@ function Factory.ApplyMissingGlows(f, rec, w, h, combat)
     local rung = lvl and (lvl + Factory.AURA_LADDER.missGlow)
     for k = 1, (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1 do
         local suf = (k > 1) and tostring(k) or ""
-        local want = ok and Factory.MissingGlowOn(rec, k)
+        local want = ok and Factory.MissingGlowOn(rec, k) and Factory.LookGlow(f, "missing", true)
             and (combat == true or Store.Resolve(rec, "auraActive", "activeGlowCombatOnly" .. suf) ~= true)
         if want and not host then
             host = CreateFrame("Frame", nil, f._adStage or f)
@@ -4304,6 +4304,20 @@ function Factory.StyleAuraGlowButton(b, rec, px, opts)
         opts.w or px, opts.h or px, aA, slot, nil, opts.glowCap)
 end
 
+-- Each alpha bucket's tint colour, for an own look that tints without a colour of its own.
+Factory.BUCKET_TINT = { ready = "readyTintColor", cooldown = "cooldownTintColor",
+    recharge = "rechargeTintColor", idle = "idleTintColor" }
+
+-- A glow lane's switch as the own look in play decides it (SetState fills
+-- f._adLookGlow), else `on`; the editor's one-lane preview shows the lane as set.
+function Factory.LookGlow(f, field, on)
+    local T = f._adLookGlow
+    if T == nil or f._adGlowLaneOnly ~= nil then return on end
+    local v = T[field]
+    if v == nil then return on end
+    return v
+end
+
 -- State writer: drivers report, this paints. onCooldown picks the alpha bucket
 -- (missing, on an aura icon); desatState (nil = onCooldown) drives desaturation
 -- alone, so a recharging charge spell dims but stays colored until depleted.
@@ -4312,6 +4326,15 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     if desatState == nil then desatState = onCooldown end
     f._adDesatState = desatState and true or false
     local R = function(section, field) return Store.Resolve(rec, section, field) end
+    -- An own look (Core\AD_OwnLooks.lua: the icon's, its layout's or the
+    -- defaults') takes a state's look over while its conditions hold; the glow
+    -- lanes read what it decides from f._adLookGlow.
+    local OL = NS.OwnLooks
+    if OL then
+        local looks = OL.Effective(rec)
+        if not (looks and looks[1]) then OL = nil end
+    end
+    f._adLookGlow = nil
     if f._adLabels then
         for _, st in ipairs(f._adLabels) do
             if st.has and st.fs then
@@ -4336,10 +4359,16 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         -- onCooldown here means the aura is missing: a whole-icon dim with its
         -- own text carve-out, as aura icons have no States tab.
         local a, desat = 1, false
+        local LM = OL and onCooldown and OL.Active(rec, "missing") or nil
         if onCooldown then
             a = (R("auraMissing", "showWhileMissing") == false) and 0
                 or (R("auraMissing", "missingAlpha") or 1)
             desat = R("auraMissing", "missingDesaturate") ~= false
+            if LM then
+                if LM.alpha ~= nil then a = LM.alpha end
+                if LM.grey ~= nil then desat = LM.grey end
+                OL.PutGlows(f, rec, "missing", LM)
+            end
         end
         f._adSwipeBright = nil
         ApplyStateAlpha(f, a, R("auraMissing", "missingPreserveText") ~= false)
@@ -4349,6 +4378,9 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         local va = f._adShownAlpha or a
         local mt = onCooldown and R("auraMissing", "missingTintEnabled") == true
             and (R("auraMissing", "missingTintColor") or { 0.5, 0.5, 0.5, 1 }) or nil
+        if LM and LM.tint ~= nil then
+            mt = LM.tint and (LM.tintColor or R("auraMissing", "missingTintColor") or { 0.5, 0.5, 0.5, 1 }) or nil
+        end
         if mt then
             f.icon:SetVertexColor(mt[1], mt[2], mt[3], va)
         else
@@ -4374,6 +4406,22 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     -- the usability looks: while it can be cast, or only while ready when they wait for it
     local usabOK = castable
     if recharging and R("states", "usabilityReadyOnly") == true then usabOK = false end
+    -- the own looks in play: the state's bucket, its usability, toggled on,
+    -- out of stock and no weapon (nil: the state's own look)
+    local bucket, LB, LU, LT, LO, LN
+    if OL then
+        bucket = (recharging and "recharge") or (idle and "idle") or (onCooldown and "cooldown") or "ready"
+        local bkey = OL.StateKey(rec.kind, bucket)
+        LB = OL.Active(rec, bkey)
+        local u = f._adUsability
+        if u == "unusable" or u == "nomana" or u == "range" then LU = OL.Active(rec, u) end
+        if f._adToggled then LT = OL.Active(rec, "toggle") end
+        if f._adItemEmpty and (rec.kind == "item" or rec.kind == "ammo") then LO = OL.Active(rec, "out") end
+        if f._adNoWeapon and rec.kind == "enchant" then LN = OL.Active(rec, "noweapon") end
+        OL.PutGlows(f, rec, bkey, LB)
+        if u == "range" then OL.PutGlows(f, rec, "range", LU) end
+        OL.PutGlows(f, rec, "toggle", LT)
+    end
     -- "always" / "ready" / "cooldown": which state a rule covers (recharging is on cooldown)
     local function StateWhen(v)
         if v == "ready" then return not onCooldown end
@@ -4386,7 +4434,9 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     if keepBright then
         f._adStateAlpha = 1
     else
-        if recharging then
+        if LB and LB.alpha ~= nil then
+            f._adStateAlpha = LB.alpha
+        elseif recharging then
             -- a look of its own, neither Ready's nor No charges'
             f._adStateAlpha = R("states", "rechargeAlpha") or 1
         elseif idle then
@@ -4402,24 +4452,28 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         local ucode = usabOK and f._adUsability or nil
         local replace = R("states", "usabilityAlphaReplaces") == true
         if ucode == "unusable" then
-            local ua = R("states", "unusableAlpha") or 1
+            local ua = (LU and LU.alpha) or R("states", "unusableAlpha") or 1
             f._adStateAlpha = replace and ua or math.min(f._adStateAlpha, ua)
         elseif ucode == "nomana" then
-            local ra = R("states", "resourceAlpha") or 1
+            local ra = (LU and LU.alpha) or R("states", "resourceAlpha") or 1
             f._adStateAlpha = replace and ra or math.min(f._adStateAlpha, ra)
         elseif ucode == "range" then
-            f._adStateAlpha = math.min(f._adStateAlpha, R("states", "rangeAlpha") or 1)
+            f._adStateAlpha = math.min(f._adStateAlpha, (LU and LU.alpha) or R("states", "rangeAlpha") or 1)
         end
     end
     -- Toggled on (Shoot, Auto Shot, Attack, pet autocast: Drivers\AD_DriverToggle.lua) has its own alpha.
-    if f._adToggled and not keepBright and R("states", "toggleAlphaEnabled") == true then
-        f._adStateAlpha = R("states", "toggleAlpha") or 1
+    local toggleA = f._adToggled and not keepBright and ((LT and LT.alpha)
+        or (R("states", "toggleAlphaEnabled") == true and (R("states", "toggleAlpha") or 1))) or nil
+    if toggleA then
+        f._adStateAlpha = toggleA
     end
     -- A group buff in combat: nobody's buffs can be read, so its count and
     -- icon step aside (its driver's layers show instead, when switched on).
     if rec.kind == "groupbuff" and f._adGBHidden then f._adStateAlpha = 0 end
     -- A weapon enchant whose hand holds no weapon: its No weapon state.
-    if rec.kind == "enchant" and f._adNoWeapon then f._adStateAlpha = R("states", "noWeaponAlpha") or 0 end
+    if rec.kind == "enchant" and f._adNoWeapon then
+        f._adStateAlpha = (LN and LN.alpha) or R("states", "noWeaponAlpha") or 0
+    end
     -- procOverride: a lit proc forces full opacity, over the usability dim too.
     if procLift then
         f._adStateAlpha = 1
@@ -4428,7 +4482,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     -- unless out of range has a dim of its own).
     if not onCooldown and R("states", "usableOverride") == true
         and (f._adUsability == nil or (f._adUsability == "range"
-            and (R("states", "rangeAlpha") or 1) >= 1)) then
+            and ((LU and LU.alpha) or R("states", "rangeAlpha") or 1) >= 1)) then
         f._adStateAlpha = 1
     end
     -- On cooldown's opacity waiting for the last seconds: only On cooldown's
@@ -4439,7 +4493,8 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     local cdA = R("states", "cooldownAlpha") or 1
     if rec.kind == "spell" and onCooldown and not recharging and not keepBright
         and f._adTimedDur ~= nil
-        and not (f._adToggled and R("states", "toggleAlphaEnabled") == true)
+        and not toggleA
+        and not (LB and LB.alpha ~= nil)
         and not procLift
         and R("states", "cooldownAlphaTimed") == true
         and C_CurveUtil ~= nil and C_CurveUtil.CreateCurve ~= nil then
@@ -4456,32 +4511,43 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     f._adSwipeBright = R("states", "preserveSwipe") == true
     ApplyStateAlpha(f, f._adStateAlpha, keepText)
     local desatOK = not keepBright or R("appearance", "keepBrightAllowDesat") == true
-    f.icon:SetDesaturated(desatOK and f._adDesatState
+    -- an own look's grey stands in for its state's (nil: the state's own)
+    local lookG = LB and LB.grey
+    f.icon:SetDesaturated(desatOK and f._adDesatState and (lookG == nil or bucket ~= "cooldown")
         and R("states", "cooldownDesaturate") == true or false)
     -- The ready look (a Custom Icon's Active) has its own grey out; a
     -- recharging spell has its own, below.
-    if desatOK and not onCooldown and R("states", "readyDesaturate") == true
+    if desatOK and not onCooldown and (lookG == nil or bucket ~= "ready") and R("states", "readyDesaturate") == true
         and not (R("states", "readyGreyUsable") == true and f._adUsability ~= nil) then
         f.icon:SetDesaturated(true)
     end
-    if desatOK and idle and R("states", "idleDesaturate") == true then
+    if desatOK and idle and (lookG == nil or bucket ~= "idle") and R("states", "idleDesaturate") == true then
         f.icon:SetDesaturated(true)
     end
     -- Grey only while usable holds Recharging's grey back the same way
-    if desatOK and recharging and R("states", "rechargeDesaturate") == true
+    if desatOK and recharging and (lookG == nil or bucket ~= "recharge") and R("states", "rechargeDesaturate") == true
         and not (R("states", "readyGreyUsable") == true and f._adUsability ~= nil) then
+        f.icon:SetDesaturated(true)
+    end
+    if desatOK and lookG == true and (bucket ~= "cooldown" or f._adDesatState)
+        and not ((bucket == "ready" or bucket == "recharge") and R("states", "readyGreyUsable") == true
+            and f._adUsability ~= nil) then
         f.icon:SetDesaturated(true)
     end
     -- No-resource, unusable or out of range can grey a castable icon apart from the cooldown desat.
     if usabOK and desatOK then
         local ucode = f._adUsability
-        if (ucode == "nomana" and R("states", "resourceDesaturate") == true)
+        local lookU = LU and LU.grey
+        if lookU ~= nil then
+            if lookU then f.icon:SetDesaturated(true) end
+        elseif (ucode == "nomana" and R("states", "resourceDesaturate") == true)
             or (ucode == "unusable" and R("states", "unusableDesaturate") == true)
             or (ucode == "range" and R("states", "rangeDesaturate") == true) then
             f.icon:SetDesaturated(true)
         end
     end
-    if desatOK and f._adToggled and R("states", "toggleDesaturate") == true then
+    local lookT = LT and LT.grey
+    if desatOK and f._adToggled and (lookT == true or (lookT == nil and R("states", "toggleDesaturate") == true)) then
         f.icon:SetDesaturated(true)
     end
     -- "Desaturate while the aura is down" with an aura overlay: the art stays
@@ -4497,18 +4563,23 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     local tc
     local code = usabOK and f._adUsability or nil
     if code == nil and onCooldown and R("states", "usabilityOnCooldown") == true then code = f._adUsability end
-    if code == "range" and R("states", "rangeTint") ~= false then
-        tc = R("states", "rangeTintColor") or { 0.85, 0.2, 0.2, 1 }
+    -- an own look's tint switch and colour stand in for its state's (nil: the state's own)
+    local tintU, tintT = LU and LU.tint, LT and LT.tint
+    if code == "range" and (tintU == true or (tintU == nil and R("states", "rangeTint") ~= false)) then
+        tc = (tintU and LU.tintColor) or R("states", "rangeTintColor") or { 0.85, 0.2, 0.2, 1 }
     elseif code == "nomana" and f._adToggled and R("states", "queueShort") == true
         and NS.DriverToggle ~= nil and NS.DriverToggle.Kind(rec) == "queue" then
         -- queued without the cost: this swing lands plain
         tc = R("states", "queueShortColor") or { 1, 0.1, 0.1, 1 }
-    elseif code == "nomana" and R("states", "resourceTintEnabled") ~= false then
-        tc = R("states", "resourceTintColor") or { 0.35, 0.45, 1, 1 }
-    elseif code == "unusable" and R("states", "unusableTintEnabled") ~= false then
-        tc = R("states", "unusableTintColor") or { 0.45, 0.45, 0.45, 1 }
-    elseif castable and f._adToggled and R("states", "toggleTintEnabled") == true then
-        tc = R("states", "toggleTintColor") or { 1, 0.35, 0.35, 1 }
+    elseif code == "nomana" and (tintU == true or (tintU == nil and R("states", "resourceTintEnabled") ~= false)) then
+        tc = (tintU and LU.tintColor) or R("states", "resourceTintColor") or { 0.35, 0.45, 1, 1 }
+    elseif code == "unusable" and (tintU == true or (tintU == nil and R("states", "unusableTintEnabled") ~= false)) then
+        tc = (tintU and LU.tintColor) or R("states", "unusableTintColor") or { 0.45, 0.45, 0.45, 1 }
+    elseif castable and f._adToggled
+        and (tintT == true or (tintT == nil and R("states", "toggleTintEnabled") == true)) then
+        tc = (tintT and LT.tintColor) or R("states", "toggleTintColor") or { 1, 0.35, 0.35, 1 }
+    elseif LB and LB.tint ~= nil then
+        if LB.tint then tc = LB.tintColor or R("states", Factory.BUCKET_TINT[bucket]) or { 1, 1, 1, 1 } end
     elseif recharging then
         -- its own tint or none: never Ready's or No charges'
         if R("states", "rechargeTintEnabled") == true then
@@ -4540,15 +4611,19 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         Factory.ApplyFrameAlpha(f, rec)
     end
     if (rec.kind == "item" or rec.kind == "ammo") and f._adItemEmpty then
-        if R("outOfStock", "outDesaturate") ~= false then
+        local lookO = LO and LO.grey
+        if lookO == true or (lookO == nil and R("outOfStock", "outDesaturate") ~= false) then
             f.icon:SetDesaturated(true)
         end
-        if R("outOfStock", "outAlphaEnabled") == true then
+        local outA = (LO and LO.alpha)
+            or (R("outOfStock", "outAlphaEnabled") == true and (R("outOfStock", "outAlpha") or 0.4)) or nil
+        if outA then
             -- preserveDurationText applies: items and ammo have a States tab.
-            ApplyStateAlpha(f, R("outOfStock", "outAlpha") or 0.4, keepText)
+            ApplyStateAlpha(f, outA, keepText)
         end
-        if R("outOfStock", "outTintEnabled") == true then
-            local oc = R("outOfStock", "outTintColor") or { 0.5, 0.5, 0.5, 1 }
+        local tintO = LO and LO.tint
+        if tintO == true or (tintO == nil and R("outOfStock", "outTintEnabled") == true) then
+            local oc = (tintO and LO.tintColor) or R("outOfStock", "outTintColor") or { 0.5, 0.5, 0.5, 1 }
             f.icon:SetVertexColor(oc[1], oc[2], oc[3], f._adShownAlpha or f._adStateAlpha or 1)
         end
     end
@@ -4626,6 +4701,25 @@ end
 -- glow key so they never stop each other, all through StopLane and
 -- StartLane so each offers every style. Ants and the flashes are our own
 -- builders on a per-lane host (TexLaneStart), which every stop takes down too.
+-- A button glow's fade out is the library's two 0.2s steps; a lane's own
+-- length scales them, and the steps go back to 0.2 when the fade ends or is
+-- cut, as the frame returns to a pool other glows share.
+local function SetFadeSteps(g, secs)
+    local out = g.animOut
+    for _, list in ipairs({ out.appear, out.fade }) do
+        for _, anim in pairs(list) do
+            if anim.SetDuration then anim:SetDuration(secs) end
+        end
+    end
+end
+local function RestoreFadeSteps(grp)
+    local g = grp:GetParent()
+    if g and g._adFadeSet then
+        g._adFadeSet = nil
+        SetFadeSteps(g, 0.2)
+    end
+end
+
 local function StopLane(f, key)
     local tg = f["_adTexGlow" .. key]
     if tg then
@@ -4639,9 +4733,34 @@ local function StopLane(f, key)
         local g = f[fld .. key]
         if g and g.SetScale then g:SetScale(1) end
     end
+    -- The button glow's fade: the lane's own length (nil: the library's
+    -- 0.4s). An icon its state just hid vanishes at once, so its glow goes
+    -- with it whatever the length.
+    local bg = f["_ButtonGlow" .. key]
+    local out = bg and bg.animOut
+    local fade = bg and bg._adFade
+    local cut = out ~= nil and ((fade ~= nil and fade <= 0) or Factory.GlowHidden(f))
+    if out and fade and fade > 0 and not cut and out.appear and out.fade and not out:IsPlaying() then
+        if not bg._adFadeHooked and out.HookScript then
+            bg._adFadeHooked = true
+            out:HookScript("OnFinished", RestoreFadeSteps)
+            out:HookScript("OnStop", RestoreFadeSteps)
+        end
+        if bg._adFadeHooked then
+            bg._adFadeSet = true
+            SetFadeSteps(bg, fade / 2)
+        end
+    end
     LCG.PixelGlow_Stop(f, key)
     LCG.AutoCastGlow_Stop(f, key)
     LCG.ButtonGlow_Stop(f, key)
+    if out then
+        -- hiding the glow frame ends its fade and hands it back to the
+        -- library's pool (its OnHide)
+        if cut and out:IsPlaying() then bg:Hide() end
+        -- released without a fade (a hidden icon, mid fade-in): steps back now
+        if bg._adFadeSet and not out:IsPlaying() then RestoreFadeSteps(out) end
+    end
     if LCG.ProcGlow_Stop then LCG.ProcGlow_Stop(f, key) end
 end
 
@@ -4801,6 +4920,9 @@ local function StartLane(f, key, gtype, p)
     end
     ApplyStrata(f, key, p.strata)
     local g = f[LCG_FIELD[gtype] .. key]
+    -- its fade for StopLane, set on every start: the frame is pooled (nil:
+    -- a caller without the setting keeps the library's own fade)
+    if g and gtype == "button" then g._adFade = p.fade end
     -- untinted art has no colour alpha to carry the intensity, so it dims the
     -- frame; any other start returns a recycled frame to full
     if g and g.SetAlpha then g:SetAlpha(p.native and (p.inten or 1) or 1) end
@@ -4829,7 +4951,13 @@ local function LaneLook(rec, sec, glowPrefix, gtype, p, inten)
         and Store.Resolve(rec, sec, glowPrefix .. "Native") == true
     p.border = gtype == "pixel" and Store.Resolve(rec, sec, glowPrefix .. "Backing") == true
     p.inten = inten or 1
-    return (p.native and (":n" .. p.inten) or "") .. (p.border and ":b" or "")
+    -- the button glow's fade when it stops (StopLane); 0 = at once
+    p.fade = nil
+    if gtype == "button" then
+        local v = Store.Resolve(rec, sec, glowPrefix .. "FadeOut")
+        p.fade = type(v) == "number" and v or 0
+    end
+    return (p.native and (":n" .. p.inten) or "") .. (p.border and ":b" or "") .. (p.fade and (":o" .. p.fade) or "")
 end
 Factory.LaneLook = LaneLook
 
@@ -5025,7 +5153,8 @@ function Factory.UpdateGlow(f, rec, ready)
     local LCG = GetLCG()
     if not LCG then return end
     local R = function(s, k) return Store.Resolve(rec, s, k) end
-    local want = ready and rec.kind ~= "aura" and R("states", "readyGlow") == true
+    local want = ready and rec.kind ~= "aura"
+        and Factory.LookGlow(f, "readyGlow", R("states", "readyGlow") == true)
         and LaneAllowed(f, "ready") and not Factory.GlowHidden(f)
     -- Combat-only is re-checked on every restyle and at each combat edge
     -- (Factory.CombatGlows).
@@ -5083,7 +5212,7 @@ function Factory.UpdateUsableGlow(f, rec)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
     -- castable: ready, or recharging with a charge left; an item in stock
     local want = (rec.kind == "spell" or (rec.kind == "item" and not f._adItemEmpty))
-        and R("states", "usableGlow") == true
+        and Factory.LookGlow(f, "usableGlow", R("states", "usableGlow") == true)
         and f._adUsability == nil
         and (not f._adOnCooldown or f._adRecharging == true)
         and R("appearance", "forceHideIcon") ~= true
@@ -5138,7 +5267,7 @@ function Factory.UpdateRechargeGlow(f, rec)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
     local preview = f._adGlowLaneOnly == "recharge"
     local want = rec.kind == "spell"
-        and R("states", "rechargeGlow") == true
+        and Factory.LookGlow(f, "rechargeGlow", R("states", "rechargeGlow") == true)
         and f._adRecharging == true
         and R("appearance", "forceHideIcon") ~= true
         and LaneAllowed(f, "recharge") and not Factory.GlowHidden(f)
@@ -5192,7 +5321,7 @@ function Factory.UpdateIdleGlow(f, rec)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
     local preview = f._adGlowLaneOnly == "idle"
     local want = rec.kind == "timer"
-        and R("states", "idleGlow") == true
+        and Factory.LookGlow(f, "idleGlow", R("states", "idleGlow") == true)
         and f._adIdleReady == true and f._adOnCooldown == true
         and R("appearance", "forceHideIcon") ~= true
         and LaneAllowed(f, "idle") and not Factory.GlowHidden(f)
@@ -5246,7 +5375,7 @@ function Factory.UpdateRangeGlow(f, rec)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
     local preview = f._adGlowLaneOnly == "range"
     local want = rec.kind == "spell"
-        and R("states", "rangeGlow") == true
+        and Factory.LookGlow(f, "rangeGlow", R("states", "rangeGlow") == true)
         and (preview or (f._adUsability == "range" and (not f._adOnCooldown or f._adRecharging == true)))
         and R("appearance", "forceHideIcon") ~= true
         and LaneAllowed(f, "range") and not Factory.GlowHidden(f)
@@ -5304,7 +5433,7 @@ function Factory.UpdateCooldownGlow(f, rec)
     -- so has a Custom Icon's Ready
     local want = f._adOnCooldown == true and f._adRecharging ~= true and f._adIdleReady ~= true
         and rec.kind ~= "aura"
-        and R("states", "cooldownGlow") == true
+        and Factory.LookGlow(f, "cooldownGlow", R("states", "cooldownGlow") == true)
         and R("appearance", "forceHideIcon") ~= true
         and LaneAllowed(f, "cooldown") and not Factory.GlowHidden(f)
     if want and R("states", "cooldownGlowCombatOnly") == true

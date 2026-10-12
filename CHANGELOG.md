@@ -1,6 +1,6 @@
 # Arc Auras
 
-## 2.9.0
+## 2.9.0.a
 
 Own looks for any state, and a fade setting for button glows.
 
@@ -8,6 +8,10 @@ Own looks for any state, and a fade setting for button glows.
 
 - **Own looks** - Give any state its own look while something is true, like Missing with no target or Ready in combat (Conditions > By State).
 - **Button glow fade out** - Set how long a button glow fades when it stops. By default it stops at once.
+
+### Improvements
+
+- **Adding an own look** - A green + right after a state's name adds one, instead of an extra row under every state.
 
 ### Bug Fixes
 

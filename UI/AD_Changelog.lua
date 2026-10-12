@@ -13,7 +13,7 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
-        version = "2.9.0",
+        version = "2.9.0.a",
         intro = "Own looks for any state, and a fade setting for button glows.",
         sections = {
             { header = "New Features", items = {
@@ -21,6 +21,10 @@ CL.versions = {
                     desc = "Give any state its own look while something is true, like Missing with no target or Ready in combat (Conditions > By State)." },
                 { title = "Button glow fade out",
                     desc = "Set how long a button glow fades when it stops. By default it stops at once." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Adding an own look",
+                    desc = "A green + right after a state's name adds one, instead of an extra row under every state." },
             } },
             { header = "Bug Fixes", items = {
                 { title = "Button glow on hidden icons",
@@ -971,7 +975,7 @@ CL.versions = {
 }
 CL.retailVersions = {
     {
-        version = "2.9.0",
+        version = "2.9.0.a",
         intro = "Own looks for any state, and a fade setting for button glows.",
         sections = {
             { header = "New Features", items = {
@@ -979,6 +983,10 @@ CL.retailVersions = {
                     desc = "Give any state its own look while something is true, like Missing with no target or Ready in combat (Conditions > By State)." },
                 { title = "Button glow fade out",
                     desc = "Set how long a button glow fades when it stops. By default it stops at once." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Adding an own look",
+                    desc = "A green + right after a state's name adds one, instead of an extra row under every state." },
             } },
             { header = "Bug Fixes", items = {
                 { title = "Button glow on hidden icons",

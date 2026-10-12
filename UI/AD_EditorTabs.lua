@@ -2477,9 +2477,11 @@ end
 
 -- A state's own looks while a condition holds (Core\AD_OwnLooks.lua, reached
 -- at call time): a row each under the state, drawn as the state's row is,
--- then a green row that adds one. Look rows are made when a record first
--- needs them, so a table without looks draws as it always did.
-local LOOK_H, ADD_H = 34, 23
+-- added from a green + after the state's name. Look rows are made when a
+-- record first needs them, so a table without looks draws as it always did.
+local LOOK_H = 34
+-- the + after a state's name, and its gap from the name
+local PLUS_W, PLUS_GAP = 17, 5
 -- a look's words sit further in than its state's, after the joint line
 local LOOK_X, JOINT_X = 26, 17
 -- up, down and x after the effect columns
@@ -2767,7 +2769,7 @@ end
 -- One own look's row under its state: its name joined to the state by a
 -- line, the state's cells (a dash where the state has none), its glow,
 -- then up and down (on hover, with two or more) and x. i: its place under
--- the state. Made on demand, right above the state's add row.
+-- the state. Made on demand, under the state's editor row and its looks.
 local function LookRow(T, slot, i)
     local pg, sec, st, kind, ctx = T.pg, T.sec, slot.st, slot.kind, T.ctx
     local function Entry()
@@ -2784,17 +2786,18 @@ local function LookRow(T, slot, i)
         return LooksOf(r, st)[i] ~= nil
     end)
     pg._curSection = was
-    -- AddRow put it last: it belongs right above the state's add row
+    -- AddRow put it last: it belongs right after the state's last row so far
     local list = (sec and sec.rows) or pg._rows
     table.remove(list)
     local at = #list + 1
     for k, r in ipairs(list) do
-        if r == slot.add then
-            at = k
+        if r == slot.last then
+            at = k + 1
             break
         end
     end
     table.insert(list, at, row)
+    slot.last = row
     row._adOwnLook, row._adLookIndex = slot, i
     local frame = TableEdges(row, false)
     local jv, jh = Strip(row), Strip(row)
@@ -3244,15 +3247,16 @@ function ET.LookPick(T)
     return p
 end
 
--- The green row under a state's looks: "+ Add a <state> look while..." and
--- the pick it opens; a pick adds a look that starts as the state's look.
--- Only a state with a column a look can set has one; drawn on first show.
-local function AddLookRow(pg, T, ctx, vis, kind, st, srow)
-    local slot = { kind = kind, st = st, srow = srow, rows = {} }
-    local row = AT.AddRow(pg, ADD_H, function()
-        if not vis() then return false end
-        local r = ctx()
-        if not (r and r.kind == kind and LooksOn(r)) or not srow._visibleFn() then return false end
+-- The green + right after a state's name and the pick it opens; a pick adds
+-- a look that starts as the state's look. Only a state with a column a look
+-- can set shows one; made on first show. erow: the state's editor row, the
+-- first look's row goes after it.
+local function LookSlot(pg, T, ctx, vis, kind, st, srow, erow)
+    local slot = { kind = kind, st = st, srow = srow, last = erow, rows = {} }
+    T.slots[#T.slots + 1] = slot
+    srow._adLookSlot = slot
+    local function CanAdd(r)
+        if not (r and r.kind == kind and LooksOn(r)) then return false end
         -- the Defaults page draws every state; a state only some icons have
         -- (Recharging, Toggled on) gets its looks on those icons, which keeps
         -- the page within its height
@@ -3263,25 +3267,25 @@ local function AddLookRow(pg, T, ctx, vis, kind, st, srow)
         local list = (OL.Effective and o and OL.Effective(o)) or (o and o.ownLooks)
         if max and type(list) == "table" and #list >= max then return false end
         return LookCols(r, st).any
-    end)
-    slot.add = row
-    row._adLookAdd = slot
-    T.slots[#T.slots + 1] = slot
-    local frame, btn
+    end
+    -- the room the + takes after the name, for the table's first column
+    srow._adPlusW = function()
+        return CanAdd(ctx()) and (PLUS_GAP + PLUS_W) or 0
+    end
+    local row = srow
+    local btn
     local function Build()
-        frame = TableEdges(row, false)
         btn = CreateFrame("Button", nil, row, "BackdropTemplate")
-        btn:SetHeight(17)
-        btn:SetPoint("LEFT", LOOK_X, 0)
+        btn:SetSize(PLUS_W, PLUS_W)
+        btn:SetPoint("LEFT", row._adLabel, "RIGHT", PLUS_GAP, 0)
         AT.Skin(btn, COL.btn, GREEN)
         local fs = btn:CreateFontString(nil, "OVERLAY")
-        fs:SetFont(AT.FONT, 11, "")
-        fs:SetPoint("LEFT", 2, 0)
-        fs:SetJustifyH("LEFT")
-        fs:SetWordWrap(false)
+        fs:SetFont(AT.FONT, 15, "")
+        fs:SetPoint("CENTER", 0, 1)
         fs:SetTextColor(GREEN[1], GREEN[2], GREEN[3])
+        fs:SetText("+")
         btn.fs = fs
-        -- bare words at rest; the rail's add look under the mouse or while its pick is open
+        -- a bare + at rest; boxed under the mouse or while its pick is open
         function btn._adPaint()
             local p = T.lookPick
             local hot = btn._hot or (p ~= nil and p:IsShown() and p._owner == btn)
@@ -3304,22 +3308,31 @@ local function AddLookRow(pg, T, ctx, vis, kind, st, srow)
             end, pg)
             btn._adPaint()
         end)
-        Tip(btn, function() return Tr("Own look") end,
+        -- its title: the add words without their +, as the + is the button
+        Tip(btn, function()
+                local r = ctx()
+                if not r then return Tr("Own look") end
+                return (ET.AddLookWords(r, st):gsub("^%+%s*", ""))
+            end,
             function() return Tr("It starts as this state's look. When several hold, the top one wins.") end)
         btn._adPaint()
-        row._adAddButton = btn
+        row._adLookPlus = btn
         row:HookScript("OnHide", function()
             local p = T.lookPick
             if p and p:IsShown() and p._owner == btn then AT.CloseDropdown() end
         end)
     end
+    local base = row._sync
     row._sync = function()
-        local r = ctx()
-        if not (r and r.kind == kind and T.c1 and LooksOn(r)) then return end
-        if not btn then Build() end
-        frame(T.full or T.w)
-        btn.fs:SetText(ET.AddLookWords(r, st))
-        btn:SetWidth(Measure(btn.fs) + 4)
+        if base then base() end
+        local on = T.c1 ~= nil and CanAdd(ctx())
+        if on and not btn then Build() end
+        if btn then
+            btn:SetShown(on)
+            if not on and T.lookPick and T.lookPick:IsShown() and T.lookPick._owner == btn then
+                AT.CloseDropdown()
+            end
+        end
     end
     return slot
 end
@@ -3399,7 +3412,8 @@ function ET.StateTable(pg, ctx, vis, owner)
         local has = {}
         for _, row in ipairs(T.rows) do
             if row._visibleFn() then
-                lw = math.max(lw, Measure(row._adLabel))
+                -- a name with its + after it
+                lw = math.max(lw, Measure(row._adLabel) + (row._adPlusW and row._adPlusW() or 0))
                 local a = row._adStateRow.alpha
                 if a and a.on then hasOn = true end
                 -- a clock after the opacity widens the column by itself and a gap
@@ -3503,8 +3517,9 @@ function ET.StateTable(pg, ctx, vis, owner)
             Options.BuildYield()
             local srow = StateRow(pg, T, ctx, vis, kind, st, owner)
             Options.BuildYield()
-            T.editors[#T.editors + 1] = EditorRow(pg, T, ctx, vis, kind, st, owner, srow)
-            AddLookRow(pg, T, ctx, vis, kind, st, srow)
+            local erow = EditorRow(pg, T, ctx, vis, kind, st, owner, srow)
+            T.editors[#T.editors + 1] = erow
+            LookSlot(pg, T, ctx, vis, kind, st, srow, erow)
         end
     end
     ET.lastTable = T

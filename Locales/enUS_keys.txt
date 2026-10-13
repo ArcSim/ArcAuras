@@ -351,6 +351,7 @@ Ammo text font
 Ammo text outline
 Ammo text shadow
 Ammo text size
+An Arc Auras icon or bar
 An action button
 An attack missed you
 An aura
@@ -395,6 +396,7 @@ Another wheel
 Ants (border crawl)
 Any
 Any enchant
+Any of %d items: the icon shows the best one you carry and can use.
 Any of the icon's spells, or only one of them (its ranks together). Works in combat.
 Any one of them
 Any slot
@@ -1047,6 +1049,7 @@ Every food counts.
 Every group in this layout uses these looks unless it sets its own.
 Every icon in the group as the game's Cooldown Manager draws it: rounded corners, border, shadow and swipe.
 Every icon in this layout uses these looks unless it sets its own.
+Every item of this kind: the icon follows the one you last used, as the Cooldown Manager's does.
 Every other kind
 Every other kind of %s (%d)
 Every point
@@ -1589,6 +1592,7 @@ Marker color tints the icon. Spell's own colors keeps the real icon, with the ma
 Markers
 Marks
 Masque Skins
+Masque's skin is drawn over the Cooldown Manager look; disable the group in Masque to show it.
 Master (ignores the other sliders)
 Match
 Match by spell name (ranks)
@@ -2014,6 +2018,7 @@ Pick Frame
 Pick a condition
 Pick a place...
 Pick a talent, then the look to edit: with it or without it.
+Pick an icon or bar on screen.
 Pick an item
 Pick each group's skin in Masque's options: /msq.
 Pick what comes over from Proc Tracker into a ProcTracker layout. You can import again any time.
@@ -2687,6 +2692,7 @@ Swipe inset H
 Swipe inset W
 Swipe only when no charges
 TEMPLATE - click one to fill in every rank's enchant ID
+TEMPLATE - click one, then Create
 THICKOUTLINE
 TOP
 TOPLEFT

@@ -26,8 +26,9 @@ function SK.Lib()
     return LibStub ~= nil and LibStub("Masque", true) or nil
 end
 
+-- on while Masque is installed, until switched off (an off is kept as false)
 function SK.On()
-    return Store.GetSetting("masqueSkins") == true and SK.Lib() ~= nil
+    return Store.GetSetting("masqueSkins") ~= false and SK.Lib() ~= nil
 end
 
 -- Any change Masque reports, a colour or a profile change it does not: every
@@ -157,29 +158,38 @@ function SK.CdmLook(rec)
     return g ~= nil and SK.CdmLook(g)
 end
 
--- The skin a record wears now, or nil: the Cooldown Manager look first; else
--- Masque on, the switch on, a group for it that Masque has not disabled.
+-- The skin a record wears now, or nil. With Masque on, every group asks for
+-- its Masque group, so each is listed there, and Masque's skin wins; a group
+-- Masque has disabled, or Masque off, leaves the Cooldown Manager look.
 function SK.PlanFor(rec)
-    if SK.CdmLook(rec) then return SK.CDM_PLAN end
-    if not SK.On() then return nil end
-    local sid, name = SK.SourceOf(rec)
-    if not sid then return nil end
-    local p = SK.plans[sid]
-    if p == nil then
-        p = Plan(SK.Group(sid, name))
-        SK.plans[sid] = p
+    if SK.On() then
+        local sid, name = SK.SourceOf(rec)
+        if sid then
+            local p = SK.plans[sid]
+            if p == nil then
+                p = Plan(SK.Group(sid, name))
+                SK.plans[sid] = p
+            end
+            if p then return p end
+        end
     end
-    return p or nil
+    if SK.CdmLook(rec) then return SK.CDM_PLAN end
+    return nil
 end
 
 function SK.Skinned(rec)
     return SK.PlanFor(rec) ~= nil
 end
 
+-- the Cooldown Manager look is what it wears (not hidden under a Masque skin)
+function SK.WearsCdm(rec)
+    return SK.PlanFor(rec) == SK.CDM_PLAN
+end
+
 -- Off: our groups leave Masque's list (Masque keeps their settings for the
 -- next time) and every look goes back to its own.
 function SK.SetOn(v)
-    Store.SetSetting("masqueSkins", v and true or nil)
+    Store.SetSetting("masqueSkins", v and true or false)
     if not v then
         for sid, g in pairs(SK.groups) do
             if g.Delete then g:Delete() end

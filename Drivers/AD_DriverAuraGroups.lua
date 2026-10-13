@@ -69,6 +69,10 @@ local function MemberMapFor(rec, unit)
     local DA = NS.DriverAura
     local d = rec.driver or {}
     local lane, harmful = DA.LaneOf(d)
+    -- "You, then your target" (a Cooldown Manager import): a row gives each
+    -- member one lane, the one its aura type names: a debuff on your target
+    -- (an imported Flame Shock), a buff on you
+    if DA.TwoUnits and DA.TwoUnits(d) then lane = harmful and "target" or "player" end
     if lane ~= unit or harmful ~= (unit == "target") then return ParkMap() end
     local ids = DA.IncludeMap(d)
     if ids[0] then return ParkMap() end

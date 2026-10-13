@@ -13,11 +13,45 @@ TA.live = {}
 
 local function Secret(v) return issecretvalue ~= nil and issecretvalue(v) end
 
-function TA.Pinned(kind) return kind == "frame" or kind == "action" or kind == "cdm" end
+function TA.Pinned(kind) return kind == "frame" or kind == "action" or kind == "cdm" or kind == "item" end
+
+-- One of our own items ("icon:12", "bar:5", "group:3"): its kind and record id.
+function TA.ItemSpec(spec)
+    if type(spec) ~= "string" then return nil end
+    local kind, id = spec:match("^(%a+):(%d+)$")
+    if not kind then return nil end
+    return kind, tonumber(id)
+end
+
+-- An item's frame showing or hiding moves the texts riding it (between
+-- layout passes too); hooked once on our own frame.
+local function Watch(f)
+    if f._adPinWatch then return end
+    f._adPinWatch = true
+    local again = function()
+        if NS.Events and NS.Events.Coalesce then
+            NS.Events.Coalesce("adtext_items", TA.ReapplyItems)
+        else
+            TA.ReapplyItems()
+        end
+    end
+    f:HookScript("OnShow", again)
+    f:HookScript("OnHide", again)
+end
 
 -- The frame a pin names, while the text may ride it: on screen, not forbidden,
 -- not a nameplate, its place not secret. nil sends the text home.
 function TA.Target(kind, spec)
+    if kind == "item" then
+        local k, id = TA.ItemSpec(spec)
+        local A = NS.Anchor
+        local f = k and A and A.FrameOf and A.FrameOf(k, id)
+        if not f then return nil end
+        Watch(f)
+        local vis = f:IsVisible()
+        if Secret(vis) or not vis then return nil end
+        return f
+    end
     if kind == "action" or kind == "cdm" then
         local SA = NS.SpellAnchor
         return SA and SA.Resolve(kind, spec) or nil
@@ -113,6 +147,16 @@ function TA.Reapply()
     end
 end
 
+-- The texts riding our own items look again: after a layout pass (the
+-- target's frame may be new) and when one of those frames shows or hides.
+function TA.ReapplyItems()
+    for fs, p in pairs(TA.live) do
+        if p.kind == "item" then
+            TA.Place(fs, p.owner, p.slot, p.kind, p.spec, p.point, p.rel, p.x, p.y, p.home)
+        end
+    end
+end
+
 -- The finder's events and hooks stay armed while a text needs them.
 function TA.Arm()
     local SA = NS.SpellAnchor
@@ -139,6 +183,14 @@ function TA.Describe(kind, spec)
         if type(spec) ~= "string" or spec == "" then return Tr("Type a frame name or pick one.") end
         if TA.Target(kind, spec) then return Tr("On %s."):format(spec) end
         return Tr("%s is not shown, so it sits on its own spot."):format(spec)
+    end
+    if kind == "item" then
+        local _, id = TA.ItemSpec(spec)
+        local rec = id and NS.Store and NS.Store.Get(id)
+        if not rec then return Tr("Pick an icon or bar on screen.") end
+        local name = rec.name or "?"
+        if TA.Target(kind, spec) then return Tr("On %s."):format(name) end
+        return Tr("%s is not shown, so it sits on its own spot."):format(name)
     end
     local p = SA and SA.Parse(spec)
     if not p then

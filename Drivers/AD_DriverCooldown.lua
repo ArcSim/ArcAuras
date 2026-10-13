@@ -847,6 +847,100 @@ function Driver.CategoryItem(d)
     return iid
 end
 
+-- A combat potion's buff on its icon, as the Cooldown Manager shows it: its
+-- "On this icon" aura (driver.overlay with learn) gathers every potion buff it
+-- can know before the drink, so the duration shows in combat from the first
+-- one: each potion in your bags and the one last used from the category.
+-- Plain reads only; a new ID re-sends the filters, which waits out combat. An
+-- instant heal leaves no buff, so an extra ID never lights.
+Driver.POTION_CAT = 4
+Driver.POTION_IDS_MAX = 16
+function Driver.PotionOverlay()
+    return { on = true, learn = true, auraType = "buff", unit = "player" }
+end
+
+-- adds ids the overlay lacks (the cap keeps the oldest); true when it changed
+function Driver.LearnInto(ov, ids)
+    local list = Store.AuraIDList(ov)
+    local have, added = {}, false
+    for _, v in ipairs(list) do have[v] = true end
+    for _, id in ipairs(ids) do
+        if not have[id] and #list < Driver.POTION_IDS_MAX then
+            list[#list + 1] = id
+            have[id] = true
+            added = true
+        end
+    end
+    if added then
+        ov.spellID = list[1]
+        ov.spellIDs = (#list > 1) and list or nil
+    end
+    return added
+end
+
+-- the use spell of every potion in your bags (item data not loaded yet: skipped)
+function Driver.BagPotionSpells()
+    local out, seen = {}, {}
+    local C = C_Container
+    if not (C and C.GetContainerNumSlots and C.GetContainerItemID and C_Item and C_Item.GetItemInfoInstant
+        and C_Item.GetItemSpell) then
+        return out
+    end
+    local consumable = (Enum and Enum.ItemClass and Enum.ItemClass.Consumable) or 0
+    local potion = (Enum and Enum.ItemConsumableSubclass and Enum.ItemConsumableSubclass.Potion) or 1
+    for bag = 0, (NUM_TOTAL_EQUIPPED_BAG_SLOTS or 5) do
+        for slot = 1, (C.GetContainerNumSlots(bag) or 0) do
+            local iid = C.GetContainerItemID(bag, slot)
+            if type(iid) == "number" and not (issecretvalue and issecretvalue(iid)) and not seen[iid] then
+                seen[iid] = true
+                local _, _, _, _, _, classID, subID = C_Item.GetItemInfoInstant(iid)
+                if classID == consumable and subID == potion then
+                    local _, sid = C_Item.GetItemSpell(iid)
+                    if type(sid) == "number" and not (issecretvalue and issecretvalue(sid)) then
+                        out[#out + 1] = sid -- raw-id: an item's use spell
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
+-- Every learning combat potion icon takes what can be known now. A combat
+-- potion icon made before this (an older import) gets the aura once; one
+-- switched off keeps it off.
+function Driver.LearnPotions()
+    if not Store.EachRecord then return end
+    local bag
+    Store.EachRecord(function(id, rec)
+        local d = rec.type == "icon" and rec.kind == "item" and type(rec.driver) == "table" and rec.driver
+        if not (d and d.category) then return end
+        if d.category == Driver.POTION_CAT and d.overlay == nil then
+            d.overlay = Driver.PotionOverlay()
+            Store.Dirty("style", id)
+        end
+        local ov = type(d.overlay) == "table" and d.overlay
+        if not (ov and ov.learn == true) then return end
+        bag = bag or Driver.BagPotionSpells()
+        local ids = {}
+        local f = C_Spell and C_Spell.GetLastCategoryCooldownSource
+        local sid = f and f(d.category)
+        if type(sid) == "number" and not (issecretvalue and issecretvalue(sid)) and sid > 0 then
+            ids[1] = sid -- raw-id: the spell that last started the category
+        end
+        for _, v in ipairs(bag) do ids[#ids + 1] = v end
+        if Driver.LearnInto(ov, ids) then Store.Dirty("style", id) end
+    end)
+end
+
+local function QueueLearn()
+    Events.Coalesce("adcd_potion", Driver.LearnPotions)
+end
+Events.On("PLAYER_ENTERING_WORLD", "adcd_potion", QueueLearn)
+Events.On("BAG_UPDATE_DELAYED", "adcd_potion", QueueLearn)
+Events.On("PLAYER_REGEN_ENABLED", "adcd_potion", QueueLearn)
+Driver.QueueLearnPotions = QueueLearn
+
 -- the item to show, or nil while a read is unreadable
 function Driver.PickItem(d)
     if d.category then return Driver.CategoryItem(d) end

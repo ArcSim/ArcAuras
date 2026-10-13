@@ -174,6 +174,8 @@ local BAR_TABS = {
     wheel    = { "Wheel", "Appearance", "Load Conditions" },
     -- an Arc Proc's deck (Bars\AD_SpecialBar.lua, rows in UI\AD_SpecialOptions.lua)
     special  = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    -- a copy of a Cooldown Manager Tracked Bar (Bars\AD_CDMBar.lua, rows in UI\AD_CDMBarOptions.lua)
+    cdmbar   = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
     -- a Sound item draws nothing: its rules, and when it loads (Bars\AD_SoundItem.lua)
     sound    = { "Tracking", "Load Conditions" },
 }
@@ -356,6 +358,8 @@ local function BarPillText(barKind, barMode)
     if barKind == "sound" then return "Sound", { 0.56, 0.82, 1 } end
     -- the Arc Proc family's amber, as on its icon pill
     if barKind == "special" then return "Arc Proc Bar", Options.ICON_PILL_COLORS.special end
+    -- an aura's timer, copied from the Cooldown Manager: the aura family's purple
+    if barKind == "cdmbar" then return "CDM Bar", PURPLE end
     return stack and "CD Stack" or "CD Duration", YELLOW
 end
 
@@ -4189,8 +4193,9 @@ local function BarTexture(rec)
         local slot = (d.swingType == 1 and 17) or (d.swingType == 2 and 18) or 16
         return GetInventoryItemTexture("player", slot)
     end
-    -- the spell the bar reads, or its aura (each question's own entry)
-    if rec.barKind == "cooldown" then
+    -- the spell the bar reads, or its aura (each question's own entry); a
+    -- Cooldown Manager bar keeps its entry's picture spell there
+    if rec.barKind == "cooldown" or rec.barKind == "cdmbar" then
         local sid = Store.RecordSpellID(d)
         return sid and C_Spell.GetSpellTexture(sid) or nil
     end
@@ -6189,6 +6194,8 @@ local function RefreshLayoutPane()
             Line("Sound  -  %s", Options.SoundWhat and Options.SoundWhat(b) or Tr("sound"))
         elseif b.barKind == "special" then
             Line("Deck bar  -  %s", Options.SpecialBarWhat and Options.SpecialBarWhat(b) or "Arc Proc")
+        elseif b.barKind == "cdmbar" then
+            Line("Cooldown Manager bar  -  %s", Options.CDMBarWhat and Options.CDMBarWhat(b) or "")
         else
             row.sub:SetText(Tr(b.barMode == "stack" and "Cooldown bar  -  charges of spell %s"
                 or "Cooldown bar  -  duration of spell %s"):format(tostring(d.spellID or "?")))
@@ -6904,7 +6911,8 @@ end
 Options.BAR_KIND_WORDS = { cooldown = "cooldown bar", aura = "aura bar", swing = "swing bar",
     resource = "resource bar", health = "health bar", cast = "cast bar", enchant = "enchant bar",
     range = "range bar", text = "text bar", texture = "texture bar", wheel = "wheel bar",
-    special = "special bar", sound = "sound bar", timer = "timer bar", stack = "stack bar" }
+    special = "special bar", sound = "sound bar", timer = "timer bar", stack = "stack bar",
+    cdmbar = "Cooldown Manager bar" }
 function Options.BarKindWord(kind)
     return AT.Tr(Options.BAR_KIND_WORDS[kind] or ((kind or "") .. " bar"))
 end
@@ -7422,7 +7430,7 @@ end
 Options.LOOK_BAR_WORDS = { cooldown = "Cooldown bars", aura = "Aura bars", swing = "Swing bars",
     resource = "Resource bars", health = "Health bars", cast = "Castbars", enchant = "Weapon enchant bars",
     range = "Range bars", text = "Texts", texture = "Textures", wheel = "Wheels", special = "Arc Proc bars",
-    sound = "Sounds" }
+    sound = "Sounds", cdmbar = (NS.IsForever ~= true) and "Cooldown Manager bars" or nil }
 
 -- The element list folds by itself while Overview (its own element list) or
 -- Looks is open, so those pages get the height; the CONTENTS bar still opens
@@ -9792,16 +9800,23 @@ local function BuildIconEditor(parent)
     })
     -- a skin's rows step aside (Options.FieldShows): one line says why, naming
     -- the Cooldown Manager look or the Masque skin
+    -- cdm: "wears" the Cooldown Manager look, "under" a Masque skin drawn over it, nil a plain Masque skin
     local function SkinNote(def, text, cdm)
         AT.RowDesc(pg, text, 20, function()
             local r = SelIcon()
-            if not (def.vis() and r ~= nil and NS.Skins ~= nil and NS.Skins.Skinned(r)) then return false end
-            local look = NS.Skins.CdmLook ~= nil and NS.Skins.CdmLook(r) == true
-            return look == (cdm == true)
+            local S = NS.Skins
+            if not (def.vis() and r ~= nil and S ~= nil and S.Skinned(r)) then return false end
+            local wears = S.WearsCdm ~= nil and S.WearsCdm(r) == true
+            if cdm == "wears" then return wears end
+            if wears then return false end
+            local under = S.CdmLook ~= nil and S.CdmLook(r) == true
+            return under == (cdm == "under")
         end)
     end
     SkinNote(lookDef, "Its Masque skin sets the picture's size, crop and shape.")
-    SkinNote(lookDef, "The Cooldown Manager look sets the picture's size, crop and shape.", true)
+    SkinNote(lookDef, "The Cooldown Manager look sets the picture's size, crop and shape.", "wears")
+    SkinNote(lookDef, "Masque's skin is drawn over the Cooldown Manager look; disable the group in Masque to show it.",
+        "under")
     -- the switch reads the icon's own; its group's switch can turn the look on too
     Options.BuildYield()
     AT.RowDesc(pg, "Its group turns this look on: the group's Appearance > Icons.", 20, function()
@@ -12179,6 +12194,7 @@ local function BuildBarPane()
     -- a deck bar's tracker, status and Reset (UI\AD_SpecialOptions.lua)
     Options.BuildYield()
     if Options.SpecialBarRows then Options.SpecialBarRows(pg, SelBar, trackVis) end
+    if Options.CDMBarTrackRows then Options.CDMBarTrackRows(pg, SelBar, trackVis, win) end
 
     Options.BuildYield()
     ConditionRows(pg, SelBar, BarTabVisible("Load Conditions"))
@@ -13163,6 +13179,7 @@ local function BuildBarPane()
             "hideWhenInactive", "hiddenAlpha",
         }, function(r)
             return r.barKind == "aura" or r.barKind == "timer" or r.barKind == "swing" or r.barKind == "enchant"
+                or r.barKind == "cdmbar"
         end, "By State")
         -- Swing bars: dim while the target is out of range of a spell, the
         -- bar's own or its hand's usual one (the field's kinds hide the sub on
@@ -13836,7 +13853,7 @@ local function BuildAddWindow()
     AT.RowInput(pg, "Item IDs",
         function() return addState.itemID or "" end,
         function(v)
-            addState.itemID, addState.itemName, addState.itemSet = v, nil, nil
+            addState.itemID, addState.itemName, addState.itemSet, addState.itemCategory = v, nil, nil, nil
             if UpdateCreate then UpdateCreate() end
         end,
         function() return isIcon("item")() and not addState.remGroupId end,
@@ -13866,6 +13883,10 @@ local function BuildAddWindow()
                 { value = "cooldown", text = "Cooldown Bar" },
                 { value = "aura", text = "Aura Bar" },
             }
+            -- a copy of a Cooldown Manager Tracked Bar (retail; its rows load first)
+            if Options.CDMBarAddRows and NS.CDMBars then
+                items[#items + 1] = { value = "cdmbar", text = "Cooldown Manager Bar" }
+            end
             -- capability probe, never a build gate: swing bars exist only
             -- where the client ships C_SwingTimer (WoW Forever)
             if C_SwingTimer then
@@ -13894,6 +13915,7 @@ local function BuildAddWindow()
         function()
             return addState.cat == "Bar" and addState.barKind == "range"
         end)
+    if Options.CDMBarAddRows then Options.CDMBarAddRows(pg, addWin, addState) end
     AT.RowDropdown(pg, addWin, "Weapon",
         function() return addState.enchantHand or "main" end,
         function(v) addState.enchantHand = v end,
@@ -14287,7 +14309,11 @@ local function BuildAddWindow()
             if ik == "spell" then return (addState.spellID or "") ~= "" end
             if ik == "aura" then return #Options.ParseSpellIDs(addState.auraID) > 0 end
             if ik == "groupbuff" then return #Options.ParseSpellIDs(addState.gbID) > 0 end
-            if ik == "item" then return #Options.ParseSpellIDs(addState.itemID) > 0 end
+            if ik == "item" then
+                -- a Cooldown Manager pick needs no IDs (never on a Reminder group's add)
+                return (addState.itemCategory ~= nil and not addState.remGroupId)
+                    or #Options.ParseSpellIDs(addState.itemID) > 0
+            end
             if ik == "timer" then return Options.CustomCreate ~= nil end
             if ik == "stance" then return Options.StanceCanCreate ~= nil and Options.StanceCanCreate(addState) end
             return true
@@ -14308,6 +14334,8 @@ local function BuildAddWindow()
                 return (addState.barSpell or "") ~= ""
             elseif bk == "timer" then
                 return Options.CustomBarDriver ~= nil
+            elseif bk == "cdmbar" then
+                return Options.CDMBarCanCreate ~= nil and Options.CDMBarCanCreate(addState)
             end
             return true
         elseif addState.cat == "Text" then
@@ -14419,6 +14447,15 @@ local function BuildAddWindow()
             local name = (C_Spell.GetSpellName and C_Spell.GetSpellName(ids[1])) or ("Buff " .. ids[1])
             local rec = Store.NewIcon("groupbuff", driver, dest, layoutId, name)
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
+        elseif iconKind == "item" and addState.itemCategory then
+            -- the Cooldown Manager's entry: the icon follows the item last used from the category
+            local M = NS.CDMMirror
+            local cat = addState.itemCategory
+            local d = (M and M.CategoryDriver) and M.CategoryDriver(cat)
+                or { category = cat, itemID = M and M.CategoryStartItem and M.CategoryStartItem(cat) }
+            local rec = Store.NewIcon("item", d, dest, layoutId,
+                addState.itemName or (M and M.ItemName and M.ItemName(cat)) or ("Item Category " .. cat))
+            if rec then addWin:Hide() Options.SelectIconHome(rec) end
         elseif iconKind == "item" then
             local ids = Options.ParseSpellIDs(addState.itemID)
             if #ids == 0 then return end
@@ -14507,6 +14544,11 @@ local function BuildAddWindow()
             elseif bk == "timer" then
                 if not Options.CustomBarDriver then return end
                 driver, name = Options.CustomBarDriver(addState)
+            elseif bk == "cdmbar" then
+                if not Options.CDMBarDriver then return end
+                driver, name = Options.CDMBarDriver(addState)
+                if not driver then return end
+                mode = nil
             elseif bk == "aura" then
                 -- the field holds the ID by now (a picked name fills it in)
                 local sid = tonumber(addState.barAuraID)
@@ -17437,7 +17479,8 @@ Options.Search = {
         bar = { cooldown = "cooldown bars", aura = "aura bars", timer = "custom bars",
             stack = "stack bars", swing = "swing bars", resource = "resource bars", cast = "castbars",
             health = "health bars", enchant = "enchant bars", range = "range bars",
-            text = "text elements", texture = "textures", wheel = "wheels", special = "Arc Proc bars", sound = "sounds" },
+            text = "text elements", texture = "textures", wheel = "wheels", special = "Arc Proc bars", sound = "sounds",
+            cdmbar = "Cooldown Manager bars" },
         group = { aura = "aura groups", cooldown = "icon groups", reminder = "reminder groups" },
     },
     -- the ui fields a sample walk moves (put back by RestoreUI)

@@ -13,6 +13,28 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.0.0",
+        intro = "Texts you can pin to your own icons, Masque on by default, and Dynamic aura group fixes.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Pin a text to your own icons",
+                    desc = "A text can sit on any Arc Auras icon or bar, aura icons included. Pick it on screen." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Masque",
+                    desc = "Every group shows up in Masque, also ones in the Cooldown Manager look, and Masque Skins is on when Masque is installed." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Buffs copied as debuffs",
+                    desc = "Copying your Cooldown Manager no longer turns some buffs into debuff icons." },
+                { title = "Debuffs in Dynamic aura groups",
+                    desc = "A debuff copied from the Cooldown Manager now shows in a Dynamic aura group." },
+                { title = "Dynamic aura groups after logging in",
+                    desc = "Icons that load for a spec or talent no longer stay empty when you log in inside a dungeon or in combat." },
+            } },
+        },
+    },
+    {
         version = "2.9.0.a",
         intro = "Own looks for any state, and a fade setting for button glows.",
         sections = {
@@ -974,6 +996,34 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.0.0",
+        intro = "Cooldown Manager Bars, potion and healthstone templates, and texts you can pin to your own icons.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Cooldown Manager Bar",
+                    desc = "A new bar that copies one of the Cooldown Manager's Tracked Bars, timer and all, in your own look. Handy for timers no aura can track, like Crusading Strikes' swing timer." },
+                { title = "Potion and healthstone templates",
+                    desc = "Item icons offer Combat Potion, Health Potion and Healthstone templates. Each follows the one you last used, as the Cooldown Manager does." },
+                { title = "Pin a text to your own icons",
+                    desc = "A text can sit on any Arc Auras icon or bar, aura icons included. Pick it on screen." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Combat potion duration",
+                    desc = "A combat potion icon shows how long your potion's buff has left, also when copied from the Cooldown Manager." },
+                { title = "Masque",
+                    desc = "Every group shows up in Masque, also ones in the Cooldown Manager look, and Masque Skins is on when Masque is installed." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Buffs copied as debuffs",
+                    desc = "Copying your Cooldown Manager no longer turns some buffs, like Crash Lightning, into debuff icons." },
+                { title = "Debuffs in Dynamic aura groups",
+                    desc = "A debuff copied from the Cooldown Manager, like Flame Shock, now shows in a Dynamic aura group." },
+                { title = "Dynamic aura groups after logging in",
+                    desc = "Icons that load for a spec or talent no longer stay empty when you log in inside a dungeon or in combat." },
+            } },
+        },
+    },
     {
         version = "2.9.0.a",
         intro = "Own looks for any state, and a fade setting for button glows.",

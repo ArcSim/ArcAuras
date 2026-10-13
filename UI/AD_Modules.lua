@@ -586,8 +586,8 @@ function MOD.RankRows(pg, m)
 end
 
 -- Core\AD_Skins.lua reads the skins and the Factory paints them; this card
--- switches them on and says where a skin is picked. Off by default: on gives
--- every icon a skin.
+-- switches them and says where a skin is picked. On while Masque is
+-- installed, until switched off.
 function MOD.MasqueRows(pg, m)
     local has = m.available
     AT.Section(pg, m.name)
@@ -676,7 +676,8 @@ MOD.Register({
         { 6, 6, 8, 8, "dim" }, { 6, 6, 8, 2, "ink" },
     },
     available = function() return NS.Skins ~= nil and NS.Skins.Lib() ~= nil end,
-    isOn = function() return Store.GetSetting("masqueSkins") == true end,
+    -- on until switched off: with Masque installed, its skins are what the player wants
+    isOn = function() return Store.GetSetting("masqueSkins") ~= false end,
     setOn = function(v)
         if NS.Skins then NS.Skins.SetOn(v) end
         Options.RefreshAll()

@@ -2349,6 +2349,8 @@ function Engine.Rebuild()
     -- frames pinned to a group need its anchored spot; then the conditions
     -- pass paints alphas this same frame, so none render stale.
     ApplyAnchors()
+    -- texts riding our own items: their frames may be new this pass
+    if NS.TextAnchor and NS.TextAnchor.ReapplyItems then NS.TextAnchor.ReapplyItems() end
     if NS.Pins then NS.Pins.ApplyAll() end
     if NS.Conditions then NS.Conditions.Pass() end
     Engine.RefreshEditing()

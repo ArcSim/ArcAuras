@@ -29,7 +29,7 @@ function Options.TextPinRows(pg, ctx, vis, family, section, toKey, targetKey, ow
         for i = 1, select("#", ...) do if k == select(i, ...) then return true end end
         return false
     end
-    local pinned = function() return vis() and Is("frame", "action", "cdm") end
+    local pinned = function() return vis() and Is("frame", "action", "cdm", "item") end
     local function Stamp(row, field)
         row._adMeta = { family = family, section = section, field = field, def = defs[field], baseVis = vis }
     end
@@ -108,7 +108,7 @@ function Options.TextPinRows(pg, ctx, vis, family, section, toKey, targetKey, ow
         end
     end, pinned, 110, "Pick it on screen")
     AT.Tooltip(pick.button, "Pick Frame",
-        "Hover a game frame, an action button or a Cooldown Manager icon and left-click it. Right-click or Esc cancels.")
+        "Hover a game frame, an action button, a Cooldown Manager icon or an Arc Auras icon and left-click it. Right-click or Esc cancels.")
 
     -- where it is now, in words
     local line = AT.AddRow(pg, 30, pinned)

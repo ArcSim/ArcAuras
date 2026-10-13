@@ -68,6 +68,7 @@ D.WORDS = {
         texture = K("Texture", "texture", "textures", "Textures"),
         wheel = K("Wheel", "wheel", "wheels", "Wheels"),
         special = K("Arc Proc bar", "Arc Proc bar", "Arc Proc bars", "Arc Proc bars"),
+        cdmbar = K("Cooldown Manager Bar", "Cooldown Manager bar", "Cooldown Manager bars", "Cooldown Manager bars"),
     },
     iconGroup = {
         cooldown = K("Icon Group", "icon group", "icon groups", "Icon groups"),
@@ -109,6 +110,7 @@ function D.BarKinds()
     for _, k in ipairs({ "resource", "health", "cast", "enchant" }) do out[#out + 1] = k end
     if C_Spell and C_Spell.IsSpellInRange then out[#out + 1] = "range" end
     if NS.DriverCustom then out[#out + 1] = "timer" end
+    if NS.CDMBars then out[#out + 1] = "cdmbar" end
     return out
 end
 

@@ -56,7 +56,7 @@ Schema.GROUP_KINDS = { "cooldown", "aura", "reminder" }
 -- kind stays valid everywhere, so sync never rewrites a record. Legacy "timer"
 -- and "stack" (power) bars stay legal but cannot be created.
 Schema.BAR_KINDS = { "cooldown", "aura", "swing", "resource", "health", "cast", "enchant", "range", "text", "texture",
-    "wheel", "special", "sound" }
+    "wheel", "special", "sound", "cdmbar" }
 -- A text element's sources (rec.driver.source, Bars\AD_TextElement.lua): each
 -- reads plain in combat or reaches the screen through a text sink only.
 Schema.TEXT_SOURCES = { "static", "power", "health", "name", "combo", "ammo", "petMood", "range", "clock",
@@ -411,14 +411,14 @@ local GCD_SWIPE_DRAWN = { swipe = true, both = true }
 -- frame, the action button holding a spell, or a Cooldown Manager icon (by
 -- spell or by cooldown ID). The frame name, spells or "cd:<id>" ride in the
 -- text's PinTarget field.
-Schema.PIN_TO = { "own", "frame", "action", "cdm" }
+Schema.PIN_TO = { "own", "frame", "action", "cdm", "item" }
 -- A resource bar's own look per power (a druid's forms), per spec, or with and
 -- without a talent (Core\AD_Looks.lua). Its place, size and rules are the
 -- bar's in every look.
 Schema.LOOK_MODES = { "power", "spec", "talent" }
 Schema.LOOK_SKIP = { size = true, frame = true, anchor = true, behavior = true, mouse = true }
 Schema.PIN_LABELS = { own = "Its own spot", frame = "A named frame", action = "An action button",
-    cdm = "A Cooldown Manager icon" }
+    cdm = "A Cooldown Manager icon", item = "An Arc Auras icon or bar" }
 -- An icon's own looks (Core\AD_OwnLooks.lua, rec.ownLooks): per kind, the
 -- states one can take over and what each state has: a opacity, g grey out,
 -- t tint, glow its glow switches in the states section (the first one shows
@@ -2811,7 +2811,9 @@ local BK_DUR  = { cooldown = true, aura = true, timer = true, swing = true, ench
 -- left with SetFormattedText; it is secret for a target in combat) but not the
 -- rounding or the decimals threshold: both would compare that time.
 local BK_CAST = { cast = true }
-local BK_DURC = { cooldown = true, aura = true, timer = true, swing = true, cast = true, enchant = true }
+-- A Cooldown Manager bar (Bars\AD_CDMBar.lua) copies a time that may be secret
+-- the same way, so it takes the castbar's share of the duration rows.
+local BK_DURC = { cooldown = true, aura = true, timer = true, swing = true, cast = true, enchant = true, cdmbar = true }
 local BK_RES  = { resource = true }
 local BK_HP   = { health = true }
 
@@ -2862,7 +2864,7 @@ local BK_CST  = { cooldown = true, stack = true, aura = true, enchant = true, ti
 -- Hide-at-zero needs our own writer to pass the count through the secret-safe
 -- truncator; the engine writes an aura bar's stack text.
 local BK_STKZ = { cooldown = true, stack = true, timer = true }
-local BK_TMSW = { timer = true, swing = true, aura = true, enchant = true }
+local BK_TMSW = { timer = true, swing = true, aura = true, enchant = true, cdmbar = true }
 -- Aura bars too: SetDurationBar takes direction and interpolation from the
 -- caller, so fillMode and smoothing work on aura duration bars.
 local BK_FILL = { cooldown = true, timer = true, swing = true, aura = true, enchant = true, special = true }
@@ -2874,6 +2876,10 @@ local BK_SMOOTH = { cooldown = true, aura = true, resource = true, health = true
 -- fill colour, fill direction or tick marks there.
 local BK_NOTRANGE = { cooldown = true, aura = true, timer = true, stack = true, swing = true,
     resource = true, health = true, cast = true, enchant = true, special = true }
+-- The fill colour and direction reach a Cooldown Manager bar too; tick marks do
+-- not, since nothing plain gives its copied timer a length to mark.
+local BK_TINT = { cdmbar = true }
+for k in pairs(BK_NOTRANGE) do BK_TINT[k] = true end
 -- The kinds whose tick marks follow the tick mode; a deck bar's marks are its
 -- procs (Bars\AD_SpecialBar.lua), so it has no mode to pick.
 local BK_TICKMODE = { cooldown = true, aura = true, timer = true, stack = true, swing = true,
@@ -2881,7 +2887,7 @@ local BK_TICKMODE = { cooldown = true, aura = true, timer = true, stack = true, 
 -- Every kind that draws a bar: a text element (Bars\AD_TextElement.lua) is one
 -- string in a box, with no fill, chrome or text runs of the bar's.
 local BK_DRAWN = { cooldown = true, aura = true, timer = true, stack = true, swing = true,
-    resource = true, health = true, cast = true, enchant = true, range = true, special = true }
+    resource = true, health = true, cast = true, enchant = true, range = true, special = true, cdmbar = true }
 
 local BAR_ANCHORS ={ "LEFT", "CENTER", "RIGHT", "TOPLEFT", "TOP", "TOPRIGHT",
     "BOTTOMLEFT", "BOTTOM", "BOTTOMRIGHT" }
@@ -3030,6 +3036,7 @@ Schema.BAR_GLOW_KINDS = {
     enchant = { marks = "overlay" },
     range = { marks = "overlay" },
     special = { marks = "overlay" },
+    cdmbar = { marks = "overlay" },
     timer = { marks = "overlay" },
     stack = { marks = "overlay" },
 }
@@ -3066,7 +3073,7 @@ Schema.bar = {
         -- Only used while colorMode is "fill"; every other bar kind resolves
         -- colorMode to that default.
         color       = { inherit = false, d = { 0.247, 0.788, 0.949, 1 }, t = "color", alpha = true, label = "Fill color",
-            kinds = BK_NOTRANGE, dep = { field = "colorMode", value = "fill" }, showIf = Schema.DeckFillColorShows },
+            kinds = BK_TINT, dep = { field = "colorMode", value = "fill" }, showIf = Schema.DeckFillColorShows },
         gradLowColor = { d = { 1, 0.15, 0.15, 1 }, t = "color", alpha = true, kinds = BK_HP, label = "Empty health color",
             dep = { field = "colorMode", value = "gradient" } },
         gradMidColor = { d = { 1, 0.82, 0.1, 1 }, t = "color", alpha = true, kinds = BK_HP, label = "Half health color",
@@ -3094,7 +3101,7 @@ Schema.bar = {
                     NS.Store.SetBarStanding(rec, false)
                 end
             end },
-        reverseFill = { d = false, t = "bool", label = "Reverse fill", kinds = BK_NOTRANGE,
+        reverseFill = { d = false, t = "bool", label = "Reverse fill", kinds = BK_TINT,
             kindModes = { cooldown = { duration = true } } },
         -- Cooldowns drain toward ready; swing bars fill (dk: per-kind
         -- defaults). Duration mode only: a stack fill is a count, not a timer.
@@ -3370,7 +3377,7 @@ Schema.bar = {
     -- Side icon. On a cast bar it shows the spell being cast, on a deck bar its
     -- tracker's art.
     icon = { push = true, inherit = true, kinds = { cooldown = true, aura = true, cast = true, enchant = true, timer = true,
-        special = true }, fields = {
+        special = true, cdmbar = true }, fields = {
         iconShow = { d = false, t = "bool", label = "Icon" },
         -- Off: the icon keeps its own size; on: it follows the bar's thickness.
         iconFollowBar = { d = false, t = "bool", label = "Match the bar's size", dep = { field = "iconShow" } },
@@ -4352,7 +4359,7 @@ Schema.bar = {
         -- Only kinds with a state hide (ready, full charges, inactive); aura
         -- bars have none, as the engine hides the whole bar with the aura. On a
         -- cast bar, above 0 leaves the empty bar faintly visible between casts.
-        hiddenAlpha = { d = 0, t = "num", min = 0, max = 1, kinds = { cooldown = true, timer = true, swing = true, cast = true, enchant = true }, label = "Hidden opacity" },
+        hiddenAlpha = { d = 0, t = "num", min = 0, max = 1, kinds = { cooldown = true, timer = true, swing = true, cast = true, enchant = true, cdmbar = true }, label = "Hidden opacity" },
         -- Spell 61304 (the GCD), inverted readiness, exempt from the debounce.
         gcdMode = { d = false, t = "bool", kinds = BK_CD, label = "GCD tracker mode" },
         -- A health bar's click area: a secure unit button over the bar that

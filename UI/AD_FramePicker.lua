@@ -184,6 +184,8 @@ end
 -- The first pickable frame under the cursor: name, frame (a game frame), nil,
 -- frame, nil, item (an Arc Auras item), or nil, nil, why. The catcher is
 -- always the top one; being unnamed under UIParent, its walk yields nothing.
+-- An aura icon's button is the game's, and a walk stops on it: then the
+-- smallest of our own items under the cursor answers instead.
 function FP.Resolve(foci, items, spells)
     local why
     for _, f in ipairs(foci or {}) do
@@ -191,7 +193,42 @@ function FP.Resolve(foci, items, spells)
         if name or item then return name, frame, nil, item end
         why = why or w
     end
+    local best, bestItem, bestArea
+    for f, it in pairs(items or {}) do
+        if it.value and f.IsVisible and f.IsMouseOver then
+            local vis, over = f:IsVisible(), f:IsMouseOver()
+            if not (Secret(vis) or Secret(over)) and vis and over then
+                local w, h = f:GetSize()
+                local area = (not (Secret(w) or Secret(h)) and type(w) == "number" and type(h) == "number")
+                    and w * h or math.huge
+                if not bestArea or area < bestArea then best, bestItem, bestArea = f, it, area end
+            end
+        end
+    end
+    if best then return nil, best, nil, bestItem end
     return nil, nil, why
+end
+
+-- A text's picks among our own items: every icon (one in a group too), bar
+-- and group, as "item" with its "kind:id"; the text's own record says why not.
+function FP.TextItems(rec)
+    local A, Store = NS.Anchor, NS.Store
+    local map = {}
+    if not (A and A.FrameOf and Store and Store.EachRecord) then return map end
+    local WORD = { icon = "Icon", bar = "Bar", group = "Group" }
+    Store.EachRecord(function(id, other)
+        local word = WORD[other.type]
+        if not word then return end
+        local f = A.FrameOf(other.type, id)
+        if not f then return end
+        if rec and id == rec.id then
+            map[f] = { why = "self" }
+        else
+            map[f] = { value = "item", spec = other.type .. ":" .. id,
+                text = word .. ":  " .. (other.name or (word .. " " .. id)) }
+        end
+    end)
+    return map
 end
 
 function FP.IsActive()
@@ -384,8 +421,12 @@ function FP.Start(onPick, rec, textPick)
     FP.onPick = onPick
     -- the items are mapped once: pick mode is short, and a rebuild while it
     -- runs only leaves a stale frame that is no longer under the cursor. A
-    -- text's pick offers game frames, buttons and icons, never Arc Auras items.
-    FP.items = (rec and not textPick and NS.Anchor and NS.Anchor.PickFrames) and NS.Anchor.PickFrames(rec) or nil
+    -- text's pick offers game frames, buttons and icons, and our own items.
+    if textPick then
+        FP.items = FP.TextItems(rec)
+    else
+        FP.items = (rec and NS.Anchor and NS.Anchor.PickFrames) and NS.Anchor.PickFrames(rec) or nil
+    end
     FP.spells = FP.SpellPicks(rec, textPick)
     FP.active = true
     FP.acc, FP.lastX, FP.lastY = 0, nil, nil

@@ -1,5 +1,26 @@
 # Arc Auras
 
+## 3.0.0
+
+Cooldown Manager Bars, potion and healthstone templates, and texts you can pin to your own icons.
+
+### New Features
+
+- **Cooldown Manager Bar** - A new bar that copies one of the Cooldown Manager's Tracked Bars, timer and all, in your own look. Handy for timers no aura can track, like Crusading Strikes' swing timer.
+- **Potion and healthstone templates** - Item icons offer Combat Potion, Health Potion and Healthstone templates. Each follows the one you last used, as the Cooldown Manager does.
+- **Pin a text to your own icons** - A text can sit on any Arc Auras icon or bar, aura icons included. Pick it on screen.
+
+### Improvements
+
+- **Combat potion duration** - A combat potion icon shows how long your potion's buff has left, also when copied from the Cooldown Manager.
+- **Masque** - Every group shows up in Masque, also ones in the Cooldown Manager look, and Masque Skins is on when Masque is installed.
+
+### Bug Fixes
+
+- **Buffs copied as debuffs** - Copying your Cooldown Manager no longer turns some buffs, like Crash Lightning, into debuff icons.
+- **Debuffs in Dynamic aura groups** - A debuff copied from the Cooldown Manager, like Flame Shock, now shows in a Dynamic aura group.
+- **Dynamic aura groups after logging in** - Icons that load for a spec or talent no longer stay empty when you log in inside a dungeon or in combat.
+
 ## 2.9.0.a
 
 Own looks for any state, and a fade setting for button glows.

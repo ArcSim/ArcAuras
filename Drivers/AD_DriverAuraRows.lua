@@ -1283,6 +1283,19 @@ function AR.Sweep()
     end
 end
 
+-- The load window's members: every aura icon of the group, loaded here or
+-- not. A fresh login (an alt's, or any after a logout) knows no spec or
+-- talents yet at ADDON_LOADED, so a load condition would leave out members it
+-- cannot judge; a spare parked piece costs nothing, a missing one cannot be
+-- made in combat or an instance.
+function AR.PreMembers(g)
+    local out = {}
+    for _, rec in ipairs(Store.IconsOf(g)) do
+        if rec.kind == "aura" then out[#out + 1] = rec end
+    end
+    return out
+end
+
 -- Load window: the pool gets a piece for every icon of every Dynamic aura group,
 -- plus the copies a centered row needs (a group ordered by Time left: one per
 -- flow), the one time creation is legal in combat or an instance.
@@ -1298,11 +1311,11 @@ function AR.PreBuild()
         for _, g in ipairs((Store.ChildrenOf(layout))) do
             if AR.On(g) and AR.TimeLeft(g) then
                 -- Time left: a flow per unit and Cast by, nothing per icon
-                for _, f in ipairs(AR.FlowList(g, AR.Grid(g, AR.Members(g)), (AR.Pack(g)))) do
+                for _, f in ipairs(AR.FlowList(g, AR.Grid(g, AR.PreMembers(g)), (AR.Pack(g)))) do
                     need[f.unit] = need[f.unit] + 1
                 end
             elseif AR.On(g) then
-                local grid = AR.Grid(g, AR.Members(g))
+                local grid = AR.Grid(g, AR.PreMembers(g))
                 local rows = {}
                 for _, cell in ipairs(grid.cells) do
                     local unit = AR.UnitOf(cell.rec)

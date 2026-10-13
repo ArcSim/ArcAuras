@@ -289,18 +289,33 @@ function M.Harmful(id)
     return M.Plain(v) and v == true
 end
 
+-- Whether an entry's aura is harmful, by the aura's own spell: its linked IDs
+-- when it has any (a harmful strike can carry a buff on you: Crash Lightning's
+-- 1252415 on 187874), harmful when one of them is; else the picture's spell.
+function M.AuraHarmful(info, ids)
+    local seen, any = false, false
+    for _, id in ipairs(type(info.linkedSpellIDs) == "table" and info.linkedSpellIDs or {}) do
+        if type(id) == "number" and M.Plain(id) then
+            seen = true
+            if M.Harmful(id) then any = true end
+        end
+    end
+    if seen then return any end
+    return M.Harmful(ids[1])
+end
+
 -- The aura an icon shows, as Blizzard decides it on every icon (CooldownViewerItemData
 -- GetAuraData): your own buff on you first, else your own aura on your target, matching
 -- linked, tooltip, override and spell IDs, never with HideAura. The selfAura / hasAura
 -- hints are not read: Blizzard's Lua never reads them either. The target lane is a
--- debuff for a harmful spell (Blizzard picks by the target's side; a helpful spell's aura
--- sits on a friend, a harmful one's on an enemy). Returns NS.DriverAura's shape: the
+-- debuff for a harmful aura (Blizzard picks by the target's side; a helpful aura sits
+-- on a friend, a harmful one's on an enemy). Returns NS.DriverAura's shape: the
 -- picture's spell first (M.AuraIDs), then the rest, as a set.
 function M.AuraFor(info)
     if type(info) ~= "table" or M.HasFlag(info.flags, M.Flag("HideAura")) then return nil end
     local ids = M.AuraIDs(info)
     if #ids == 0 then return nil end
-    local harmful = M.Harmful(ids[1])
+    local harmful = M.AuraHarmful(info, ids)
     return { caster = "mine", spellID = ids[1], spellIDs = (#ids > 1) and ids or nil,
         auraType = harmful and "debuff" or "buff", unit = "player", unit2 = "target" }
 end
@@ -576,10 +591,69 @@ end
 function M.LastCategoryItem(cat)
     local f = C_Spell and C_Spell.GetLastCategoryCooldownSource
     if not f then return nil end
-    local _, iid = f(cat)
+    local _, iid = f(cat) -- raw-id: a spell category, not a spell
     iid = M.Num(iid)
     if iid and iid > 0 then return iid end
     return nil
+end
+
+-- The retail item icon templates, each { category, spellID }: the three every
+-- character has, then any other item entry the Cooldown Manager lists for
+-- this character (shown or not), in its order; an entry's spell is its
+-- picture before any use. In combat the last read. One read a second at
+-- most: the Add window asks on every layout pass.
+M.ITEM_DEFAULT = { 4, 30, 1711 }
+function M.ItemCategories()
+    local now = GetTime()
+    if M.itemCats and M.itemCatsAt and now - M.itemCatsAt < 1 then return M.itemCats end
+    if M.itemCats and InCombatLockdown() then
+        M.itemCatsAt = now
+        return M.itemCats
+    end
+    local out, at = {}, {}
+    for _, cat in ipairs(M.ITEM_DEFAULT) do
+        out[#out + 1] = { category = cat }
+        at[cat] = out[#out]
+    end
+    if not InCombatLockdown() and M.Available() then
+        local snap = M.Read()
+        if snap.complete then
+            for _, name in ipairs(M.CATS) do
+                for _, id in ipairs(snap.sets[M.Cat(name)] or {}) do
+                    local info = snap.infos[id]
+                    local cat = info and info.spellCategoryID
+                    if type(cat) == "number" then
+                        local e = at[cat]
+                        if not e then
+                            e = { category = cat }
+                            out[#out + 1] = e
+                            at[cat] = e
+                        end
+                        if not e.spellID and type(info.spellID) == "number" then e.spellID = info.spellID end
+                    end
+                end
+            end
+        end
+    end
+    M.itemCats, M.itemCatsAt = out, now
+    return out
+end
+
+-- the item a new icon for the category starts on: retail's stand-in, else the last one used
+function M.CategoryStartItem(cat)
+    return M.ITEM_FALLBACK[cat] or M.LastCategoryItem(cat)
+end
+
+-- A category item icon's driver, the template's and the import's alike: a
+-- combat potion also shows its buff (Drivers\AD_DriverCooldown.lua LearnPotions).
+function M.CategoryDriver(cat)
+    local d = { category = cat, itemID = M.CategoryStartItem(cat) }
+    local DC = NS.DriverCooldown
+    if DC and DC.POTION_CAT == cat and DC.PotionOverlay then
+        d.overlay = DC.PotionOverlay()
+        if DC.QueueLearnPotions then DC.QueueLearnPotions() end
+    end
+    return d
 end
 
 -- "Combat Potion" for category 4; "Item Category N" for one Blizzard has not named
@@ -623,8 +697,8 @@ function M.NewIconFor(p, groupId)
     if p.kind == "item" then
         -- the category's item, as Blizzard's icon follows it (Drivers\AD_DriverCooldown.lua CategoryItem)
         local cat = p.spellCategoryID
-        local iid = M.ITEM_FALLBACK[cat] or M.LastCategoryItem(cat)
-        return S.NewIcon("item", { category = cat, itemID = iid }, groupId, nil, M.ItemName(cat))
+        -- the same icon as the Add window's template for it
+        return S.NewIcon("item", M.CategoryDriver(cat), groupId, nil, M.ItemName(cat))
     end
     return nil
 end

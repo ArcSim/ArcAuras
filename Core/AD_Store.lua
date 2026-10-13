@@ -1043,7 +1043,8 @@ function Store.Normalize()
                 and rec.barKind ~= "cast" and rec.barKind ~= "enchant"
                 and rec.barKind ~= "range" and rec.barKind ~= "text"
                 and rec.barKind ~= "texture" and rec.barKind ~= "wheel"
-                and rec.barKind ~= "special" and rec.barKind ~= "sound" then
+                and rec.barKind ~= "special" and rec.barKind ~= "sound"
+                and rec.barKind ~= "cdmbar" then
                 rec.barKind = "cooldown"
             end
             -- a timer (custom) bar fills with its timer or with its stacks
@@ -1109,6 +1110,11 @@ function Store.Normalize()
             if rec.barKind == "sound" then Store.CleanSound(rec.driver) end
             -- a deck bar names its tracker by id (Bars\AD_SpecialBar.lua)
             if rec.barKind == "special" and type(rec.driver.tracker) ~= "string" then rec.driver.tracker = nil end
+            -- a Cooldown Manager bar names its entry by cooldown ID (Bars\AD_CDMBar.lua)
+            if rec.barKind == "cdmbar" then
+                local cd = tonumber(rec.driver.cooldownID)
+                rec.driver.cooldownID = (cd and cd > 0) and math.floor(cd) or nil
+            end
         end
         if rec.type == "icon" and rec.kind == "timer" then
             rec.driver = rec.driver or {}
@@ -5060,7 +5066,8 @@ end
 -- A new bar's creation template (Store.IconTemplate's note).
 function Store.BarTemplate(rec, put)
     local barKind = rec.barKind
-    if barKind == "cooldown" or barKind == "aura" or barKind == "enchant" or barKind == "special" then
+    if barKind == "cooldown" or barKind == "aura" or barKind == "enchant" or barKind == "special"
+        or barKind == "cdmbar" then
         put("icon", "iconShow", true)
     end
     -- A deck bar marks where each proc landed.
@@ -5174,7 +5181,7 @@ function Store.NewBar(layoutId, barKind, driver, name, barMode)
         and barKind ~= "aura" and barKind ~= "resource" and barKind ~= "health"
         and barKind ~= "cast" and barKind ~= "enchant" and barKind ~= "range"
         and barKind ~= "text" and barKind ~= "texture" and barKind ~= "wheel"
-        and barKind ~= "special" and barKind ~= "sound" then
+        and barKind ~= "special" and barKind ~= "sound" and barKind ~= "cdmbar" then
         barKind = "cooldown"
     end
     local id = NewId()
@@ -5409,7 +5416,7 @@ end
 -- duplicate and dropped on an import).
 local function RemapRules(rec, map, keep)
     local d = rec.driver
-    if type(d) ~= "table" then return end
+    if type(d) ~= "table" then d = {} end
     local rules = d.rules
     if type(rules) == "table" then
         for _, r in ipairs(rules) do
@@ -5431,6 +5438,26 @@ local function RemapRules(rec, map, keep)
                 d[k] = map[id]
             elseif id and not keep then
                 d[k] = nil
+            end
+        end
+    end
+    -- a text riding one of our items ("<x>PinTo" = "item", its "<x>PinTarget" =
+    -- "icon:12"): the same rule; one that loses its item goes back home
+    for _, sec in pairs(rec.o or {}) do
+        if type(sec) == "table" then
+            for k, v in pairs(sec) do
+                local pre, n
+                if type(k) == "string" then pre, n = k:match("^(.-)PinTo(%d*)$") end
+                if pre and v == "item" then
+                    local tk = pre .. "PinTarget" .. n
+                    local kind, id = tostring(sec[tk] or ""):match("^(%a+):(%d+)$")
+                    id = tonumber(id)
+                    if id and map[id] then
+                        sec[tk] = kind .. ":" .. map[id]
+                    elseif id and not keep then
+                        sec[k], sec[tk] = nil, nil
+                    end
+                end
             end
         end
     end

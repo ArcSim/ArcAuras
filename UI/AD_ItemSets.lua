@@ -1,6 +1,7 @@
 -- AD_ItemSets: ready-made item lists for item icons (Healthstone, Healing Potion, ...) and their picks in the Add window.
 -- AD_Options builds the Add window and calls Options.ItemSetAddRows; the icon runtime is the cooldown driver's.
--- The lists are WoW Forever's own item IDs, best first; elsewhere none are offered.
+-- WoW Forever's lists are its own item IDs, best first; retail's are item icon templates by spell
+-- category (Core\AD_CDMMirror.lua ItemCategories), the icons a Cooldown Manager import makes.
 local ADDON, NS = ...
 
 local IS = {}
@@ -49,9 +50,33 @@ IS.FOREVER = {
       ids = { 8079, 8078, 8077, 3772, 2136, 2288, 5350 } },
 }
 
--- the lists this client gets
+-- the lists this client gets: WoW Forever's, else the Cooldown Manager's
+-- potions and healthstones, each an icon by its spell category
 function IS.List()
-    return NS.IsForever == true and IS.FOREVER or {}
+    if NS.IsForever == true then return IS.FOREVER end
+    local M = NS.CDMMirror
+    if not (M and M.ItemCategories) then return {} end
+    local out = {}
+    for _, e in ipairs(M.ItemCategories()) do
+        out[#out + 1] = { key = "cat:" .. e.category, name = M.ItemName(e.category), category = e.category,
+            spellID = e.spellID }
+    end
+    return out
+end
+
+-- a list's picture: its item's, else (a category nobody used yet) the
+-- Cooldown Manager entry's spell, as the game draws it
+function IS.Art(s)
+    local item = s.art
+    if s.category then
+        local M = NS.CDMMirror
+        item = M and M.CategoryStartItem and M.CategoryStartItem(s.category)
+    end
+    local tex = item and C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(item)
+    if not tex and s.spellID and C_Spell and C_Spell.GetSpellTexture then
+        tex = C_Spell.GetSpellTexture(s.spellID) -- raw-id: a Cooldown Manager entry
+    end
+    return tex or 134400
 end
 
 function IS.Get(key)
@@ -61,36 +86,50 @@ function IS.Get(key)
     return nil
 end
 
-IS.CELL, IS.PITCH = 32, 36
+IS.CELL, IS.PITCH, IS.CAP = 32, 36, 13
 
 -- One square per list, on the label margin: a click fills the Item IDs field
--- and names the new icon after the list; the pick stays cyan.
+-- and names the new icon after the list (a Cooldown Manager entry picks its
+-- category instead); the pick stays cyan. The squares are laid out on every
+-- pass, as retail's follow the Cooldown Manager, under a caption there.
 function IS.AddRows(pg, owner, addState, vis, onPick)
     local AT, COL = NS.AT, NS.AT.COL
-    local list = IS.List()
-    if #list == 0 then return end
-    local row = AT.AddRow(pg, IS.PITCH + 8, vis)
+    local cdm = NS.IsForever ~= true
+    local top = cdm and IS.CAP or 0
+    local row = AT.AddRow(pg, IS.PITCH + 8 + top, function() return vis() and #IS.List() > 0 end)
+    if cdm then
+        local cap = row:CreateFontString(nil, "OVERLAY")
+        cap:SetFont(AT.FONT, 9, "")
+        cap:SetPoint("TOPLEFT", 10, -2)
+        cap:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
+        cap:SetText(AT.Tr("TEMPLATE - click one, then Create"))
+        row._cap = cap
+    end
     local cells = {}
-    for i, s in ipairs(list) do
+    local function Cell(i)
+        if cells[i] then return cells[i] end
         local b = CreateFrame("Button", nil, row, "BackdropTemplate")
         b:SetSize(IS.CELL, IS.CELL)
-        b:SetPoint("LEFT", row, "LEFT", 10 + (i - 1) * IS.PITCH, 0)
+        b:SetPoint("LEFT", row, "LEFT", 10 + (i - 1) * IS.PITCH, -top / 2)
         AT.Skin(b, COL.well, COL.line)
         b.tex = b:CreateTexture(nil, "ARTWORK")
         b.tex:SetPoint("TOPLEFT", 2, -2)
         b.tex:SetPoint("BOTTOMRIGHT", -2, 2)
         b.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-        b.tex:SetTexture(C_Item and C_Item.GetItemIconByID and C_Item.GetItemIconByID(s.art) or 134400)
         function b.Edge(hot)
-            local c = (addState.itemSet == s.key and COL.arc) or (hot and COL.focus) or COL.line
+            local s = b._s
+            local c = (s and addState.itemSet == s.key and COL.arc) or (hot and COL.focus) or COL.line
             b:SetBackdropBorderColor(c[1], c[2], c[3], 1)
         end
         b:SetScript("OnEnter", function()
+            local s = b._s
+            if not s then return end
             b.Edge(true)
             GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
-            GameTooltip:SetText(s.name, COL.ink[1], COL.ink[2], COL.ink[3])
-            GameTooltip:AddLine(("Any of %d items: the icon shows the best one you carry and can use."):format(#s.ids),
-                COL.dim[1], COL.dim[2], COL.dim[3], true)
+            GameTooltip:SetText(AT.Tr(s.name), COL.ink[1], COL.ink[2], COL.ink[3])
+            local body = s.category and AT.Tr("Every item of this kind: the icon follows the one you last used, as the Cooldown Manager's does.")
+                or AT.Tr("Any of %d items: the icon shows the best one you carry and can use."):format(#s.ids)
+            GameTooltip:AddLine(body, COL.dim[1], COL.dim[2], COL.dim[3], true)
             GameTooltip:Show()
         end)
         b:SetScript("OnLeave", function()
@@ -98,19 +137,37 @@ function IS.AddRows(pg, owner, addState, vis, onPick)
             if GameTooltip:IsOwned(b) then GameTooltip:Hide() end
         end)
         b:SetScript("OnClick", function()
+            local s = b._s
+            if not s then return end
             AT.CloseDropdown()
-            local t = {}
-            for k, id in ipairs(s.ids) do t[k] = tostring(id) end
-            addState.itemID, addState.itemName, addState.itemSet = table.concat(t, ", "), s.name, s.key
+            if s.category then
+                addState.itemID, addState.itemName, addState.itemSet, addState.itemCategory = "", s.name, s.key, s.category
+            else
+                local t = {}
+                for k, id in ipairs(s.ids) do t[k] = tostring(id) end
+                addState.itemID, addState.itemName, addState.itemSet, addState.itemCategory =
+                    table.concat(t, ", "), s.name, s.key, nil
+            end
             AT.LayoutPage(pg)
             if onPick then onPick() end
         end)
-        b._adSet = s.key
         cells[i] = b
+        return b
     end
     row._cells = cells
     row._sync = function()
-        for _, b in ipairs(cells) do b.Edge(false) end
+        local list = IS.List()
+        for i, s in ipairs(list) do
+            local b = Cell(i)
+            b._s, b._adSet = s, s.key
+            b.tex:SetTexture(IS.Art(s))
+            b.Edge(false)
+            b:Show()
+        end
+        for i = #list + 1, #cells do
+            cells[i]._s, cells[i]._adSet = nil, nil
+            cells[i]:Hide()
+        end
     end
     return row
 end

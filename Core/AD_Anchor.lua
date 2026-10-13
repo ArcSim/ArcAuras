@@ -16,6 +16,12 @@ local sources = {}     -- recId -> frame, the sources ApplyAll walks
 
 local DEFAULT_SRC, DEFAULT_DST = "TOP", "BOTTOM"
 
+-- a record's live frame by its kind ("icon", "bar", "group", "layout"), or nil
+function Anchor.FrameOf(kind, id)
+    local get = providers[kind]
+    return get and id and get(id) or nil
+end
+
 function Anchor.RegisterProvider(kind, fn)
     providers[kind] = fn
 end

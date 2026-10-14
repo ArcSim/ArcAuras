@@ -426,7 +426,7 @@ function PW.PaintMove()
                 r.name:SetText(c.name)
                 local col = on and COL.ink or COL.dim
                 r.name:SetTextColor(col[1], col[2], col[3])
-                r.kind:SetText(c.off and AT.Tr("off") or "")
+                r.kind:SetText((c.off and not c.before) and AT.Tr("off") or "")
                 r.onTick = function()
                     move.picks[c.key] = (not move.picks[c.key]) or nil
                     move.err = nil
@@ -451,7 +451,7 @@ function PW.ShowMove(list)
     local f = PW.BuildMove()
     move.list, move.picks, move.err = list, {}, nil
     for _, c in ipairs(list) do
-        if not c.off then move.picks[c.key] = true end
+        if not c.off or c.before then move.picks[c.key] = true end
     end
     PW.PaintMove()
     f:Show()
@@ -468,7 +468,14 @@ function PW.MoveNow()
         return
     end
     local ui = NS.Store.UI and NS.Store.UI()
-    if ui then ui.ptOffer = "done" end
+    if ui then
+        ui.ptOffer = "done"
+        -- the parts left unticked were answered: a switched-off one no longer asks
+        ui.ptDeclined = type(ui.ptDeclined) == "table" and ui.ptDeclined or {}
+        for _, c in ipairs(move.list or {}) do
+            ui.ptDeclined[c.key] = (not move.picks[c.key]) or nil
+        end
+    end
     picks = nil
     move.f:Hide()
     if Options.RefreshAll then Options.RefreshAll() end
@@ -477,6 +484,7 @@ end
 
 -- After each load, never in combat (it waits for the fight to end): while
 -- ArcUI ProcTracker has something switched on for this class that has not moved,
+-- or a switched-off one a Move has not answered yet,
 -- the move window lists every part this class has there. Another class's wait
 -- for that class to log in. An old "Don't ask again" answer still holds.
 function PW.MigrateOnLogin()
@@ -494,7 +502,12 @@ function PW.MigrateOnLogin()
         PW.waitFight:RegisterEvent("PLAYER_REGEN_ENABLED")
         return
     end
-    local list, anyOn = {}, false
+    -- what an earlier import brought: a stamp whose layout is gone was moved
+    -- before (that import switched it off in ProcTracker) and starts ticked
+    local adb = rawget(_G, "ArcAurasDB")
+    local stamps = type(adb) == "table" and type(adb.importPT) == "table" and adb.importPT or {}
+    local declined = type(ui.ptDeclined) == "table" and ui.ptDeclined or {}
+    local list, ask = {}, false
     for _, c in ipairs(MP.Candidates()) do
         if not c.other then
             if MP.PartLive(c.key) then
@@ -502,13 +515,15 @@ function PW.MigrateOnLogin()
                 -- ProcTracker since): only switched off there, never a second copy
                 if not c.off then MP.SwitchOffInPT(c) end
             else
+                c.before = stamps[c.key] ~= nil
                 list[#list + 1] = c
-                if not c.off then anyOn = true end
+                -- a switched-on part always asks; a switched-off one until a Move
+                -- left it unticked, so the window never asks every login forever
+                if not c.off or not declined[c.key] then ask = true end
             end
         end
     end
-    -- only switched-off parts left: nothing to move, so nothing to ask
-    if not anyOn then return end
+    if not ask then return end
     PW.ShowMove(list)
 end
 

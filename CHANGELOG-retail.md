@@ -24,6 +24,7 @@ Import from Arc UI (work in progress), bar skins, and shaped glows.
 - **Glow fixes** - Glows on missing icons no longer get cut off, and button glows on masked icons run at the right speed.
 - **Stack bar colors** - No more flash on the first stack or a new color after a reload.
 - **Proc Tracker import** - "Draw Behind Border" glows keep their backing.
+- **ArcUI ProcTracker move** - Trackers switched off in ArcUI ProcTracker show in the move window too, so you can bring them over for your other specs.
 
 ## 3.0.0
 

@@ -1059,6 +1059,8 @@ CL.retailVersions = {
                     desc = "No more flash on the first stack or a new color after a reload." },
                 { title = "Proc Tracker import",
                     desc = "\"Draw Behind Border\" glows keep their backing." },
+                { title = "ArcUI ProcTracker move",
+                    desc = "Trackers switched off in ArcUI ProcTracker show in the move window too, so you can bring them over for your other specs." },
             } },
         },
     },

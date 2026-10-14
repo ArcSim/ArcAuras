@@ -2,8 +2,9 @@
 -- Import / Export page (UI\AD_Options.lua hosts it through PW.TabShown, PW.BuildPane and
 -- PW.Refresh): a box of its icons beside one of its bars, a tick per part ArcUI
 -- ProcTracker has settings for (the switched-on ones ticked); Import copies the ticked
--- ones through MigratePT.Import into a new layout, again any time. The New Layout card,
--- the login offer (Store.UI().ptOffer) and /arcui2 proctracker open the tab. Retail only.
+-- ones through MigratePT.Import into a new layout, again any time. At each load the
+-- switched-on ones move by themselves (PW.MigrateOnLogin). The New Layout card and
+-- /arcui2 proctracker open the tab. Retail only.
 local ADDON, NS = ...
 if NS.IsForever == true then return end
 
@@ -279,56 +280,236 @@ function PW.Open()
     if Options.OpenImportTab then Options.OpenImportTab("pt") end
 end
 
--- The login offer: a small window, its three answers. "Not now" asks again
--- at the next login.
-local offer
-function PW.BuildOffer()
-    if offer then return offer end
-    local AT = NS.AT
-    offer = AT.CreateWindow("ArcAurasImportPTOffer", {
-        w = 460, h = 190, minW = 460, minH = 190, maxW = 460, maxH = 190,
-        title = NS.AT.Brand("Arc", " Auras"),
-    })
-    local pg = AT.NewPage(offer)
-    pg:SetPoint("TOPLEFT", 8, -38)
-    pg:SetPoint("BOTTOMRIGHT", -8, 8)
-    pg:Show()
-    AT.Section(pg, "ArcUI ProcTracker found")
-    AT.RowDesc(pg, "Trackers are switched on in ArcUI ProcTracker. Pick which ones come into Arc Auras, placed as they are.", 34)
-    AT.RowActions(pg, {
-        { label = "Start the import", w = 140, onClick = function()
-            offer:Hide()
-            PW.Open()
-        end },
-        { label = "Not now", w = 90, onClick = function() offer:Hide() end },
-        { label = "Don't ask again", w = 130, quiet = true, onClick = function()
-            local ui = NS.Store.UI and NS.Store.UI()
-            if ui then ui.ptOffer = "never" end
-            offer:Hide()
-        end },
-    }, "left")
-    AT.LayoutPage(pg)
-    return offer
+-- The look both login windows share, after ArcUI ProcTracker's own move notice
+-- (the logo, a cyan title, the words), so the two read as one story. Escape
+-- closes it like any other window.
+PW.LOGO = "Interface\\AddOns\\ArcAuras\\Textures\\ArcAuras_Icon_256"
+PW.NOTE_W = 460
+function PW.NoteFrame(name, titleText, bodyText, w)
+    local AT, COL = NS.AT, NS.AT.COL
+    w = w or PW.NOTE_W
+    local f = CreateFrame("Frame", name, UIParent, "BackdropTemplate")
+    f:SetSize(w, 160)
+    f:SetPoint("CENTER", 0, 140)
+    f:SetFrameStrata("DIALOG")
+    f:SetClampedToScreen(true)
+    AT.Skin(f, COL.bg, COL.arc)
+    f:EnableMouse(true)
+    f:SetMovable(true)
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", f.StartMoving)
+    f:SetScript("OnDragStop", f.StopMovingOrSizing)
+    tinsert(UISpecialFrames, name)
+    local logo = f:CreateTexture(nil, "ARTWORK")
+    logo:SetSize(56, 56)
+    logo:SetPoint("TOPLEFT", 16, -16)
+    logo:SetTexture(PW.LOGO)
+    local title = f:CreateFontString(nil, "OVERLAY")
+    title:SetFont(AT.FONT, 16, "")
+    title:SetPoint("TOPLEFT", logo, "TOPRIGHT", 12, -2)
+    title:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+    title:SetText(AT.Tr(titleText))
+    local body = f:CreateFontString(nil, "OVERLAY")
+    body:SetFont(AT.FONT, 12, "")
+    body:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+    -- a set width, so its height reads right before the window first draws
+    body:SetWidth(w - 84 - 18)
+    body:SetJustifyH("LEFT")
+    body:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+    body:SetText(AT.Tr(bodyText))
+    f.title, f.body = title, body
+    f:Hide()
+    return f
 end
 
--- Asked once a session while ArcUI ProcTracker has something switched on and
--- no import or "Don't ask again" answered it; never in combat (it waits for
--- the fight to end).
-function PW.OfferOnLogin()
-    local MP, Store = NS.MigratePT, NS.Store
-    local ui = Store and Store.UI and Store.UI()
-    if not (MP and ui and MP.Loaded()) or ui.ptOffer ~= nil then return end
-    if InCombatLockdown and InCombatLockdown() then
-        local wait = CreateFrame("Frame")
-        wait:RegisterEvent("PLAYER_REGEN_ENABLED")
-        wait:SetScript("OnEvent", function(self)
-            self:UnregisterAllEvents()
-            PW.OfferOnLogin()
-        end)
+-- After a move: what happened, one button.
+local moved
+function PW.BuildMoved()
+    if moved then return moved end
+    local AT = NS.AT
+    local f = PW.NoteFrame("ArcAurasPTMoved", "ArcUI ProcTracker moved into Arc Auras",
+        "Your trackers now run here, in the same places with the same looks: see the ProcTracker layout. They are switched off in ArcUI ProcTracker, so nothing shows twice.")
+    local ok = AT.MakeSmallButton(f, "Got it", 96)
+    ok:SetHeight(24)
+    ok:SetPoint("BOTTOMRIGHT", -18, 18)
+    ok:SetScript("OnClick", function() f:Hide() end)
+    moved = f
+    return f
+end
+
+-- The move at login: a tick per icon and bar this class has in ArcUI ProcTracker,
+-- in two columns (ICONS, BARS). The switched-on ones start ticked; the switched-off
+-- ones are listed unticked, for a spec that wants them. One button, Move them; the
+-- unticked stay in ArcUI ProcTracker. Escape closes it and it asks again at the
+-- next load while something switched on there has not moved.
+PW.MOVE_W = 560
+PW.MOVE_HEAD_H = 20
+local move = { rows = {}, heads = {} }
+-- for harnesses: the window's state and widgets
+PW.MOVE = move
+function PW.BuildMove()
+    if move.f then return move.f end
+    local AT, COL = NS.AT, NS.AT.COL
+    local f = PW.NoteFrame("ArcAurasPTMove", "ArcUI ProcTracker is moving into Arc Auras",
+        "Tick the trackers to bring over. They arrive in the same places with the same looks and switch off in ArcUI ProcTracker.",
+        PW.MOVE_W)
+    local go = AT.MakeSmallButton(f, "Move them", 110)
+    go:SetHeight(24)
+    go:SetPoint("BOTTOMRIGHT", -18, 18)
+    go:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
+    go:SetScript("OnLeave", function()
+        go:SetBackdropColor(COL.btn[1], COL.btn[2], COL.btn[3], 1)
+        go:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
+    end)
+    go:SetScript("OnClick", function() PW.MoveNow() end)
+    local said = Font(f, 11, { 1, 0.45, 0.4 })
+    said:SetPoint("BOTTOMLEFT", 84, 24)
+    said:SetPoint("RIGHT", go, "LEFT", -10, 0)
+    for i, B in ipairs(PW.BOXES) do
+        move.heads[i] = Font(f, 10, COL.dim)
+        move.heads[i]:SetText(AT.Tr(B[1]))
+    end
+    move.f, move.go, move.said = f, go, said
+    return f
+end
+
+-- A tracker's row in the move window: its tick, its name, "off" when it is
+-- switched off in ArcUI ProcTracker.
+function PW.MoveRow(i)
+    local r = move.rows[i]
+    if r then return r end
+    local AT, COL = NS.AT, NS.AT.COL
+    r = CreateFrame("Button", nil, move.f)
+    r:SetHeight(PW.ROW_H)
+    r:SetHighlightTexture(AT.WHITE)
+    r:GetHighlightTexture():SetVertexColor(COL.arcDeep[1], COL.arcDeep[2], COL.arcDeep[3], 0.35)
+    r.check = Options.ImportKit.Check(r)
+    r.check:SetPoint("LEFT", 4, 0)
+    r.name = Font(r, 12, COL.ink)
+    r.name:SetPoint("LEFT", r.check, "RIGHT", 9, 0)
+    r.kind = Font(r, 11, COL.dim)
+    r.kind:SetPoint("LEFT", r.name, "RIGHT", 8, 0)
+    local function Flip() if r.onTick then r.onTick() end end
+    r:SetScript("OnClick", Flip)
+    r.check:SetScript("OnClick", Flip)
+    r:HookScript("OnEnter", function() r.check:SetHover(true) end)
+    r:HookScript("OnLeave", function() r.check:SetHover(false) end)
+    move.rows[i] = r
+    return r
+end
+
+-- Lays the two columns under the words and sizes the window to the taller one.
+function PW.PaintMove()
+    local f = move.f
+    if not f then return end
+    local AT, COL = NS.AT, NS.AT.COL
+    local top = math.max(16 + 56 + 10, 18 + 20 + 8 + math.ceil(f.body:GetStringHeight() or 30) + 12)
+    local colW = math.floor((PW.MOVE_W - 80 - 18 - 16) / 2)
+    local tallest, n = 0, 0
+    for _, r in ipairs(move.rows) do r:Hide() end
+    for bi, B in ipairs(PW.BOXES) do
+        local x = 80 + (bi - 1) * (colW + 16)
+        local head = move.heads[bi]
+        head:ClearAllPoints()
+        head:SetPoint("TOPLEFT", f, "TOPLEFT", x + 4, -top)
+        local y, count = top + PW.MOVE_HEAD_H, 0
+        for _, c in ipairs(move.list or {}) do
+            if B[2][c.part] then
+                n, count = n + 1, count + 1
+                local r = PW.MoveRow(n)
+                r.key = c.key
+                r:ClearAllPoints()
+                r:SetPoint("TOPLEFT", f, "TOPLEFT", x, -y)
+                r:SetWidth(colW)
+                local on = move.picks[c.key] == true
+                r.check:SetState(on and "on" or "off")
+                r.name:SetText(c.name)
+                local col = on and COL.ink or COL.dim
+                r.name:SetTextColor(col[1], col[2], col[3])
+                r.kind:SetText(c.off and AT.Tr("off") or "")
+                r.onTick = function()
+                    move.picks[c.key] = (not move.picks[c.key]) or nil
+                    move.err = nil
+                    PW.PaintMove()
+                end
+                r:Show()
+                y = y + PW.ROW_H
+            end
+        end
+        head:SetShown(count > 0)
+        if count > 0 then tallest = math.max(tallest, y) end
+    end
+    f:SetHeight(math.max(tallest, top) + 12 + 24 + 18)
+    local any = next(move.picks) ~= nil
+    move.go:SetAlpha(any and 1 or 0.45)
+    move.go:EnableMouse(any)
+    move.said:SetText(move.err and AT.Tr(move.err) or "")
+end
+
+-- The switched-on parts start ticked, the switched-off ones unticked.
+function PW.ShowMove(list)
+    local f = PW.BuildMove()
+    move.list, move.picks, move.err = list, {}, nil
+    for _, c in ipairs(list) do
+        if not c.off then move.picks[c.key] = true end
+    end
+    PW.PaintMove()
+    f:Show()
+end
+
+-- Move them: the ticked trackers come over, then the note says so.
+function PW.MoveNow()
+    local MP = NS.MigratePT
+    if not (MP and move.picks) or next(move.picks) == nil then return end
+    local res, err = MP.Import(move.picks)
+    if not res then
+        move.err = err or "The move did not run."
+        PW.PaintMove()
         return
     end
-    if not MP.AnyOn() then return end
-    PW.BuildOffer():Show()
+    local ui = NS.Store.UI and NS.Store.UI()
+    if ui then ui.ptOffer = "done" end
+    picks = nil
+    move.f:Hide()
+    if Options.RefreshAll then Options.RefreshAll() end
+    PW.BuildMoved():Show()
+end
+
+-- After each load, never in combat (it waits for the fight to end): while
+-- ArcUI ProcTracker has something switched on for this class that has not moved,
+-- the move window lists every part this class has there. Another class's wait
+-- for that class to log in. An old "Don't ask again" answer still holds.
+function PW.MigrateOnLogin()
+    local MP, Store = NS.MigratePT, NS.Store
+    local ui = Store and Store.UI and Store.UI()
+    if not (MP and ui and MP.Loaded()) or ui.ptOffer == "never" then return end
+    if InCombatLockdown and InCombatLockdown() then
+        if not PW.waitFight then
+            PW.waitFight = CreateFrame("Frame")
+            PW.waitFight:SetScript("OnEvent", function(self)
+                self:UnregisterAllEvents()
+                PW.MigrateOnLogin()
+            end)
+        end
+        PW.waitFight:RegisterEvent("PLAYER_REGEN_ENABLED")
+        return
+    end
+    local list, anyOn = {}, false
+    for _, c in ipairs(MP.Candidates()) do
+        if not c.other then
+            if MP.PartLive(c.key) then
+                -- in Arc Auras already from an earlier import (switched back on in
+                -- ProcTracker since): only switched off there, never a second copy
+                if not c.off then MP.SwitchOffInPT(c) end
+            else
+                list[#list + 1] = c
+                if not c.off then anyOn = true end
+            end
+        end
+    end
+    -- only switched-off parts left: nothing to move, so nothing to ask
+    if not anyOn then return end
+    PW.ShowMove(list)
 end
 
 -- After the first PLAYER_ENTERING_WORLD: the game closes windows opened
@@ -337,7 +518,7 @@ local loginEv = CreateFrame("Frame")
 loginEv:RegisterEvent("PLAYER_ENTERING_WORLD")
 loginEv:SetScript("OnEvent", function(self)
     self:UnregisterEvent("PLAYER_ENTERING_WORLD")
-    C_Timer.After(3, PW.OfferOnLogin)
+    C_Timer.After(3, PW.MigrateOnLogin)
 end)
 
 -- The card's picture: ProcTracker's own icon handing its icons to an Arc

@@ -392,12 +392,24 @@ end
 Bars.DurationBands = DurationBands
 
 -- Aura stack composition: the extra engine-driven fills a bar needs and where
--- they sit. Each layer: { kind = "band"|"max", minA, maxA (the engine's
--- applications window), x0, x1 (fractions of the bar), color, imm }. The
--- engine shows a fill only while count >= minA and stretches it across
--- minA..maxA, so a rect pre-sized to [x0..x1] paints exactly its region with
--- no reads. Returns the layers and the base fill colour.
+-- they sit. Each layer: { kind, minA, maxA (the engine's applications window),
+-- x0, x1 (fractions of the bar), color, imm }; every layer starts at count 0,
+-- so the engine never hides one (a fill first shown mid-fight drew one stale
+-- frame, the bar flashing full at the first threshold after a reload) and the
+-- geometry alone decides what shows:
+--   band  = a saturating overlay on [x0..x1], full at maxA
+--   track = a full-length fill masked to [f..1] (side "high"): paints [f..count]
+--   step  = an overhanging fill masked to [0..f]: empty below maxA, full at it
+--           (its edge crosses the window between maxA - 1 and maxA: pv, span)
+-- Returns the layers and the base fill colour.
 local function StackLayerPlan(rec, maxStacks, segmented)
+    -- A step filling the window [0..f] once the count reaches T: on the
+    -- window's scale its edge sits at span * (count / T - pv), so -1.1 at
+    -- T - 1 (empty) and +1.1 from T (full), a margin each side.
+    local function StackStep(T, f, color)
+        return { kind = "step", side = "low", f = f, pv = (T - 0.5) / T, span = 2.2 * T,
+            minA = 0, maxA = T, x0 = 0, x1 = f, color = color, imm = true }
+    end
     local M = math.max(1, maxStacks or 1)
     local bands = StackBands(rec, M)
     local layers = {}
@@ -418,34 +430,43 @@ local function StackLayerPlan(rec, maxStacks, segmented)
             end
         else
             -- Flip colouring: at count >= T the whole fill takes the band
-            -- colour. P paints [T .. count] (hidden under T); Q paints
-            -- [0 .. T] once the count reaches T (hidden under T-1, empty at
-            -- T-1, so the wipe hides inside one integer step). Higher bands
-            -- draw on top.
+            -- colour. P paints [T .. count]; Q paints [0 .. T] once the count
+            -- reaches T (the wipe hides inside one integer step). Higher
+            -- bands draw on top.
             for k = 1, #bands do
                 local T, c = bands[k].from, bands[k].color
                 if T < M then
-                    layers[#layers + 1] = { kind = "band", minA = T, maxA = M,
+                    layers[#layers + 1] = { kind = "track", side = "high", f = T / M, minA = 0, maxA = M,
                         x0 = T / M, x1 = 1, color = c }
                 end
-                layers[#layers + 1] = { kind = "band", minA = T - 1, maxA = T,
-                    x0 = 0, x1 = T / M, color = c, imm = true }
+                layers[#layers + 1] = StackStep(T, T / M, c)
             end
         end
     end
-    -- 12.1.0 has no applications window, so a max layer would paint from zero
+    -- offered where the setting is (clients with the applications window)
     if R(rec, "stackcolors", "maxColorEnabled") == true and NS.AuraAppWindow == true then
         -- continuous: the whole fill at max; segmented: the last segment
-        layers[#layers + 1] = { kind = "max", minA = M - 1, maxA = M,
-            x0 = segmented and (M - 1) / M or 0, x1 = 1,
-            color = R(rec, "stackcolors", "maxColor") or { 0, 1, 0, 1 }, imm = true }
+        local c = R(rec, "stackcolors", "maxColor") or { 0, 1, 0, 1 }
+        if segmented then
+            layers[#layers + 1] = { kind = "track", side = "high", f = (M - 1) / M, minA = 0, maxA = M,
+                x0 = (M - 1) / M, x1 = 1, color = c, imm = true }
+        else
+            layers[#layers + 1] = StackStep(M, 1, c)
+        end
     end
     return layers, fillColor
 end
 Bars.StackLayerPlan = StackLayerPlan
 
--- Colour by position (each cell keeps its band) or the flip model; the flip
--- layers need the applications window, position ones do not.
+-- A step's mask edge past its window: one pixel into the next band (same
+-- colour, so no gap shows), but cut exactly at the bar's end, where its
+-- overhang runs on and that pixel would sit on the border.
+function Bars.StepMaskFar(L)
+    return (L and L.f or 0) >= 0.9999 and "exact" or "over"
+end
+
+-- Colour by position (each cell keeps its band) or the flip model; clients
+-- without the applications window keep position colouring, as they always had.
 function Bars.StackSegmented(rec)
     return NS.AuraAppWindow ~= true or R(rec, "stackcolors", "scPosition") ~= false
 end
@@ -5150,7 +5171,7 @@ local function AuraLayoutLayers(entry)
         local lay = AuraLayerHost(entry, i)
         if L.kind == "shade" then
             AuraAxisRect(lay.host, fill, 0, len, vertical, rev)
-        elseif L.kind == "band" or L.kind == "max" then
+        elseif L.kind == "band" then
             AuraAxisRect(lay.host, fill, Snap(len * L.x0), Snap(len * L.x1), vertical, rev)
         else
             local X = Snap(len * L.f)
@@ -5163,9 +5184,16 @@ local function AuraLayoutLayers(entry)
                 -- the overhang: Lg long, its origin Lg*f before the bar
                 -- origin, so its fill edge crosses the bar origin at the
                 -- threshold and sweeps the window within X/Lg (0.05%) of
-                -- the aura's life
-                local Lg = math.min(AURA_STEP_MAXLEN, math.max(len, X / AURA_STEP_DELTA))
-                local back = Lg * L.f
+                -- the aura's life; a stack step crosses it between two
+                -- counts (span windows long, pivot pv)
+                local Lg, back
+                if L.span then
+                    Lg = math.min(AURA_STEP_MAXLEN, math.max(1, X * L.span))
+                    back = Lg * L.pv
+                else
+                    Lg = math.min(AURA_STEP_MAXLEN, math.max(len, X / AURA_STEP_DELTA))
+                    back = Lg * L.f
+                end
                 local sr = lay.stepRect
                 sr:ClearAllPoints()
                 if vertical then
@@ -5310,6 +5338,19 @@ local function AuraBarEnsure(entry)
         local kind = L and L.kind or "base"
         b:EnableMouse(false)
         b:SetAlpha(1)
+        -- A fresh StatusBar draws one stale frame (its whole fill) the first
+        -- time it shows. The engine plays this hold each time the aura
+        -- appears (secure, in combat too, nothing to write after this
+        -- window), so the layer comes in clear a few frames later.
+        local ag = b.AddAuraShownAnimation and b.CreateAnimationGroup and b:CreateAnimationGroup()
+        local hold = ag and ag.CreateAnimation and ag:CreateAnimation("Alpha")
+        if hold then
+            hold:SetFromAlpha(0)
+            hold:SetToAlpha(0)
+            hold:SetDuration(0.05)
+            b:AddAuraShownAnimation(ag)
+            e2.auraHolds = (e2.auraHolds or 0) + 1
+        end
         -- The button's level first: SetFrameLevel on a parent shifts its
         -- children by the delta.
         local base = sh.fill:GetFrameLevel()
@@ -5357,7 +5398,7 @@ local function AuraBarEnsure(entry)
             local rev = R(rec, "fill", "reverseFill") == true
             local px = Px(sh)
             if kind == "step" then
-                AuraMaskRect(m, b, vertical, rev, "exact", "over", px)
+                AuraMaskRect(m, b, vertical, rev, "exact", Bars.StepMaskFar(L), px)
             elseif L.side == "high" then
                 AuraMaskRect(m, b, vertical, rev, "over", "pad", px)
             else

@@ -470,9 +470,10 @@ local ICON_FROM_LABELS = { icon = "Icon ID", spell = "Spell ID", item = "Item ID
 -- flash the Cooldown Manager's flash, redflash the action bar's blinking red
 -- (white keeps its own red); barcheck the bars' gold frame while a button is
 -- on (queued, attacking, repeating), barattack that frame with the red frame
--- blinking, as Attack and Auto Shot show. Proc, proc loop, ants and the
--- attack blink run at Blizzard's fixed pace, so Speed shows only for
--- GLOW_SPEED_STYLES.
+-- blinking, as Attack and Auto Shot show. The attack blink and the bars'
+-- frames run at Blizzard's fixed pace, so Speed shows only for
+-- GLOW_SPEED_STYLES; ants and proc keep Blizzard's pace at their default
+-- speed (Factory.GlowLoopTime).
 local GLOW_STYLES = { "button", "pixel", "autocast", "proc", "procloop", "ants", "flash", "redflash",
     "barcheck", "barattack", "pandemic" }
 local PROC_GLOW_STYLES = { "proc", "procloop", "button", "pixel", "autocast", "ants", "flash", "redflash",
@@ -485,7 +486,8 @@ local GLOW_STYLE_LABELS = { button = "Button", pixel = "Pixel", autocast = "Auto
     proc = "Proc", procloop = "Proc loop (no burst)", ants = "Marching ants",
     flash = "Cooldown Manager flash", redflash = "Action bar red flash",
     barcheck = "Action bar yellow", barattack = "Action bar red and yellow", pandemic = "Pandemic border" }
-local GLOW_SPEED_STYLES = { button = true, pixel = true, autocast = true, flash = true, redflash = true }
+local GLOW_SPEED_STYLES = { button = true, pixel = true, autocast = true, flash = true, redflash = true,
+    ants = true, proc = true, procloop = true }
 -- The styles a glow's size reaches: autocast's particles, and the button and
 -- proc glows scaled whole (Factory StartLane).
 local GLOW_SIZE_STYLES = { autocast = true, button = true, proc = true, procloop = true }
@@ -690,7 +692,7 @@ Schema.icon = {
             desc = "The icon as the game's Cooldown Manager draws it: its rounded corners, its border and shadow, and its swipe." },
         iconMask = { d = "none", t = "enum", values = Schema.MASK_KEYS, labels = Schema.MASK_LABELS,
             label = "Cut the icon to", skin = true,
-            desc = "The picture, border, swipe and shadow follow the shape, and every glow draws as a soft outline around it." },
+            desc = "The picture, border, swipe, shadow and glows follow the shape." },
         alpha = { d = 1.0,  t = "num", min = 0.1, max = 1, label = "Base alpha" },
         -- Shrinks the art inside the frame; border and swipe insets follow it.
         padding = { d = 0, t = "int", min = 0, max = 20, label = "Icon padding", skin = true },
@@ -4586,4 +4588,19 @@ function Schema.Applies(def, sectionDef, kind, mode)
         return false
     end
     return true
+end
+
+-- A glow's Speed puts itself back in one click (the editor's Default button):
+-- resetTo is its default, the game's own pace for the game's glows.
+do
+    for _, sec in pairs(Schema.icon) do
+        if type(sec) == "table" and type(sec.fields) == "table" then
+            for name, def in pairs(sec.fields) do
+                if type(def) == "table" and type(name) == "string" and name:find("GlowSpeed", 1, true)
+                    and type(def.d) == "number" then
+                    def.resetTo = def.d
+                end
+            end
+        end
+    end
 end

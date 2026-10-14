@@ -16,6 +16,14 @@ local WHITE = "Interface\\Buttons\\WHITE8X8"
 local layoutFrames = {}   -- [layoutId] = container
 local groupFrames = {}    -- [groupId] = container
 local barFrames = {}      -- [barId] = holder (the bars runtime fills it)
+-- [iconId] = { row, col }: the cell a static grid drew each shown member in
+-- last, its saved one or, while another loaded icon holds that, a free one
+-- for that pass (PlaceGroup); drops and swaps go by it.
+local drawnCell = {}
+local function CellOf(rec)
+    return drawnCell[rec.id] or rec.gpos
+end
+Engine.CellOf = CellOf
 
 -- Core\AD_Anchor.lua does all anchoring; these tell it how to find frames.
 if NS.Anchor then
@@ -1359,9 +1367,10 @@ local function GroupDropInfo(grec, gf, cx, cy, skipId)
     local byCell = {}
     local maxRow = rows - 1
     for _, r in ipairs(Store.IconsOf(grec)) do
-        if r.id ~= skipId and r.gpos and ShowsRec(r) then
-            byCell[(r.gpos.row or 0) * cols + (r.gpos.col or 0)] = r
-            if (r.gpos.row or 0) > maxRow then maxRow = r.gpos.row end
+        local gp = CellOf(r)
+        if r.id ~= skipId and gp and ShowsRec(r) then
+            byCell[(gp.row or 0) * cols + (gp.col or 0)] = r
+            if (gp.row or 0) > maxRow then maxRow = gp.row end
         end
     end
     local needRows = math.max(rows, maxRow + 1)
@@ -1374,8 +1383,9 @@ local function GroupDropInfo(grec, gf, cx, cy, skipId)
     local growthV = R("growthV") or "DOWN"
     local allCells = {}
     for _, r in ipairs(Store.IconsOf(grec)) do
-        if r.gpos and ShowsRec(r) and (r.gpos.col or 0) < cols then
-            allCells[(r.gpos.row or 0) * cols + (r.gpos.col or 0)] = r
+        local gp = CellOf(r)
+        if gp and ShowsRec(r) and (gp.col or 0) < cols then
+            allCells[(gp.row or 0) * cols + (gp.col or 0)] = r
         end
     end
     local cas = GroupCascade(allCells, cols, needRows, slotW, slotH, growthH, growthV, ScaleOf(grec))
@@ -1531,7 +1541,11 @@ local function WireIconDrag(f)
             end
             if info.mode == "swap" and info.occupantId then
                 if rec.groupId == grec.id then
-                    ok = Store.SwapCells(grec.id, rec.id, info.occupantId)
+                    -- the cells they are drawn in: either may be in a free
+                    -- cell for now, its own held by another loaded icon
+                    local occ = Store.Get(info.occupantId)
+                    ok = occ ~= nil and Store.SwapCells(grec.id, rec.id, info.occupantId,
+                        CellOf(rec), CellOf(occ))
                 else
                     -- The occupant moves to the group's first free cell.
                     local occ = Store.Get(info.occupantId)
@@ -1631,7 +1645,7 @@ local function DrawnRows(g)
     local cols = math.max(1, Store.Resolve(g, "arrangement", "cols") or 6)
     local maxRow = rows - 1
     for _, r in ipairs(Store.IconsOf(g)) do
-        local gp = r.gpos
+        local gp = CellOf(r)
         if gp and gp.row and gp.col and gp.col < cols and gp.row > maxRow
             and ShowsRec(r) then
             maxRow = gp.row
@@ -1936,8 +1950,14 @@ local function PlaceGroup(group, container, flowMode)
     local rows = math.max(1, R("rows") or 1)
 
     -- Static grid: each member keeps a cell (rec.gpos), holes are legal and
-    -- nothing packs. A member without one (new, collided, imported) takes the
-    -- first free cell in member order. Overfull grids grow by rows.
+    -- nothing packs. A member without one (new, imported) takes the first
+    -- free cell in member order and keeps it. One whose cell another loaded
+    -- icon holds, or past the columns, is drawn in the first free cell for
+    -- this pass only and keeps its own: icons of other specs or talent builds
+    -- share cells and load together only for a moment (a login, before the
+    -- game answers known spells and talents), and a moved spot would stay
+    -- moved. A drag gives it a new one. Overfull grids grow by rows.
+    for _, rec in ipairs(icons) do drawnCell[rec.id] = nil end
     local occupied = {}
     local pending = {}
     local maxRow = rows - 1
@@ -1956,8 +1976,10 @@ local function PlaceGroup(group, container, flowMode)
         local k = 0
         while occupied[k] do k = k + 1 end
         occupied[k] = rec
-        rec.gpos = { row = math.floor(k / cols), col = k % cols }
-        if rec.gpos.row > maxRow then maxRow = rec.gpos.row end
+        local cell = { row = math.floor(k / cols), col = k % cols }
+        if rec.gpos == nil then rec.gpos = cell end
+        drawnCell[rec.id] = cell
+        if cell.row > maxRow then maxRow = cell.row end
     end
     local needRows = math.max(rows, maxRow + 1)
 

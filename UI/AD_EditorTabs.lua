@@ -596,7 +596,7 @@ local COLS = { "alpha", "grey", "tint" }
 -- a cell's tooltip, one whole line per column around the state's words
 local COL_TIP = { alpha = "%s: opacity", grey = "%s: grey out", tint = "%s: tint" }
 local COL_NONE = { alpha = "%s has no opacity look.", grey = "%s has no grey out look.", tint = "%s has no tint look." }
-local SLIDER_W, VALUE_W = 96, 40
+local SLIDER_W = 96
 
 local function Def(section, field)
     local sec = Schema.icon[section]
@@ -728,6 +728,8 @@ ET.FX_ORDER = { "glow", "sound", "art" }
 ET.FX_WORD = { glow = "Glow", sound = "Sound", art = "Icon" }
 -- a sound field's width in an editor line (it narrows on a short line)
 ET.SOUND_W = 220
+-- a slider's Default button (fdef.resetTo): the quiet button grows to its words
+ET.RESET_W = 56
 ET.FX_BLOCKS = {}
 ET.FX_KIND_BLOCKS = {}
 -- Options' gate for a block on a record: its kind, a switch's own row, and
@@ -950,68 +952,27 @@ local function TableEdges(row, top)
     end, fill
 end
 
--- A compact slider with its value box. lo and hi may be functions, re-read on
--- every refresh; pct shows a 0..1 value as a percent, fmtStr a raw format.
+-- A slider of the theme's one build (AT.MakeSlider: track, [-][value][+]).
+-- lo and hi may be functions, re-read on every refresh; pct shows a 0..1
+-- value as a percent, fmtStr a raw format. Its width with the stepper is
+-- w + AT.SLIDER_TRAIL.
 local function CompactSlider(parent, w, lo, hi, step, pct, fmtStr, get, set)
-    local s = CreateFrame("Slider", nil, parent, "BackdropTemplate")
-    local box = CreateFrame("EditBox", nil, parent, "BackdropTemplate")
-    local settingUp = true
-    local function Lo() return type(lo) == "function" and lo() or lo end
-    local function Hi() return type(hi) == "function" and hi() or hi end
-    local function fmt(v)
-        v = tonumber(v) or 0
-        if pct then return ("%d%%"):format(math.floor(v * 100 + 0.5)) end
-        if fmtStr then return fmtStr:format(v) end
-        if step >= 1 then return tostring(math.floor(v + 0.5)) end
-        return (("%.2f"):format(v):gsub("%.?0+$", ""))
-    end
-    local function refresh()
-        settingUp = true
-        local a, b = Lo(), Hi()
-        s:SetMinMaxValues(a, b)
-        local v = tonumber(get()) or a
-        s:SetValue(math.max(a, math.min(b, v)))
-        if not box:HasFocus() then AT.BoxText(box, fmt(v)) end
-        settingUp = false
-    end
-    s:SetOrientation("HORIZONTAL")
-    s:SetSize(w, 10)
-    AT.Skin(s, COL.well)
-    s:SetThumbTexture(AT.WHITE)
-    local th = s:GetThumbTexture()
-    th:SetSize(8, 10)
-    th:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
-    AT.SliderFill(s)
-    s:SetMinMaxValues(Lo(), Hi())
-    s:SetValueStep(step)
-    s:SetObeyStepOnDrag(true)
-    s:SetScript("OnValueChanged", function(_, v)
-        if settingUp then return end
-        v = math.floor(v / step + 0.5) * step
-        if not box:HasFocus() then AT.BoxText(box, fmt(v)) end
-        set(v)
-    end)
-    box:SetSize(VALUE_W, 16)
-    AT.Skin(box, COL.well)
-    box:SetFont(AT.FONT, 11, "")
-    box:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
-    box:SetJustifyH("CENTER")
-    box:SetAutoFocus(false)
-    local function commit(self)
-        local n = tonumber(((self:GetText() or ""):gsub("%%", "")))
-        if n then
+    local s, refresh = AT.MakeSlider(parent, w, {
+        lo = lo, hi = hi, step = step, get = get, set = set,
+        fmt = function(v)
+            if pct then return ("%d%%"):format(math.floor(v * 100 + 0.5)) end
+            if fmtStr then return fmtStr:format(v) end
+            if step >= 1 then return tostring(math.floor(v + 0.5)) end
+            return (("%.2f"):format(v):gsub("%.?0+$", ""))
+        end,
+        parse = function(text)
+            local n = tonumber((text:gsub("%%", "")))
+            if not n then return nil end
             if pct then n = n / 100 end
-            n = math.floor(n / step + 0.5) * step
-            set(math.max(Lo(), math.min(Hi(), n)))
-        end
-        refresh()
-    end
-    box:SetScript("OnEnterPressed", function(self) commit(self) self:ClearFocus() end)
-    box:SetScript("OnEditFocusLost", commit)
-    box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-    box:SetPoint("LEFT", s, "RIGHT", 6, 0)
-    refresh()
-    return s, box, refresh
+            return math.floor(n / step + 0.5) * step
+        end,
+    })
+    return s, s.box, refresh
 end
 
 -- The state table's opacity cell: the compact slider over 0..1, as percents.
@@ -1285,17 +1246,45 @@ local function MakePair(ed, blk, field, ctx, owner, relay)
         local hi = fdef.maxFn and function() local r = ctx() return (r and fdef.maxFn(r)) or fdef.max or (int and 100 or 1) end
             or (fdef.max or (int and 100 or 1))
         local pct = (not int) and not fdef.fmt and (fdef.max or 1) <= 1
-        local s, box, refresh = CompactSlider(ed, 80, lo, hi, int and 1 or (fdef.step or 0.01), pct, fdef.fmt,
-            function() return Get() or fdef.d or 0 end, Put)
-        P.ctrl, P.extra = s, box
-        P.extraGap = 6
-        P.sync = refresh
+        -- fdef.resetTo: a Default button after the box puts the value back
+        -- (a glow's Speed: the game's own pace), shown while it differs
+        local rb
+        local function Differs()
+            local v = tonumber(Get())
+            return fdef.resetTo ~= nil and v ~= nil and math.abs(v - fdef.resetTo) > 1e-6
+        end
+        local function SyncReset()
+            if rb then rb:SetShown(P.shownNow ~= false and Differs()) end
+        end
+        local s, _, refresh = CompactSlider(ed, 80, lo, hi, int and 1 or (fdef.step or 0.01), pct, fdef.fmt,
+            function() return Get() or fdef.d or 0 end, function(v) Put(v) SyncReset() end)
+        -- the stepper and box ride the slider: one control, AT.SLIDER_TRAIL wider
+        P.ctrl, P.trail, P.after = s, AT.SLIDER_TRAIL, s.plus
+        P.sync = function() refresh() SyncReset() end
+        if fdef.resetTo ~= nil then
+            rb = AT.MakeQuietButton(ed, "Default", ET.RESET_W)
+            rb:SetScript("OnClick", function()
+                AT.CloseDropdown()
+                local r = ctx()
+                if not r then return end
+                -- its own value goes; where a layout or saved default holds
+                -- another, the default itself is set
+                Store.SetOverride(r, section, field, nil)
+                if Differs() then Store.SetOverride(r, section, field, fdef.resetTo) end
+                if fdef.onSet then fdef.onSet(r, Get()) end
+                P.sync()
+            end)
+            Tip(rb, "Default", Tr("Back to the default speed: the game's own pace."))
+            P.extra2 = rb
+        end
     end
     if not P.ctrl then return nil end
     if fdef.desc then Tip(P.ctrl, fdef.label or words, fdef.desc) end
     P.width = function()
-        local w = Measure(lbl) + 8 + (P.ctrl:GetWidth() or 0)
+        local w = Measure(lbl) + 8 + (P.ctrl:GetWidth() or 0) + (P.trail or 0)
         if P.extra then w = w + (P.extraGap or 4) + (P.extra:GetWidth() or 0) end
+        -- the Default button's place is kept while it hides: the row never shifts
+        if P.extra2 then w = w + 6 + (P.extra2:GetWidth() or 0) end
         return w
     end
     P.place = function(x, y)
@@ -1307,21 +1296,31 @@ local function MakePair(ed, blk, field, ctx, owner, relay)
             P.extra:ClearAllPoints()
             P.extra:SetPoint("LEFT", P.ctrl, "RIGHT", P.extraGap or 4, 0)
         end
+        if P.extra2 then
+            P.extra2:ClearAllPoints()
+            P.extra2:SetPoint("LEFT", P.extra or P.after or P.ctrl, "RIGHT", 6, 0)
+        end
     end
     P.show = function(on)
         lbl:SetShown(on)
         P.ctrl:SetShown(on)
         if P.extra then P.extra:SetShown(on) end
+        P.shownNow = on
+        if P.extra2 then P.sync() end
     end
     -- an off block's settings dim in place and take no clicks
     P.dim = function(off)
         local a = off and AT.CARD_DIM or 1
         lbl:SetAlpha(a)
         P.ctrl:SetAlpha(a)
-        P.ctrl:EnableMouse(not off)
+        if P.trail then AT.SliderMouse(P.ctrl, not off) else P.ctrl:EnableMouse(not off) end
         if P.extra then
             P.extra:SetAlpha(a)
             P.extra:EnableMouse(not off)
+        end
+        if P.extra2 then
+            P.extra2:SetAlpha(a)
+            P.extra2:EnableMouse(not off)
         end
     end
     return P
@@ -1583,7 +1582,14 @@ local function EditorRow(pg, T, ctx, vis, kind, st, owner, stateRow)
         if not open then return end
         local _, fxKind, keys = ET.Open(r)
         local defs = Blocks(r, fxKind, keys)
-        for _, B in pairs(built) do B:Hide() end
+        -- only the blocks leaving hide: a shown control hidden and shown again
+        -- drops a drag in hand (a slider let go mid-drag on every write); the
+        -- staying blocks show or hide each control below
+        local staying = {}
+        for _, def in ipairs(defs) do staying[def] = true end
+        for def, B in pairs(built) do
+            if not staying[def] then B:Hide() end
+        end
         for k, g in pairs(glyphs) do g:SetShown(k == fxKind) end
         local g = glyphs[fxKind]
         if g then g:SetColor(COL.arc) end
@@ -2077,6 +2083,8 @@ function ET.TimePop(T)
             inner = math.max(inner, 22 + Measure(w3a) + 6 + 30 + 6 + Measure(w3b))
         end
         l3:SetShown(t.unit ~= nil)
+        -- Before that: its word, then the slider with its stepper
+        if on then inner = math.max(inner, w4:GetWidth() + 6 + SLIDER_W + AT.SLIDER_TRAIL) end
         local w = math.max(POP_W, inner + 2 * POP_PAD)
         local y = POP_PAD + 16 + POP_GAP
         for _, l in ipairs(lines) do
@@ -2237,7 +2245,7 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
                     -- the clock: when this opacity starts (ET.TimePop)
                     local ck = CreateFrame("Button", nil, cell, "BackdropTemplate")
                     ck:SetSize(40, 18)
-                    ck:SetPoint("LEFT", box, "RIGHT", 6, 0)
+                    ck:SetPoint("LEFT", s.plus, "RIGHT", 6, 0)
                     AT.Skin(ck, COL.well, COL.line2)
                     ck._adGlyph = ET.Glyph(ck, "clock")
                     ck._adWord = ck:CreateFontString(nil, "OVERLAY")
@@ -2422,10 +2430,11 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
                     C.swatch:SetColor({ col[1] or 1, col[2] or 1, col[3] or 1 })
                 end
                 -- a cell whose dep fails dims in place, so the table never jumps
-                for _, w in ipairs({ C.slider or false, C.box or false, C.check or false, C.swatch or false }) do
+                -- the slider's box and stepper are its children: they fade with it
+                for _, w in ipairs({ C.slider or false, C.check or false, C.swatch or false }) do
                     if w then
                         w:SetAlpha(ok and 1 or 0.45)
-                        w:EnableMouse(ok)
+                        if w == C.slider then AT.SliderMouse(w, ok) else w:EnableMouse(ok) end
                     end
                 end
                 C.enabled = ok
@@ -2903,8 +2912,7 @@ local function LookRow(T, slot, i)
             Tip(s, Title, body)
             Tip(box, Title, body)
             C.slider, C.box, C.refresh = s, box, refresh
-            hoverables[#hoverables + 1] = s
-            hoverables[#hoverables + 1] = box
+            for _, f in ipairs({ s, s.minus, box, s.plus }) do hoverables[#hoverables + 1] = f end
         elseif spec and c == "grey" then
             local cb = Checkbox(cell, Click("grey"))
             Tip(cb, Title, function() return Tr("Greys the icon out while this look shows.") end)
@@ -3437,7 +3445,7 @@ function ET.StateTable(pg, ctx, vis, owner)
             end
         end
         if not r then return end
-        local w1 = math.max((hasOn and 24 or 0) + SLIDER_W + 6 + VALUE_W + (hasClock and (6 + 40) or 0),
+        local w1 = math.max((hasOn and 24 or 0) + SLIDER_W + AT.SLIDER_TRAIL + (hasClock and (6 + 40) or 0),
             Measure(heads[2]))
         local w2 = math.max(18, Measure(heads[3]))
         local w3 = math.max(24 + 30, Measure(heads[4]))

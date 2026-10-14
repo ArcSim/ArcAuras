@@ -164,6 +164,8 @@
 + From Action Bars
 + My Action Bars
 + New Layout
++ New Skin
++ New skin from this look
 +%d more
 0 hides it while the hand has no weapon to enchant.
 0 hides it.
@@ -395,6 +397,7 @@ Another anchor
 Another wheel
 Ants (border crawl)
 Any
+Any class
 Any enchant
 Any of %d items: the icon shows the best one you carry and can use.
 Any of the icon's spells, or only one of them (its ranks together). Works in combat.
@@ -403,6 +406,7 @@ Any slot
 Any spec
 Any spell ID
 Any spell ID above lights this one icon.
+Any talent
 Any text you like in place of the name. Leave it empty to show the default name.
 Anyone
 Anyone but me
@@ -492,11 +496,13 @@ Autocast (sparkles)
 Automatic (current power)
 Automatic follows the power you are using right now.
 BACKGROUND
+BARS  (%d)
 BOTTOM
 BOTTOMLEFT
 BOTTOMRIGHT
 Back to Arc's value for this row. It asks whether the items you have change too.
 Back to Arc's value for this row: %s. It asks whether the items you have change too.
+Back to the default speed: the game's own pace.
 Background
 Background color
 Background opacity
@@ -518,6 +524,7 @@ Bar height
 Bar scale
 Bar texture
 Bar width
+Bar's own
 Bars of type
 Bars only
 Base alpha
@@ -581,6 +588,7 @@ CD Icon
 CD Stack
 CD Stack bar
 CD icon
+CDM Bar
 CENTER
 CHANGED
 CONTENTS
@@ -678,6 +686,7 @@ Color under it
 Color wash strength
 Color when health is
 Color when power is
+Colors
 Colors and badges
 Colors and badges keeps the game's order. Full look per type also gives each type its own size, swipe, texts and glows, in the order you pick.
 Colors the icon %s.
@@ -700,6 +709,9 @@ Content or unhappy
 Cooldown ID
 Cooldown Manager
 Cooldown Manager IDs
+Cooldown Manager bar
+Cooldown Manager bars
+Cooldown Manager entry %s
 Cooldown Manager flash
 Cooldown Manager icon
 Cooldown Manager icon (by spell)
@@ -908,6 +920,7 @@ Delete the %s '%s'?
 Delete the group '%s'?
 Delete the icon '%s'?
 Delete the layout '%s' and everything inside it?
+Delete the skin "%s"? The bars that wear it keep its look as their own.
 Desaturate on cooldown
 Desaturate on no resource
 Desaturate when out of stock
@@ -1068,6 +1081,7 @@ Export selection
 Extend it by the seconds
 Extra colors (after the fill color)
 Extra features for the whole addon. Switch one on to use it; its settings open from its card.
+FREE ICONS  (%d)
 FROM YOUR SPELLBOOK - click one, then Create Reminder
 FROM YOUR SPELLBOOK - click to fill
 Faction
@@ -1129,6 +1143,7 @@ Flip the picture upside down
 Flying
 Focus
 Fold
+Fold bars and free icons
 Fold in half
 Folds the layouts list away - the editor gets the full window width.
 Follow defaults
@@ -1340,6 +1355,7 @@ Highlight lasts
 Highlight opacity
 Hold for (s)
 Hold interrupted and failed casts
+Holds
 Holds %s.
 Holds only while the bar shows %s.
 Holds:
@@ -1448,6 +1464,7 @@ In the IDs block
 In the last 30%
 In the stance
 In this layout
+In this skin
 In use
 In whole screen pixels.
 In your collection
@@ -1552,6 +1569,7 @@ Load conditions: %s
 Load only while
 Loaded here
 Loaded on this character
+Loading
 Loading options
 Loading this page
 Loads only while you wear at least %d of %s (%d worn now).
@@ -1627,6 +1645,7 @@ Missing alpha
 Missing here: %s; they use the default until you add them.
 Missing icon ID
 Missing icon from
+Missing skin
 Missing tint
 Missing tint color
 Modules
@@ -1699,6 +1718,7 @@ Never Load When
 Never brighter than Ready's opacity.
 New
 New Layout
+New skin
 New texture
 New triggers start silent: turn Play sound on in each reminder's triggers.
 Next Swing
@@ -1709,6 +1729,7 @@ No Cooldown Manager icon of %s is shown, so it sits on its own spot.
 No Cooldown Manager icon with cooldown ID %s is shown now, so it stays at its own spot.
 No Fade (snap off)
 No action button with %s is shown, so it sits on its own spot.
+No bar wears it yet
 No buff named %s was found. Type the buff's name as its tooltip shows it.
 No cap
 No checks yet: this band never holds.
@@ -1728,6 +1749,7 @@ No rules yet: it shows as active until a rule starts its timer or counts stacks.
 No set rule
 No set rule.
 No shield equipped
+No skins yet. Make one with + New Skin, or from a bar's Skin dropdown.
 No spell entered yet, so it stays at its own spot.
 No spell has that name
 No spell rule
@@ -1771,6 +1793,7 @@ Not enough resource
 Not in combat
 Not in it
 Not in the stance
+Not in your Tracked Bars now: move it there in the Cooldown Manager.
 Not in your collection yet
 Not in your collection yet.
 Not learned
@@ -2015,6 +2038,7 @@ Pet is on Passive
 Pet is out
 Pet is unhappy
 Pick Frame
+Pick a class first: its specs are listed then.
 Pick a condition
 Pick a place...
 Pick a talent, then the look to edit: with it or without it.
@@ -2180,6 +2204,7 @@ Pulse size (%)
 Pulse timer
 Pulse while it shows
 Put all %d of your %s defaults back to Arc's?
+Puts each layout's bars and free icons in the sidebar under BARS and FREE ICONS folds. Off: they list in place among its groups.
 Puts the rows of this sub-panel back: to the layout's values where its layout sets them, to the defaults for this thing everywhere else (a saved default still counts).
 PvP flagged
 Quest border
@@ -2306,6 +2331,7 @@ Remove last stack picture
 Remove last threshold
 Remove stacks
 Remove this look
+Remove this skin from the bar
 Remove this trigger
 Removes this check from the band.
 Rename
@@ -2331,6 +2357,7 @@ Reset the timer and stacks
 Reset this page
 Reset to layout
 Reset to preset
+Reset to skin
 Resize
 Resource
 Resource anchor
@@ -2380,9 +2407,11 @@ Rune order
 Runes
 Runic Power
 Running or not
+SKINS
 Safe Mythic+ reset
 Same as Settings
 Same as fill
+Sample
 Save as Default
 Say on proc
 Say when a charge returns
@@ -2520,7 +2549,9 @@ Shrink the group to fit
 Size
 Size & Frame
 Size and Time
+Skin
 Skin icons with Masque
+Skins
 Skyriding
 Slate
 Slide into place
@@ -2691,6 +2722,7 @@ Swipe inset
 Swipe inset H
 Swipe inset W
 Swipe only when no charges
+Switches the skin on with a talent, or without it.
 TEMPLATE - click one to fill in every rank's enchant ID
 TEMPLATE - click one, then Create
 THICKOUTLINE
@@ -2708,6 +2740,7 @@ Talent IDs
 Talent is
 Talents
 Talents (%d)
+Talents are picked on your own class's tree.
 Talents: %s
 Talents: none, shows on any build. The Talents button by a class picks its talents.
 Tall (2:3)
@@ -2757,6 +2790,7 @@ The Cooldown Manager's cooldown IDs for spells, auras and equipped trinkets: one
 The Cooldown Manager's soft shadow frame around the icon art.
 The ID block shows only when Shift is held as the tooltip opens.
 The ID of what the tooltip shows: a spell, aura, item, toy, mount, currency, achievement or quest.
+The Tracked Bars entry this bar copies, its timer and all. The Cooldown Manager's own bar must stay on: set the Tracked Bars' opacity to 0 in Edit Mode to hide it.
 The action bar's yellow check on the icon while it waits for your next swing.
 The art's spell
 The aura icons in this group are kept for when you switch back.
@@ -2793,6 +2827,7 @@ The icon as the game's Cooldown Manager draws it: its rounded corners, its borde
 The icon's file ID, the base icon when an override swapped the art, and the icon the button shows when that differs.
 The label's own color
 The layout's center point
+The look the rows below change. Bar's own is the look when no skin applies; a skin switches on when its conditions hold, the first from the top.
 The mana the next tick adds glows past the fill, brightens as the tick nears, then lands. Empty while the five-second rule runs.
 The middle of your screen
 The number beside a marker that comes back in a later swing.
@@ -2801,7 +2836,7 @@ The picture again, dimmed, behind it: the empty part of a fill. It hides with th
 The picture grows and shrinks gently, in combat too.
 The picture is a sheet of frames, played in order over and over.
 The picture keeps its shape at any width and height: its edges are cropped, never stretched.
-The picture, border, swipe and shadow follow the shape, and every glow draws as a soft outline around it.
+The picture, border, swipe, shadow and glows follow the shape.
 The pulse stays at full, with no fade and no time limit, until you cast the spell (or use the item), or until its trigger's Clear when option ends it. On use pulses and previews still run their time.
 The resize lands when you let go of the slider.
 The resource texts change color at their own power values, apart from the bar's colors.
@@ -2809,6 +2844,7 @@ The resource texts wear the fill's color, the bar's own or a row's. A row's own 
 The set gate is the Set Pieces Rule on Load Conditions.
 The sets on the gear you wear now are listed; with fewer pieces on, the item goes inert.
 The shield is in Appearance > Icon, the color in Appearance > Fill & Colors.
+The specs this skin switches on in. Pick several or Any spec.
 The spell whose icon it wears; Appearance > Icon > Art > Custom icon wins over it. A spell ID, a link, or the name of a spell you know.
 The spell whose range picks the band: a melee ability for Melee, a ranged spell for Caster. A spell ID or the name of a spell you know; the rank you know is checked. Empty: your class's usual one.
 The spell whose range to your target decides the rule: a spell ID, or the name of a spell you know. Any rank works: the rank you know is checked.
@@ -2941,6 +2977,7 @@ Totem icon
 Totem slot
 Tracked auras
 Tracked auras: the aura icons you add to this group, matched by spell ID. All auras on a unit: every buff or debuff on one unit, drawn by the game, with no icons to add.
+Tracked bar
 Tracking
 Tracks %s  (%s)
 Tracks an unknown Arc Proc: this bar came from a newer version.
@@ -3057,6 +3094,7 @@ Voidwalker is out
 WHAT TO SHARE
 WHAT'S IN IT
 WHERE IT GOES
+WORN BY
 Wand GCD
 Wand swipe color
 War Mode on
@@ -3185,6 +3223,7 @@ Wide (3:2)
 Width
 Width (0 = auto)
 With
+With %s
 With %s left. Click to change it.
 With Close gaps on, set these on the Aura Group.
 With Close gaps on, the game places the row: these apply only while this window is open.
@@ -3199,6 +3238,7 @@ With this window open, every icon keeps its spot.
 Within
 Within seconds
 Within seconds after rule
+Without %s
 Wobble
 Words after the value. Not on a countdown the game draws (a spell's time left, an aura's).
 Words before the value. Not on a countdown the game draws (a spell's time left, an aura's).
@@ -3283,12 +3323,12 @@ a layout
 a spell not picked yet
 above %s
 added %d
+always
 and
 and %d more IDs
 another frame
 at least
 at most
-at the end of %s
 aura %s
 auras %s +%d
 below %s
@@ -3309,9 +3349,13 @@ e.g. %d
 e.g. %d, %d
 e.g. 2825, 32182, 80353
 e.g. PlayerFrame
+each bar's own
 enchant %s
 end
 equipped ammo
+every character
+every class
+every look
 exactly
 excluded
 excluded, taken
@@ -3350,6 +3394,7 @@ needs Devourer
 needs Restoration
 newer
 no aura
+no entry picked
 no key
 no rules yet
 no sound
@@ -3364,6 +3409,7 @@ not in this tree
 not loaded
 not taken
 not talented
+not worn
 nothing matches "%s"
 nothing this version can use
 nothing ticked
@@ -3432,6 +3478,8 @@ unknown - type it (5 until then)
 unknown Arc Proc
 version %s
 wheel
+when
+when no skin applies
 while every proc is used, or its timer runs
 while it can still proc
 while it can't be used

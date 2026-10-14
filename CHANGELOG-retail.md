@@ -1,5 +1,30 @@
 # Arc Auras
 
+## 3.0.1
+
+Import from Arc UI (work in progress), bar skins, and shaped glows.
+
+### New Features
+
+- **Import from Arc UI (work in progress)** - Bring your Arc UI icons, groups and bars over (Import / Export > Arc UI).
+- **ArcUI ProcTracker moves in** - With ArcUI ProcTracker installed, Arc Auras asks at login which of its trackers to bring over, in the same places with the same looks.
+- **Bar skins** - Save a bar's look as a skin and use it on any bar, switching by class, spec or talent.
+- **Glows on shaped icons** - Glows take the shape of circle, diamond and hexagon icons.
+
+### Improvements
+
+- **Sliders** - Smoother dragging, with - and + steppers.
+- **Faster options panel** - No more stutter on clicks.
+- **Glow speed** - Ants and Proc glows have a Speed setting too.
+- **Tidier sidebar** - Each layout lists + Add New first, then its groups, with bars and free icons in folds of their own.
+
+### Bug Fixes
+
+- **Icons stay in place** - Icons in a group no longer move on their own after a login or spec change.
+- **Glow fixes** - Glows on missing icons no longer get cut off, and button glows on masked icons run at the right speed.
+- **Stack bar colors** - No more flash on the first stack or a new color after a reload.
+- **Proc Tracker import** - "Draw Behind Border" glows keep their backing.
+
 ## 3.0.0
 
 Cooldown Manager Bars, potion and healthstone templates, and texts you can pin to your own icons.

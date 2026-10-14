@@ -480,6 +480,8 @@ function G.MakeLane(st, k, kind, shape, unit, harmful, look, gm)
         stage:SetPoint("BOTTOMRIGHT", st.anchor, "BOTTOMRIGHT", 0, 0)
         local host = CreateFrame("Frame", nil, stage)
         host:EnableMouse(false)
+        -- drawn in the stage (Factory.GlowBlend)
+        host._adFlat = true
         lane.stage, lane.host = stage, host
         parent = stage
     end

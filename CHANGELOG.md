@@ -1,5 +1,27 @@
 # Arc Auras
 
+## 3.0.1
+
+Bar skins and shaped glows.
+
+### New Features
+
+- **Bar skins** - Save a bar's look as a skin and use it on any bar, switching by class or talent.
+- **Glows on shaped icons** - Glows take the shape of circle, diamond and hexagon icons.
+
+### Improvements
+
+- **Sliders** - Smoother dragging, with - and + steppers.
+- **Faster options panel** - No more stutter on clicks.
+- **Glow speed** - Ants and Proc glows have a Speed setting too.
+- **Tidier sidebar** - Each layout lists + Add New first, then its groups, with bars and free icons in folds of their own.
+
+### Bug Fixes
+
+- **Icons stay in place** - Icons in a group no longer move on their own after a login or spec change.
+- **Button glow speed** - Button glows on masked icons run at the right speed.
+- **Stack bar colors** - No more flash on the first stack or a new color after a reload.
+
 ## 3.0.0
 
 Texts you can pin to your own icons, Masque on by default, and Dynamic aura group fixes.

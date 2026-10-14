@@ -197,7 +197,7 @@ local function Status()
 end
 
 SP.Register({
-    id = "dre", name = "DRE Ascendance", class = "SHAMAN", specs = { 263 },
+    id = "dre", name = "DRE (Enhancement)", class = "SHAMAN", specs = { 263 },
     talentGate = { node = DRE_NODE_ID, entry = DRE_ENTRY_ID },
     icon = DRE_ICON, size = DECK_SIZE, procs = DECK_PROCS,
     isTimer = false, bar = true, sound = false, chanceSpend = true, chanceForecast = false, viol = true,

@@ -2618,6 +2618,7 @@ local function OpenTalentPicker(ctxFn, classTag, specID)
     tpWin:Show()
     TPLayout()
 end
+Options.OpenTalentPicker = OpenTalentPicker
 
 -- The picker edits one record, so it closes with the panel that chose it.
 local function CloseTalentPicker()
@@ -2887,12 +2888,14 @@ local function CondGrid(pg, ctx, visible, list)
         hdr:SetPoint("TOPLEFT", 6, -2)
         hdr:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
         hdr:SetText(AT.Tr(cat.text))
-        -- the checkboxes come with the row's first showing, not with the
-        -- window: sixteen grids of them sit on tabs most opens never visit
+        -- the checkboxes are not made with the window (sixteen grids of them sit
+        -- on tabs most opens never visit): a page's first showing makes its
+        -- grids' boxes in the loader's slices under the veil, a pause per box
         local cells
-        local function BuildCells()
+        local function BuildCells(pause)
             cells = {}
             for _, d in ipairs(defs) do
+                if pause then Options.BuildYield() end
                 local cell = CreateFrame("Frame", nil, row)
                 cell:SetHeight(COND_CELL_H)
                 local cb = AT.MakeCheckbox(cell)
@@ -2915,12 +2918,30 @@ local function CondGrid(pg, ctx, visible, list)
                 cells[#cells + 1] = { f = cell, cb = cb, d = d }
             end
         end
+        pg._adCondBuild = pg._adCondBuild or {}
+        table.insert(pg._adCondBuild, function()
+            if not cells and row._visibleFn() then BuildCells(true) end
+        end)
         -- measured placement; returns true when the row's height changed
         local function place()
             local r = ctx()
             if not r then return false end
             if not cells then
                 if not row._visibleFn() then return false end
+                local L = Options.Loader
+                if L and win and not L.InBuild() and Options.WhenWork then
+                    -- one wait per page: every grid it shows gets its boxes
+                    if not pg._adCondWait then
+                        pg._adCondWait = true
+                        Options.WhenWork("cond:" .. tostring(pg), function()
+                            for _, b in ipairs(pg._adCondBuild) do b() end
+                        end, function()
+                            pg._adCondWait = nil
+                            AT.LayoutPage(pg)
+                        end)
+                    end
+                    return false
+                end
                 BuildCells()
             end
             local w = row:GetWidth() or 0
@@ -4344,9 +4365,10 @@ function RailDD.Target()
         return { row = row, mode = "into", layoutId = item.rec.id, label = AT.Tr("into %s"):format(item.rec.name) }
     end
     if item.kind == "addchild" then
-        if RailDD.AlreadyThere(rec, item.rec.id, nil) then return nil end
-        return { row = row, mode = "before", layoutId = item.rec.id, beforeId = nil,
-            line = "top", label = AT.Tr("at the end of %s"):format(item.rec.name) }
+        -- "+ Add New" heads the layout's rows: a drop there goes into the layout,
+        -- lit as on its header; nothing for a record already loose in it
+        if rec.layoutId == item.rec.id and not (rec.type == "icon" and rec.groupId) then return nil end
+        return { row = row, mode = "into", layoutId = item.rec.id, label = AT.Tr("into %s"):format(item.rec.name) }
     end
     -- over an icon inside a group: an icon from elsewhere joins that group
     if item.kind == "groupicon" then
@@ -5026,9 +5048,11 @@ local function BuildRailList()
         end
         list[#list + 1] = { kind = "layout", rec = layout, notLoaded = notLoaded, open = open }
         if open then
-            -- The layout's own member order, kinds mixed; free icons are plain
-            -- children. In a layout that loads here, members that do not load
-            -- here follow the add row under their own sub-header.
+            -- "+ Add New" heads the layout's rows, so it never moves as folds open.
+            -- Then its groups in member order, its bars and its free icons each in
+            -- a fold of their own; members that do not load here (in a layout
+            -- that does) follow under their own sub-header.
+            if not filter then list[#list + 1] = { kind = "addchild", rec = layout } end
             local later = {}
             local function Add(m)
                 if m.type == "group" then
@@ -5102,13 +5126,22 @@ local function BuildRailList()
                     list[#list + 1] = { kind = "bar", rec = m }
                 end
             end
-            local gone, byClass = 0, {}
+            local gone, byClass, bars, free = 0, {}, {}, {}
+            -- the layout's own bars and free icons gather under a fold each, after its
+            -- groups, unless the Settings switch lists them in place
+            local flat = Store.GetSetting("railFlat") == true
+            local function Main(m)
+                if flat then Add(m)
+                elseif m.type == "icon" then free[#free + 1] = m
+                elseif m.type == "bar" then bars[#bars + 1] = m
+                else Add(m) end
+            end
             for _, m in ipairs(members) do
                 if view == "char" or only then
                     -- a one-class view keeps that class's items in place, loaded here or not
-                    if Keeps(m) then Add(m) else gone = gone + 1 end
+                    if Keeps(m) then Main(m) else gone = gone + 1 end
                 elseif notLoaded or Store.IsLoaded(m) then
-                    Add(m)
+                    Main(m)
                 else
                     local tag = (view == "byclass") and OneClass(m) or nil
                     if tag then
@@ -5119,7 +5152,18 @@ local function BuildRailList()
                     end
                 end
             end
-            if not filter then list[#list + 1] = { kind = "addchild", rec = layout } end
+            -- open until shut, per layout (a panel preference); a search shows its matches
+            local function KindFold(kind, recs, shutKey)
+                if #recs == 0 then return end
+                local st = Store.UI()[shutKey]
+                local shut = (not filter) and st ~= nil and st[layout.id] == true
+                list[#list + 1] = { kind = kind, count = #recs, rec = layout, shut = shut }
+                if not shut then
+                    for _, m in ipairs(recs) do Add(m) end
+                end
+            end
+            KindFold("barsub", bars, "barShut")
+            KindFold("freesub", free, "freeShut")
             if gone > 0 then list[#list + 1] = { kind = "hidden", count = gone, depth = 1 } end
             local shutSet = Store.UI().nlShut
             -- by class: a section per class, each folding on its own
@@ -5231,7 +5275,7 @@ local function RefreshRail()
         -- Air above every header but the first.
         if i > 1 and (item.kind == "layout" or item.kind == "nlhdr" or item.kind == "clhdr"
             or item.kind == "nlsub" or item.kind == "clsub" or item.kind == "gsub"
-            or item.kind == "newlayout") then
+            or item.kind == "freesub" or item.kind == "barsub" or item.kind == "newlayout") then
             y = y - 5
         end
         local h = (item.kind == "layout") and 26 or 24
@@ -5414,6 +5458,27 @@ local function RefreshRail()
                 u.nlShut[lid] = (not item.shut) or nil
                 RefreshAll()
             end)
+        elseif item.kind == "freesub" or item.kind == "barsub" then
+            -- the layout's bars, or its free icons, in one fold, drawn as NOT LOADED
+            -- is; a click folds or opens it
+            local bars = item.kind == "barsub"
+            row.guide:Show()
+            row.chev:Show()
+            row.chev:ClearAllPoints()
+            row.chev:SetPoint("LEFT", 20, 0)
+            row.chev:SetDown(not item.shut)
+            row.name:ClearAllPoints()
+            row.name:SetPoint("LEFT", 36, 0)
+            row.name:SetPoint("RIGHT", -8, 0)
+            row.name:SetText((bars and AT.Tr("BARS  (%d)") or AT.Tr("FREE ICONS  (%d)")):format(item.count or 0))
+            PaintRailRow(row, false, "label")
+            local lid, key = item.rec.id, bars and "barShut" or "freeShut"
+            row:SetScript("OnClick", function()
+                local u = Store.UI()
+                u[key] = u[key] or {}
+                u[key][lid] = (not item.shut) or nil
+                RefreshAll()
+            end)
         elseif item.kind == "group" then
             local rec = item.rec
             row.thumb:SetGroup(Options.GROUP_COLORS[rec.groupKind] or YELLOW)
@@ -5520,6 +5585,8 @@ local function RefreshRail()
     end
     for i = #list + 1, #railRows do railRows[i]:Hide() end
     Options.RailFit(-y + 6, #list)
+    -- spare rows for the next opening, made in the background
+    if Options.RailTopUp then Options.RailTopUp(#list) end
 end
 
 -- Sizes the scrolling list to its rows. Only when the selection changed does it
@@ -7516,13 +7583,21 @@ function Options.BuildLayoutLooks()
             end
             return best
         end
+        -- The chips, sub-tabs and pages follow from the type, the open chip and
+        -- the open sub-tab alone (the blocks never change), and every row's
+        -- visibility asks for them: each answer is worked out once.
+        local memo = { chips = {}, subs = {}, states = {} }
         local function ChipsNow()
-            local out, kind = {}, Kind()
+            local kind = Kind()
+            local hit = memo.chips[tostring(kind)]
+            if hit then return hit end
+            local out = {}
             for _, c in ipairs(chips) do
                 for _, b in ipairs(blocks) do
                     if b.tab == c and KindOK(b, kind) then out[#out + 1] = c break end
                 end
             end
+            memo.chips[tostring(kind)] = out
             return out
         end
         local function Chip()
@@ -7535,13 +7610,18 @@ function Options.BuildLayoutLooks()
         end
         -- the sub-tabs of the open chip, in block order
         local function Subs()
-            local out, had, chip, kind = {}, {}, Chip(), Kind()
+            local chip, kind = Chip(), Kind()
+            local key = tostring(chip) .. "|" .. tostring(kind)
+            local hit = memo.subs[key]
+            if hit then return hit end
+            local out, had = {}, {}
             for _, b in ipairs(blocks) do
                 if b.sub and not had[b.sub] and b.tab == chip and KindOK(b, kind) then
                     had[b.sub] = true
                     out[#out + 1] = b.sub
                 end
             end
+            memo.subs[key] = out
             return out
         end
         local function Sub()
@@ -7565,7 +7645,12 @@ function Options.BuildLayoutLooks()
         local GLOWS = "Glows and art"
         local function PageOf(b) return (b.state or not b.fx) and b.title or GLOWS end
         local function States()
-            local out, had, chip, kind, stateful = {}, {}, Chip(), Kind(), false
+            local chip, kind = Chip(), Kind()
+            local subs = Subs()
+            local memoKey = tostring(chip) .. "|" .. tostring(kind) .. "|" .. tostring(#subs >= 2 and Sub() or "")
+            local hit = memo.states[memoKey]
+            if hit then return hit end
+            local out, had, stateful = {}, {}, false
             for _, b in ipairs(blocks) do
                 if b.tab == chip and KindOK(b, kind) and OnSub(b) then
                     if b.state then stateful = true end
@@ -7576,7 +7661,9 @@ function Options.BuildLayoutLooks()
                     end
                 end
             end
-            return stateful and out or {}
+            out = stateful and out or {}
+            memo.states[memoKey] = out
+            return out
         end
         local function State()
             local states, chip = States(), Chip()
@@ -7667,6 +7754,31 @@ function Options.BuildLayoutLooks()
             end, 11)
             local want = (h or 24) + 6
             if stateRow._h ~= want then stateRow._h = want stateRow:SetHeight(want) end
+        end
+        -- its chips, as many as one chip's pages come to, made in the background
+        -- warm-up: a first Conditions page made them all in one frame
+        if Options.AddWarm then
+            Options.AddWarm(function()
+                if stateRow:IsVisible() then return end
+                local most = 0
+                for _, c in ipairs(chips) do
+                    local had, n = {}, 0
+                    for _, b in ipairs(blocks) do
+                        if b.tab == c and not had[PageOf(b)] then
+                            had[PageOf(b)] = true
+                            n = n + 1
+                        end
+                    end
+                    if n > most then most = n end
+                end
+                local names = {}
+                for i = 1, most do
+                    names[i] = tostring(i)
+                    stateRow._strip:Set(names, nil, function() end, 11)
+                    Options.BuildYield()
+                end
+                stateRow._strip:Set({}, nil, function() end, 11)
+            end)
         end
         for _, b in ipairs(blocks) do
             local vis = function()
@@ -11587,6 +11699,9 @@ local function BuildBarPane()
         local want = (h or 24) + 6
         if tabRow._h ~= want then tabRow._h = want tabRow:SetHeight(want) end
     end
+    -- the bar's skin and when it switches on, on Appearance and Text (UI\AD_SkinsOptions.lua)
+    Options.BuildYield()
+    if Options.SkinStrip then Options.SkinStrip(pg, SelBar, function() return ui.barTab end, win) end
 
     -- Tracking: the driver block per kind (retarget re-keys, never re-ids)
     local trackVis = BarTabVisible("Tracking")
@@ -12490,6 +12605,44 @@ local function BuildBarPane()
             "anchorMatchWidth", "anchorMatchWidthAdjust", "anchorMatchHeight", "anchorMatchHeightAdjust",
         })
     end
+    -- Orientation, then, on a vertical bar only, the quarter turn that stands
+    -- the bar up (Store.SetBarStanding): the bar's shape, so in Size & Frame
+    -- under its size. It has its own visibility: charge-slot bars have no
+    -- orientation. The rows join the Bar Size block's push list.
+    do
+        local orientVis = function()
+            if not sizeVis() then return false end
+            local r = SelBar()
+            return r ~= nil and not (r.barKind == "cooldown" and r.barMode == "stack")
+        end
+        AT.Section(pg, "Orientation", { visibleFn = orientVis })
+        SectionRows(pg, "bar", "fill", SelBar, orientVis, { "orientation", "reverseFill" })
+        -- its own block in the looks' Size & Frame (these never inherit, so
+        -- the layout looks are unchanged)
+        Options.LookBlock("bar", "Appearance", "Orientation", "fill", { "orientation", "reverseFill" }, SF)
+        local list = Options.blockFields[sizeVis]
+        if list then
+            list[#list + 1] = "orientation"
+            list[#list + 1] = "reverseFill"
+        end
+        local stand = AT.RowToggle(pg, "Stand the bar up",
+            function() local r = SelBar() return r ~= nil and Store.BarStanding(r) end,
+            function(v) local r = SelBar() if r then Store.SetBarStanding(r, v) end end,
+            function()
+                local r = SelBar()
+                -- a swap of one bar's own width and height: not over several
+                return orientVis() and r ~= nil and not r._adMulti
+                    and Store.Resolve(r, "fill", "orientation") == "VERTICAL"
+            end,
+            "A quarter turn: width and height swap so the bar is tall and thin, a side icon moves to the bar's end, and the texture and gradient turn with it. Switching the orientation back to Horizontal lays the bar down again.")
+        -- The search walks one sample bar per kind, mostly flat ones: hand it
+        -- this gate without the Vertical check plus that switch, so "stand" is
+        -- found on any bar and the jump flashes Orientation.
+        stand._adMeta = { family = "bar", section = "fill", field = "standBar",
+            def = { label = "Stand the bar up",
+                dep = { field = "orientation", value = "VERTICAL" } },
+            baseVis = orientVis }
+    end
     -- pips style: the bar frame is the row of cells, so only scale and
     -- opacity remain meaningful
     BarBlock("Scale", "size", "Appearance", {
@@ -12694,45 +12847,6 @@ local function BuildBarPane()
     end })
     DEF_OF[texVis].extra = { "texture" }
     Options.BuildYield()
-    -- Orientation, then, on a vertical bar only, the quarter turn that stands
-    -- the bar up (Store.SetBarStanding). It has its own visibility: charge-slot
-    -- bars have no orientation. The rows join the Fill block's push list.
-    do
-        local orientVis = function()
-            if not (fillVis() or colorVis()) then return false end
-            local r = SelBar()
-            return r ~= nil and not (r.barKind == "cooldown" and r.barMode == "stack")
-        end
-        AT.Section(pg, "Orientation", { visibleFn = orientVis })
-        SectionRows(pg, "bar", "fill", SelBar, orientVis, { "orientation", "reverseFill" })
-        -- in the Fill block's look (one box less on the Defaults page; these
-        -- never inherit, so the layout looks are unchanged)
-        Options.LookBlock("bar", "Appearance", "Fill", "fill", { "orientation", "reverseFill" }, FC)
-        for _, v in ipairs({ fillVis, colorVis }) do
-            local list = Options.blockFields[v]
-            if list then
-                list[#list + 1] = "orientation"
-                list[#list + 1] = "reverseFill"
-            end
-        end
-        local stand = AT.RowToggle(pg, "Stand the bar up",
-            function() local r = SelBar() return r ~= nil and Store.BarStanding(r) end,
-            function(v) local r = SelBar() if r then Store.SetBarStanding(r, v) end end,
-            function()
-                local r = SelBar()
-                -- a swap of one bar's own width and height: not over several
-                return orientVis() and r ~= nil and not r._adMulti
-                    and Store.Resolve(r, "fill", "orientation") == "VERTICAL"
-            end,
-            "A quarter turn: width and height swap so the bar is tall and thin, a side icon moves to the bar's end, and the texture and gradient turn with it. Switching the orientation back to Horizontal lays the bar down again.")
-        -- The search walks one sample bar per kind, mostly flat ones: hand it
-        -- this gate without the Vertical check plus that switch, so "stand" is
-        -- found on any bar and the jump flashes Orientation.
-        stand._adMeta = { family = "bar", section = "fill", field = "standBar",
-            def = { label = "Stand the bar up",
-                dep = { field = "orientation", value = "VERTICAL" } },
-            baseVis = orientVis }
-    end
     BarSub(fillVis, "Gradient", "fill", { "useGradient", "gradientDir", "gradientColor" })
     -- every kind's Defaults and looks keep Gradient (a resource bar edits it
     -- in its Color block): a wider gate, no more rows
@@ -13324,6 +13438,8 @@ local function BuildBarPane()
     Options.BuildYield()
     Options.AnchorPickRows(pg, "bar", SelBar, anchorVis, nil,
         "On a nameplate the bar hides while this window is open; the preview shows it.")
+    -- the rows' marks while a skin is edited, after each layout (UI\AD_SkinsOptions.lua)
+    if Options.SkinMarks then Options.SkinMarks(pg, SelBar, function() return ui.barTab end) end
 end
 
 -- Empty pane
@@ -14693,7 +14809,9 @@ end
 -- after creating an icon, land where it lives
 function Options.SelectIconHome(rec)
     local L = Options.Loader
-    if L and L.Busy() and not L.InBuild() then
+    -- only the window's first build is waited out here; the background build
+    -- is no reason to (Select hurries the pane it needs, under its veil)
+    if L and L.Busy() and not L.InBuild() and not L.Background() then
         L.Then(function() Options.SelectIconHome(rec) end)
         return
     end
@@ -14865,6 +14983,14 @@ local function BuildSettingsPane()
             RefreshAll()
         end,
         nil, "Keeps + and the eye on every sidebar row. Off: they show when the row is under the mouse, so names get more room.")
+    Options.BuildYield()
+    AT.RowToggle(pg, "Fold bars and free icons",
+        function() return Store.GetSetting("railFlat") ~= true end,
+        function(v)
+            Store.SetSetting("railFlat", (not v) and true or nil)
+            RefreshAll()
+        end,
+        nil, "Puts each layout's bars and free icons in the sidebar under BARS and FREE ICONS folds. Off: they list in place among its groups.")
     -- Use English, built only on a client in another language. The panel's
     -- words are drawn once when it is built, so the switch waits for a reload.
     local Loc = NS.Locale
@@ -15080,6 +15206,16 @@ function Options.BuildDefaultsPane()
     local h = MakeHeader(pane)
     h.name:SetText(AT.Tr("Defaults"))
     if Options.Defaults then Options.Defaults.Fill(pane, h, win) end
+end
+
+-- The Skins page (UI\AD_SkinsOptions.lua): every bar skin on the account.
+function Options.BuildSkinsPane()
+    local pane = CreateFrame("Frame", nil, content)
+    pane:SetAllPoints()
+    panes.skins = pane
+    local h = MakeHeader(pane)
+    h.name:SetText(AT.Tr("Skins"))
+    if Options.SkinsUI then Options.SkinsUI.Fill(pane, h, win) end
 end
 
 function IE.SetStatus(text, ok)
@@ -17343,8 +17479,11 @@ function Options.Select(selType, id)
     -- The QOL page folded into Modules: a pick of it lands there.
     if selType == "qol" then selType, id = "modules", nil end
     -- An open-then-select from outside waits for the first build to finish.
+    -- The background build is no reason to wait: a pick on a pane it has not
+    -- reached hurries that pane under the Loading veil (Options.WhenPane), so
+    -- a click always answers at once.
     local L = Options.Loader
-    if L and L.Busy() and not L.InBuild() then
+    if L and L.Busy() and not L.InBuild() and not L.Background() then
         L.Then(function() Options.Select(selType, id) end)
         return
     end
@@ -17356,7 +17495,7 @@ function Options.Select(selType, id)
     end
     -- an editor not built yet builds first, and the pick lands after it
     local need = (selType == "layout" or selType == "group" or selType == "free" or selType == "bar"
-        or selType == "multi" or selType == "defaults") and selType or nil
+        or selType == "multi" or selType == "defaults" or selType == "skins") and selType or nil
     if need and not Options.PaneBuilt(need) then
         Options.WhenPane(need, function() Options.Select(selType, id) end)
         return
@@ -17384,7 +17523,7 @@ function Options.Select(selType, id)
     if Engine and Engine.RefreshArrows then Engine.RefreshArrows() end
     -- id on "modules": the module whose page opens, nil for the cards
     if selType == "ie" or selType == "settings" or selType == "modules" or selType == "newlayout"
-        or selType == "home" or selType == "defaults" then
+        or selType == "home" or selType == "defaults" or selType == "skins" then
         ShowPane(selType)
         RefreshAll()
         return
@@ -17429,6 +17568,8 @@ local function RefreshPane()
         if Options.Modules then Options.Modules.Refresh() end
     elseif ui.selType == "defaults" then
         if Options.Defaults then Options.Defaults.Refresh() end
+    elseif ui.selType == "skins" then
+        if Options.SkinsUI then Options.SkinsUI.Refresh() end
     elseif ui.selType == "ie" then IE.Refresh()
     elseif ui.selType == "newlayout" and NS.NewLayout then NS.NewLayout.Refresh()
     elseif ui.selType == "home" and Options.Home then Options.Home.Refresh() end
@@ -18186,7 +18327,7 @@ function Options.Search.ShowSelPane()
     if ui.selType == "qol" then ui.selType, ui.selId = "modules", nil end
     local t = ui.selType
     if t == "layout" or t == "group" or t == "free" or t == "bar" or t == "multi"
-        or t == "ie" or t == "settings" or t == "modules" or t == "home" then
+        or t == "ie" or t == "settings" or t == "modules" or t == "home" or t == "skins" then
         ShowPane(t)
     else
         ShowPane("empty")
@@ -18569,12 +18710,13 @@ local PANE_BUILD = {
     modules = { function() Options.BuildModulesPane() end },
     -- every item's defaults: its kind pages mirror the item editors' blocks
     defaults = { function() Options.BuildDefaultsPane() end, lazy = true, needs = { "group", "bar" } },
+    skins = { function() Options.BuildSkinsPane() end, lazy = true },
     ie = { BuildIEPane },
     all = { lazy = true, needs = { "layout", "group", "free", "bar", "multi", "looks" } },
 }
 -- the build order of old, kept for the panes that build together
 local PANE_ORDER = { "empty", "home", "newlayout", "layout", "group", "free", "bar", "multi", "looks",
-    "settings", "modules", "defaults", "ie" }
+    "settings", "modules", "defaults", "skins", "ie" }
 local paneBuilt = {}    -- name -> "building" | true
 
 -- Builds a pane, and what it needs, once. The page on screen stays while it
@@ -18640,9 +18782,98 @@ function Options.WhenPane(name, fn)
     end
 end
 
+-- Heavy work a press waits on (a big read, an import plan) runs the way a pane
+-- builds: in the loader's slices, pausing at Options.BuildYield, behind the
+-- Loading veil, then fn. Named like a pane; a name done before runs again.
+-- Without the loader it runs at once.
+function Options.WhenWork(name, work, fn)
+    local p = PANE_BUILD[name]
+    if not p then
+        PANE_BUILD[name] = { work, lazy = true }
+    elseif paneBuilt[name] == true then
+        p[1] = work
+        paneBuilt[name] = nil
+    end
+    Options.WhenPane(name, fn)
+end
+
+-- Pools a press would otherwise fill in one frame, made ahead in the
+-- background, a pause per widget, so no part of the panel stalls on a press.
+-- First the rail's spare rows (`railwarm`: a pick
+-- can open a big group at once), then after the panes (`warm`) what
+-- Options.AddWarm registered: the icon strips at the biggest group or layout.
+-- The condition checkboxes are too many to make ahead: a page's first showing
+-- makes them under the veil (CondGrid's place).
+PB.warmers = {}
+function Options.AddWarm(fn) PB.warmers[#PB.warmers + 1] = fn end
+function Options.Warm()
+    for _, fn in ipairs(PB.warmers) do fn() end
+end
+-- The rail keeps spare rows past the ones it shows: its biggest single opening
+-- (a group's icons, a layout's members) and a few. Not a row per record: a
+-- big setup would hold thousands of objects for rows it never shows.
+function PB.RailSpare()
+    local most = 0
+    Store.EachRecord(function(_, r)
+        if r.type == "group" then
+            local kids = (r.groupKind == "reminder") and Store.GroupMembers(r) or Store.IconsOf(r)
+            most = math.max(most, #kids)
+        elseif r.type == "layout" then
+            most = math.max(most, #Store.MembersOf(r))
+        end
+    end)
+    return most + 6
+end
+PB.railShown = 0
+PANE_BUILD.railwarm = { function()
+    PB.spare = PB.RailSpare()
+    for i = 1, PB.railShown + PB.spare do
+        if not railRows[i] then
+            RailRow(i):Hide()
+            Options.BuildYield()
+        end
+    end
+end, lazy = true }
+-- After each rail refresh (n rows in use): short of spares, the background
+-- build makes more. Before the first warm-up the window's own start does it.
+function Options.RailTopUp(n)
+    PB.railShown = n
+    if PB.spare == nil or #railRows - n >= PB.spare then return end
+    if paneBuilt.railwarm == true then paneBuilt.railwarm = nil end
+    Options.Prebuild()
+end
+PANE_BUILD.warm = { function() Options.Warm() end, lazy = true }
+Options.AddWarm(function()
+    local most, mostFree = 0, 0
+    Store.EachRecord(function(_, r)
+        if r.type == "group" then
+            local kids = (r.groupKind == "reminder") and Store.GroupMembers(r) or Store.IconsOf(r)
+            most = math.max(most, #kids)
+        elseif r.type == "layout" then
+            local _, free = Store.ChildrenOf(r)
+            mostFree = math.max(mostFree, #(free or {}))
+        end
+    end)
+    for i = 1, groupStrip and most or 0 do
+        if not stripPool[i] then
+            stripPool[i] = IconButton(groupStrip, 32)
+            stripPool[i]:Hide()
+            Options.BuildYield()
+        end
+    end
+    for i = 1, freeStrip and mostFree or 0 do
+        if not freeStripPool[i] then
+            freeStripPool[i] = IconButton(freeStrip, 32)
+            freeStripPool[i]:Hide()
+            Options.BuildYield()
+        end
+    end
+end)
+
 -- The editors' panes the window builds in the background once it shows, in
--- the order a player usually opens them.
-PB.ORDER = { "layout", "group", "bar", "free", "multi", "looks" }
+-- the order a player usually opens them; the rail's rows before them, the
+-- pools after.
+PB.ORDER = { "railwarm", "layout", "group", "bar", "free", "multi", "looks", "warm" }
 
 function PB.Next()
     for _, w in ipairs(PB.want) do
@@ -18701,12 +18932,13 @@ end
 -- While a pick waits on its pane, the page on screen is dimmed under a
 -- "Loading" box with a sweeping bar, so the window never looks frozen. A thin
 -- line at the content's top edge was missed (the header drew over it). The
--- veil waits a beat before it shows, so a pane built at once never flashes it;
--- it takes the clicks meant for the stale page, sits above every pane's
--- frames, and goes with the window (it is the window's child, and PB.Drop
--- clears it on a cancel).
-PB.VEIL_DELAY, PB.VEIL_W, PB.VEIL_H = 0.12, 240, 64
+-- veil shows the moment a pick waits: every press gets an answer at once. It
+-- takes the clicks meant for the stale page, sits above every pane's frames,
+-- and goes with the window (it is the window's child, and PB.Drop clears it on
+-- a cancel). A folded window says Loading on its bar instead.
+PB.VEIL_DELAY, PB.VEIL_W, PB.VEIL_H = 0, 240, 64
 function Options.LoadLine(on)
+    if Options.Fold and Options.Fold.Loading then Options.Fold.Loading(on) end
     if not (win and content) then return end
     if on and not PB.veil then
         local v = CreateFrame("Frame", nil, win)
@@ -18887,10 +19119,10 @@ Options.BuildYield()
     Options.railView = viewDD
 
     -- The layouts tree scrolls from under the caption down to the ADDON foot's
-    -- hairline (the foot is 130 tall); RefreshRail fills it, Options.RailFit sizes it.
+    -- hairline (the foot is 156 tall); RefreshRail fills it, Options.RailFit sizes it.
     local railHost, railList = AT.MakeScroll(rail)
     railHost:SetPoint("TOPLEFT", 0, -88)
-    railHost:SetPoint("BOTTOMRIGHT", -6, 131)
+    railHost:SetPoint("BOTTOMRIGHT", -6, 157)
     railHost:HookScript("OnSizeChanged", function(_, w)
         if w and w > 0 then railList:SetWidth(w - AT.ScrollExtra()) end
     end)
@@ -18976,7 +19208,7 @@ Options.BuildYield()
     local foot = CreateFrame("Frame", nil, rail)
     foot:SetPoint("BOTTOMLEFT", 1, 1)
     foot:SetPoint("BOTTOMRIGHT", -1, 1)
-    foot:SetHeight(130)
+    foot:SetHeight(156)
     foot:SetFrameLevel(rail:GetFrameLevel() + 19)
     foot:EnableMouse(true)   -- blocks clicks to anything under it
     local footBg = foot:CreateTexture(nil, "BACKGROUND")
@@ -18991,7 +19223,7 @@ Options.BuildYield()
     local acat = foot:CreateFontString(nil, "OVERLAY")
     acat:SetFont(AT.FONT, 9, "")
     acat:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
-    acat:SetPoint("BOTTOMLEFT", 9, 111)
+    acat:SetPoint("BOTTOMLEFT", 9, 137)
     acat:SetText(AT.Tr("ADDON"))
     local function AddonRow(label, paneName, yOff)
         local r = CreateFrame("Button", nil, rail, "BackdropTemplate")
@@ -19010,8 +19242,10 @@ Options.BuildYield()
         railAddonRows[paneName] = r
         return r
     end
-    AddonRow("Modules", "modules", 84)
-    AddonRow("Import / Export", "ie", 58)
+    AddonRow("Modules", "modules", 110)
+    AddonRow("Import / Export", "ie", 84)
+    -- the account's bar skins (UI\AD_SkinsOptions.lua)
+    AddonRow("Skins", "skins", 58)
     -- every item's defaults on one page (UI\AD_DefaultsOptions.lua), NEW for a version
     local defRow = AddonRow("Defaults", "defaults", 32)
     if Options.Defaults then Options.Defaults.RailRow(defRow) end

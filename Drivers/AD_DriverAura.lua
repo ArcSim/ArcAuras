@@ -825,6 +825,8 @@ local function EnsureSlots(iconId, rec, startParked)
                 maxFrameCount = 1,
                 initializeFrame = function(b)
                     WireButton(b)
+                    -- its glows draw in the stage (Factory.GlowBlend)
+                    b._adFlat = sub.inStage or nil
                     local e = entries[iconId]
                     if not e then return end
                     sub.frame = b

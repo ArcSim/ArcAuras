@@ -517,6 +517,7 @@ local function CleanValue(def, v)
     end
     return v
 end
+Store.CleanValue = CleanValue
 
 -- Cleans a layout's inh like overrides, keeping only the fields that inherit.
 local function CleanLayoutValues(rec)
@@ -962,6 +963,11 @@ function Store.NewerMaker(made)
 end
 
 function Store.Normalize()
+    -- the account's bar skins (Core\AD_BarSkins.lua), before the bars that wear them
+    if DB.skins ~= nil then
+        if type(DB.skins) ~= "table" then DB.skins = nil
+        elseif NS.BarSkins then NS.BarSkins.CleanLib(DB.skins) end
+    end
     -- Save-as-Default buckets are not records, so the loop below never sees
     -- them: their retired keys are folded here.
     local nd = DB.newDefaults and DB.newDefaults["iconGroup:cooldown"]
@@ -1261,6 +1267,7 @@ function Store.Normalize()
             end
         end
         Store.CleanLooks(rec, family and Schema[family])
+        if NS.BarSkins then NS.BarSkins.CleanRec(rec) end
         Store.CleanTypeLooks(rec)
         Store.CleanOwnLooks(rec)
     end
@@ -1668,6 +1675,12 @@ function Store.Resolve(rec, section, field)
         local v = L and L.Value(rec, lk, section, field)
         if v ~= nil then return v end
     end
+    -- a bar's skin in play (Core\AD_BarSkins.lua)
+    if rec.skins then
+        local S = NS.BarSkins
+        local v = S and S.Value(rec, section, field)
+        if v ~= nil then return v end
+    end
     local o = rec.o[section]
     if o and o[field] ~= nil then return o[field] end
     -- A reminder follows its group field by field: what it leaves unset reads
@@ -1749,15 +1762,17 @@ function Store.SetOverride(rec, section, field, value)
     end
     -- a look the options are editing takes the write (Core\AD_Looks.lua)
     if rec.looks and NS.Looks and NS.Looks.Set(rec, section, field, value) then return end
+    -- a skin entry the options are editing takes the parts its skin holds
+    if rec.skins and NS.BarSkins and NS.BarSkins.Set(rec, section, field, value) then return end
     rec.o[section] = rec.o[section] or {}
     -- storing the resolved-default value is a no-op: keep the record sparse
     local without = rec.o[section][field]
     rec.o[section][field] = nil
-    -- against the record's own chain: a look in play is not its default
-    local looks = rec.looks
-    rec.looks = nil
+    -- against the record's own chain: a look or skin in play is not its default
+    local looks, skins = rec.looks, rec.skins
+    rec.looks, rec.skins = nil, nil
     local base = Store.Resolve(rec, section, field)
-    rec.looks = looks
+    rec.looks, rec.skins = looks, skins
     if value == base then
         if next(rec.o[section]) == nil then rec.o[section] = nil end
     else
@@ -5325,11 +5340,19 @@ function Store.MoveIcon(iconId, destGroupId, layoutId, pos, cell)
     return true
 end
 
--- exchange two members' grid cells (the static-grid swap drop)
-function Store.SwapCells(groupId, idA, idB)
+-- exchange two members' grid cells (the static-grid swap drop); cellA and
+-- cellB, when given, are the cells they are drawn in (the engine's, which
+-- may be a free cell for now), and each takes the other's for good
+function Store.SwapCells(groupId, idA, idB, cellA, cellB)
     local a, b = Store.Get(idA), Store.Get(idB)
     if not (a and b and a.groupId == groupId and b.groupId == groupId) then
         return false
+    end
+    if cellA and cellB then
+        a.gpos = { row = cellB.row, col = cellB.col }
+        b.gpos = { row = cellA.row, col = cellA.col }
+        Store.Dirty("tree")
+        return true
     end
     a.gpos, b.gpos = b.gpos, a.gpos
     Store.Dirty("tree")
@@ -5886,6 +5909,12 @@ end
 
 function Store.UI() return DB.ui end
 
+-- the account's bar skins by id (Core\AD_BarSkins.lua)
+function Store.SkinLib()
+    DB.skins = DB.skins or {}
+    return DB.skins
+end
+
 -- A custom item's live state for this character (its timer's end and its
 -- stacks), kept so a /reload picks it up where it was. Written by
 -- Drivers\AD_DriverCustom.lua; plain numbers only.
@@ -6126,7 +6155,8 @@ function Store.Export(ids, keep)
     local infoLay = Store.PackInfoLayout(exIds)
     local payload = { v = 1, kind = "adlayout", records = recs, at = time and time() or 0,
         made = Store.AddonVersion(), need = Store.FORMAT, game = Store.Game(),
-        info = infoLay and Store.CleanPackInfo(Store.PackInfo(infoLay.id)) or nil }
+        info = infoLay and Store.CleanPackInfo(Store.PackInfo(infoLay.id)) or nil,
+        skins = NS.BarSkins and NS.BarSkins.ForExport(recs) or nil }
     local out = {}
     SerVal(payload, out)
     local comp = LD:CompressDeflate(table.concat(out))
@@ -6327,10 +6357,43 @@ function Store.Import(text, targetLayoutId, opts)
                 :format(tostring(rgroup and rgroup.name or "?"), table.concat(refused, ", "))
         end
     end
+    -- the skins its bars wear, the ones this account lacks
+    if NS.BarSkins then NS.BarSkins.TakeIn(payload.skins) end
     Store.Normalize()
     Store.Dirty("tree")
     return { layouts = layouts, items = items, target = target, dropped = dropped,
         reminders = reminders, reminderGroup = rgroup, refused = refused }
+end
+
+-- One bar skin as a share string of its own (Core\AD_BarSkins.lua); the
+-- layout import refuses it by its prefix.
+Store.SKIN_PREFIX = "!ADSK1!"
+function Store.ExportSkin(skin)
+    local LD = GetDeflate()
+    if not LD then return nil, "LibDeflate did not load" end
+    if type(skin) ~= "table" then return nil, "no such skin" end
+    local out = {}
+    SerVal({ v = 1, kind = "adskin", skin = skin, made = Store.AddonVersion() }, out)
+    return Store.SKIN_PREFIX .. LD:EncodeForPrint(LD:CompressDeflate(table.concat(out)))
+end
+
+-- The skin a share string holds (uncleaned), or nil and a reason.
+function Store.DecodeSkin(text)
+    text = tostring(text or ""):gsub("%s+", "")
+    if text == "" then return nil, "paste a skin string first" end
+    local n = #Store.SKIN_PREFIX
+    if text:sub(1, n) ~= Store.SKIN_PREFIX then return nil, "not an Arc Auras skin string" end
+    local LD = GetDeflate()
+    if not LD then return nil, "LibDeflate did not load" end
+    local comp = LD:DecodeForPrint(text:sub(n + 1))
+    local raw = comp and LD:DecompressDeflate(comp)
+    if not raw then return nil, "corrupt string" end
+    local payload, _, err = DeserVal(raw, 1)
+    if err or type(payload) ~= "table" or payload.v ~= 1 or payload.kind ~= "adskin"
+        or type(payload.skin) ~= "table" then
+        return nil, err or "corrupt string"
+    end
+    return payload.skin
 end
 
 -- One-layout form of Import: the first imported layout, or where the loose

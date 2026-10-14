@@ -168,7 +168,7 @@ local function Status()
 end
 
 SP.Register({
-    id = "restodre", name = "Deeply Rooted Elements", class = "SHAMAN", specs = { 264 },
+    id = "restodre", name = "DRE (Restoration)", class = "SHAMAN", specs = { 264 },
     icon = DRE_ICON, size = CAP_AT, procs = nil, cap = CAP_AT,
     isTimer = false, bar = true, sound = false, chanceSpend = false, chanceForecast = false, viol = false,
     words = {

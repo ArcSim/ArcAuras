@@ -3172,13 +3172,21 @@ local PANDEMIC_FX = { "UI-CooldownManager-PandemicFX-Icon01", "UI-CooldownManage
     "UI-CooldownManager-PandemicFX-Icon03" }
 -- the pandemic box: the icon plus a sixth of its short side all round
 Factory.PANDEMIC_GROW = 6 / 36
--- On a shaped icon (rec) every style draws the shape's soft outline, "shape:<key>",
--- and the red flash, which covers the icon itself, its filled silhouette:
--- rectangle styles would stand off the outline.
+-- On a shaped icon (rec) the styles drawn round an edge keep their own look in
+-- its shape ("button:circle"): pixel and autocast ride its outline
+-- (Factory.GlowShaped), the button glow, its ants and the proc loop play the
+-- game's sheets bent into the shape (GLOW_ART). The rest draw its soft outline
+-- ("shape:<key>"), and the red flash, which covers the icon itself, its filled
+-- silhouette: rectangle styles would stand off the outline. Rounded is close
+-- enough to square that every outline style keeps its own look.
+local OUTLINE_STYLES = { pixel = true, autocast = true, button = true, ants = true, proc = true, procloop = true }
 local function DrawnGlowStyle(gtype, rec)
     local key = rec and (Factory.MaskOf(rec) or Factory.SkinGlowShape(rec))
     if key then
-        return ((gtype == "redflash" or gtype == "barattack") and "shapefill:" or "shape:") .. key
+        if gtype == "redflash" or gtype == "barattack" then return "shapefill:" .. key end
+        if key ~= "rounded" then
+            return (OUTLINE_STYLES[gtype] and (gtype .. ":") or "shape:") .. key
+        end
     end
     if not GLOW_STYLES_KNOWN[gtype] then return "button" end
     if gtype == "ants" and not AtlasOK(ANTS_ATLAS) then return "button" end
@@ -3191,6 +3199,10 @@ Factory._glowAtlasOK = atlasOK   -- test harness handle
 local ICON_ALERT = "Interface\\SpellActivationOverlay\\IconAlert"
 local ICON_ALERT_ANTS = "Interface\\SpellActivationOverlay\\IconAlertAnts"
 local PROC_LOOP = "UI-HUD-ActionBar-Proc-Loop-Flipbook"
+-- A shaped icon's button glow, ants and proc loop: the same sheets bent into
+-- its shape, in their own layouts (brand\shape_glows.lua): "<part>_<shape>",
+-- part Alert, Ants or Proc. The proc loop's frames are 80 px.
+local GLOW_ART = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Shapes\\AD_Glow"
 -- the IconAlert sheet's outer ring
 local ALERT_GLOW = { 0.00781250, 0.50781250, 0.27734375, 0.52734375 }
 -- Sparkle art: the Artifacts sheet exists on retail only; other clients,
@@ -3219,7 +3231,7 @@ end
 -- Set every build: whether children follow a parent's level is undocumented.
 local function LevelStyleFrames(host, L)
     for _, k in ipairs({ "_adBtn", "_adProc", "_adAnts", "_adFlash", "_adRedFlash", "_adShape", "_adShapeFill",
-        "_adBarCheck", "_adBarRed", "_adPand" }) do
+        "_adBarCheck", "_adBarRed", "_adPand", "_adShaped" }) do
         local fr = host[k]
         if fr then fr:SetFrameLevel(L + 1) end
     end
@@ -3282,6 +3294,16 @@ local function HideGlowParts(host, keep)
         host._adShapeFill.ag:Stop()
         host._adShapeFill:Hide()
     end
+    local sh = host._adShaped
+    if keep ~= "shaped" and sh then
+        for _, pool in pairs(sh.riders) do
+            for _, it in ipairs(pool) do
+                it.ag:Stop()
+                it.tex:Hide()
+            end
+        end
+        sh:Hide()
+    end
 end
 
 -- "shape:circle" -> "shape", "circle"; any other style alone
@@ -3291,6 +3313,31 @@ local function ShapeStyle(gtype)
     return gtype, nil
 end
 Factory.ShapeStyle = ShapeStyle
+
+-- The part of HideGlowParts a style keeps: pixel and autocast along a shape's
+-- outline keep the shaped frame; any other style keeps its own pieces.
+local function KeepOf(gtype)
+    local st, key = ShapeStyle(gtype)
+    if key and (st == "pixel" or st == "autocast") then return "shaped", st, key end
+    return st, st, key
+end
+Factory.KeepOf = KeepOf
+
+-- Added light drawn into a stage shows only where something under it is
+-- already drawn, so a glow host there (host._adFlat) blends instead.
+local function GlowBlend(host)
+    return host._adFlat and "BLEND" or "ADD"
+end
+Factory.GlowBlend = GlowBlend
+
+-- A loop's length for a flipbook style (ants, proc): a second at the glow's
+-- default speed (ref), shorter as the speed rises.
+local function GlowLoopTime(speed, ref)
+    local t = (ref or 0.25) / math.max(0.05, speed or ref or 0.25)
+    if t < 0.1 then t = 0.1 elseif t > 10 then t = 10 end
+    return t
+end
+Factory.GlowLoopTime = GlowLoopTime
 
 -- Pixel: n dashes around a W x H rect, th thick, a lap per period seconds;
 -- len = dash length in pixels (0 or nil = automatic), met by the nearest band.
@@ -3461,7 +3508,6 @@ local function GlowSparkle(host, W, H, n, scale, period, r, g, bl, a)
                 it.tex = host:CreateTexture(nil, "OVERLAY", nil, 7)
                 it.tex:SetTexture(SPARKLE)
                 it.tex:SetTexCoord(SPARKLE_TC[1], SPARKLE_TC[2], SPARKLE_TC[3], SPARKLE_TC[4])
-                it.tex:SetBlendMode("ADD")
                 it.ag = it.tex:CreateAnimationGroup()
                 it.ag:SetLooping("REPEAT")
                 it.path = it.ag:CreateAnimation("Path")
@@ -3473,6 +3519,7 @@ local function GlowSparkle(host, W, H, n, scale, period, r, g, bl, a)
                 list[idx] = it
             end
             it.ag:Stop()
+            it.tex:SetBlendMode(GlowBlend(host))
             local sx, sy = PerimPoint(start, W, H)
             local sz = SPARKLE_SIZES[layer] * scale
             it.tex:SetSize(sz, sz)
@@ -3501,7 +3548,24 @@ Factory.GlowArt = { pixel = GlowPixel, autocast = GlowSparkle, hide = HideGlowPa
 -- Button: the button glow at rest, its outer ring and ants on a
 -- (1.4 w + 2 xo) x (1.4 h + 2 yo) frame, as the cooldown lanes lay it.
 -- Desaturated so the colour tints the gold art.
-local function GlowButton(host, fw, fh, r, g, bl, a, speed, native)
+-- One ants lap (22 frames) at the library's real pace, so a drawn button glow
+-- runs as the library's does on a plain icon. Its stepper (the game's
+-- AnimateTexCoords) waits until more than 0.0025 / speed seconds pile up, then
+-- spends a whole screen frame advancing and drops the rest: at 120 fps a lap
+-- at the default speed takes about 0.55 s, not the nominal 0.22.
+function Factory.ButtonGlowLoop(speed, fps)
+    local throttle = 0.0025 / math.max(0.05, speed or 0.25)
+    if type(fps) ~= "number" or fps ~= fps or fps < 10 then fps = 60 end
+    local dt = 1 / fps
+    -- screen frames piling up; an even fit passes, as a running sum of frame times does
+    local n = math.floor(throttle / dt - 1e-9) + 1
+    local k = math.max(1, math.floor(n * dt / throttle)) -- ant frames per step
+    local dur = 22 * (n + 1) * dt / k
+    if dur < 0.05 then dur = 0.05 elseif dur > 5 then dur = 5 end
+    return dur
+end
+
+local function GlowButton(host, fw, fh, r, g, bl, a, speed, native, shape)
     local bt = host._adBtn
     if not bt then
         bt = CreateFrame("Frame", nil, host, host._adOptIn)
@@ -3509,12 +3573,10 @@ local function GlowButton(host, fw, fh, r, g, bl, a, speed, native)
         bt.outer = bt:CreateTexture(nil, "OVERLAY", nil, 6)
         bt.outer:SetTexture(ICON_ALERT)
         bt.outer:SetTexCoord(ALERT_GLOW[1], ALERT_GLOW[2], ALERT_GLOW[3], ALERT_GLOW[4])
-        bt.outer:SetBlendMode("ADD")
         bt.outer:SetPoint("CENTER", bt, "CENTER", 0, 0)
         if bt.outer.SetDesaturated then bt.outer:SetDesaturated(true) end
         bt.ants = bt:CreateTexture(nil, "OVERLAY", nil, 7)
         bt.ants:SetTexture(ICON_ALERT_ANTS)
-        bt.ants:SetBlendMode("ADD")
         bt.ants:SetPoint("CENTER", bt, "CENTER", 0, 0)
         if bt.ants.SetDesaturated then bt.ants:SetDesaturated(true) end
         bt.antsAG = bt.ants:CreateAnimationGroup()
@@ -3530,6 +3592,15 @@ local function GlowButton(host, fw, fh, r, g, bl, a, speed, native)
         host._adBtn = bt
     end
     bt.antsAG:Stop()
+    local tex = shape and (GLOW_ART .. "Alert_" .. shape) or ICON_ALERT
+    if bt._adTex ~= tex then
+        bt.outer:SetTexture(tex)
+        bt.outer:SetTexCoord(ALERT_GLOW[1], ALERT_GLOW[2], ALERT_GLOW[3], ALERT_GLOW[4])
+        bt.ants:SetTexture(shape and (GLOW_ART .. "Ants_" .. shape) or ICON_ALERT_ANTS)
+        bt._adTex = tex
+    end
+    bt.outer:SetBlendMode(GlowBlend(host))
+    bt.ants:SetBlendMode(GlowBlend(host))
     -- the game's own colour keeps the gold art as it is
     if bt.outer.SetDesaturated then bt.outer:SetDesaturated(not native) end
     if bt.ants.SetDesaturated then bt.ants:SetDesaturated(not native) end
@@ -3540,10 +3611,7 @@ local function GlowButton(host, fw, fh, r, g, bl, a, speed, native)
     bt.ants:SetVertexColor(r, g, bl, 0)
     bt.antsLit:SetFromAlpha(a)
     bt.antsLit:SetToAlpha(a)
-    -- the cooldown lanes' pace at the same speed (one ants lap = 22 frames)
-    local dur = 0.055 / math.max(0.05, speed)
-    if dur < 0.05 then dur = 0.05 elseif dur > 5 then dur = 5 end
-    bt.antsFB:SetDuration(dur)
+    bt.antsFB:SetDuration(Factory.ButtonGlowLoop(speed, GetFramerate and GetFramerate()))
     bt:Show()
     bt.antsAG:Play()
 end
@@ -3564,7 +3632,7 @@ end
 
 -- Proc: Blizzard's proc loop on a (1.4 w + 2 xo) x (1.4 h + 2 yo) frame. With
 -- no opening burst, proc and procloop draw the same loop on an aura button.
-local function GlowProc(host, fw, fh, r, g, bl, a, native)
+local function GlowProc(host, fw, fh, r, g, bl, a, native, shape, dur)
     local pr = host._adProc
     if not pr then
         pr = CreateFrame("Frame", nil, host, host._adOptIn)
@@ -3577,11 +3645,26 @@ local function GlowProc(host, fw, fh, r, g, bl, a, native)
         local la = pr.loop:CreateAnimationGroup()
         la:SetLooping("REPEAT")
         pr.loopLit = LoopLit(la)
-        FlipBook(la, nil, 1, 1)
+        pr.loopFB = FlipBook(la, nil, 1, 1)
         pr.loopAG = la
+        pr._adTex = PROC_LOOP
         host._adProc = pr
     end
     pr.loopAG:Stop()
+    local tex = shape and (GLOW_ART .. "Proc_" .. shape) or PROC_LOOP
+    if pr._adTex ~= tex then
+        if shape then
+            pr.loop:SetTexture(tex)
+        else
+            pr.loop:SetAtlas(PROC_LOOP)
+        end
+        -- the atlas splits evenly; our sheet has 80 px frames from its corner
+        pr.loopFB:SetFlipBookFrameWidth(shape and 80 or 0)
+        pr.loopFB:SetFlipBookFrameHeight(shape and 80 or 0)
+        pr._adTex = tex
+    end
+    -- a loop a second at the glow's default speed (GlowLoopTime)
+    pr.loopFB:SetDuration(dur or 1)
     if pr.loop.SetDesaturated then pr.loop:SetDesaturated(not native) end
     pr:SetSize(fw, fh)
     pr.loop:SetVertexColor(r, g, bl, 0)
@@ -3591,10 +3674,11 @@ local function GlowProc(host, fw, fh, r, g, bl, a, native)
     pr.loopAG:Play()
 end
 
--- Ants: the action bar's highlight flipbook (30 frames, a lap a second) on the
--- fw x fh box, 66/45 of the icon plus offsets. Desaturated so the colour tints
--- it.
-local function GlowAnts(host, fw, fh, r, g, bl, a)
+-- Ants: the action bar's highlight flipbook (30 frames, a lap a second at the
+-- glow's default speed: dur) on the fw x fh box, 66/45 of the icon plus
+-- offsets; on a shaped icon our ring sheet drawn for it (84 px frames).
+-- Desaturated so the colour tints it.
+local function GlowAnts(host, fw, fh, r, g, bl, a, dur, shape)
     local at = host._adAnts
     if not at then
         at = CreateFrame("Frame", nil, host, host._adOptIn)
@@ -3606,11 +3690,24 @@ local function GlowAnts(host, fw, fh, r, g, bl, a)
         local ag = at.tex:CreateAnimationGroup()
         ag:SetLooping("REPEAT")
         at.lit = LoopLit(ag)
-        FlipBook(ag, nil, 1, 1)
+        at.fb = FlipBook(ag, nil, 1, 1)
         at.ag = ag
+        at._adTex = ANTS_ATLAS
         host._adAnts = at
     end
     at.ag:Stop()
+    local tex = shape and (GLOW_ART .. "Ring_" .. shape) or ANTS_ATLAS
+    if at._adTex ~= tex then
+        if shape then
+            at.tex:SetTexture(tex)
+        else
+            at.tex:SetAtlas(ANTS_ATLAS)
+        end
+        at.fb:SetFlipBookFrameWidth(shape and 84 or 0)
+        at.fb:SetFlipBookFrameHeight(shape and 84 or 0)
+        at._adTex = tex
+    end
+    at.fb:SetDuration(dur or 1)
     at:SetSize(fw, fh)
     at.tex:SetVertexColor(r, g, bl, 0)
     at.lit:SetFromAlpha(a)
@@ -3707,10 +3804,10 @@ local function GlowBarCheck(host, fw, fh, r, g, bl, a)
         else
             fl.tex:SetTexture(BAR_CHECK_FILE)
         end
-        fl.tex:SetBlendMode("ADD")
         fl.tex:SetAllPoints(fl)
         host._adBarCheck = fl
     end
+    fl.tex:SetBlendMode(GlowBlend(host))
     fl:SetSize(fw * BAR_W, fh)
     fl.tex:SetVertexColor(r, g, bl, a)
     fl:Show()
@@ -3819,15 +3916,14 @@ local function GlowPandemic(host, fw, fh, r, g, bl, a, native)
     pd.ag:Play()
 end
 
--- A shaped icon's glow: the shape's halo, added light, pulsing 40% to 100% at
--- the flash's pace. fw, fh = the halo's box (the icon times SHAPE_HALO).
+-- A shaped icon's glow: the shape's halo pulsing 40% to 100% at the flash's
+-- pace. fw, fh = the halo's box (the icon times SHAPE_HALO).
 local function GlowShape(host, fw, fh, r, g, bl, a, speed, key)
     local fl = host._adShape
     if not fl then
         fl = CreateFrame("Frame", nil, host, host._adOptIn)
         fl:SetPoint("CENTER", host, "CENTER", 0, 0)
         fl.tex = fl:CreateTexture(nil, "OVERLAY", nil, 7)
-        fl.tex:SetBlendMode("ADD")
         fl.tex:SetAllPoints(fl)
         local ag = fl:CreateAnimationGroup()
         ag:SetLooping("REPEAT")
@@ -3849,6 +3945,7 @@ local function GlowShape(host, fw, fh, r, g, bl, a, speed, key)
         fl.tex:SetTexture(Factory.ShapeFile(key, "Halo"))
         fl._adKey = key
     end
+    fl.tex:SetBlendMode(GlowBlend(host))
     fl:SetSize(fw, fh)
     fl.tex:SetVertexColor(r, g, bl, a)
     local half = 0.125 / math.max(0.05, speed or 0.25)
@@ -3898,6 +3995,206 @@ local function GlowShapeFill(host, fw, fh, r, g, bl, a, speed, key)
     fl.ag:Play()
 end
 
+-- Glows along a shape's outline (a circle, diamond or hexagon icon): each
+-- style keeps its own look. Its points ride the outline on Path animations,
+-- so a lap costs no Lua; one frame holds them all, so they share one level.
+local SHAPED = { ROUND = 32, DOTS = 12 }
+
+-- The outline of a shape filling a W x H box as its mask does, clockwise from
+-- the top, as offsets from the box's BOTTOMLEFT; a circle in ROUND steps.
+function SHAPED.Outline(key, W, H)
+    if key == "diamond" then
+        return { { W / 2, H }, { W, H / 2 }, { W / 2, 0 }, { 0, H / 2 } }
+    elseif key == "hexagon" then
+        return { { W / 2, H }, { W, H * 0.75 }, { W, H * 0.25 }, { W / 2, 0 },
+            { 0, H * 0.25 }, { 0, H * 0.75 } }
+    end
+    local pts = {}
+    for i = 0, SHAPED.ROUND - 1 do
+        local t = i / SHAPED.ROUND * 2 * math.pi
+        pts[i + 1] = { W / 2 * (1 + math.sin(t)), H / 2 * (1 + math.cos(t)) }
+    end
+    return pts
+end
+Factory.ShapeOutline = SHAPED.Outline
+
+-- An outline to ride: its points, where each sits along it, and its length.
+function SHAPED.Path(pts)
+    local pos, len = {}, 0
+    for i, p in ipairs(pts) do
+        pos[i] = len
+        local q = pts[i % #pts + 1]
+        len = len + math.sqrt((q[1] - p[1]) ^ 2 + (q[2] - p[2]) ^ 2)
+    end
+    return { pts = pts, pos = pos, len = len }
+end
+
+-- the spot s along the path (any s: it wraps)
+function SHAPED.At(o, s)
+    local pts, pos, n = o.pts, o.pos, #o.pts
+    s = s % o.len
+    for i = n, 1, -1 do
+        if s >= pos[i] then
+            local p, q = pts[i], pts[i % n + 1]
+            local seg = ((i < n) and pos[i + 1] or o.len) - pos[i]
+            local f = (seg > 0) and (s - pos[i]) / seg or 0
+            return p[1] + (q[1] - p[1]) * f, p[2] + (q[2] - p[2]) * f
+        end
+    end
+    return pts[1][1], pts[1][2]
+end
+Factory.ShapePathAt = function(key, W, H, s) return SHAPED.At(SHAPED.Path(SHAPED.Outline(key, W, H)), s) end
+
+-- The host's shaped frame: the pixel style's backing band, then the riders up
+-- its layers. Riders pool by stop count, as
+-- a Path keeps its control points for good.
+function SHAPED.Frame(host)
+    local sh = host._adShaped
+    if sh then return sh end
+    sh = CreateFrame("Frame", nil, host, host._adOptIn)
+    sh:SetPoint("CENTER", host, "CENTER", 0, 0)
+    sh.band = sh:CreateTexture(nil, "OVERLAY", nil, 5)
+    sh.band:SetPoint("CENTER", sh, "CENTER", 0, 0)
+    sh.hole = sh:CreateMaskTexture()
+    sh.hole:SetPoint("CENTER", sh, "CENTER", 0, 0)
+    sh.band:AddMaskTexture(sh.hole)
+    sh.riders = {}
+    host._adShaped = sh
+    return sh
+end
+
+function SHAPED.Rider(sh, stops, i)
+    local pool = sh.riders[stops]
+    if not pool then
+        pool = {}
+        sh.riders[stops] = pool
+    end
+    local it = pool[i]
+    if not it then
+        it = { tex = sh:CreateTexture(nil, "OVERLAY", nil, 7), points = {} }
+        it.ag = it.tex:CreateAnimationGroup()
+        it.ag:SetLooping("REPEAT")
+        it.path = it.ag:CreateAnimation("Path")
+        for k = 1, stops do it.points[k] = it.path:CreateControlPoint(nil, nil, k) end
+        pool[i] = it
+    end
+    return it
+end
+
+-- A rider from s0 round the path o (its box's corner at ox, oy in sh), a lap
+-- per `lap` seconds: every point once, then back to s0.
+function SHAPED.Ride(it, sh, o, s0, lap, ox, oy)
+    local sx, sy = SHAPED.At(o, s0)
+    it.ag:Stop()
+    it.tex:ClearAllPoints()
+    it.tex:SetPoint("CENTER", sh, "BOTTOMLEFT", ox + sx, oy + sy)
+    local k = 0
+    for pass = 1, 2 do
+        for i, q in ipairs(o.pts) do
+            if (pass == 1) == (o.pos[i] > s0) then
+                k = k + 1
+                it.points[k]:SetOffset(q[1] - sx, q[2] - sy)
+            end
+        end
+    end
+    it.points[k + 1]:SetOffset(0, 0)
+    it.path:SetDuration(math.max(0.05, lap))
+    it.tex:Show()
+    it.ag:Play()
+end
+
+-- n dashes of th-wide dots round the path o, each `dash` long, a lap per
+-- `lap` seconds; the dots overlap into a line. Returns the riders used.
+function SHAPED.Dashes(sh, o, n, dash, th, lap, r, g, bl, a, ox, oy, used)
+    local cycle = o.len / n
+    dash = math.max(th, math.min(dash, cycle))
+    local m = math.min(SHAPED.DOTS, math.floor((dash - th) / math.max(0.5, th / 2)) + 1)
+    local step = (m > 1) and (dash - th) / (m - 1) or 0
+    for d = 0, n - 1 do
+        for j = 0, m - 1 do
+            used = used + 1
+            local it = SHAPED.Rider(sh, #o.pts + 1, used)
+            it.tex:SetTexture(WHITE)
+            it.tex:SetTexCoord(0, 1, 0, 1)
+            it.tex:SetBlendMode("BLEND")
+            it.tex:SetSize(th, th)
+            it.tex:SetVertexColor(r, g, bl, a)
+            SHAPED.Ride(it, sh, o, (d * cycle + th / 2 + j * step) % o.len, lap, ox, oy)
+        end
+    end
+    return used
+end
+
+-- autocast's sparkles round the path o: n a ring, four rings, the outer ones slower
+function SHAPED.Sparkles(sh, o, n, scale, period, r, g, bl, a, ox, oy, used, blend)
+    for layer = 1, 4 do
+        for s = 1, n do
+            used = used + 1
+            local it = SHAPED.Rider(sh, #o.pts + 1, used)
+            it.tex:SetTexture(SPARKLE)
+            it.tex:SetTexCoord(SPARKLE_TC[1], SPARKLE_TC[2], SPARKLE_TC[3], SPARKLE_TC[4])
+            it.tex:SetBlendMode(blend)
+            local sz = SPARKLE_SIZES[layer] * scale
+            it.tex:SetSize(sz, sz)
+            it.tex:SetVertexColor(r, g, bl, a)
+            SHAPED.Ride(it, sh, o, (s - 1) * o.len / n, period * layer, ox, oy)
+        end
+    end
+    return used
+end
+
+-- Pixel or autocast along a shaped icon's outline. W x H = the glow's box,
+-- iw x ih = the icon's, both centred on the host. o = the look: r, g, bl, a,
+-- speed; pixel: lines, th (whole pixels), len, back = { w, a } or nil;
+-- autocast: parts, scale.
+--   pixel     the dashes inside the edge, a dark band under them on request
+--   autocast  the sparkles on the edge
+local function GlowShaped(host, style, key, W, H, iw, ih, o)
+    local sh = SHAPED.Frame(host)
+    sh:SetSize(W, H)
+    local r, g, bl, a = o.r, o.g, o.bl, o.a
+    local speed = math.max(0.05, o.speed or 0.25)
+    local blend = GlowBlend(host)
+    -- the icon box's corner in the frame
+    local ox, oy = (W - iw) / 2, (H - ih) / 2
+    if style == "pixel" and o.back then
+        local b = o.back.w * (Factory.SHAPE_RING[key] or 1)
+        if sh.band._adKey ~= key then
+            sh.band:SetTexture(Factory.ShapeFile(key, "Mask"))
+            sh.hole:SetTexture(Factory.ShapeFile(key, "Hole"), "CLAMPTOWHITE", "CLAMPTOWHITE")
+            sh.band._adKey = key
+        end
+        sh.band:SetSize(iw, ih)
+        sh.hole:SetSize(math.max(1, iw - 2 * b), math.max(1, ih - 2 * b))
+        sh.band:SetVertexColor(0.1, 0.1, 0.1, o.back.a or 0.8)
+        sh.band:Show()
+    else
+        sh.band:Hide()
+    end
+    local used, path = 0, nil
+    if style == "pixel" then
+        -- dot centres half a dot in, so the dashes sit inside the edge
+        local th = o.th or 1
+        path = SHAPED.Path(SHAPED.Outline(key, iw - th, ih - th))
+        local n = math.max(1, o.lines or 8)
+        local dash = (o.len and o.len > 0) and o.len or (path.len / n * DASH_BANDS[DASH_AUTO] / 64)
+        used = SHAPED.Dashes(sh, path, n, dash, th, 1 / speed, r, g, bl, a, ox + th / 2, oy + th / 2, used)
+    else
+        path = SHAPED.Path(SHAPED.Outline(key, iw, ih))
+        used = SHAPED.Sparkles(sh, path, math.max(1, o.parts or 4), o.scale or 1, 1 / speed,
+            r, g, bl, a, ox, oy, used, blend)
+    end
+    local stops = #path.pts + 1
+    for k, pool in pairs(sh.riders) do
+        for i = ((k == stops) and used or 0) + 1, #pool do
+            pool[i].ag:Stop()
+            pool[i].tex:Hide()
+        end
+    end
+    sh:Show()
+end
+Factory.GlowShaped = GlowShaped
+
 -- Glow timing (auraActive.activeGlowWhen), all engine-driven:
 --   always    while the aura is up: the host is the button's child
 --   pandemic  the last 30%: Forever keeps no leftover time on a refresh, so
@@ -3939,6 +4236,13 @@ local function GlowTextures(host)
     if pd then
         out[#out + 1] = { pd.border, pd }
         for _, t in ipairs(pd.sparks) do out[#out + 1] = { t, pd.fx } end
+    end
+    local sh = host._adShaped
+    if sh then
+        out[#out + 1] = { sh.band, sh }
+        for _, pool in pairs(sh.riders) do
+            for _, it in ipairs(pool) do out[#out + 1] = { it.tex, sh } end
+        end
     end
     return out
 end
@@ -4012,8 +4316,8 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
     local c = R("auraActive", "activeGlowColor") or { 0.95, 0.95, 0.32, 1 }
     -- the game's own colour: the gold art untinted, the intensity its alpha
     local Sch = NS.Schema
-    local native = Sch ~= nil and Sch.GLOW_NATIVE_STYLES[gtype] == true and R("auraActive", "activeGlowNative") == true
-    local backing = gtype == "pixel" and R("auraActive", "activeGlowBacking") == true
+    local native = Sch ~= nil and Sch.GLOW_NATIVE_STYLES[ShapeStyle(gtype)] == true and R("auraActive", "activeGlowNative") == true
+    local backing = ShapeStyle(gtype) == "pixel" and R("auraActive", "activeGlowBacking") == true
     local a = (native and 1 or (c[4] or 1)) * (R("auraActive", "activeGlowIntensity") or 1) * (alphaMul or 1)
     local speed = math.max(0.05, R("auraActive", "activeGlowSpeed") or 0.25)
     local xo = R("auraActive", "activeGlowXOffset") or 0
@@ -4058,6 +4362,8 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
         -- every frame anchored to it needs too
         host = CreateFrame("Frame", nil, b, b._adOptIn)
         host._adOptIn = b._adOptIn
+        -- a Missing glow's host draws in its stage (GlowBlend)
+        host._adFlat = b._adFlat
         host:EnableMouse(false)
         b[hostKey] = host
     end
@@ -4065,7 +4371,8 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
     b[sigKey] = sig
     host:ClearAllPoints()
     local W, H
-    if gtype == "pixel" or gtype == "autocast" then
+    local keep, style, shape = KeepOf(gtype)
+    if style == "pixel" or style == "autocast" then
         host:SetPoint("TOPLEFT", b, "TOPLEFT", -xo + mx, yo + my)
         host:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", xo + mx, -yo + my)
         W, H = w + 2 * xo, h + 2 * yo
@@ -4075,15 +4382,18 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
         -- expanding any
         host:SetPoint("CENTER", b, "CENTER", mx, my)
         host:SetSize(w, h)
-        local k = (gtype == "ants" or gtype == "flash") and BLIZZ_RATIO or 1.4
+        local k = (style == "ants" or gtype == "flash") and BLIZZ_RATIO or 1.4
         if gtype == "redflash" then k = 1 end
         -- a shaped icon's outline lays its halo box, its fill the icon itself
-        local st = ShapeStyle(gtype)
-        if st == "shape" then k = Factory.SHAPE_HALO elseif st == "shapefill" then k = 1 end
+        if style == "shape" then
+            k = Factory.SHAPE_HALO
+        elseif style == "shapefill" then
+            k = 1
+        end
         -- the bars' frames sit on the icon's own box
         if gtype == "barcheck" or gtype == "barattack" then k = 1 end
-        -- a button or proc glow's size grows its box
-        if gtype == "button" or gtype == "proc" or gtype == "procloop" then
+        -- a button or proc glow's size grows its box (shaped ones too)
+        if style == "button" or style == "proc" or style == "procloop" then
             k = k * math.min(2, math.max(0.5, tonumber(scale) or 1))
         end
         W, H = w * k + 2 * xo, h * k + 2 * yo
@@ -4106,11 +4416,19 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
         end
         host._adStrata = nil
     end
-    local style, shape = ShapeStyle(gtype)
-    HideGlowParts(host, style)
+    HideGlowParts(host, keep)
     local r, g, bl = c[1], c[2], c[3]
     if native then r, g, bl = 1, 1, 1 end
-    if style == "shape" then
+    -- Whole physical pixels on the live button's grid, which carries its
+    -- layout's scale (a preview's stand-in keeps the live one's).
+    local ref = b._adPxRef or b
+    if keep == "shaped" then
+        local tpx = SkinSnap(ref, (style == "pixel") and th or 2, 1)
+        GlowShaped(host, style, shape, W, H, w + 2 * xo, h + 2 * yo, {
+            r = r, g = g, bl = bl, a = a, speed = speed, lines = lines, th = tpx, len = dash,
+            back = backing and { w = tpx + SkinSnap(ref, 1, 1), a = 0.8 * (alphaMul or 1) } or nil,
+            parts = parts, scale = scale })
+    elseif style == "shape" then
         GlowShape(host, W, H, r, g, bl, a, speed, shape)
     elseif style == "shapefill" then
         GlowShapeFill(host, W, H, r, g, bl, a, speed, shape)
@@ -4119,9 +4437,6 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
     elseif gtype == "barattack" then
         GlowBarAttack(host, W, H, r, g, bl, a)
     elseif gtype == "pixel" then
-        -- Whole physical pixels on the live button's grid, which carries its
-        -- layout's scale (a preview's stand-in keeps the live one's).
-        local ref = b._adPxRef or b
         local tpx = SkinSnap(ref, th, 1)
         local bpx = tpx + SkinSnap(ref, 1, 1)
         -- the backing dims with the aura's opacity, as the cooldown lanes' does with the icon
@@ -4129,10 +4444,10 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
             backing and { w = bpx, a = 0.8 * (alphaMul or 1) } or nil)
     elseif gtype == "autocast" then
         GlowSparkle(host, W, H, parts, scale, 1 / speed, r, g, bl, a)
-    elseif gtype == "proc" or gtype == "procloop" then
-        GlowProc(host, W, H, r, g, bl, a, native)
-    elseif gtype == "ants" then
-        GlowAnts(host, W, H, r, g, bl, a)
+    elseif style == "proc" or style == "procloop" then
+        GlowProc(host, W, H, r, g, bl, a, native, shape, GlowLoopTime(speed))
+    elseif style == "ants" then
+        GlowAnts(host, W, H, r, g, bl, a, GlowLoopTime(speed), shape)
     elseif gtype == "flash" then
         GlowFlash(host, W, H, r, g, bl, a, speed)
     elseif gtype == "redflash" then
@@ -4140,7 +4455,7 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
     elseif gtype == "pandemic" then
         GlowPandemic(host, W, H, r, g, bl, a, native)
     else
-        GlowButton(host, W, H, r, g, bl, a, speed, native)
+        GlowButton(host, W, H, r, g, bl, a, speed, native, shape)
     end
     -- an exact level holds the style frames on it too, so nothing of the glow
     -- reaches the next rung; otherwise they sit one over the host
@@ -4278,6 +4593,9 @@ function Factory.ApplyMissingGlows(f, rec, w, h, combat)
             host = CreateFrame("Frame", nil, f._adStage or f)
             host:SetAllPoints(f)
             host:EnableMouse(false)
+            -- drawn in the stage with the missing look (GlowBlend), the
+            -- editor's preview alike
+            host._adFlat = true
             f._adMissGlow = host
         end
         if host then
@@ -4828,6 +5146,8 @@ local function TexLaneStart(f, key, gtype, p)
     if not host then
         host = CreateFrame("Frame", nil, f)
         host:EnableMouse(false)
+        -- a layer drawn in a stage (GlowBlend)
+        host._adFlat = f._adFlat
         f["_adTexGlow" .. key] = host
     end
     local w, h = f:GetSize()
@@ -4849,12 +5169,18 @@ local function TexLaneStart(f, key, gtype, p)
         host:SetFrameStrata(f:GetFrameStrata() or "MEDIUM")
         host._adStrataOverride = nil
     end
-    local style, shape = ShapeStyle(gtype)
-    HideGlowParts(host, style)
+    local keep, style, shape = KeepOf(gtype)
+    HideGlowParts(host, keep)
     -- the red flash covers the icon itself, the others their template's box;
-    -- a shaped outline its halo's, a shaped fill the icon
+    -- a shaped outline its halo's, a shaped fill the icon; pixel and autocast
+    -- along an outline the icon and its offsets; a shaped button or proc glow
+    -- the square ones' 1.4 box, its size growing it
     local k = (gtype == "redflash" or gtype == "barcheck" or gtype == "barattack") and 1 or BLIZZ_RATIO
     if style == "shape" then k = Factory.SHAPE_HALO elseif style == "shapefill" then k = 1 end
+    if keep == "shaped" then k = 1 end
+    -- (shaped ants keep the ants' 66/45 box: their ring sheet is drawn for it)
+    local sheet = shape ~= nil and (style == "button" or style == "proc" or style == "procloop")
+    if sheet then k = 1.4 * math.min(2, math.max(0.5, tonumber(p.scale) or 1)) end
     local W = math.max(1, w * k + 2 * (p.xo or 0))
     local H = math.max(1, h * k + 2 * (p.yo or 0))
     if gtype == "pandemic" then
@@ -4862,7 +5188,25 @@ local function TexLaneStart(f, key, gtype, p)
         W, H = math.max(1, w + 2 * grow + 2 * (p.xo or 0)), math.max(1, h + 2 * grow + 2 * (p.yo or 0))
     end
     local c = p.color
-    if gtype == "pandemic" then
+    if keep == "shaped" then
+        -- the library's speeds are laps a second, its thickness 2 by default
+        local tpx = SkinSnap(f, (style == "pixel") and (p.thickness or 2) or 2, 1)
+        local col = c or { 0.95, 0.95, 0.32, 1 }
+        GlowShaped(host, style, shape, W, H, math.max(1, w + 2 * (p.xo or 0)), math.max(1, h + 2 * (p.yo or 0)), {
+            r = col[1], g = col[2], bl = col[3], a = col[4] or 1, speed = p.speed, lines = p.lines,
+            th = tpx, len = p.length, back = p.border and { w = tpx + SkinSnap(f, 1, 1), a = 0.8 } or nil,
+            parts = p.particles, scale = p.scale })
+    elseif sheet then
+        -- the game's own colour: the gold art untinted, the intensity its alpha
+        local col = c or { 0.95, 0.95, 0.32, 1 }
+        local r, g, bl, a = col[1], col[2], col[3], col[4] or 1
+        if p.native then r, g, bl, a = 1, 1, 1, p.inten or 1 end
+        if style == "proc" or style == "procloop" then
+            GlowProc(host, W, H, r, g, bl, a, p.native, shape, GlowLoopTime(p.speed, p.speedRef))
+        else
+            GlowButton(host, W, H, r, g, bl, a, p.speed, p.native, shape)
+        end
+    elseif gtype == "pandemic" then
         GlowPandemic(host, W, H, c[1], c[2], c[3], p.native and (p.inten or 1) or (c[4] or 1), p.native)
     elseif style == "shape" then
         GlowShape(host, W, H, c[1], c[2], c[3], c[4] or 1, p.speed, shape)
@@ -4872,8 +5216,8 @@ local function TexLaneStart(f, key, gtype, p)
         GlowBarCheck(host, W, H, c[1], c[2], c[3], c[4] or 1)
     elseif gtype == "barattack" then
         GlowBarAttack(host, W, H, c[1], c[2], c[3], c[4] or 1)
-    elseif gtype == "ants" then
-        GlowAnts(host, W, H, c[1], c[2], c[3], c[4] or 1)
+    elseif style == "ants" then
+        GlowAnts(host, W, H, c[1], c[2], c[3], c[4] or 1, GlowLoopTime(p.speed, p.speedRef), shape)
     elseif gtype == "redflash" then
         GlowRedFlash(host, W, H, c[1], c[2], c[3], c[4] or 1, p.speed)
     else
@@ -4889,9 +5233,10 @@ local LCG_FIELD = { pixel = "_PixelGlow", autocast = "_AutoCastGlow",
     button = "_ButtonGlow", proc = "_ProcGlow", procloop = "_ProcGlow" }
 
 local function StartLane(f, key, gtype, p)
+    -- every style on a shaped icon is ours
     local style = ShapeStyle(gtype)
     if gtype == "ants" or gtype == "flash" or gtype == "redflash" or gtype == "barcheck" or gtype == "barattack"
-        or gtype == "pandemic" or style == "shape" or style == "shapefill" then
+        or gtype == "pandemic" or style ~= gtype then
         TexLaneStart(f, key, gtype, p)
         return
     end
@@ -4913,7 +5258,7 @@ local function StartLane(f, key, gtype, p)
         -- procloop = the proc glow without its opening burst
         LCG.ProcGlow_Start(f, { color = color, key = key,
             frameLevel = lvl, xOffset = p.xo, yOffset = p.yo,
-            startAnim = gtype == "proc" })
+            startAnim = gtype == "proc", duration = GlowLoopTime(p.speed, p.speedRef) })
     else
         LCG.ButtonGlow_Start(f, color, p.speed, lvl, key, p.xo, p.yo)
         gtype = "button"
@@ -4947,9 +5292,9 @@ Factory.StopGlowLane = StopLane
 -- intensity (the untinted art's frame alpha). Returns the signature part.
 local function LaneLook(rec, sec, glowPrefix, gtype, p, inten)
     local Sch = NS.Schema
-    p.native = Sch ~= nil and Sch.GLOW_NATIVE_STYLES[gtype] == true
+    p.native = Sch ~= nil and Sch.GLOW_NATIVE_STYLES[ShapeStyle(gtype)] == true
         and Store.Resolve(rec, sec, glowPrefix .. "Native") == true
-    p.border = gtype == "pixel" and Store.Resolve(rec, sec, glowPrefix .. "Backing") == true
+    p.border = ShapeStyle(gtype) == "pixel" and Store.Resolve(rec, sec, glowPrefix .. "Backing") == true
     p.inten = inten or 1
     -- the button glow's fade when it stops (StopLane); 0 = at once
     p.fade = nil
@@ -4985,6 +5330,8 @@ function Factory.SetProcGlow(f, rec, on)
     local p = {
         color = { c[1], c[2], c[3], (c[4] or 1) * inten },
         speed = R("states", "procGlowSpeed") or 0.4,
+        -- its default speed: the pace a flipbook style keeps unchanged
+        speedRef = 0.4,
         lines = R("states", "procGlowLines") or 10,
         thickness = R("states", "procGlowThickness") or 2,
         particles = R("states", "procGlowParticles") or 4,
@@ -5081,6 +5428,9 @@ local function EnsureEditChip(f)
     b:SetScript("OnClick", function()
         local rec = Store.Get(f._adRecId)
         if rec and NS.Options and NS.Options.SelectIconHome then
+            -- the press answers at once: this chip reads Editing while its
+            -- page may still be loading (the engine re-marks them after)
+            for _, fr in pairs(Factory.frames) do Factory.SetEditing(fr, fr == f) end
             NS.Options.Open()
             NS.Options.SelectIconHome(rec)
         end

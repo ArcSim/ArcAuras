@@ -13,6 +13,36 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.0.1",
+        intro = "Bar skins and shaped glows.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Bar skins",
+                    desc = "Save a bar's look as a skin and use it on any bar, switching by class or talent." },
+                { title = "Glows on shaped icons",
+                    desc = "Glows take the shape of circle, diamond and hexagon icons." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Sliders",
+                    desc = "Smoother dragging, with - and + steppers." },
+                { title = "Faster options panel",
+                    desc = "No more stutter on clicks." },
+                { title = "Glow speed",
+                    desc = "Ants and Proc glows have a Speed setting too." },
+                { title = "Tidier sidebar",
+                    desc = "Each layout lists + Add New first, then its groups, with bars and free icons in folds of their own." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Icons stay in place",
+                    desc = "Icons in a group no longer move on their own after a login or spec change." },
+                { title = "Button glow speed",
+                    desc = "Button glows on masked icons run at the right speed." },
+                { title = "Stack bar colors",
+                    desc = "No more flash on the first stack or a new color after a reload." },
+            } },
+        },
+    },
+    {
         version = "3.0.0",
         intro = "Texts you can pin to your own icons, Masque on by default, and Dynamic aura group fixes.",
         sections = {
@@ -996,6 +1026,42 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.0.1",
+        intro = "Import from Arc UI (work in progress), bar skins, and shaped glows.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Import from Arc UI (work in progress)",
+                    desc = "Bring your Arc UI icons, groups and bars over (Import / Export > Arc UI)." },
+                { title = "ArcUI ProcTracker moves in",
+                    desc = "With ArcUI ProcTracker installed, Arc Auras asks at login which of its trackers to bring over, in the same places with the same looks." },
+                { title = "Bar skins",
+                    desc = "Save a bar's look as a skin and use it on any bar, switching by class, spec or talent." },
+                { title = "Glows on shaped icons",
+                    desc = "Glows take the shape of circle, diamond and hexagon icons." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Sliders",
+                    desc = "Smoother dragging, with - and + steppers." },
+                { title = "Faster options panel",
+                    desc = "No more stutter on clicks." },
+                { title = "Glow speed",
+                    desc = "Ants and Proc glows have a Speed setting too." },
+                { title = "Tidier sidebar",
+                    desc = "Each layout lists + Add New first, then its groups, with bars and free icons in folds of their own." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Icons stay in place",
+                    desc = "Icons in a group no longer move on their own after a login or spec change." },
+                { title = "Glow fixes",
+                    desc = "Glows on missing icons no longer get cut off, and button glows on masked icons run at the right speed." },
+                { title = "Stack bar colors",
+                    desc = "No more flash on the first stack or a new color after a reload." },
+                { title = "Proc Tracker import",
+                    desc = "\"Draw Behind Border\" glows keep their backing." },
+            } },
+        },
+    },
     {
         version = "3.0.0",
         intro = "Cooldown Manager Bars, potion and healthstone templates, and texts you can pin to your own icons.",

@@ -223,6 +223,8 @@ local function BuildLayer(rec, part, ids)
     st:SetFlattensRenderLayers(true)
     -- set before any button exists
     st:SetIsFrameBuffer(true)
+    -- its glows draw in it (Factory.GlowBlend)
+    st._adFlat = true
     st:SetAlpha(0)
     local c = DA.CreateIconContainer("player", st)
     if not c then

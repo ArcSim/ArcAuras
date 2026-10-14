@@ -118,11 +118,26 @@ function Fold.SyncEdit()
     eb.fs:SetTextColor(ink[1], ink[2], ink[3])
 end
 
+function Fold.Loading(on)
+    on = on and true or nil
+    if Fold.loading == on then return end
+    Fold.loading = on
+    Fold.Sync()
+end
+
 function Fold.Sync()
     Fold.SyncEdit()
     if Fold.folded and Fold.win then Fold.HideBody() end
     local chip = Fold.chip
     if not chip then return end
+    -- a pick waiting on its page: the folded bar says so (the page, with its
+    -- loading veil, is folded away)
+    if Fold.folded and Fold.loading then
+        chip.fs:SetText(AT.Tr("Loading"))
+        chip:SetWidth(math.ceil(chip.fs:GetStringWidth()) + 16)
+        chip:Show()
+        return
+    end
     local rec = Fold.folded and SelectedRecord()
     if not rec or not rec.name then
         chip:Hide()

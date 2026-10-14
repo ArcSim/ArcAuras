@@ -1,6 +1,6 @@
--- The layout editor's Overview tab: Size and Place side by side, the layout
--- and its center point on a small copy of the screen with its element list,
--- then Mouse and Anchored to this as shut folds. BuildLayoutPane (UI\AD_Options.lua)
+-- The layout editor's Overview tab: Size with Mouse under it beside Place, the
+-- layout and its center point on a small copy of the screen with its element
+-- list, then Anchored to this as a shut fold. BuildLayoutPane (UI\AD_Options.lua)
 -- calls Options.BuildLayoutOverview; scale, position and strata live in the
 -- store, the element rects and the point in the layout engine. Every store
 -- and engine call is checked first, so the tab builds before those exist.
@@ -1005,6 +1005,15 @@ function Options.BuildLayoutOverview(pg, env)
     Options.BuildYield()
     OV.NoteRow(pg, "Icons, bars, texts and the gaps between them grow together.", vis, "L")
 
+    -- Mouse (left, under Size): the room beside the taller Place block
+    Options.BuildYield()
+    AT.Section(pg, "Mouse", { visibleFn = vis, side = "L", under = true })
+    local mouseSec = pg._curSection
+    Options.BuildYield()
+    OV.NoteRow(pg, "Groups and icons can override these.", vis, "L")
+    Options.BuildYield()
+    Options.SectionRows(pg, "layout", "mouse", sel, vis, { "clickThrough", "showTooltip" })
+
     -- Place (right)
     Options.BuildYield()
     AT.Section(pg, "Place", { visibleFn = vis, side = "R" })
@@ -1045,8 +1054,8 @@ function Options.BuildLayoutOverview(pg, env)
     local _, namesBox = OV.NamesToggle(pg, mapSec, vis, Repaint)
     Options.BuildYield()
     local mapRow
-    -- the page's height outside the map: the rows above, Size | Place, this
-    -- block's header and gap, the two folds shut
+    -- the page's height outside the map: the rows above, Size and Mouse | Place,
+    -- this block's header and gap, the fold shut
     local function Rest()
         local function Shown(r) return (not r._visibleFn) or r._visibleFn() end
         local function BoxH(sec)
@@ -1060,7 +1069,11 @@ function Options.BuildLayoutOverview(pg, env)
         for _, r in ipairs(pg._rows) do
             if Shown(r) then h = h + (r._h or 0) end
         end
-        h = h + LAY.hdr + math.max(BoxH(sizeSec), BoxH(placeSec)) + LAY.gap
+        local left = BoxH(sizeSec)
+        if (not mouseSec.visibleFn) or mouseSec.visibleFn() then
+            left = left + LAY.gap + LAY.hdr + BoxH(mouseSec)
+        end
+        h = h + LAY.hdr + math.max(left, BoxH(placeSec)) + LAY.gap
         local above = 0
         for _, r in ipairs(mapSec.rows) do
             if r ~= mapRow and Shown(r) then above = above + (r._h or 0) end
@@ -1085,17 +1098,10 @@ function Options.BuildLayoutOverview(pg, env)
         OV.Dash(st, i):Hide()
     end
 
-    -- Mouse (left) and Anchored to this (right), folds shut by default
+    -- Anchored to this, a fold shut by default
     Options.BuildYield()
-    AT.Section(pg, "Mouse", { visibleFn = vis, side = "L", collapsible = true })
-    Shut(pg._curSection)
-    Options.BuildYield()
-    OV.NoteRow(pg, "Applies to every icon in this layout; groups and icons can override it.", vis, "L")
-    Options.BuildYield()
-    Options.SectionRows(pg, "layout", "mouse", sel, vis, { "clickThrough", "showTooltip" })
-    Options.BuildYield()
-    Options.AnchoredHereRows(pg, sel, vis, { visibleFn = vis, side = "R", collapsible = true })
+    Options.AnchoredHereRows(pg, sel, vis, { visibleFn = vis, collapsible = true })
     Shut(pg._curSection)
     OV.rows = { scale = scale, chips = chipRow, strata = strata, pin = pin, map = mapRow,
-        size = sizeSec, place = placeSec, screen = mapSec }
+        size = sizeSec, mouse = mouseSec, place = placeSec, screen = mapSec }
 end

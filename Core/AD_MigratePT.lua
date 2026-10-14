@@ -269,6 +269,8 @@ local function Glow(O, t, pt, lane)
     O("states", lane .. "GlowThickness", Clamp(t[pt .. "GlowThick"] or 2, 1, 20))
     O("states", lane .. "GlowParticles", Clamp(t[pt .. "GlowParticles"] or 4, 1, 16))
     O("states", lane .. "GlowScale", Clamp(t[pt .. "GlowScale"] or 1, 0.5, 2))
+    -- "Draw Behind Border" is the pixel glow's dark backing line
+    if t[pt .. "GlowBorder"] == true then O("states", lane .. "GlowBacking", true) end
     local pad = Clamp(t[pt .. "GlowPad"] or 0, -20, 20)
     if pad ~= 0 then
         O("states", lane .. "GlowXOffset", pad)

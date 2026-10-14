@@ -133,6 +133,13 @@ local function Slash(msg)
         PW.Open()
         return
     end
+    -- "/arcui2 arcui" opens the Arc UI import (retail); the Arc UI stand-in's
+    -- old commands run it.
+    local IW = NS.Options and NS.Options.ImportArcUI
+    if msg == "arcui" and IW and IW.Open then
+        IW.Open()
+        return
+    end
     NS.Options.Toggle()
 end
 SlashCmdList["ARCUIVTWO"] = Slash

@@ -642,14 +642,17 @@ function LOS.BuildToolbar()
     s:SetMinMaxValues(SCALE_MIN, SCALE_MAX)
     s:SetValueStep(0.05)
     s:SetObeyStepOnDrag(true)
+    -- the layout rescales at most every AT.SLIDER_DRAG_EVERY while dragged
+    local write = AT.SliderDrag(s, function(v) LOS.Change(LOS.SetScale, v) end)
     s:SetScript("OnValueChanged", function(_, v)
         LOS.Fill(v)
         if tb.settingUp then return end
-        LOS.Change(LOS.SetScale, v)
+        write(v)
     end)
-    -- a slide is one undo step from press to release
-    s:SetScript("OnMouseDown", function() LOS.Begin("track") end)
-    s:SetScript("OnMouseUp", function() LOS.End("track") end)
+    -- a slide is one undo step from press to release; hooked after the drag's
+    -- own, so its last write lands inside the step
+    s:HookScript("OnMouseDown", function() LOS.Begin("track") end)
+    s:HookScript("OnMouseUp", function() LOS.End("track") end)
     tb.slider = s
     tb.scaleLbl = Text(tb, 14, COL.dim)
     tb.scaleLbl:SetText(Tr("Scale"))

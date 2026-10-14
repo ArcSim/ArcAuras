@@ -180,6 +180,8 @@ function AR.Make(unit, staged, lane)
             b:SetSize(p.cfg.iconW, p.cfg.iconH)
             b._adAppliedW, b._adAppliedH = p.cfg.iconW, p.cfg.iconH
             b._adSlotIndex = 1
+            -- a staged piece's glows draw in its stage (Factory.GlowBlend)
+            b._adFlat = p.erase
             b:EnableMouse(false)
             if not b._adCollected then
                 b._adCollected = true
@@ -726,6 +728,8 @@ function AR.PaintGlows(p, combat)
         gh:SetAllPoints(p.stage)
         gh:EnableMouse(false)
         gh._adOptIn = AR.OPT_IN
+        -- drawn in the stage (Factory.GlowBlend)
+        gh._adFlat = true
         look.glow = gh
     end
     local ma, _, LM = AR.MissLook(rec)

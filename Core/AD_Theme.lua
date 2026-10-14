@@ -8,7 +8,7 @@ local AT = {}
 -- Other addons carry copies of this file, generated from it by the
 -- arc-theme-sync tool, which compares this number to find stale copies.
 -- Bump it on every change and never edit a copy.
-AT.VERSION = 31
+AT.VERSION = 34
 
 -- The addon this copy loads in: a palette's font file sits in its folder.
 local THEME_ADDON = ...
@@ -1580,7 +1580,9 @@ function AT.Tooltip(region, title, body)
     region:HookScript("OnLeave", function() GameTooltip:Hide() end)
 end
 
--- opts = { visibleFn, side = "L"/"R", ctrlX, collapsible = false, store = table }
+-- opts = { visibleFn, side = "L"/"R", under = true, ctrlX, collapsible = false, store = table }
+-- `under` on a left section stacks it under the left section above it in the
+-- same row (right sections already stack); the right column keeps the row's top.
 -- A collapsible section has a clickable header bar, arrow on the left; shut,
 -- it keeps a cyan underline. Its open/shut state is saved in `store` (any
 -- table you own) under the title. The title shows through AT.L; sec.key keeps
@@ -1594,6 +1596,7 @@ function AT.Section(pg, text, opts)
     box:SetClipsChildren(true)
     local sec = {
         box = box, rows = {}, visibleFn = opts.visibleFn, side = opts.side,
+        under = (opts.side == "L" and opts.under == true) or nil,
         ctrlX = opts.ctrlX or LAY.ctrl, collapsed = false, f = 1, store = opts.store,
         key = text,
     }
@@ -2034,8 +2037,9 @@ function AT.LayoutPage(pg)
             if sec.title then sec.title:Hide() end
             if sec.hr then sec.hr:Hide() end
             sec.box:Hide()
-            -- a hidden right section leaves the column to the next one
-            if side == "L" then pairTopY, pairBottomY = y, y end
+            -- a hidden right section leaves the column to the next one; a
+            -- hidden left one stacked under another keeps its row
+            if side == "L" and not sec.under then pairTopY, pairBottomY = y, y end
         else
             -- A section with every row hidden paints nothing: no title, no
             -- empty box, no gap.
@@ -2049,7 +2053,7 @@ function AT.LayoutPage(pg)
                 if sec.title then sec.title:Hide() end
                 if sec.hr then sec.hr:Hide() end
                 sec.box:Hide()
-                if side == "L" then pairTopY, pairBottomY = y, y end
+                if side == "L" and not sec.under then pairTopY, pairBottomY = y, y end
             else
             local topY = (side == "R" and pairTopY) or y
             local hdrH = 0
@@ -2092,7 +2096,10 @@ function AT.LayoutPage(pg)
             sec.box:SetShown(not (sec.collapsed and f <= 0))
             sec.box:SetHeight(shownH)
             local bottom = boxTop - (sec.box:IsShown() and shownH or 0) - LAY.gap
-            if side == "L" then pairTopY, pairBottomY, y = topY, bottom, bottom
+            if side == "L" and sec.under and pairTopY then
+                -- under the left section above: the row keeps its top for the right column
+                pairBottomY, y = bottom, bottom
+            elseif side == "L" then pairTopY, pairBottomY, y = topY, bottom, bottom
             elseif side == "R" then
                 -- right sections in a row stack in the right column; the page
                 -- goes on under the lower of the two columns
@@ -2402,29 +2409,71 @@ function AT.SliderFill(s)
     return fill
 end
 
--- A fixed, Blizzard-length slider with a [-][value][+] stepper after it.
--- minV and maxV may be functions, re-read on every sync, so the range can
--- follow the record.
-function AT.RowSlider(pg, label, get, set, minV, maxV, step, isPct, visibleFn)
-    local row = AT.AddRow(pg, LAY.rowH, visibleFn)
-    local lbl = AT.RowLabel(row, label)
-    local s = CreateFrame("Slider", nil, row, "BackdropTemplate")
-    local box = CreateFrame("EditBox", nil, row, "BackdropTemplate")
+-- A slider's writes while it is dragged. The thumb, its fill and the value box
+-- follow the mouse every frame; `set` runs at most every SLIDER_DRAG_EVERY
+-- seconds and once more on release, so a costly setter (a glow rebuilt, a page
+-- laid out) never holds the thumb back. Returns write(v), for OnValueChanged,
+-- and held(), true mid-drag: a refresh then leaves the thumb where the mouse has it.
+AT.SLIDER_DRAG_EVERY = 0.1
+function AT.SliderDrag(s, set)
+    local dragging, pending, last = false, nil, 0
+    local pump = CreateFrame("Frame", nil, s)
+    pump:Hide()
+    local function flush()
+        if pending == nil then return end
+        local v = pending
+        pending = nil
+        last = GetTime()
+        set(v)
+    end
+    pump:SetScript("OnUpdate", function(self)
+        if pending == nil then
+            self:Hide()
+        elseif GetTime() - last >= AT.SLIDER_DRAG_EVERY then
+            flush()
+        end
+    end)
+    local function stop()
+        dragging = false
+        pump:Hide()
+        flush()
+    end
+    s:HookScript("OnMouseDown", function() dragging = true end)
+    s:HookScript("OnMouseUp", stop)
+    -- a page laid out mid-drag can hide the row: the last value still lands
+    s:HookScript("OnHide", stop)
+    local function write(v)
+        if not dragging then
+            set(v)
+            return
+        end
+        pending = v
+        pump:Show()
+    end
+    return write, function() return dragging end
+end
+
+-- THE slider, the one build every slider uses: a filled track, then the
+-- [-][value][+] stepper, its writes paced by AT.SliderDrag. The stepper and
+-- the box are the slider's own children, so showing, hiding, fading or
+-- anchoring the slider takes them along. o = { lo, hi (numbers, or functions
+-- re-read on every refresh), step, get, set, fmt(v) -> text, parse(text) -> v }.
+-- Returns the slider and its refresh; s.minus, s.box and s.plus are its parts.
+AT.SLIDER_TRAIL = 78   -- what follows the track: 8 + 14 + 2 + 38 + 2 + 14
+function AT.MakeSlider(parent, w, o)
+    local step, get, set = o.step or 1, o.get, o.set
+    local s = CreateFrame("Slider", nil, parent, "BackdropTemplate")
+    local box = CreateFrame("EditBox", nil, s, "BackdropTemplate")
     local settingUp = true
-    -- isPct: true shows a 0-1 value as a percent; a format string ("%.2f")
-    -- shows the raw value with it and takes typed values as they are.
-    local fmtStr = type(isPct) == "string" and isPct or nil
-    if fmtStr then isPct = false end
     local function fmt(v)
         v = tonumber(v) or 0
-        if fmtStr then return fmtStr:format(v)
-        elseif isPct then return ("%.0f"):format(v * 100)
-        elseif step < 1 then return ("%.1f"):format(v)
-        else return ("%d"):format(math.floor(v + 0.5)) end
+        if o.fmt then return o.fmt(v) end
+        if step >= 1 then return ("%d"):format(math.floor(v + 0.5)) end
+        return ("%.1f"):format(v)
     end
     local function bounds()
-        local lo = (type(minV) == "function") and minV() or minV
-        local hi = (type(maxV) == "function") and maxV() or maxV
+        local lo = (type(o.lo) == "function") and o.lo() or o.lo
+        local hi = (type(o.hi) == "function") and o.hi() or o.hi
         lo, hi = tonumber(lo) or 0, tonumber(hi) or 0
         if hi < lo then hi = lo end
         return lo, hi
@@ -2435,22 +2484,26 @@ function AT.RowSlider(pg, label, get, set, minV, maxV, step, isPct, visibleFn)
         if step >= 1 then v = math.floor(v + 0.5) end
         return v
     end
+    local write, held   -- AT.SliderDrag's, set once the slider is made
     local function refresh()
+        -- a drag in hand keeps its thumb and its box: the setter lags it
+        if held and held() then return end
         settingUp = true
         local lo, hi = bounds()
         s:SetMinMaxValues(lo, hi)
-        s:SetValue(math.max(lo, math.min(hi, get() or 0)))
-        if not box:HasFocus() then AT.BoxText(box, fmt(get() or 0)) end
+        local v = tonumber(get()) or lo
+        s:SetValue(math.max(lo, math.min(hi, v)))
+        if not box:HasFocus() then AT.BoxText(box, fmt(v)) end
         settingUp = false
     end
     local function setVal(v) set(clamp(v)); refresh() end
     local function arrow(glyph, delta)
-        local b = CreateFrame("Button", nil, row, "BackdropTemplate")
+        local b = CreateFrame("Button", nil, s, "BackdropTemplate")
         b:SetSize(14, 14); Skin(b, COL.well)
         local g = b:CreateFontString(nil, "OVERLAY")
         g:SetFont(AT.FONT, 11, ""); g:SetPoint("CENTER")
         g:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3]); g:SetText(glyph)
-        b:SetScript("OnClick", function() AT.CloseDropdown(); setVal((get() or (bounds())) + delta) end)
+        b:SetScript("OnClick", function() AT.CloseDropdown(); setVal((tonumber(get()) or (bounds())) + delta) end)
         b:SetScript("OnEnter", function() b:SetBackdropBorderColor(COL.focus[1], COL.focus[2], COL.focus[3], 1) end)
         b:SetScript("OnLeave", function() b:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1) end)
         return b
@@ -2462,15 +2515,14 @@ function AT.RowSlider(pg, label, get, set, minV, maxV, step, isPct, visibleFn)
     box:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
     box:SetJustifyH("CENTER"); box:SetAutoFocus(false)
     local function commitTyped(self)
-        local n = tonumber(self:GetText())
-        if n then if isPct then n = n / 100 end setVal(n) else refresh() end
+        local n = (o.parse or tonumber)(self:GetText() or "")
+        if n then setVal(n) else refresh() end
     end
     box:SetScript("OnEnterPressed", function(self) commitTyped(self); self:ClearFocus() end)
     box:SetScript("OnEditFocusLost", commitTyped)
     box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-    s:SetOrientation("HORIZONTAL"); s:SetHeight(10)
-    s:SetWidth(LAY.sliderW)
-    s:SetPoint("LEFT", row._ctrlX, 0)
+    s:SetOrientation("HORIZONTAL")
+    s:SetSize(w, 10)
     minus:SetPoint("LEFT", s, "RIGHT", 8, 0)
     box:SetPoint("LEFT", minus, "RIGHT", 2, 0)
     plus:SetPoint("LEFT", box, "RIGHT", 2, 0)
@@ -2480,16 +2532,59 @@ function AT.RowSlider(pg, label, get, set, minV, maxV, step, isPct, visibleFn)
     th:SetSize(8, 10); th:SetVertexColor(COL.arc[1], COL.arc[2], COL.arc[3], 1)
     AT.SliderFill(s)
     s:SetMinMaxValues(bounds()); s:SetValueStep(step); s:SetObeyStepOnDrag(true)
+    write, held = AT.SliderDrag(s, set)
     s:SetScript("OnValueChanged", function(_, v)
         if settingUp then return end
-        if step >= 1 then v = math.floor(v + 0.5) end
+        if step >= 1 then
+            v = math.floor(v + 0.5)
+        else
+            local lo = bounds()
+            v = lo + math.floor((v - lo) / step + 0.5) * step
+        end
         if not box:HasFocus() then AT.BoxText(box, fmt(v)) end
-        set(v)
+        write(v)
     end)
+    s.minus, s.box, s.plus = minus, box, plus
     refresh()
+    return s, refresh
+end
+
+-- A slider's clicks on or off: the track, its stepper and its box together.
+function AT.SliderMouse(s, on)
+    s:EnableMouse(on)
+    for _, p in ipairs({ s.minus or false, s.box or false, s.plus or false }) do
+        if p then p:EnableMouse(on) end
+    end
+end
+
+-- A fixed, Blizzard-length slider with a [-][value][+] stepper after it.
+-- minV and maxV may be functions, re-read on every sync, so the range can
+-- follow the record.
+function AT.RowSlider(pg, label, get, set, minV, maxV, step, isPct, visibleFn)
+    local row = AT.AddRow(pg, LAY.rowH, visibleFn)
+    local lbl = AT.RowLabel(row, label)
+    -- isPct: true shows a 0-1 value as a percent; a format string ("%.2f")
+    -- shows the raw value with it and takes typed values as they are.
+    local fmtStr = type(isPct) == "string" and isPct or nil
+    if fmtStr then isPct = false end
+    local s, refresh = AT.MakeSlider(row, LAY.sliderW, {
+        lo = minV, hi = maxV, step = step, get = get, set = set,
+        fmt = function(v)
+            if fmtStr then return fmtStr:format(v)
+            elseif isPct then return ("%.0f"):format(v * 100)
+            elseif step < 1 then return ("%.1f"):format(v)
+            else return ("%d"):format(math.floor(v + 0.5)) end
+        end,
+        parse = function(text)
+            local n = tonumber(text)
+            if n and isPct then n = n / 100 end
+            return n
+        end,
+    })
+    s:SetPoint("LEFT", row._ctrlX, 0)
     row._colLabel, row._colCtrl = lbl, s
     -- the stepper cluster after the slider: a card's width counts it
-    row._colTrail = 78
+    row._colTrail = AT.SLIDER_TRAIL
     row._sync = refresh
     return row
 end

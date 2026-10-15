@@ -888,7 +888,6 @@ function IA.MapArcCooldownIcon(eff, kind, ctx)
             Put(o, "outOfStock", "outAlphaEnabled", cs.dimWhenEmpty == true)
             if cs.dimWhenEmpty == true then Put(o, "outOfStock", "outAlpha", cdA) end
             -- one you carry but can't use yet: grey, the cooldown opacity, no tint (v1's fixed rule)
-            Put(o, "states", "itemUsability", true)
             Put(o, "states", "unusableDesaturate", not keep)
             Put(o, "states", "unusableTintEnabled", false)
             Put(o, "states", "unusableAlpha", cdA)

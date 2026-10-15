@@ -142,6 +142,11 @@ local function Paint(e, o)
         o.label:SetTextColor(lc[1], lc[2], lc[3], lc[4] or 1)
         o.label:SetText(K.R(rec, "fill", "swingOffhandLabelText") or "OH")
     end
+    -- its own strata on a child of the follower (the editor's preview keeps it)
+    if NS.TextAnchor and NS.TextAnchor.Strata then
+        NS.TextAnchor.Strata(shell, o.label, "ohlabel",
+            (o.labelOn and not e.isPreview) and K.R(rec, "fill", "swingOffhandLabelStrata") or nil, o.follow)
+    end
     local c = K.R(rec, "fill", "swingOffhandColor") or { 1, 0.75, 0.3, 1 }
     if o.style == "mark" then
         -- the bar only supplies a moving edge for the mark to ride

@@ -456,7 +456,7 @@ function MOD.PressRows(pg, m)
     local phOn = m.isOn
     AT.Section(pg, m.name)
     local row = AT.RowToggle(pg, "Highlight icons when you press their button", m.isOn, m.setOn, nil,
-        "When you press an action button, cast a spell through a macro or use a trinket, every icon of that ability on screen lights up for a moment: feedback on the icon you are watching, not the bar. Spells, items and trinkets; every rank of a spell counts as the same ability.")
+        "Icons of an ability flash when you press its button, cast it by macro or use the trinket. All ranks count as one.")
     MOD.Stamp(row, m, m.switch, "bool", nil, true)
     row = AT.RowDropdown(pg, win, "Highlight lasts",
         function() return Store.GetSetting("pressMode") or "flash" end,
@@ -474,7 +474,7 @@ function MOD.PressRows(pg, m)
         function(v) Store.SetSetting("pressDuration", v) end,
         0.05, 0.5, 0.05, "%g", phOn)
     AT.Tooltip(row, "Flash length (s)",
-        "How long a flash shows. While the button is held, the highlight also stays at least this long, so a click (which casts when you let go) still shows.")
+        "How long a flash shows. A held button keeps the highlight at least this long, so clicks that cast on release still show.")
     MOD.Stamp(row, m, "pressDuration", "num")
     row = AT.RowDropdown(pg, win, "Look",
         function() return Store.GetSetting("pressLook") or "fill" end,
@@ -511,14 +511,14 @@ end
 function MOD.TooltipRows(pg, m)
     AT.Section(pg, m.name)
     local row = AT.RowToggle(pg, "IDs in tooltips", m.isOn, m.setOn, nil,
-        "Appends an Arc ID block to game tooltips everywhere - spell, aura, item, toy, mount, currency, achievement and quest IDs, each with its icon ID (and the icon the button actually shows when that differs), the Cooldown Manager's cooldown ID for spells, auras and equipped trinkets, plus talent node / entry IDs on the talent tree. Works on action bars, buffs, bags and the spellbook, not just Arc Auras icons.")
+        "Adds IDs to game tooltips everywhere: spell, aura, item, icon, quest, talent and Cooldown Manager IDs.")
     MOD.Stamp(row, m, m.switch, "bool", nil, true)
     -- The block's parts: each on unless switched off, stored only when off. An
     -- if, not `(not v) and false or nil`: that idiom always yields nil.
     for _, p in ipairs({
         { "Data", "Spell and item IDs", "The ID of what the tooltip shows: a spell, aura, item, toy, mount, currency, achievement or quest." },
         { "Icons", "Icon IDs", "The icon's file ID, the base icon when an override swapped the art, and the icon the button shows when that differs." },
-        { "CDM", "Cooldown Manager IDs", "The Cooldown Manager's cooldown IDs for spells, auras and equipped trinkets: one line per category, with runs of IDs shortened to a range." },
+        { "CDM", "Cooldown Manager IDs", "The Cooldown Manager's cooldown IDs for spells, auras and trinkets, one line per category. Runs of IDs show as ranges." },
         { "Talent", "Talent IDs", "Node, entry and definition IDs on talent tree buttons." },
     }) do
         local key = "tooltipIDs" .. p[1]
@@ -554,7 +554,7 @@ function MOD.TooltipRows(pg, m)
     row = AT.RowToggle(pg, "Imbue damage with your weapon",
         function() return Store.GetSetting("tooltipImbueDamage") == true end,
         function(v) Store.SetSetting("tooltipImbueDamage", v and true or nil) end,
-        m.isOn, "Rockbiter, Flametongue and Windfury Weapon, sharpening stones and weightstones: what each adds per hit and per second with your main-hand weapon, to compare them.")
+        m.isOn, "Compares what Rockbiter, Flametongue, Windfury, sharpening stones and weightstones add per hit and per second, main hand.")
     MOD.Stamp(row, m, "tooltipImbueDamage", "bool")
 end
 
@@ -564,7 +564,7 @@ function MOD.RankRows(pg, m)
     local ranked = m.available
     AT.Section(pg, m.name)
     local row = AT.RowToggle(pg, "Auto-rank action bar spells", m.isOn, m.setOn, ranked,
-        "When you learn a new rank, every action bar button that held the previous top rank moves up to the new one. Lower ranks you placed on purpose are left alone. Macros are never touched. Bars only change out of combat.")
+        "When you learn a new rank, action bar buttons with the old top rank move up to it. Lower ranks and macros stay.")
     MOD.Stamp(row, m, m.switch, "bool", ranked, true)
     local upRow = AT.RowButton(pg, "Upgrade all bars now", function()
         if not AR then return end

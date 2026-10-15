@@ -84,7 +84,7 @@ function CO.Items(cur)
     return items
 end
 
-CO.PICK_TIP = "The Tracked Bars entry this bar copies, its timer and all. The Cooldown Manager's own bar must stay on: set the Tracked Bars' opacity to 0 in Edit Mode to hide it."
+CO.PICK_TIP = "The Tracked Bars entry this bar copies. Keep the Cooldown Manager's own bar on, and hide it with opacity 0 in Edit Mode."
 
 function Options.CDMBarAddRows(pg, owner, addState)
     if not CO.On() then return end

@@ -2149,6 +2149,12 @@ local function StyleLabel(fs, rec, suf, kS, anchorTo, pinOwner)
 end
 Factory.StyleLabel = StyleLabel
 
+-- A text's own strata (Core\AD_TextAnchor.lua TA.Strata); nil keeps it home.
+function Factory.TextStrata(f, fs, slot, strata, home)
+    local TA = NS.TextAnchor
+    if TA and TA.Strata and fs then TA.Strata(f, fs, slot, strata, home) end
+end
+
 -- The one style writer; drivers never call widget style methods.
 function Factory.ApplyStyle(f, rec)
     local R = function(section, field) return Store.Resolve(rec, section, field) end
@@ -2202,7 +2208,9 @@ function Factory.ApplyStyle(f, rec)
             end
             if plainLvl then home:SetFrameLevel(hostLvl + Factory.TEXT_LEVEL - 1 + Factory.Rise(rec)) end
         end
-        if cfs:GetParent() ~= home then cfs:SetParent(home) end
+        -- its own strata host keeps it (Factory.TextStrata, after its style)
+        local sh = f._adTxtStrata and f._adTxtStrata.countdown
+        if cfs:GetParent() ~= home and not (sh and cfs:GetParent() == sh) then cfs:SetParent(home) end
     end
     -- With an aura overlay the button shows the aura's count in that corner,
     -- so the charges move to a low host at +3, between the swipe (+2) and the
@@ -2216,7 +2224,7 @@ function Factory.ApplyStyle(f, rec)
         end
         if plainLvl then low:SetFrameLevel(hostLvl + 3) end
         if f.stackText:GetParent() ~= low then f.stackText:SetParent(low) end
-    elseif f._adLowText and f.stackText:GetParent() ~= f.textHost then
+    elseif f._adLowText and f.stackText:GetParent() == f._adLowText then
         f.stackText:SetParent(f.textHost)
     end
 
@@ -2342,6 +2350,9 @@ function Factory.ApplyStyle(f, rec)
         if cfs then
             local fp = select(1, cfs:GetFont()) or STANDARD_TEXT_FONT
             StyleCountdownText(cfs, rec, kS, f, fp)
+            -- with an aura overlay the spell's texts stay under its button
+            Factory.TextStrata(f, cfs, "countdown", not overlay and R("text", "durationStrata") or nil,
+                overlay and f.cooldown or f._adCdText)
         end
     end
 
@@ -2354,6 +2365,9 @@ function Factory.ApplyStyle(f, rec)
     else
         f.stackText:Hide()
     end
+    Factory.TextStrata(f, f.stackText, "stack",
+        (stacks and not overlay and rec.kind ~= "aura") and R("text", "stackStrata") or nil,
+        overlay and f._adLowText or f.textHost)
 
     -- Ammo text: styled and shown here, filled by the driver.
     local ammo = NS.Schema.Applies(NS.Schema.icon.text.fields.ammoText, NS.Schema.icon.text, rec.kind)
@@ -2375,6 +2389,7 @@ function Factory.ApplyStyle(f, rec)
         f.ammoText:SetText("")
         f.ammoText:Hide()
     end
+    Factory.TextStrata(f, f.ammoText, "ammo", ammo and R("text", "ammoStrata") or nil, f.textHost)
 
     -- Custom labels: styled here, shown per state in SetState.
     f._adLabels = f._adLabels or {}
@@ -2424,8 +2439,11 @@ function Factory.ApplyStyle(f, rec)
         local st = f._adLabels[i] or {}
         f._adLabels[i] = st
         st.fs = fs
-        -- a pinned text rides its carrier; the rest move between the two hosts
-        if fs and fs:GetParent() ~= labelParent and not (NS.TextAnchor and NS.TextAnchor.live[fs]) then
+        -- a pinned text rides its carrier, one with its own strata its host;
+        -- the rest move between the two hosts
+        local sh = f._adTxtStrata and f._adTxtStrata["label" .. suf]
+        if fs and fs:GetParent() ~= labelParent and not (sh and fs:GetParent() == sh)
+            and not (NS.TextAnchor and NS.TextAnchor.live[fs]) then
             fs:SetParent(labelParent)
         end
         st.ready = R("label", "labelShowReady" .. suf) ~= false
@@ -2437,6 +2455,10 @@ function Factory.ApplyStyle(f, rec)
         if fs and ltext and ltext ~= "" then
             StyleLabel(fs, rec, suf, kS, f, f)
             st.has = true
+            -- an aura icon's text on its button or with its missing look keeps
+            -- their places: only the copy on the holder takes a strata
+            local own = not (Factory.LabelOnButton(rec, suf) or Factory.LabelWithMissing(rec, suf))
+            Factory.TextStrata(f, fs, "label" .. suf, own and R("label", "labelStrata" .. suf) or nil, labelParent)
         elseif fs then
             fs:SetText("")
             st.has = false
@@ -2470,6 +2492,7 @@ function Factory.ApplyStyle(f, rec)
     else
         f.keybindText:Hide()
     end
+    Factory.TextStrata(f, f.keybindText, "keybind", kbOn and R("keybind", "keybindStrata") or nil, f.textHost)
 
     -- Glows restart only when their signature changes: a restart is visible.
     Factory.SetState(f, rec, f._adOnCooldown, f._adDesatState)

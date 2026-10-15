@@ -258,7 +258,7 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
             refresh()
         end,
         rangeVis,
-        "The buff this totem puts on you, as its tooltip names it. The Out of range look shows while the totem is out and this buff is not on you. Empty: the totem's name without Totem.",
+        "The buff this totem gives you, as its tooltip names it. The Out of range look shows while the totem is out and you lack it.",
         function()
             local r = Rec()
             return (r and NS.TotemRange and NS.TotemRange.AutoName(r)) or ""

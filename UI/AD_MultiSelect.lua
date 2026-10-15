@@ -873,9 +873,9 @@ function M.Fill(pane, header, win, kit)
     end
     Act(go, "Move", function(v) M.Move(v) end)
     Act(cp, "Copy", function(v) M.Copy(v) end)
-    AT.Tooltip(dd, "Move or copy to", "Where the selection goes: free in a layout, or, for icons, into a group that takes them. A selected group takes its icons along. Nothing happens until you press Move or Copy.")
+    AT.Tooltip(dd, "Move or copy to", "Where the selection goes: free in a layout, or into a group for icons. A selected group brings its icons. Press Move or Copy to apply.")
     AT.Tooltip(go, "Move", "Moves the selection to the picked place. Positions and settings travel with each item.")
-    AT.Tooltip(cp, "Copy", "Puts a copy of the selection in the picked place and leaves the originals where they are. Each copy keeps its settings, name and position.")
+    AT.Tooltip(cp, "Copy", "Copies the selection to the picked place and leaves the originals. Each copy keeps its settings, name and position.")
     mv._colLabel, mv._colCtrl = lbl, dd
     mv._sync = dd.Refresh
     M.moveDD, M.moveBtn, M.copyBtn = dd, go, cp

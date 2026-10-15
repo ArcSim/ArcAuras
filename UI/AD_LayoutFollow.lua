@@ -173,6 +173,6 @@ function LF.Rows(pg, ctx, tabVisible, anySpecs)
         LF.Refresh()
     end, vis, 150, anySpecs and "Their own class and spec checks" or "Their own class checks")
     AT.Tooltip(row.button, "Match the layout", anySpecs
-        and "Copies this layout's class and spec checks onto those items (and its talent checks when it has any), so they load wherever the layout does. Their Load When rules stay."
-        or "Copies this layout's class checks onto those items (and its talent checks when it has any), so they load wherever the layout does. Their Load When rules stay.")
+        and "Copies the layout's class, spec and talent checks to those items so they load where the layout does. Load When rules stay."
+        or "Copies the layout's class and talent checks to those items so they load where the layout does. Load When rules stay.")
 end

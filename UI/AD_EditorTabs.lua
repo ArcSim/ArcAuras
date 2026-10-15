@@ -395,9 +395,6 @@ end
 function ET.CustomCd(r)
     return r ~= nil and r.kind == "timer" and type(r.driver) == "table" and r.driver.cdOn == true
 end
--- an item's row, while it is set to mark when it can't be used
-local ITEM_UNUSABLE = { showIf = function(r) return r ~= nil and Store.Resolve(r, S, "itemUsability") == true end }
-for k, v in pairs(UNUSABLE) do ITEM_UNUSABLE[k] = v end
 local OUT_OF_STOCK = { key = "out", label = "Out of stock", when = "while none is left", alpha = { O, "outAlpha", on = "outAlphaEnabled" },
     grey = { O, "outDesaturate" }, tint = { O, "outTintColor", on = "outTintEnabled" },
     onTip = "On: this opacity while none is left. Off: it keeps its opacity." }
@@ -506,7 +503,7 @@ ET.STATES = {
           grey = { M, "missingDesaturate" }, tint = { M, "missingTintColor", on = "missingTintEnabled" },
           fx = { glow = AuraGlowKeys(true), sound = { "alerts.auraLostSoundEnabled" }, art = { "art.missing" } } },
     },
-    item = { READY, COOLDOWN, ITEM_UNUSABLE, OUT_OF_STOCK, WARNING, OVERLAY, OVERLAY_MISSING },
+    item = { READY, COOLDOWN, UNUSABLE, OUT_OF_STOCK, WARNING, OVERLAY, OVERLAY_MISSING },
     trinket = { READY, COOLDOWN, OUT_OF_STOCK, WARNING, OVERLAY, OVERLAY_MISSING },
     -- a Custom Icon: active per its Show as active while (the ready bucket),
     -- else not active (the cooldown bucket); both can grey out. With an aura

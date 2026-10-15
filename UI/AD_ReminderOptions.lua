@@ -661,7 +661,7 @@ function RP.Build(kit)
         local r = Rec()
         if r then Options.OpenExport(r.id) end
     end)
-    AT.Tooltip(exp, "Export", "Opens Import / Export with just this reminder ticked and its share string ready to copy: its triggers, load conditions and its own appearance.")
+    AT.Tooltip(exp, "Export", "Opens Import / Export with just this reminder ticked and its share string ready to copy.")
     local dup = AT.MakeSmallButton(head, "Duplicate", 66)
     dup:SetPoint("RIGHT", exp, "LEFT", -5, 0)
     dup:SetScript("OnClick", function()
@@ -899,7 +899,7 @@ function RP.Build(kit)
             end,
             function(v) Set(i, "ignoreCooldown", v or nil) end,
             TypeIs("when_usable"),
-            "Fires the moment the spell's own requirement is met (a dodge, a proc that activates it, enough mana), even while it is still cooling down.")
+            "Fires as soon as the spell's own requirement is met (a proc, enough mana), even while it is on cooldown.")
         -- "Clear when it ends", in the words of each type's moment
         local function ClearRow(label, ty, desc)
             AT.RowToggle(pg, label,
@@ -995,7 +995,7 @@ function RP.Build(kit)
             end,
             0, 5, 1, false, tv)
         prow:EnableMouse(true)
-        AT.Tooltip(prow, "Priority", "0 is normal. A higher priority takes over a lower one on screen, never gives way to it, and is the last out of a full queue or stack. Equal ones follow the group's Overlap Behavior.")
+        AT.Tooltip(prow, "Priority", "0 is normal. A higher priority wins the screen spot and is the last out of a full queue. Ties follow Overlap Behavior.")
         AT.RowDropdown(pg, owner, "Glow",
             function()
                 local t = T()

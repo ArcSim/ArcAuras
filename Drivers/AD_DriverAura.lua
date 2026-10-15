@@ -329,10 +329,19 @@ local function GlowSlots()
     return (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1
 end
 
+-- A glow with a strata of its own takes a lane: the icon's button is born in
+-- its stage (a Dynamic row's missing piece in one too), which draws everything
+-- in it at the stage's strata, so a glow set above its icon would stay with
+-- the icon under whatever covers it. Lanes are born outside any stage.
+local function OwnGlowStrata(rec, suf)
+    local s = Store.Resolve(rec, "auraActive", "activeGlowStrata" .. (suf or ""))
+    return s ~= nil and s ~= "inherit"
+end
+
 -- The ids glow `slot` (default 1) follows on its own button, or nil: the glow
--- is off, or it is glow 1 with no gate (a pick of every id counts as none),
--- which stays on the icon's button. row: a Dynamic row's lane instead, whose
--- button keeps every glow with no gate.
+-- is off, or it is glow 1 with no gate (a pick of every id counts as none)
+-- and no strata of its own, which stays on the icon's button. row: a Dynamic
+-- row's lane instead, whose button keeps every glow with no gate or strata.
 local function LaneIDs(rec, slot, row)
     slot = slot or 1
     local overlay = false
@@ -366,7 +375,10 @@ local function LaneIDs(rec, slot, row)
     end
     if n == 0 or n == #ids then
         -- no pick, one the icon no longer tracks, or all of them
-        if (slot == 1 or row) and R("activeGlowCombatOnly") ~= true and not timed then return nil end
+        if (slot == 1 or row) and R("activeGlowCombatOnly") ~= true and not timed
+            and (overlay or not OwnGlowStrata(rec, suf)) then
+            return nil
+        end
         m = IncludeMap(d)
     end
     return m

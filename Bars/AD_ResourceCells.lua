@@ -124,6 +124,11 @@ function RC.StyleText(entry, cd)
     fs:SetTextColor(col[1], col[2], col[3], col[4] or 1)
     K.PlaceText(fs, cd, K.R(rec, "text", "rcAnchor") or "CENTER",
         K.R(rec, "text", "rcOffsetX"), K.R(rec, "text", "rcOffsetY"))
+    -- its own strata on a child of the widget, which keeps driving it
+    local TA = NS.TextAnchor
+    if TA and TA.Strata then
+        TA.Strata(cd, fs, "rc", (not entry.isPreview) and K.R(rec, "text", "rcStrata") or nil, cd)
+    end
 end
 
 -- A recharge countdown sits on the marks rung: over the bar glows, under the

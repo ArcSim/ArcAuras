@@ -679,7 +679,7 @@ function Options.SkinStrip(pg, sel, tabFn, owner)
         local r, e = E()
         if e and SO.TalentOK(e) then SO.OpenMenu(tal, owner, 210, function() return SO.TalentMenu(r, e) end) end
     end)
-    AT.Tooltip(dd, "Skin", "The look the rows below change. Bar's own is the look when no skin applies; a skin switches on when its conditions hold, the first from the top.")
+    AT.Tooltip(dd, "Skin", "The look the rows below edit. Bar's own applies when no skin does. A skin applies when its conditions hold, first from the top.")
     AT.Tooltip(cls, "Class", "The class this skin switches on for.")
     AT.Tooltip(spec, "Spec", function()
         local _, e = E()

@@ -8,7 +8,7 @@ local Tr = NS.AT.Tr
 local TO = {}
 Options.TotemBar = TO
 
-TO.SPELL_TIP = "The spell that puts it down: the bar follows that totem or guardian, any rank, into whatever slot it lands. Empty: whatever is in the slot."
+TO.SPELL_TIP = "The spell that puts it down. The bar follows that totem or guardian, any rank, in any slot. Empty: whatever is in the slot."
 
 function TO.On()
     return NS.TotemBars ~= nil and NS.DriverTotem ~= nil

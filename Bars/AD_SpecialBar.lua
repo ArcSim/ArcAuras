@@ -204,6 +204,11 @@ function SB.StyleTexts(e)
         local fs = e.deckFS[which]
         SB.StyleDeckText(fs, SB.ReadText(e.rec, which, SB.Cfg(e, which)))
         SB.PlaceDeckText(e, which, fs)
+        -- its own strata (a pinned text rides its carrier; the preview keeps it)
+        local TA = (not e.isPreview) and NS.TextAnchor or nil
+        if TA and TA.Strata then
+            TA.Strata(e.shell, fs, "deck:" .. which, R(e.rec, "deck", which .. "Strata"), e.shell.overlay)
+        end
     end
 end
 

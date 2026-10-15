@@ -670,6 +670,8 @@ local function RaiseOver(frame, target)
     if ts and not Editing() and (STRATA_RANK[ts] or 0) > (STRATA_RANK[fs] or 0) then
         frame:SetFrameStrata(ts)
         fs = ts
+        -- texts with a strata of their own keep it
+        if NS.TextAnchor then NS.TextAnchor.Restrata(frame) end
     end
     local tl = Plain(target:GetFrameLevel())
     if ts == fs and type(tl) == "number" then
@@ -1224,7 +1226,7 @@ function Anchor.DescribePick(rec)
     end
     if Anchor.IsMousePick(rec) then
         if Editing() then
-            return Tr("Follows your mouse cursor while you play. While this window is open it sits at its own spot; set where it sits next to the cursor with My point and the offsets.")
+            return Tr("Follows your cursor while you play, and stays put while this window is open. My point and the offsets set its place by the cursor.")
         end
         return Tr("Follows your mouse cursor.")
     end

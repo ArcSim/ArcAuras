@@ -357,8 +357,8 @@ local CDST = { spell = true, item = true, trinket = true, timer = true, totem = 
 local USE_CD = { spell = true, item = true, trinket = true, timer = true, enchant = true }
 local USE = { spell = true, item = true, trinket = true, timer = true, enchant = true, special = true }
 local SP  = { spell = true }
--- the Can't use it look and the usable glow: spells, and items (an item
--- reads as can't use only with its Mark it while it can't be used on)
+-- the Can't use it look and the usable glow: spells, and items (while the
+-- game says you can't use the item now, as Blizzard's buttons tint it)
 local SPI = { spell = true, item = true }
 -- what shows over a cooldown ("On this icon": an aura, a totem, a set
 -- duration): spells, items, trinkets and a Custom Icon's aura; with aura
@@ -563,6 +563,32 @@ function Schema.AmmoCountShown(rec)
     return Store.Resolve(rec, "text", "ammoText") == true
 end
 
+-- A text's own strata (Core\AD_TextAnchor.lua TA.Strata): "inherit" draws it
+-- with the other texts. Never on a text the game's aura button draws.
+Schema.TEXT_STRATA = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }
+
+-- Hidden while the text is pinned to another frame (it draws over that one),
+-- and for `under` (a spell's countdown and charges) while an aura overlay's
+-- button covers the spell's look.
+function Schema.TextStrataShows(rec, sec, pinKey, under)
+    local Store, TA, D = NS.Store, NS.TextAnchor, NS.DriverAura
+    if not (rec and Store) then return true end
+    if under and D and D.OverlayOn and D.OverlayOn(rec) == true then return false end
+    if pinKey and TA and TA.Pinned(Store.Resolve(rec, sec, pinKey)) then return false end
+    return true
+end
+
+-- An aura icon's custom text takes a strata only on its holder: one on the
+-- live button or with the missing look keeps that place.
+function Schema.LabelStrataShows(rec, suf)
+    if not Schema.TextStrataShows(rec, "label", "labelPinTo" .. suf) then return false end
+    local F = NS.Factory
+    if rec and rec.kind == "aura" and F and F.LabelOnButton then
+        return not (F.LabelOnButton(rec, suf) or F.LabelWithMissing(rec, suf))
+    end
+    return true
+end
+
 -- A totem icon set to one totem by its spell: it has one buff to be out of
 -- range of. A slot icon holds whatever lands in its slot.
 function Schema.TotemBySpell(rec)
@@ -709,7 +735,7 @@ Schema.icon = {
         -- Aura icons: the engine colours the border through the button's own
         -- dispel-type textures. No Lua reads the type, so it works in combat.
         dispelBorder = { d = false, t = "bool", kinds = AU, newAuraEngine = true, label = "Border colour by dispel type",
-            desc = "While the aura is up, its border takes the game's colour for its type: Magic, Curse, Disease or Poison. Auras without a type keep the border color." },
+            desc = "While the aura is up, its border takes the game's color for its type: Magic, Curse, Disease or Poison. Others keep the border color." },
         -- the engine draws either: our strips in the type's colour, or its own
         -- debuff border art for the type
         dispelBorderStyle = { d = "arc", t = "enum", values = { "arc", "game" }, kinds = AU, newAuraEngine = true,
@@ -941,11 +967,6 @@ Schema.icon = {
         -- in combat).
         unusableAlpha = { d = 1, t = "num", min = 0, max = 1, kinds = SPI, label = "Unusable alpha" },
         resourceAlpha = { d = 1, t = "num", min = 0, max = 1, kinds = SP, label = "No-resource alpha" },
-        -- An item you carry but can't use yet (wrong zone, level or a missing
-        -- requirement) takes the Can't use it look: the game's own answer,
-        -- plain in combat. Out of stock wins over it.
-        itemUsability = { d = false, t = "bool", kinds = { item = true }, label = "Mark it while it can't be used",
-            desc = "Its Can't use it look shows while the game says you can't use the item yet." },
         -- Glows while the spell can be cast now: resources available and no
         -- real cooldown. The GCD does not count: the shadow is fed ignoreGCD.
         -- An item: ready, in stock and not marked can't use.
@@ -1340,6 +1361,9 @@ Schema.icon = {
             label = "Custom text anchor", dep = { field = "labelText", nonempty = true } },
         labelX = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text X", dep = { field = "labelText", nonempty = true } },
         labelY = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text Y", dep = { field = "labelText", nonempty = true } },
+        labelStrata = { adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, label = "Custom text strata",
+            showIf = function(r) return Schema.LabelStrataShows(r, "") end,
+            dep = { field = "labelText", nonempty = true } },
         -- The two-state kinds: one dropdown in the kind's own state words writes
         -- both (statePick, UI\AD_Options.lua); both on = always.
         labelShowReady = { inherit = false, d = true, t = "bool", kinds = TWO, label = "Show custom text",
@@ -1365,6 +1389,9 @@ Schema.icon = {
             label = "Custom text 2 anchor", dep = { field = "labelText2", nonempty = true } },
         labelX2 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text 2 X", dep = { field = "labelText2", nonempty = true } },
         labelY2 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text 2 Y", dep = { field = "labelText2", nonempty = true } },
+        labelStrata2 = { adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, label = "Custom text 2 strata",
+            showIf = function(r) return Schema.LabelStrataShows(r, "2") end,
+            dep = { field = "labelText2", nonempty = true } },
         labelShowReady2 = { inherit = false, d = true, t = "bool", kinds = TWO, label = "Show custom text 2",
             statePick = "labelShowCooldown2", rangePick = "labelShowRange2", dep = { field = "labelText2", nonempty = true } },
         labelShowCooldown2 = { inherit = false, d = true, t = "bool", kinds = TWO, label = "Show custom text 2 on cooldown",
@@ -1384,6 +1411,9 @@ Schema.icon = {
             label = "Custom text 3 anchor", dep = { field = "labelText3", nonempty = true } },
         labelX3 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text 3 X", dep = { field = "labelText3", nonempty = true } },
         labelY3 = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Custom text 3 Y", dep = { field = "labelText3", nonempty = true } },
+        labelStrata3 = { adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, label = "Custom text 3 strata",
+            showIf = function(r) return Schema.LabelStrataShows(r, "3") end,
+            dep = { field = "labelText3", nonempty = true } },
         labelShowReady3 = { inherit = false, d = true, t = "bool", kinds = TWO, label = "Show custom text 3",
             statePick = "labelShowCooldown3", rangePick = "labelShowRange3", dep = { field = "labelText3", nonempty = true } },
         labelShowCooldown3 = { inherit = false, d = true, t = "bool", kinds = TWO, label = "Show custom text 3 on cooldown",
@@ -1511,6 +1541,9 @@ Schema.icon = {
             label = "Keybind anchor", dep = { field = "keybindEnabled" } },
         keybindX = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Keybind X", dep = { field = "keybindEnabled" } },
         keybindY = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Keybind Y", dep = { field = "keybindEnabled" } },
+        keybindStrata = { adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, label = "Keybind strata",
+            showIf = function(r) return Schema.TextStrataShows(r, "keybind", "keybindPinTo") end,
+            dep = { field = "keybindEnabled" } },
         keybindPinTo = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS,
             label = "Keybind pinned to", dep = { field = "keybindEnabled" } },
         keybindPinTarget = { noDefault = true, inherit = false, d = "", t = "text", label = "Keybind pin target",
@@ -1546,7 +1579,7 @@ Schema.icon = {
         -- a buff the whole group needs, or one kept on one member
         remind = { d = "lacks", t = "enum", values = { "lacks", "nobody" },
             labels = { lacks = "Anyone lacks it", nobody = "Nobody has it" }, label = "Remind while",
-            desc = "Anyone lacks it: a buff the whole group needs. Nobody has it: a buff you keep on one member, such as Beacon of Light, Earth Shield, Source of Magic or a Soulstone." },
+            desc = "Anyone lacks it: a buff the whole group needs. Nobody has it: a buff kept on one member, like Beacon of Light or Earth Shield." },
         combatShow = { d = false, t = "bool", label = "Show in combat",
             desc = "In combat the game hides buffs, so the count stops; this shows the icon, without a count, while it reminds, drawn by the game." },
         -- the count text's words: have / total, how many lack it, or have
@@ -1776,7 +1809,7 @@ Schema.icon = {
             dep = { { field = "activeGlow" }, { field = "activeGlowWhen", value = "time" },
                 { field = "activeGlowTimeUnit", value = "sec" } } },
         activeGlowAuraLength = { d = 0, t = "int", min = 0, max = 600, label = "The aura lasts (seconds)",
-            desc = "The aura's full length. The game keeps the real length from addons, so a threshold in seconds needs it; percent does not. 0 = not set: the glow shows the whole time.",
+            desc = "The aura's full length. The game hides it from addons, so seconds thresholds need it. 0 = not set: the glow shows the whole time.",
             dep = { { field = "activeGlow" }, { field = "activeGlowWhen", value = "time" },
                 { field = "activeGlowTimeUnit", value = "sec" } } },
         activeGlowType = { d = "button", t = "enum", values = AURA_GLOW_STYLES, labels = GLOW_STYLE_LABELS, label = "Active glow style", dep = { field = "activeGlow" } },
@@ -1873,6 +1906,10 @@ Schema.icon = {
             label = "Duration text anchor", dep = { field = "durationText" } },
         durationX = { kinds = DUR, adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Duration text X", dep = { field = "durationText" } },
         durationY = { kinds = DUR, adv = "text", d = 0, t = "int", min = -50, max = 50, label = "Duration text Y", dep = { field = "durationText" } },
+        -- not an aura's: the game's button draws it
+        durationStrata = { kinds = { spell = true, item = true, trinket = true, timer = true, totem = true, enchant = true,
+            special = true }, adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, label = "Duration text strata",
+            showIf = function(r) return Schema.TextStrataShows(r, "text", nil, true) end, dep = { field = "durationText" } },
         -- Whether a charge is left comes from the shadow.
         hideDurWithCharges = { d = false, t = "bool", kinds = SP, label = "Hide duration while charges remain",
             dep = { field = "durationText" } },
@@ -1931,6 +1968,9 @@ Schema.icon = {
             kinds = STK, label = "Stack text anchor", dep = { field = "stackText" } },
         stackX = { adv = "text", d = 0, t = "int", min = -200, max = 200, kinds = STK, label = "Stack text X", dep = { field = "stackText" } },
         stackY = { adv = "text", d = 0, t = "int", min = -200, max = 200, kinds = STK, label = "Stack text Y", dep = { field = "stackText" } },
+        stackStrata = { adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, kinds = { spell = true, item = true, timer = true,
+            ammo = true, enchant = true, special = true, groupbuff = true }, label = "Stack text strata",
+            showIf = function(r) return Schema.TextStrataShows(r, "text", "stackPinTo", true) end, dep = { field = "stackText" } },
         stackShadow = { adv = "text", d = false, t = "bool", kinds = STK, label = "Stack text shadow", dep = { field = "stackText" } },
         stackShadowColor = { adv = "text", d = { 0, 0, 0, 1 }, t = "color", alpha = true, kinds = STK, label = "Stack shadow color",
             dep = { { field = "stackText" }, { field = "stackShadow" } } },
@@ -1996,6 +2036,8 @@ Schema.icon = {
             kinds = SP, label = "Ammo text anchor", dep = { field = "ammoText" } },
         ammoX = { foreverOnly = true, adv = "text", d = 0, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text X", dep = { field = "ammoText" } },
         ammoY = { foreverOnly = true, adv = "text", d = 0, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text Y", dep = { field = "ammoText" } },
+        ammoStrata = { foreverOnly = true, adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, kinds = SP, label = "Ammo text strata",
+            dep = { field = "ammoText" } },
         ammoShadow = { foreverOnly = true, adv = "text", d = false, t = "bool", kinds = SP, label = "Ammo text shadow", dep = { field = "ammoText" } },
         -- Threshold colours for the ammo count (Factory.AmmoCountColor). The
         -- count is plain in combat, so Lua compares it; the lowest threshold
@@ -2223,7 +2265,7 @@ Schema.SPECIAL_TEXTS = {
 do
     local fields = Schema.icon.label.fields
     local BASES = { "labelText", "labelFont", "labelPinTo", "labelPinTarget", "labelSize", "labelColor",
-        "labelAnchor", "labelX", "labelY", "labelShowReady", "labelShowCooldown" }
+        "labelAnchor", "labelX", "labelY", "labelStrata", "labelShowReady", "labelShowCooldown" }
     for _, t in ipairs(Schema.SPECIAL_TEXTS) do
         local suf = t.suf
         for _, base in ipairs(BASES) do
@@ -2240,6 +2282,7 @@ do
             def.label = (lbl:gsub("custom text 2", t.word:lower(), 1))
             if src.dep then def.dep = { field = "labelText" .. suf, nonempty = true } end
             if base == "labelAnchor" then def.d = t.anchor end
+            if base == "labelStrata" then def.showIf = function(r) return Schema.LabelStrataShows(r, suf) end end
             if base == "labelShowReady" then
                 def.statePick, def.rangePick = "labelShowCooldown" .. suf, nil
             end
@@ -2429,7 +2472,7 @@ Schema.iconGroup = {
         shows = { d = "tracked", t = "enum", values = { "tracked", "unit" },
             labels = { tracked = "Tracked auras", unit = "All auras on a unit" }, label = "Shows",
             showIf = function() return NS.DriverAuraGroups ~= nil and NS.DriverAuraGroups.IsAvailable() end,
-            desc = "Tracked auras: the aura icons you add to this group, matched by spell ID. All auras on a unit: every buff or debuff on one unit, drawn by the game, with no icons to add." },
+            desc = "Tracked auras: the aura icons you add, matched by spell ID. All auras on a unit: every buff or debuff on a unit, no icons to add." },
         unit = { d = "player", t = "enum", values = { "player", "pet", "target", "focus", "nameplate" },
             labels = { player = "Player", pet = "Pet", target = "Target", focus = "Focus",
                 nameplate = "Enemy nameplates" }, label = "Unit",
@@ -2504,7 +2547,7 @@ Schema.iconGroup = {
                 return Schema.TypeFullOK(rec) or NS.Store.Resolve(rec, "typeLook", "looks") == "full"
             end },
             label = "Debuff type looks",
-            desc = "Colors and badges keeps the game's order. Full look per type also gives each type its own size, swipe, texts and glows, in the order you pick.",
+            desc = "Colors and badges keeps the game's order. Full look per type adds size, swipe, text and glow per type, in your order.",
             dep = { section = "unitAuras", field = "shows", value = "unit" } },
         washAlpha = { d = 0.3, t = "num", min = 0.05, max = 1, step = 0.05, label = "Color wash strength",
             dep = { { field = "looks", anyOf = { parts = true, full = true } },
@@ -2546,7 +2589,7 @@ Schema.iconGroup = {
         -- "Clear when" ends it (RM.HOLD_MAX as a backstop). An "On use"
         -- pulse keeps its time: its cast is the reminder.
         holdUntilCast = { d = false, t = "bool", label = "Stay until cast",
-            desc = "The pulse stays at full, with no fade and no time limit, until you cast the spell (or use the item), or until its trigger's Clear when option ends it. On use pulses and previews still run their time." },
+            desc = "The pulse stays at full, with no fade, until you cast the spell or use the item, or its trigger's Clear when ends it." },
         hideMarker = { d = false, t = "bool", label = "Hide preview icon while editing",
             desc = "While this window is open, a dim copy of the first reminder's icon marks where pulses land. On shows only the outline and name tab." },
         queueMode = { d = "queue", t = "enum", values = { "replace", "queue", "stack" },
@@ -3093,7 +3136,7 @@ Schema.bar = {
         castChannelColor = { d = { 0.36, 0.85, 0.46, 1 }, t = "color", alpha = true, kinds = BK_CAST, label = "Channel color",
             dep = { field = "castChannelOn" } },
         castLockOn = { d = false, t = "bool", kinds = BK_CAST, label = "Own color when it can't be interrupted",
-            desc = "Casts you cannot interrupt take this color. In combat the game hides whether a target's cast can be interrupted from addons, so this can only change how the bar looks." },
+            desc = "Casts you cannot interrupt take this color. The game hides this from addons in combat, so it can only change the bar's look." },
         castLockColor = { d = { 0.62, 0.64, 0.68, 1 }, t = "color", alpha = true, kinds = BK_CAST, label = "Can't be interrupted color",
             dep = { field = "castLockOn" } },
         -- Cooldown stack bars draw charge slots, never the fill, so they lack
@@ -3142,6 +3185,8 @@ Schema.bar = {
             dep = { { field = "swingOffhand" }, { field = "swingOffhandLabel" } }, label = "Off-hand label size" },
         swingOffhandLabelColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, kinds = { swing = true },
             dep = { { field = "swingOffhand" }, { field = "swingOffhandLabel" } }, label = "Off-hand label color" },
+        swingOffhandLabelStrata = { d = "inherit", t = "enum", values = Schema.TEXT_STRATA, kinds = { swing = true },
+            dep = { { field = "swingOffhand" }, { field = "swingOffhandLabel" } }, label = "Off-hand label strata" },
         -- Swing bars: two halves that close in and meet as the swing lands, and
         -- ticks where a set time is left (Bars\AD_SwingClosing.lua). The
         -- off-hand track splits the fill its own way, so the two never show together.
@@ -3506,6 +3551,8 @@ Schema.bar = {
             dep = { field = "rcShow" }, showIf = function(rec) return Schema.Recharges(rec) end },
         rcOffsetY = { adv = "text", d = 0, t = "int", min = -100, max = 100, kinds = BK_RES, label = "Recharge offset Y",
             dep = { field = "rcShow" }, showIf = function(rec) return Schema.Recharges(rec) end },
+        rcStrata = { adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, kinds = BK_RES, label = "Recharge strata",
+            dep = { field = "rcShow" }, showIf = function(rec) return Schema.Recharges(rec) end },
         rcDecimalsEnabled = { d = false, t = "bool", kinds = BK_RES, label = "Recharge decimals",
             dep = { field = "rcShow" }, showIf = function(rec) return Schema.Recharges(rec) end },
         rcDecimalThreshold = { d = 3, t = "int", min = 2, max = 60, kinds = BK_RES, label = "Decimals below (s)",
@@ -3591,6 +3638,27 @@ Schema.bar = {
         stkShadow = { adv = "text", d = false, t = "bool", kinds = BK_CST, label = "Stack shadow" },
         resShadow = { adv = "text", d = false, t = "bool", kinds = BK_RES, label = "Resource shadow" },
         nameShadow = { adv = "text", d = false, t = "bool", label = "Name shadow" },
+        -- A text's own strata (Core\AD_TextAnchor.lua TA.Strata); the ready
+        -- text and texts 2 and 3 take their first's. Not an aura bar's duration
+        -- or stack: the game's button draws them.
+        durStrata = { adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, kinds = { cooldown = true, timer = true, swing = true, cast = true,
+            enchant = true, cdmbar = true, totembar = true }, label = "Duration strata",
+            showIf = function(r) return Schema.TextStrataShows(r, "text", "durPinTo") end },
+        stkStrata = { adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, kinds = { cooldown = true, stack = true, enchant = true, timer = true },
+            label = "Stack strata", showIf = function(r) return Schema.TextStrataShows(r, "text", "stkPinTo") end },
+        resStrata = { adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, kinds = BK_RES, label = "Resource strata",
+            showIf = function(r) return Schema.TextStrataShows(r, "text", "resPinTo") end },
+        hpStrata = { adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, kinds = BK_HP, label = "Health strata",
+            showIf = function(r) return Schema.TextStrataShows(r, "text", "hpPinTo") end },
+        -- an aura bar hidden while inactive draws its name on the game's button
+        nameStrata = { adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, label = "Name strata",
+            showIf = function(r)
+                local Store = NS.Store
+                if r and r.barKind == "aura" and Store and Store.Resolve(r, "behavior", "hideWhenInactive") == true then
+                    return false
+                end
+                return Schema.TextStrataShows(r, "text", "namePinTo")
+            end },
     } },
     -- Cooldown bars evaluate durObj curves (useChargeDur fixed at setup); timer
     -- and swing bars compare plain seconds in the GetTime loop; aura duration
@@ -3861,6 +3929,8 @@ Schema.bar = {
             dep = { field = "posShow" } },
         posOffsetY = { adv = "text", d = 0, t = "int", min = -200, max = 200, label = "Deck position offset Y",
             dep = { field = "posShow" } },
+        posStrata = { adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, label = "Deck position strata", dep = { field = "posShow" },
+            showIf = function(r) return Schema.TextStrataShows(r, "deck", "posPinTo") end },
         posPinTo = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS,
             label = "Deck position pinned to", dep = { field = "posShow" } },
         posPinTarget = { noDefault = true, inherit = false, d = "", t = "text", label = "Deck position pin target", dep = { field = "posShow" } },
@@ -3891,6 +3961,8 @@ Schema.bar = {
             dep = { field = "procShow" } },
         procOffsetY = { adv = "text", d = 2, t = "int", min = -200, max = 200, label = "Proc count offset Y",
             dep = { field = "procShow" } },
+        procStrata = { adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, label = "Proc count strata", dep = { field = "procShow" },
+            showIf = function(r) return Schema.TextStrataShows(r, "deck", "procPinTo") end },
         procPinTo = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS,
             label = "Proc count pinned to", dep = { field = "procShow" } },
         procPinTarget = { noDefault = true, inherit = false, d = "", t = "text", label = "Proc count pin target", dep = { field = "procShow" } },
@@ -3938,6 +4010,8 @@ Schema.bar = {
             dep = { { field = "fsrOn" }, { field = "fsrText" } } },
         fsrTextSize = { foreverOnly = true, d = 11, t = "int", min = 6, max = 24, label = "Countdown size",
             dep = { { field = "fsrOn" }, { field = "fsrText" } } },
+        fsrTextStrata = { foreverOnly = true, d = "inherit", t = "enum", values = Schema.TEXT_STRATA,
+            label = "Countdown strata", dep = { { field = "fsrOn" }, { field = "fsrText" } } },
         -- The regen ticks, every 2 s: found from mana events away from your
         -- casts; the next tick's mana comes from GetManaRegen, fed unread.
         tickSpark = { foreverOnly = true, d = false, t = "bool", label = "Tick spark",
@@ -4001,7 +4075,7 @@ Schema.bar = {
         -- Which casts show
         hideChannels = { inherit = false, d = false, t = "bool", label = "Hide channels" },
         lockHide = { inherit = false, d = false, t = "bool", label = "Hide casts that can't be interrupted",
-            desc = "In combat the game hides whether a target's cast can be interrupted from addons, so the bar still hides those casts but cannot do anything else about them (no sound, no alert)." },
+            desc = "Hides casts you cannot interrupt. In combat the game hides that from addons, so it cannot drive sounds or alerts." },
         -- Your casts only: the editor offers these on a player castbar.
         latencyOn = { d = false, t = "bool", label = "Latency zone",
             desc = "The end of your cast that your connection's delay covers: start the next cast once the fill reaches it." },
@@ -4016,7 +4090,7 @@ Schema.bar = {
         queueTickWidth = { d = 2, t = "int", min = 1, max = 8, label = "Queue tick width",
             dep = { field = "queueTickOn" } },
         hideBlizzard = { inherit = false, d = false, t = "bool", label = "Hide Blizzard's castbar",
-            desc = "Hides the game's own castbar under your character while this castbar is loaded. Turning it off brings the game's castbar back on your next cast." },
+            desc = "Hides the game's castbar under your character while this castbar is loaded. Turn off to bring it back on your next cast." },
     } },
     -- Range bars (Bars\AD_RangeBar.lua): how the bands draw. The bands themselves
     -- (a preset's, or the bar's own list of text, colour, switch and checks) are

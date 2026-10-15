@@ -160,11 +160,18 @@ end
 -- an orphaned table while the real data sits in the global: re-point and
 -- normalize again.
 function Store.AdoptLiveSV()
+    local adopted = false
     if ArcAurasDB ~= DB then
         Store.Init()
-        return true
+        adopted = true
     end
-    return false
+    -- names this client cannot draw, once per saved table (Store.LocalizeAll):
+    -- at login the game's spell names read
+    if DB and Store.localizedDB ~= DB then
+        Store.localizedDB = DB
+        Store.LocalizeAll()
+    end
+    return adopted
 end
 
 function Store.GetSetting(k)
@@ -3180,6 +3187,127 @@ end
 -- added for a rank you do not know or a secret read. Kept until
 -- SPELLS_CHANGED (a rank learned), which the aura driver handles: it wipes
 -- this, then resends the filters whose followed IDs moved.
+-- Names across languages. A name is text from its maker's client, and the
+-- client's font draws Latin plus its own script only: a Korean name on an
+-- English client is a row of boxes. A name holding letters of a script this
+-- client cannot draw is fixed: a record named after its spell or item takes
+-- this client's name for it, anything else a plain name. Symbols are no
+-- script and never count, so a decorated name stays as typed.
+Store.OWN_SCRIPT = { ruRU = "cyrillic", koKR = "hangul", zhCN = "cjk", zhTW = "cjk" }
+function Store.ScriptOf(cp)
+    if cp < 0x0250 or (cp >= 0x1E00 and cp <= 0x1EFF) then return "latin" end
+    if cp >= 0x0400 and cp <= 0x052F then return "cyrillic" end
+    if (cp >= 0x1100 and cp <= 0x11FF) or (cp >= 0x3130 and cp <= 0x318F) or (cp >= 0xAC00 and cp <= 0xD7AF) then
+        return "hangul"
+    end
+    if (cp >= 0x2E80 and cp <= 0x9FFF) or (cp >= 0xF900 and cp <= 0xFAFF) or (cp >= 0xFF00 and cp <= 0xFFEF) then
+        return "cjk"
+    end
+    return "other"
+end
+-- true when the text holds letters this client's font cannot draw (WoW's Lua
+-- has no utf8 library: the bytes are read by hand)
+function Store.ForeignName(text)
+    if type(text) ~= "string" or (issecretvalue and issecretvalue(text)) then return false end
+    local own = Store.OWN_SCRIPT[GetLocale and GetLocale() or "enUS"]
+    local i, n = 1, #text
+    while i <= n do
+        local c = text:byte(i)
+        local cp, len = c, 1
+        local function B(k) return (text:byte(i + k) or 0x80) % 0x40 end
+        if c >= 0xF0 then
+            cp, len = (c % 0x08) * 0x40000 + B(1) * 0x1000 + B(2) * 0x40 + B(3), 4
+        elseif c >= 0xE0 then
+            cp, len = (c % 0x10) * 0x1000 + B(1) * 0x40 + B(2), 3
+        elseif c >= 0xC0 then
+            cp, len = (c % 0x20) * 0x40 + B(1), 2
+        end
+        local s = Store.ScriptOf(cp)
+        if s ~= "latin" and s ~= "other" and s ~= own then return true end
+        i = i + len
+    end
+    return false
+end
+-- this client's name for the spell or item a record shows, or nil
+function Store.LocalName(rec)
+    local d = type(rec) == "table" and type(rec.driver) == "table" and rec.driver or nil
+    if not d then return nil end
+    local sid = tonumber(d.spellID)
+    if not sid and type(d.auraIDs) == "table" then sid = tonumber(d.auraIDs[1]) end
+    if not sid and d.cooldownID and C_CooldownViewer and C_CooldownViewer.GetCooldownViewerCooldownInfo then
+        local info = C_CooldownViewer.GetCooldownViewerCooldownInfo(d.cooldownID)
+        local s = type(info) == "table" and info.spellID
+        if s and not (issecretvalue and issecretvalue(s)) then sid = tonumber(s) end
+    end
+    if sid and sid > 0 then return NameOf(sid) end
+    local iid = tonumber(d.itemID)
+    if iid and iid > 0 and C_Item and C_Item.GetItemNameByID then
+        local nm = C_Item.GetItemNameByID(iid)
+        if type(nm) == "string" and nm ~= "" and not (issecretvalue and issecretvalue(nm)) then return nm end
+    end
+    return nil
+end
+-- a readable name in the client's language: a layout by its class, else its
+-- kind and its place among its kind
+function Store.PlainName(rec)
+    local AT = NS.AT
+    local Tr = (AT and AT.Tr) or function(s) return s end
+    if rec.type == "layout" then
+        local cls, limited = Store.ClassesOf(rec)
+        local names = LOCALIZED_CLASS_NAMES_MALE
+        local cn = limited and #cls == 1 and type(names) == "table" and names[cls[1]]
+        if type(cn) == "string" and cn ~= "" then return Tr("%s layout"):format(cn) end
+        return Tr("Imported layout")
+    end
+    local parent = Store.Get(rec.groupId) or Store.Get(rec.layoutId)
+    local n = 0
+    if parent then
+        local list = (parent.type == "group") and Store.IconsOf(parent) or Store.MembersOf(parent)
+        for _, m in ipairs(list) do
+            if m.type == rec.type then n = n + 1 end
+            if m == rec then break end
+        end
+    end
+    n = math.max(1, n)
+    if rec.type == "group" then return Tr("Group %d"):format(n) end
+    if rec.type == "bar" then return Tr("Bar %d"):format(n) end
+    return Tr("Icon %d"):format(n)
+end
+-- fixes one record's name if this client cannot draw it, or (auto: its maker's
+-- name was just the spell's) whenever this client has a name for its spell
+function Store.LocalizeName(rec, auto)
+    if type(rec) ~= "table" or type(rec.name) ~= "string" then return false end
+    -- a copy's " (import)" stays on whatever name it gets
+    local base, tail = rec.name:match("^(.-)( %(import%))$")
+    if not base then base, tail = rec.name, "" end
+    local foreign = Store.ForeignName(base)
+    if not (foreign or auto) then return false end
+    local nm = Store.LocalName(rec)
+    if not nm then
+        if not foreign then return false end
+        -- an item's name can still be on its way from the server: the next
+        -- pass tries again (a spell's is in the client, so none = no such spell)
+        if type(rec.driver) == "table" and rec.driver.itemID then return false end
+        nm = Store.PlainName(rec)
+    end
+    nm = nm .. tail
+    if nm == rec.name then return false end
+    rec.name = nm
+    return true
+end
+
+-- Every record once a session (login): names already in the account that
+-- this client cannot draw, from an import made before this fix or on another
+-- client. Returns how many it renamed.
+function Store.LocalizeAll()
+    local n = 0
+    for _, rec in pairs(DB.records) do
+        if Store.LocalizeName(rec, false) then n = n + 1 end
+    end
+    if n > 0 then Store.Dirty("tree") end
+    return n
+end
+
 Store.auraRankOf = {}   -- [id] = your rank of that spell, false for none
 function Store.AuraRank(id)
     local v = Store.auraRankOf[id]
@@ -5990,6 +6118,15 @@ local function SerVal(v, out)
     end
 end
 
+-- A big string's read is a long step: run in the options window's slices it
+-- pauses here (Store.Pause, which the window sets); anywhere else it runs
+-- straight through.
+local deserN = 0
+local function Pause()
+    local p = Store.Pause
+    if p then p() end
+end
+
 local function DeserVal(str, pos, depth)
     depth = (depth or 0) + 1
     if depth > 32 or not pos or pos > #str then return nil, nil, "corrupt data" end
@@ -6019,6 +6156,8 @@ local function DeserVal(str, pos, depth)
             if str:sub(pos, pos) == "e" then return tbl, pos + 1 end
             guard = guard + 1
             if guard > 200000 then return nil, nil, "corrupt table" end
+            deserN = deserN + 1
+            if deserN % 256 == 0 then Pause() end
             local k, np, err = DeserVal(str, pos, depth)
             if err then return nil, nil, err end
             local v
@@ -6116,7 +6255,11 @@ function Store.Export(ids, keep)
             taken = taken or UidSet()
             rec.uid = NewUid(taken)
         end
-        recs[#recs + 1] = CopyDeep(rec)
+        local cp = CopyDeep(rec)
+        -- a name that is just its spell's or item's: the importing client
+        -- names it in its own language (Store.LocalizeName)
+        if type(rec.name) == "string" and Store.LocalName(rec) == rec.name then cp.nameAuto = true end
+        recs[#recs + 1] = cp
         if rec.type == "group" then
             for _, mid in ipairs(rec.members or {}) do add(DB.records[mid]) end
         end
@@ -6367,7 +6510,19 @@ function Store.Import(text, targetLayoutId, opts)
     end
     -- the skins its bars wear, the ones this account lacks
     if NS.BarSkins then NS.BarSkins.TakeIn(payload.skins) end
+    -- names in this client's language (Store.LocalizeName); the maker's tag
+    -- read before Normalize, which keeps no field it does not know
+    local auto = {}
+    for _, list in ipairs({ newRecs, reminders }) do
+        for _, rec in ipairs(list) do
+            if rec.nameAuto then auto[rec] = true end
+            rec.nameAuto = nil
+        end
+    end
     Store.Normalize()
+    for _, list in ipairs({ newRecs, reminders }) do
+        for _, rec in ipairs(list) do Store.LocalizeName(rec, auto[rec]) end
+    end
     Store.Dirty("tree")
     return { layouts = layouts, items = items, target = target, dropped = dropped,
         reminders = reminders, reminderGroup = rgroup, refused = refused }
@@ -6520,6 +6675,11 @@ local function PartSlice(rec, part, uidOf)
     for k, p in pairs(PART_OF_KEY) do
         if p == part and rec[k] ~= nil then out["." .. k] = rec[k] end
     end
+    -- a maker's name that is just the spell's reads as this client's name for
+    -- it, so a translated name is no change (Store.LocalizeName)
+    if part == "names" and rec.nameAuto and out[".name"] ~= nil then
+        out[".name"] = Store.LocalName(rec) or out[".name"]
+    end
     for s, vals in pairs(type(rec.o) == "table" and rec.o or {}) do
         if type(vals) == "table" then
             for f, v in pairs(vals) do
@@ -6618,6 +6778,7 @@ function Store.PlanUpdate(text)
         if r.type == "layout" and type(map[r.id]) == "number" then layIn[map[r.id]] = true end
     end
     for _, r in ipairs(inc) do
+        Pause()
         local lid = map[r.id]
         local loc = type(lid) == "number" and DB.records[lid] or nil
         local item = { inc = r, loc = loc, name = r.name, type = r.type, parts = {} }
@@ -6936,7 +7097,22 @@ function Store.ApplyUpdate(plan, opts)
     end
     Store.PruneDeleted(plan.uids)
     res.target = target
+    -- names in this client's language, as an import's (Store.LocalizeName): a
+    -- maker's spell-only name is followed on a new record, or on one whose
+    -- names this update took; any name this client cannot draw is fixed
+    local named = {}
+    for _, item in ipairs(plan.items) do
+        local id = map[item.inc.id]
+        local live = id and DB.records[id]
+        if live then
+            local took = item.loc == nil or (item.loc == live and parts.names and item.parts and item.parts.names
+                and item.status == "changed" and not (opts.skip and opts.skip[item.inc.uid]))
+            named[#named + 1] = { live, took and item.inc.nameAuto == true }
+            live.nameAuto = nil
+        end
+    end
     Store.Normalize()
+    for _, p in ipairs(named) do Store.LocalizeName(p[1], p[2]) end
     res.undo = Store.KeepUndo(plan, res, before)
     Store.Dirty("tree")
     return res

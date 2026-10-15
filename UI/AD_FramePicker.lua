@@ -506,7 +506,7 @@ function Options.AnchorSpellRows(pg, ctx, vis)
             if r and spec then Store.SetOverride(r, "anchor", "anchorTargetFrame", spec) end
         end,
         spellVis,
-        "The spell whose button or icon it rides: a spell ID, a link or the name of a spell you know. Several ranks' IDs may be listed. Enter applies it.",
+        "The spell whose button or icon it rides: an ID, a link or a known spell's name. Several ranks may be listed. Enter applies.",
         "e.g. 17364")
     -- a spell's cooldown icon and its buff icon share the spell, never the cooldown ID
     AT.RowInput(pg, "Cooldown ID",

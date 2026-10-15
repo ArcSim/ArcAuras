@@ -126,6 +126,77 @@ function TA.Place(fs, owner, slot, kind, spec, point, rel, x, y, home)
     TA.Arm()
 end
 
+-- A text with a strata of its own draws on a frame of its own: a child of its
+-- home, so the home's alpha and shown state still reach it, at the home's
+-- level. "inherit" (or nil) keeps it on its home. Called each style pass,
+-- after the text is placed: a parent's SetFrameStrata resets its children. A
+-- pinned text rides its carrier over the target and is left alone; the
+-- editor's stage keeps every text with its icon.
+function TA.Strata(owner, fs, slot, strata, home)
+    if not (owner and fs and home) or TA.live[fs] then return end
+    if owner._adOnStage == true then strata = nil end
+    local want = home
+    if strata and strata ~= "inherit" then
+        owner._adTxtStrata = owner._adTxtStrata or {}
+        local h = owner._adTxtStrata[slot]
+        if not h then
+            h = CreateFrame("Frame", nil, home)
+            h:SetAllPoints(home)
+            owner._adTxtStrata[slot] = h
+        elseif h:GetParent() ~= home then
+            h:SetParent(home)
+            h:ClearAllPoints()
+            h:SetAllPoints(home)
+        end
+        h:SetFrameStrata(strata)
+        local lvl = home:GetFrameLevel()
+        if type(lvl) == "number" and not Secret(lvl) then h:SetFrameLevel(lvl) end
+        h:Show()
+        TA.strataHosts[h] = strata
+        want = h
+    elseif owner._adTxtStrata and owner._adTxtStrata[slot] then
+        TA.strataHosts[owner._adTxtStrata[slot]] = nil
+    end
+    if fs._adPinHome then fs._adPinHome = want end
+    if fs:GetParent() ~= want then fs:SetParent(want) end
+end
+
+-- [host] = strata: every text frame with a strata of its own.
+TA.strataHosts = setmetatable({}, { __mode = "k" })
+
+-- A frame that holds only texts (a range bar's band labels) takes the strata
+-- itself; "inherit" gives it back its home's.
+function TA.HostStrata(h, strata, home)
+    if not (h and home) then return end
+    if strata and strata ~= "inherit" then
+        h:SetFrameStrata(strata)
+        TA.strataHosts[h] = strata
+    elseif TA.strataHosts[h] then
+        TA.strataHosts[h] = nil
+        h:SetFrameStrata(home:GetFrameStrata())
+    end
+end
+
+-- A frame's SetFrameStrata resets every frame under it. Whoever sets one
+-- outside a style pass (an icon's layer in a Dynamic reflow, an anchor raising
+-- a frame over its target) calls this to put the texts under it back.
+function TA.Restrata(frame)
+    if not frame or next(TA.strataHosts) == nil then return end
+    local own = frame._adTxtStrata
+    if own then
+        for _, h in pairs(own) do
+            local s = TA.strataHosts[h]
+            if s then h:SetFrameStrata(s) end
+        end
+        return
+    end
+    for h, s in pairs(TA.strataHosts) do
+        local p = h:GetParent()
+        while p and p ~= frame do p = p:GetParent() end
+        if p then h:SetFrameStrata(s) end
+    end
+end
+
 -- Every pinned text on owner goes home, its carriers hidden (an icon or bar
 -- leaving the screen, or a pooled frame about to serve another record).
 function TA.Release(owner)

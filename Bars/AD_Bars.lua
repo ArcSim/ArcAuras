@@ -577,33 +577,39 @@ Bars.TickFractions = TickFractions
 
 local TEXT_DEFS = {
     { key = "dur",   pin = "dur", show = "durShow",   size = "durSize",   anchor = "durAnchor",
-      x = "durOffsetX", y = "durOffsetY", colour = "durColor", outline = "durOutline", shadow = "durShadow" },
+      x = "durOffsetX", y = "durOffsetY", colour = "durColor", outline = "durOutline", shadow = "durShadow",
+      strata = "durStrata" },
     { key = "stk",   pin = "stk", show = "stkShow",   size = "stkSize",   anchor = "stkAnchor",
-      x = "stkOffsetX", y = "stkOffsetY", colour = "stkColor", outline = "stkOutline", shadow = "stkShadow" },
+      x = "stkOffsetX", y = "stkOffsetY", colour = "stkColor", outline = "stkOutline", shadow = "stkShadow",
+      strata = "stkStrata" },
     { key = "name",  pin = "name", show = "nameShow",  size = "nameSize",  anchor = "nameAnchor",
-      x = "nameOffsetX", y = "nameOffsetY", colour = "nameColor", outline = "nameOutline", shadow = "nameShadow" },
+      x = "nameOffsetX", y = "nameOffsetY", colour = "nameColor", outline = "nameOutline", shadow = "nameShadow",
+      strata = "nameStrata" },
     -- ready shares the duration text's styling
     { key = "ready", pin = "dur", show = "readyShow", size = "durSize",   anchor = "durAnchor",
-      x = "durOffsetX", y = "durOffsetY", colour = "readyColor", outline = "durOutline", shadow = "durShadow" },
+      x = "durOffsetX", y = "durOffsetY", colour = "readyColor", outline = "durOutline", shadow = "durShadow",
+      strata = "durStrata" },
     -- own run: a resource bar has no duration run to borrow and no stack run
     { key = "res",   pin = "res", show = "resShow",   size = "resSize",   anchor = "resAnchor",
-      x = "resOffsetX", y = "resOffsetY", colour = "resColor", outline = "resOutline", shadow = "resShadow" },
+      x = "resOffsetX", y = "resOffsetY", colour = "resColor", outline = "resOutline", shadow = "resShadow",
+      strata = "resStrata" },
     { key = "hp",    pin = "hp", show = "hpShow",    size = "hpSize",    anchor = "hpAnchor",
-      x = "hpOffsetX", y = "hpOffsetY", colour = "hpColor", outline = "hpOutline", shadow = "hpShadow" },
+      x = "hpOffsetX", y = "hpOffsetY", colour = "hpColor", outline = "hpOutline", shadow = "hpShadow",
+      strata = "hpStrata" },
     -- Texts 2 and 3 of a resource or health bar, shown while its text count
     -- reaches them; they share text 1's outline and shadow.
     { key = "res2", pin = "res", show = "resShow", countField = "resCount", count = 2, size = "res2Size",
       anchor = "res2Anchor", x = "res2OffsetX", y = "res2OffsetY", colour = "res2Color",
-      outline = "resOutline", shadow = "resShadow" },
+      outline = "resOutline", shadow = "resShadow", strata = "resStrata" },
     { key = "res3", pin = "res", show = "resShow", countField = "resCount", count = 3, size = "res3Size",
       anchor = "res3Anchor", x = "res3OffsetX", y = "res3OffsetY", colour = "res3Color",
-      outline = "resOutline", shadow = "resShadow" },
+      outline = "resOutline", shadow = "resShadow", strata = "resStrata" },
     { key = "hp2", pin = "hp", show = "hpShow", countField = "hpCount", count = 2, size = "hp2Size",
       anchor = "hp2Anchor", x = "hp2OffsetX", y = "hp2OffsetY", colour = "hp2Color",
-      outline = "hpOutline", shadow = "hpShadow" },
+      outline = "hpOutline", shadow = "hpShadow", strata = "hpStrata" },
     { key = "hp3", pin = "hp", show = "hpShow", countField = "hpCount", count = 3, size = "hp3Size",
       anchor = "hp3Anchor", x = "hp3OffsetX", y = "hp3OffsetY", colour = "hp3Color",
-      outline = "hpOutline", shadow = "hpShadow" },
+      outline = "hpOutline", shadow = "hpShadow", strata = "hpStrata" },
 }
 local TEXT_DEF_BY_KEY = {}
 for _, def in ipairs(TEXT_DEFS) do TEXT_DEF_BY_KEY[def.key] = def end
@@ -795,6 +801,9 @@ local function ApplyTexts(entry)
                 else
                     PlaceText(fs, shell.overlay, an, tx, ty)
                 end
+                if TA and TA.Strata then
+                    TA.Strata(shell, fs, "bar:" .. def.key, R(rec, "text", def.strata), shell.overlay)
+                end
                 fs:Show()
             else
                 fs:SetText("")
@@ -855,6 +864,13 @@ local function ApplyTexts(entry)
                 fs:SetTextColor(c[1], c[2], c[3], c[4] or 1)
                 PlaceText(fs, entry.durCD, R(rec, "text", "durAnchor") or "RIGHT",
                     R(rec, "text", "durOffsetX"), R(rec, "text", "durOffsetY"))
+                -- the countdown on its own strata: a child of the widget, which
+                -- keeps driving it (the editor's preview keeps it home)
+                local TA = NS.TextAnchor
+                if TA and TA.Strata then
+                    TA.Strata(shell, fs, "bar:durcd", (not entry.isPreview) and R(rec, "text", "durStrata") or nil,
+                        entry.durCD)
+                end
             end
         end
     end

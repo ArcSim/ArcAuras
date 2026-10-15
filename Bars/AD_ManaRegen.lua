@@ -394,6 +394,11 @@ function MR.Look(e, v)
         t:SetPoint("RIGHT", shell.fill, "RIGHT", -4, 0)
     end
     t:SetTextColor(c[1], c[2], c[3], 1)
+    -- its own strata (the editor's preview keeps it on the bar)
+    if NS.TextAnchor and NS.TextAnchor.Strata then
+        NS.TextAnchor.Strata(shell, t, "fsr", (not e.isPreview) and K.R(rec, "regen", "fsrTextStrata") or nil,
+            shell.overlay)
+    end
     MR.LayoutGhost(e, v, vertical, reverse)
     local ic = K.R(rec, "regen", "incomingColor")
     if type(ic) ~= "table" then ic = MR.IN_COLOR end

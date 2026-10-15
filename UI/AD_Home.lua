@@ -413,6 +413,30 @@ end
 
 -- My Layouts: a card for each layout that loads here
 
+-- A layout the player took off Home with its x: only this page leaves it
+-- out; the sidebar and the screen keep it. The account's UI table keeps it.
+function HM.Hidden(lay)
+    local h = Store.UI().homeHidden
+    return type(h) == "table" and h[lay.id] == true
+end
+function HM.SetHidden(lay, on)
+    local ui = Store.UI()
+    if type(ui.homeHidden) ~= "table" then ui.homeHidden = {} end
+    ui.homeHidden[lay.id] = on and true or nil
+    if next(ui.homeHidden) == nil then ui.homeHidden = nil end
+    HM.Refresh()
+end
+-- the x on a card or a row: quiet, the card's own layout
+HM.HIDE_W = 20
+function HM.HideX(parent, owner)
+    local b = AT.MakeQuietButton(parent, "x", HM.HIDE_W)
+    b:SetHeight(HM.HIDE_W)
+    b:SetScript("OnClick", function() if owner._lay then HM.SetHidden(owner._lay, true) end end)
+    AT.Tooltip(b, "Hide from Home",
+        "Takes this layout off this page. It stays as it is, in the sidebar and on screen.")
+    return b
+end
+
 function HM.EyeText(lay)
     if Store.EditHidden(lay) then return Tr("Hidden while editing") end
     return Tr("Shown while editing")
@@ -432,6 +456,8 @@ function HM.MakeCard(parent)
     c.name = HM.Text(c, 16)
     c.name:SetPoint("TOPLEFT", c.box, "TOPRIGHT", 16, -1)
     c.name:SetWordWrap(false)
+    c.hide = HM.HideX(c, c)
+    c.hide:SetPoint("TOPRIGHT", -8, -8)
     c.chips = {}
     c.dot = c:CreateTexture(nil, "ARTWORK")
     c.dot:SetSize(7, 7)
@@ -538,7 +564,8 @@ function HM.FillCard(c, lay, w)
     c._btnsW = HM.EDIT_W + 8 + HM.EXPORT_W + 8 + (c._iconOnly and HM.EYE_ICON_W or eyeFull)
     HM.Color(c.eyeBtn.fs, Store.EditHidden(lay) and COL.arc or COL.dim)
     c.name:SetText(lay.name or Tr("Layout"))
-    HM.FillChips(c, lay, room)
+    -- the name's line ends short of the x
+    HM.FillChips(c, lay, room - HM.HIDE_W - 6)
     local what = HM.Contents(lay)
     local hid = HM.HiddenIn(lay)
     if hid > 0 then what = Tr("%s. %d not loaded here"):format(what, hid) end
@@ -567,7 +594,9 @@ function HM.MakeOther(parent)
     r.edit = AT.MakeSmallButton(r, "Edit", 50)
     HM.Fit(r.edit, 50)
     r.edit:SetPoint("RIGHT", -6, 0)
-    r.tag:SetPoint("RIGHT", r.edit, "LEFT", -8, 0)
+    r.hide = HM.HideX(r, r)
+    r.hide:SetPoint("RIGHT", r.edit, "LEFT", -4, 0)
+    r.tag:SetPoint("RIGHT", r.hide, "LEFT", -8, 0)
     r:SetScript("OnClick", function() if r._lay then Options.OpenLayout(r._lay) end end)
     r.edit:SetScript("OnClick", function() if r._lay then Options.OpenLayout(r._lay) end end)
     r:SetScript("OnEnter", function(s) s:SetBackdropBorderColor(COL.arc[1], COL.arc[2], COL.arc[3], 1) end)
@@ -577,7 +606,7 @@ end
 
 -- the room a row w wide leaves its name, with its tag beside it or without
 function HM.NameRoom(r, w, tagged)
-    local room = w - 12 - 8 - r.edit:GetWidth() - 6
+    local room = w - 12 - 8 - r.edit:GetWidth() - 6 - HM.HIDE_W - 4
     if tagged then room = room - math.ceil(HM.Width(r.tag)) - 8 end
     return room
 end
@@ -815,8 +844,9 @@ end
 function HM.PressUpdateAll()
     if HM.Armed() then
         HM.armAt = nil
-        HM.UpdateAll()
-        if Options.RefreshAll then Options.RefreshAll() end
+        -- every pack's update, sliced under the veil
+        Options.RunImport(NS.AT.Tr("Updating"), HM.UpdateAll,
+            function() if Options.RefreshAll then Options.RefreshAll() end end)
         return
     end
     local at = GetTime()
@@ -1034,8 +1064,14 @@ function HM.LayMain(row, st, w)
     row.headL:SetWidth(w)
     HM.PaintHead(row.headL)
     local shut = HM.Shut(row.headL._key)
-    local loaded, others = c.loaded, c.others
-    if shut then loaded, others = {}, {} end
+    -- the ones the player took off this page stay out (HM.Hidden)
+    local loaded, others, nHidden = {}, {}, 0
+    for _, pair in ipairs({ { c.loaded, loaded }, { c.others, others } }) do
+        for _, lay in ipairs(pair[1]) do
+            if HM.Hidden(lay) then nHidden = nHidden + 1 else pair[2][#pair[2] + 1] = lay end
+        end
+    end
+    if shut then loaded, others, nHidden = {}, {}, 0 end
     local y = HM.HEAD_H + (shut and 0 or 8)
     for i, lay in ipairs(loaded) do
         local card = HM.cards[i]
@@ -1081,6 +1117,16 @@ function HM.LayMain(row, st, w)
         y = y + math.ceil(#others / cols) * (HM.ROW_H + HM.ROW_GAP)
     end
     for i = #others + 1, #HM.others do HM.others[i]:Hide() end
+    row.hidLine:SetShown(nHidden > 0)
+    if nHidden > 0 then
+        if #loaded + #others > 0 then y = y + 6 end
+        row.hidLine.fs:SetText(nHidden == 1 and Tr("1 layout hidden here. Show it")
+            or Tr("%d layouts hidden here. Show them"):format(nHidden))
+        row.hidLine:SetWidth(math.ceil(HM.Width(row.hidLine.fs)) + 4)
+        row.hidLine:ClearAllPoints()
+        row.hidLine:SetPoint("TOPLEFT", M, "TOPLEFT", 2, -y)
+        y = y + 22
+    end
     local none = c.total == 0 and not shut
     row.none:SetShown(none)
     if none then
@@ -1179,6 +1225,17 @@ function HM.MainRow(pg)
     row.cap:SetText(Upper(Tr("Also in your collection")))
     row.none = HM.Text(row.M, 12, COL.dim)
     row.none:SetText(Tr("No layouts yet. Start one with + New Layout."))
+    -- the layouts taken off this page, and the way back: one quiet line
+    row.hidLine = CreateFrame("Button", nil, row.M)
+    row.hidLine:SetHeight(18)
+    row.hidLine.fs = HM.Text(row.hidLine, 11, COL.dim)
+    row.hidLine.fs:SetPoint("LEFT", 0, 0)
+    row.hidLine:SetScript("OnClick", function()
+        Store.UI().homeHidden = nil
+        HM.Refresh()
+    end)
+    row.hidLine:SetScript("OnEnter", function(s) HM.Color(s.fs, COL.arc) end)
+    row.hidLine:SetScript("OnLeave", function(s) HM.Color(s.fs, COL.dim) end)
     local NL = NS.NewLayout
     row.spot = HM.MakeSpot(row.M, (NL and NL.SPOTLIGHT) or {})
     -- the heading pages through the waiting updates
@@ -1339,8 +1396,10 @@ function HM.PickPack(t)
             return
         end
     end
-    local rec = t.make and t.make()
-    if rec then Options.OpenLayout(rec) end
+    if not t.make then return end
+    -- a pack's layout comes in sliced under the veil, never in one frame
+    Options.RunImport(NS.AT.Tr("Importing \"%s\""):format(NS.AT.Tr(t.title or "")), t.make,
+        function(rec) if rec then Options.OpenLayout(rec) end end)
 end
 
 -- One card per maker: every pack one maker made, opened on your class (else

@@ -1039,13 +1039,14 @@ function Driver.LiveItem(rec)
     return Driver.liveItems[rec.id] or tonumber(d.itemID)
 end
 
--- An item you carry but can't use yet, on an icon set to mark it: the game's
--- own answer (IsUsableItem has no secret return; a secret one keeps the last).
--- Out of stock wins, so an empty bag never reads as can't use.
+-- An item you carry but can't use now (a Healthstone used this fight, the
+-- wrong zone, a missing requirement): the game's own answer, its Can't use it
+-- state, as Blizzard's buttons tint it (IsUsableItem has no secret return; a
+-- secret one keeps the last). Out of stock wins, so an empty bag never reads
+-- as can't use.
 function Driver.ItemUsabilityCode(a)
     local rec, f = a.rec, a.frame
-    if rec.kind ~= "item" or f._adItemEmpty or Store.Resolve(rec, "states", "itemUsability") ~= true
-        or not (C_Item and C_Item.IsUsableItem) then
+    if rec.kind ~= "item" or f._adItemEmpty or not (C_Item and C_Item.IsUsableItem) then
         return nil
     end
     local iid = Driver.LiveItem(rec)
@@ -1148,6 +1149,10 @@ local function FeedItem(a)
     -- widget and OnCooldownDone re-feeds at expiry. No arithmetic on a secret.
     if issecretvalue and (issecretvalue(start) or issecretvalue(duration)
         or issecretvalue(enable)) then
+        if a.held then
+            a.held = nil
+            if a.frame.cooldown.Resume then a.frame.cooldown:Resume() end
+        end
         if C_DurationUtil and C_DurationUtil.CreateDuration then
             local durObj = a.durObj
             if not durObj then
@@ -1168,6 +1173,21 @@ local function FeedItem(a)
     end
     start = tonumber(start) or 0
     duration = tonumber(duration) or 0
+    -- A potion or healthstone used in combat: the game holds its cooldown
+    -- until combat ends and reports it not enabled. Not ready: its timer
+    -- shows held full, and runs from combat's end (PLAYER_REGEN_ENABLED).
+    local cd = a.frame.cooldown
+    if (enable == 0 or enable == false) and duration > 1.5 then
+        cd:SetCooldown(GetTime(), duration)
+        if cd.Pause then cd:Pause() end
+        a.held = true
+        FinishItemState(a, true)
+        return
+    end
+    if a.held then
+        a.held = nil
+        if cd.Resume then cd:Resume() end
+    end
     -- >1.5s filters the item-GCD blip, the standard item-cooldown rule
     local onCd = (enable == 1 or enable == true) and duration > 1.5
         and (start + duration - GetTime()) > 0
@@ -1189,12 +1209,40 @@ local function FeedItem(a)
     FinishItemState(a, onCd)
 end
 
--- The items set to mark when they can't be used, on the usability pass and
--- the edges that move it (combat, the zone, a boss fight); a repaint only on a change.
+-- Every item icon's Can't use it state, on the usability pass and the edges
+-- that move it (combat, the zone, a boss fight, the item's own use); a repaint
+-- only on a change.
 local function FeedItemUsability()
     for _, a in pairs(attachedItems) do
         if a.rec.kind == "item" then Factory.SetUsability(a.frame, a.rec, Driver.ItemUsabilityCode(a)) end
     end
+end
+
+-- The game's answer lags its event a little (a Healthstone's once-per-combat
+-- lock reads usable on the cast itself): read now and once more just after.
+Driver.ITEM_USAB_LAG = 0.15
+local itemUsabLater = false
+local function FeedItemUsabilitySoon()
+    FeedItemUsability()
+    if itemUsabLater or next(attachedItems) == nil then return end
+    itemUsabLater = true
+    C_Timer.After(Driver.ITEM_USAB_LAG, function()
+        itemUsabLater = false
+        FeedItemUsability()
+    end)
+end
+
+-- the cast is an item icon's use spell
+function Driver.IsItemUseSpell(spellID)
+    if not (spellID and C_Item and C_Item.GetItemSpell) then return false end
+    for _, a in pairs(attachedItems) do
+        local iid = a.rec.kind == "item" and Driver.LiveItem(a.rec)
+        if iid then
+            local _, sid = C_Item.GetItemSpell(iid)
+            if sid == spellID then return true end
+        end
+    end
+    return false
 end
 
 -- Usability and range (spells)
@@ -1380,6 +1428,8 @@ local function EnsureEvents()
     Events.On("UNIT_SPELLCAST_SUCCEEDED", "adcd", function(_, unit, _, spellID)
         if unit ~= "player" then return end
         Driver.NoteCast(spellID)
+        -- an item used: its Can't use it state may follow (a Healthstone)
+        if Driver.IsItemUseSpell(spellID) then Events.Coalesce("adcd_itemusab", FeedItemUsabilitySoon) end
         for _, a in pairs(attached) do
             -- an icon with several spells turns to the one just cast (and feeds)
             local turned = a.rec.driver and Store.HasSpellAlts(a.rec.driver) and Driver.TurnTo(a, spellID)
@@ -1397,6 +1447,11 @@ local function EnsureEvents()
         end
     end)
     Events.On("BAG_UPDATE_COOLDOWN", "adcd", function()
+        Events.Coalesce("adcd_feeditems", FeedAllItems)
+        Events.Coalesce("adcd_itemusab", FeedItemUsabilitySoon)
+    end)
+    -- a cooldown held through combat starts as it ends
+    Events.On("PLAYER_REGEN_ENABLED", "adcd_held", function()
         Events.Coalesce("adcd_feeditems", FeedAllItems)
     end)
     Events.On("BAG_UPDATE_DELAYED", "adcd", function()
@@ -1449,7 +1504,7 @@ local function EnsureEvents()
     -- (combat's start and the rest ride the usability pass)
     for _, e in ipairs(Driver.ITEM_USAB_EVENTS) do
         if EventValid(e) then
-            Events.On(e, "adcd_itemusab", function() Events.Coalesce("adcd_itemusab", FeedItemUsability) end)
+            Events.On(e, "adcd_itemusab", function() Events.Coalesce("adcd_itemusab", FeedItemUsabilitySoon) end)
         end
     end
     Events.On("PLAYER_ENTERING_WORLD", "adcd", function()
@@ -1537,6 +1592,7 @@ local function MaybeReleaseEvents()
     Events.Off("SPELL_UPDATE_CHARGES", "adcd")
     Events.Off("UNIT_SPELLCAST_SUCCEEDED", "adcd")
     Events.Off("BAG_UPDATE_COOLDOWN", "adcd")
+    Events.Off("PLAYER_REGEN_ENABLED", "adcd_held")
     Events.Off("BAG_UPDATE_DELAYED", "adcd")
     Events.Off("UNIT_INVENTORY_CHANGED", "adcd_ammo")
     Events.Off("SPELL_UPDATE_USABLE", "adcd")

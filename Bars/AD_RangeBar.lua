@@ -626,6 +626,11 @@ function RB.LayCells(e)
             c.fs:Hide()
         end
     end
+    -- the band labels are the name text: its strata (the preview keeps the bar's)
+    local TA = NS.TextAnchor
+    if TA and TA.HostStrata then
+        TA.HostStrata(C.text, (not e.isPreview) and R(rec, "text", "nameStrata") or nil, shell.overlay)
+    end
 end
 
 -- The shown bands' cells in their colours: the lit one full, the rest dimmed.

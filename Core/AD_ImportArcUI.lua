@@ -2544,6 +2544,18 @@ function IA.MapBarLook(B, cfg, map, ctx)
         and o.fill and o.fill.color then
         Put(o, "resource", "pointColor", Copy(o.fill.color))
     end
+    -- v1 keeps a bar's length in width and its thickness in height and draws a vertical
+    -- bar turned (SetSize(height, width) in every bar kind); ours are the frame's own width
+    -- and height, so a vertical bar comes in standing. Its icon side and gradient are on the
+    -- screen in both. Point rows and charge boxes size their cells themselves.
+    if type(d.barOrientation) == "string" and d.barOrientation:lower() == "vertical" then
+        local cells = (kind == "resource" and o.resource and o.resource.style == "pips")
+            or (kind == "cooldown" and isStack)
+        local sz = o.size
+        if not cells and sz and tonumber(sz.width) and tonumber(sz.height) then
+            sz.width, sz.height = sz.height, sz.width
+        end
+    end
     local bh = type(cfg.behavior) == "table" and cfg.behavior or {}
     local vis = bh.hideWhen
     if bh.hideOutOfCombat == true then

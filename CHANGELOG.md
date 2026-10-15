@@ -1,5 +1,27 @@
 # Arc Auras
 
+## 3.0.4
+
+Text strata, smoother imports, and fixes from player reports.
+
+### New Features
+
+- **Text strata** - Every text on icons and bars has its own strata setting, so a duration, charge count or custom text can draw over or under other frames.
+- **Home** - Hide a layout from Home with its x; a line under My Layouts brings them back.
+
+### Improvements
+
+- **Big imports** - Importing a big layout shows a loading screen and no longer freezes the game.
+- **Pasting import strings** - Pasting a big import string no longer freezes the game.
+- **Item icons** - An item you can't use right now, like a Healthstone already used this fight, takes the Can't use it look, as the game's own buttons do.
+- **Shorter tooltips** - Every tooltip in the options says what it does in a line or two.
+
+### Bug Fixes
+
+- **Potions and Healthstones** - One used in combat shows its cooldown right away instead of looking ready until the fight ends.
+- **Aura icon glow strata** - An aura icon's glow set to its own strata now draws there, in Dynamic groups too, so it can show above icons that cover its own.
+- **Imported names** - Icons named after their spell show in your language, and names your game cannot draw get a readable name instead of boxes.
+
 ## 3.0.3
 
 Arc Auras in your language, all the way through.

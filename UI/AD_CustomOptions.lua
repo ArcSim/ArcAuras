@@ -1018,7 +1018,7 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
             end,
             function(v) Set("ignoreCooldown", v or nil) end,
             Is("when", "usable_on", "usable_off"),
-            "On: the spell's own requirement decides (a dodge, a proc, enough mana), even while it is still cooling down. Off: only when it can be cast now, usable and off cooldown.")
+            "On: the spell's own requirement decides (a proc, enough mana), even on cooldown. Off: only when it can be cast now.")
         if Options.BuildYield then Options.BuildYield() end
         AT.RowDropdown(pg, owner, "Totem slot",
             function()

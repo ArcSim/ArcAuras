@@ -146,6 +146,8 @@ local screenEditing = false   -- the on-screen layout mode draws its own names a
 -- one whose eye hid it (Store.EditHidden) is not drawn while the panel is
 -- open. Every load check that decides what the engine draws goes through here.
 local function ShowsRec(rec)
+    -- an import still bringing it in draws it a group at a time (Engine.HoldBack)
+    if Engine.Held(rec) then return false end
     if Store.IsLoaded(rec) then
         return not (editMode and Store.EditHidden(rec))
     end
@@ -257,6 +259,7 @@ if NS.Anchor and NS.Anchor.SetFreePlacer then
         if not (c and rec.pos) then return end
         f:SetFrameStrata(ElementStrata(rec))
         f:SetFrameLevel(Store.Resolve(rec, "frame", "level") or 10)
+        if NS.TextAnchor then NS.TextAnchor.Restrata(f) end
         SnapPlacement(f, c, rec.pos.x or 0, rec.pos.y or 0)
     end)
 end
@@ -326,6 +329,8 @@ local function IconLayer(f, rec, parent)
         f:SetFrameStrata(parent:GetFrameStrata())
     end
     f:SetFrameLevel(parent:GetFrameLevel() + 2 + (Rp("frameLevel") or 0))
+    -- a Dynamic reflow comes here with no restyle: texts with their own strata
+    if NS.TextAnchor then NS.TextAnchor.Restrata(f) end
 end
 
 -- A free icon: a root, placed by its centre and snapped by measuring.
@@ -1521,7 +1526,10 @@ local function WireIconDrag(f)
         if NS.Pins then NS.Pins.DragStop() end
         self:SetScript("OnUpdate", nil)
         HideDropIndicators()
-        if self._adOldStrata then self:SetFrameStrata(self._adOldStrata) end
+        if self._adOldStrata then
+            self:SetFrameStrata(self._adOldStrata)
+            if NS.TextAnchor then NS.TextAnchor.Restrata(self) end
+        end
         local st = dragState
         dragState = nil
         if st and st.lastGF and st.lastGF._adChrome then
@@ -2386,6 +2394,44 @@ end
 
 function Engine.QueueRebuild()
     Events.Coalesce("ad_rebuild", Engine.Rebuild)
+end
+
+-- Records an import is still bringing in (Options.RunImport): not drawn until
+-- it lets them go, a group a frame, so a big layout never builds all its icons
+-- in one frame. Runtime only. Whatever happens to the import, a held record
+-- shows on its own HOLD_MAX seconds later, never in the middle of a fight.
+Engine.held = {}
+Engine.HOLD_MAX = 30
+function Engine.Held(rec)
+    local t = rec and Engine.held[rec.id]
+    if not t then return false end
+    if GetTime() >= t and not InCombatLockdown() then
+        Engine.held[rec.id] = nil
+        return false
+    end
+    return true
+end
+function Engine.HoldBack(recs)
+    local t = GetTime() + Engine.HOLD_MAX
+    for _, r in ipairs(recs) do Engine.held[r.id] = t end
+    C_Timer.After(Engine.HOLD_MAX + 0.5, Engine.CheckHeld)
+end
+-- recs = nil lets every held record go
+function Engine.LetGo(recs)
+    if not recs then
+        for id in pairs(Engine.held) do Engine.held[id] = nil end
+        return
+    end
+    for _, r in ipairs(recs) do Engine.held[r.id] = nil end
+end
+-- the safety net: past their time, out of combat, held records are drawn
+function Engine.CheckHeld()
+    if next(Engine.held) == nil then return end
+    if InCombatLockdown() then
+        C_Timer.After(5, Engine.CheckHeld)
+        return
+    end
+    Engine.QueueRebuild()
 end
 
 -- A new resolution or UI scale moves the physical pixel grid: every size and

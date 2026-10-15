@@ -13,6 +13,36 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.0.4",
+        intro = "Text strata, smoother imports, and fixes from player reports.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Text strata",
+                    desc = "Every text on icons and bars has its own strata setting, so a duration, charge count or custom text can draw over or under other frames." },
+                { title = "Home",
+                    desc = "Hide a layout from Home with its x; a line under My Layouts brings them back." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Big imports",
+                    desc = "Importing a big layout shows a loading screen and no longer freezes the game." },
+                { title = "Pasting import strings",
+                    desc = "Pasting a big import string no longer freezes the game." },
+                { title = "Item icons",
+                    desc = "An item you can't use right now, like a Healthstone already used this fight, takes the Can't use it look, as the game's own buttons do." },
+                { title = "Shorter tooltips",
+                    desc = "Every tooltip in the options says what it does in a line or two." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Potions and Healthstones",
+                    desc = "One used in combat shows its cooldown right away instead of looking ready until the fight ends." },
+                { title = "Aura icon glow strata",
+                    desc = "An aura icon's glow set to its own strata now draws there, in Dynamic groups too, so it can show above icons that cover its own." },
+                { title = "Imported names",
+                    desc = "Icons named after their spell show in your language, and names your game cannot draw get a readable name instead of boxes." },
+            } },
+        },
+    },
+    {
         version = "3.0.3",
         intro = "Arc Auras in your language, all the way through.",
         sections = {
@@ -1058,6 +1088,38 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.0.4",
+        intro = "Text strata, smoother imports, and fixes from player reports.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Text strata",
+                    desc = "Every text on icons and bars has its own strata setting, so a duration, charge count or custom text can draw over or under other frames." },
+                { title = "Home",
+                    desc = "Hide a layout from Home with its x; a line under My Layouts brings them back." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Big imports",
+                    desc = "Importing a big layout shows a loading screen and no longer freezes the game." },
+                { title = "Pasting import strings",
+                    desc = "Pasting a big import string no longer freezes the game." },
+                { title = "Item icons",
+                    desc = "An item you can't use right now, like a Healthstone already used this fight, takes the Can't use it look, as the game's own buttons do." },
+                { title = "Shorter tooltips",
+                    desc = "Every tooltip in the options says what it does in a line or two." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Potions and Healthstones",
+                    desc = "One used in combat shows its cooldown right away instead of looking ready until the fight ends." },
+                { title = "Aura icon glow strata",
+                    desc = "An aura icon's glow set to its own strata now draws there, in Dynamic groups too, so it can show above icons that cover its own." },
+                { title = "Imported names",
+                    desc = "Icons named after their spell show in your language, and names your game cannot draw get a readable name instead of boxes." },
+                { title = "Arc UI import",
+                    desc = "Vertical bars come in standing up, as Arc UI drew them." },
+            } },
+        },
+    },
     {
         version = "3.0.3",
         intro = "Arc Auras in your language, all the way through.",

@@ -443,7 +443,7 @@ function Options.SpecialIconRows(pg, ctx, trackVis, owner)
             if r and S then S.SetDriver(r, "forceCDM", v or nil) end
             AT.LayoutPage(pg)
         end,
-        dwVis, "Off: a Nature wolf's arrival credits the proc (Rolling Thunder or Feral Spirit). On: the Cooldown Manager's Doom Winds icon does, which needs the icon shown there.")
+        dwVis, "Off: a Nature wolf's arrival counts as the proc. On: the Cooldown Manager's Doom Winds icon does, so keep it shown there.")
     Stamp(cdm, "forceCDM", "Use the Cooldown Manager instead of the wolf")
     local reverify = AT.RowButton(pg, "Find the icon again", function()
         local def, S, r = Def(), SI(), Rec()
@@ -541,9 +541,9 @@ SO.SHOWS = {
 SO.STACK_LABELS = { stackText = "%s", stackFont = "%s font", stackSize = "%s size", stackColor = "%s color",
     stackOutline = "%s outline", stackShadow = "%s shadow", stackShadowColor = "%s shadow color",
     stackShadowX = "%s shadow X", stackShadowY = "%s shadow Y", stackAnchor = "%s anchor", stackX = "%s X",
-    stackY = "%s Y" }
+    stackY = "%s Y", stackStrata = "%s strata" }
 SO.LABEL_LABELS = { labelFont = "%s font", labelSize = "%s size", labelColor = "%s color",
-    labelAnchor = "%s anchor", labelX = "%s X", labelY = "%s Y", labelShowReady = "Show %s" }
+    labelAnchor = "%s anchor", labelX = "%s X", labelY = "%s Y", labelStrata = "%s strata", labelShowReady = "Show %s" }
 SO.TOKENS = "{left} {drawn} {size}: the deck. {procs} {procsLeft} {max}: its procs. {chance}: the chance. "
     .. "{viol}: violations. {count}: a counter."
 
@@ -619,7 +619,7 @@ function Options.SpecialTextTabs(api)
         return t ~= nil and t ~= ""
     end
     local STACK_LOOK = { "stackFont", "stackSize", "stackColor", "stackOutline", "stackShadow",
-        "stackShadowColor", "stackShadowX", "stackShadowY", "stackAnchor", "stackX", "stackY" }
+        "stackShadowColor", "stackShadowX", "stackShadowY", "stackAnchor", "stackX", "stackY", "stackStrata" }
     -- each row's label is one whole English line per pattern, drawn through
     -- the translation as it is
     local function StackWords(word)
@@ -629,7 +629,7 @@ function Options.SpecialTextTabs(api)
     end
     local function LabelLook(suf)
         return { "labelFont" .. suf, "labelSize" .. suf, "labelColor" .. suf, "labelAnchor" .. suf,
-            "labelX" .. suf, "labelY" .. suf, "labelShowReady" .. suf }
+            "labelX" .. suf, "labelY" .. suf, "labelStrata" .. suf, "labelShowReady" .. suf }
     end
     local function LabelWords(suf, word)
         local out = {}
@@ -779,7 +779,7 @@ function Options.SpecialBarBlocks(sub, BarBlock, PushBar, pg, ctx, owner)
         local posVis = BarBlock("Deck position", "deck", "Text", {
             "posShow", "posTemplate", "posFont", "posSize", "posColorMode", "posColor",
             "posEmptyColor", "posHalfColor", "posFullColor", "posAnchor",
-            "posOffsetX", "posOffsetY", "posOutline", "posShadow",
+            "posOffsetX", "posOffsetY", "posStrata", "posOutline", "posShadow",
         }, nil, nil, true)
         AT.RowDesc(pg, note, 20, posVis)
         -- each text may ride another frame (Options.TextPinRows)
@@ -795,7 +795,7 @@ function Options.SpecialBarBlocks(sub, BarBlock, PushBar, pg, ctx, owner)
         local procVis = BarBlock("Proc count", "deck", "Text", {
             "procShow", "procTemplate", "procFont", "procSize", "procColorMode", "procColor",
             "procEmptyColor", "procHalfColor", "procFullColor", "procAnchor",
-            "procOffsetX", "procOffsetY", "procOutline", "procShadow",
+            "procOffsetX", "procOffsetY", "procStrata", "procOutline", "procShadow",
         }, nil, nil, true)
         AT.RowDesc(pg, note, 20, procVis)
         Pins(procVis, "proc", "procShow", "Proc count")

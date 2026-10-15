@@ -1305,7 +1305,7 @@ function Options.LayoutStatusRow(pg, ctx, section, visibleFn, fieldsFn)
         end
         if changed then AT.LayoutPage(pg) end
     end)
-    AT.Tooltip(btn, "Reset to layout", "Drops this item's own values for the settings here that its layout sets, so they follow the layout again. Settings the layout leaves alone keep this item's values.")
+    AT.Tooltip(btn, "Reset to layout", "Clears this item's own values for settings its layout sets, so they follow the layout again. Other settings keep their values.")
     row._adPush = true
     return row
 end
@@ -1377,7 +1377,7 @@ local function PushBar(pg, ctx, section, visibleFn, fields)
         end
         flash(copy, AT.Tr("Copied: %s"):format(tostring(n)))
     end)
-    AT.Tooltip(dd, "Copy to", "Where the rows of this sub-panel go: everything of this type, one layout, one group, one other thing, or every icon of this kind. Nothing happens until you press Copy.")
+    AT.Tooltip(dd, "Copy to", "Where this sub-panel's rows go: all of this type, one layout, one group, one item, or all icons of this kind. Press Copy to apply.")
     AT.Tooltip(copy, "Copy", "Copies the rows of this sub-panel onto the chosen target. Copy semantics - no live link; the target keeps its own values from then on.")
     local row2 = AT.AddRow(pg, 24, vis)
     row2._adPush = true
@@ -1429,7 +1429,7 @@ local function PushBar(pg, ctx, section, visibleFn, fields)
         Ask(rec)
     end)
     AT.Tooltip(b2, "Save as Default", "Makes these rows, as they are now, the default for this kind. It asks whether the items you have change too.")
-    AT.Tooltip(b3, "Reset", "Puts the rows of this sub-panel back: to the layout's values where its layout sets them, to the defaults for this thing everywhere else (a saved default still counts).")
+    AT.Tooltip(b3, "Reset", "Resets this sub-panel's rows to the layout's values where it sets them, otherwise to the defaults (a saved default counts).")
     AT.Tooltip(b4, "Forget default", "Drops your saved default for these rows, so they read Arc's again. It asks whether the items you have change too.")
     return row
 end
@@ -3612,12 +3612,12 @@ local function ConditionRows(pg, ctx, tabVisible)
             -- the game plays an aura icon's sounds itself, so unloading cannot stop them
             if r and r.kind == "aura" then
                 return every
-                    and "Loads only while EVERY checked condition is true. Unloaded, it is hidden with no mouse and back the moment that changes, in combat too; the game still plays its aura sounds."
-                    or "Loads only while at least one checked condition is true. Unloaded, it is hidden with no mouse and back the moment that changes, in combat too; the game still plays its aura sounds."
+                    and "Loads only while EVERY checked condition is true. Unloaded, it is hidden and returns when that changes. Aura sounds still play."
+                    or "Loads only while at least one checked condition is true. Unloaded, it is hidden and returns when that changes. Aura sounds still play."
             end
             return every
-                and "Loads only while EVERY checked condition is true. Unloaded, it is gone completely - no mouse, no sounds, no spot in a dynamic group - and it is back the moment that changes, in combat too."
-                or "Loads only while at least one checked condition is true. Unloaded, it is gone completely - no mouse, no sounds, no spot in a dynamic group - and it is back the moment that changes, in combat too."
+                and "Loads only while EVERY checked condition is true. Unloaded, it is fully gone, and returns when that changes, in combat too."
+                or "Loads only while at least one checked condition is true. Unloaded, it is fully gone, and returns when that changes, in combat too."
         end)
         CondMatchRow(pg, ctx, whenVis, "loadWhen")
         CondGrid(pg, ctx, whenVis, "loadWhen")
@@ -3872,7 +3872,7 @@ local function VisibilityRows(pg, ctx, tabVisible)
             C.SetRangeSpell(r, (DR and DR.ParseSpell(v)) or tonumber(v))
             RefreshAll()
         end,
-        tabVisible, "The spell whose range to your target decides the rule: a spell ID, or the name of a spell you know. Any rank works: the rank you know is checked.",
+        tabVisible, "The spell whose range to your target decides the rule: an ID or a known spell's name. Any rank works.",
         "e.g. 75")
     Options.BuildYield()
     AT.Section(pg, "Fade Settings",
@@ -4644,7 +4644,7 @@ function Options.MakeEye(parent)
             return AT.Tr("Not loaded on this character. It loads on: %s. The sidebar View keeps it off screen; Everything shows it.")
                 :format(why)
         end
-        return AT.Tr("Not loaded on this character. It loads on: %s. Click to draw it on screen while this window is open. Its load conditions stay as they are.")
+        return AT.Tr("Not loaded on this character. It loads on: %s. Click to show it while this window is open. Conditions stay as they are.")
             :format(why)
     end)
     b:Hide()
@@ -4820,12 +4820,16 @@ function Options.RailHover(row)
     Options.RailChain(row)
 end
 
--- The rail's not-loaded tooltip, one whole sentence per record type.
+-- The rail's not-loaded tooltip, one whole sentence per record type (keys:
+-- NS.L["This group doesn't load on this character (%s). Click its eye to show it while you edit."]
+-- NS.L["This icon doesn't load on this character (%s). Click its eye to show it while you edit."]
+-- NS.L["This bar doesn't load on this character (%s). Click its eye to show it while you edit."]
+-- NS.L["This layout doesn't load on this character (%s). Click its eye to show it while you edit."])
 Options.NOT_LOADED_TIPS = {
-    group = "This group fails its load conditions on this character (%s). It exists and can be edited; it just does not show here. Click its eye to draw it on screen while you edit.",
-    icon = "This icon fails its load conditions on this character (%s). It exists and can be edited; it just does not show here. Click its eye to draw it on screen while you edit.",
-    bar = "This bar fails its load conditions on this character (%s). It exists and can be edited; it just does not show here. Click its eye to draw it on screen while you edit.",
-    layout = "This layout fails its load conditions on this character (%s). It exists and can be edited; it just does not show here. Click its eye to draw it on screen while you edit.",
+    group = "This group doesn't load on this character (%s). Click its eye to show it while you edit.",
+    icon = "This icon doesn't load on this character (%s). Click its eye to show it while you edit.",
+    bar = "This bar doesn't load on this character (%s). Click its eye to show it while you edit.",
+    layout = "This layout doesn't load on this character (%s). Click its eye to show it while you edit.",
 }
 local function RailRow(i)
     local row = railRows[i]
@@ -4885,7 +4889,7 @@ local function RailRow(i)
         local why = AT.Tr((Store.BadgeText(rec)))
         local whole = Options.NOT_LOADED_TIPS[rec.type]
         if whole then return AT.Tr(whole):format(why) end
-        return AT.Tr("This %s fails its load conditions on this character (%s). It exists and can be edited; it just does not show here. Click its eye to draw it on screen while you edit.")
+        return AT.Tr("This %s fails its load conditions on this character (%s). You can still edit it. Click its eye to show it on screen.")
             :format(tostring(rec.type), why)
     end)
     -- +, the eye and the lock show while the row is under the mouse; leaving
@@ -7137,7 +7141,7 @@ local function BuildLayoutPane()
                          or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON, "Master")
         RefreshLayoutPane()
     end)
-    AT.Tooltip(bar, "Contents", "Click to fold the element list away so the layout's own settings get the whole page, or to bring it back. Drag the grip under the list to set how tall it is.")
+    AT.Tooltip(bar, "Contents", "Click to fold the element list and give the layout settings the whole page. Drag the grip under the list to resize it.")
     layoutPane.foldChevron, layoutPane.contentsLabel, layoutPane.foldRule = chev, title, rule
     -- Tiles | Cards switch. The chips are Buttons, so a click never reaches the
     -- bar's fold; built right to left so Tiles, the default, reads first.
@@ -7876,7 +7880,7 @@ local PREV_MODES = {
       tip = "The Timer running look, its timer frozen with its swipe and duration text. Drag any text on the icon to place it." },
     -- Offered only on a spell icon with "Aura on this icon" on.
     { key = "ovup",  set = "ov", text = "Aura up",       w = 72,
-      tip = "The look while the aura on this icon is up: the aura's button over the cooldown, in the Aura Active look, with its stacks. Drag its texts to place them." },
+      tip = "The look while the aura is up: its button over the cooldown, in the Aura Active look, with stacks. Drag texts to place them." },
     { key = "tcd",    set = "tphase", text = "On cooldown", w = 96,
       tip = "The On cooldown look: the timer idle and its cooldown spell cooling down." },
     { key = "proc",  set = "cd", text = "Proc glow",     w = 86,
@@ -7884,7 +7888,7 @@ local PREV_MODES = {
     { key = "ready", set = "cd", text = "Ready glow",    w = 90,
       tip = "Holds the ready glow lit." },
     { key = "aup",   set = "aura", text = "Aura up",      w = 72,
-      tip = "The look while the aura is up: its Aura Active art, alpha, tint, border and glow, on the same kind of button the game shows. Drag any text to place it." },
+      tip = "The look while the aura is up: Aura Active art, alpha, tint, border and glow. Drag any text to place it." },
     { key = "aloop", set = "aura", text = "Aura loop",    w = 84,
       tip = "The aura comes up with a fake duration (swipe and duration text), drops to its missing look, and comes back." },
     { key = "amiss", set = "aura", text = "Aura missing", w = 100,
@@ -9056,7 +9060,7 @@ local function BuildIconEditor(parent)
             RefreshAll()
         end,
         auraVis,
-        "Every spell ID this icon lights for, separated by commas or spaces - one icon for all of them, and the game shows whichever is up. The first ID gives the icon its art and name.",
+        "Spell IDs this icon lights for, separated by commas or spaces. One icon covers all of them. The first ID sets its art and name.",
         "e.g. 2825, 32182, 80353")
     -- Forever's ranks share only a name: the icon can follow the one you know
     Options.BuildYield()
@@ -9131,7 +9135,7 @@ local function BuildIconEditor(parent)
         end,
         auraVis)
     AT.Tooltip(unitRow, "On unit",
-        "Who carries the aura. Buffs match on you, your pet, party members, players and friendly targets; debuffs on enemies. The game does not let addons match a buff on an enemy creature or a debuff on a friend by spell ID, so those stay dark (spells the game marks never-secret are the exception).")
+        "Who carries the aura: buffs on you, your pet, party and friends, debuffs on enemies. The game hides the opposite from addons.")
     Options.BuildYield()
     -- Several units: a box per unit, in the order they win (party = party 1 to 4)
     do
@@ -9238,7 +9242,7 @@ local function BuildIconEditor(parent)
         function() return Options.AURA_CASTER_ITEMS end,
         auraVis)
     AT.Tooltip(casterRow, "Cast by",
-        "Anyone: any copy of the aura lights the icon. Me: only yours (or your pet's), so another player's copy never does. Anyone but me: only copies other players put up.")
+        "Anyone: any copy lights the icon. Me: only yours or your pet's. Anyone but me: only copies from other players.")
     -- a totem from the icon's first spell shows ahead of the aura, as the
     -- Cooldown Manager's do (Drivers\AD_DriverPhase.lua)
     Options.BuildYield()
@@ -9318,7 +9322,7 @@ local function BuildIconEditor(parent)
             local r = SelIcon()
             return trackVis() and r ~= nil and r.kind == "spell" and NS.IsForever == true
         end,
-        "Ranked realms (WoW Forever): the icon resolves by NAME to the rank you currently know, so learning a new rank never needs a new spell ID. Off = it tracks the exact ID above; you can also pin a rank there.")
+        "WoW Forever: follows the rank you currently know, by name, so a new rank needs no new ID. Off: tracks the exact ID above.")
     Options.BuildYield()
     AT.RowToggle(pg, "Ignore spell overrides",
         function() local r = SelIcon() return r ~= nil and r.driver.ignoreSpellOverride == true end,
@@ -9463,7 +9467,7 @@ local function BuildIconEditor(parent)
             Options.SetEnchantIDs(r.driver, Options.ParseSpellIDs(v))
             Store.Dirty("style", r.id)
         end,
-        enchVis, "Every enchant ID this icon lights for, separated by commas or spaces. Empty: anything on the weapon. With two of them on the weapon at once, the first listed shows.",
+        enchVis, "Enchant IDs this icon lights for, separated by commas or spaces. Empty: any weapon enchant. If two are on, the first listed shows.",
         "Any enchant")
     local nowRow = AT.AddRow(pg, 22, enchVis)
     local nowFS = nowRow:CreateFontString(nil, "OVERLAY")
@@ -9566,7 +9570,7 @@ local function BuildIconEditor(parent)
         function() return Options.OVERLAY_PICKS end,
         ovSecVis)
     AT.Tooltip(ovPickRow, "Show on this icon",
-        "Over the cooldown, in the look set on Conditions: an aura while it's up, its totem while down (or both, totem first), or a set time after a cast.")
+        "Shown over the cooldown, in the Conditions look: the aura while up, its totem while out, both, or a set time after a cast.")
     Options.BuildYield()
     AT.RowInput(pg, "Totem from spell ID",
         function() return Options.OverlaySpellsText(SelIcon()) end,
@@ -9668,7 +9672,7 @@ local function BuildIconEditor(parent)
             Store.Dirty("style", r.id)
         end,
         ovVis,
-        "The aura's spell IDs, separated by commas or spaces. A buff or debuff usually has the ID of the spell that puts it up; add every rank's ID if they differ. The game shows whichever is up.",
+        "The aura's spell IDs, separated by commas or spaces. Add every rank's ID if they differ. The game shows whichever is up.",
         "e.g. 5118")
     Options.BuildYield()
     AT.RowToggle(pg, "Follow my rank",
@@ -9728,7 +9732,7 @@ local function BuildIconEditor(parent)
         end,
         ovVis)
     AT.Tooltip(ovUnitRow, "On unit",
-        "Who carries the aura: you for a buff you put up, your target for a debuff you put on it. You, then your target shows yours on you first, as the Cooldown Manager does. Buffs on enemy creatures and debuffs on friends stay dark: the game hides them from addons.")
+        "Who carries the aura: you for a buff, your target for a debuff. You, then your target: you first. Other combinations stay dark.")
     Options.BuildYield()
     local ovCasterRow = AT.RowDropdown(pg, win, "Cast by",
         function()
@@ -9747,7 +9751,7 @@ local function BuildIconEditor(parent)
         function() return Options.AURA_CASTER_ITEMS end,
         ovVis)
     AT.Tooltip(ovCasterRow, "Cast by",
-        "Me: only your own copy of the aura shows on this icon (the usual choice - another player's copy is not your cooldown). Anyone: any copy. Anyone but me: only copies other players put up.")
+        "Me: only your own copy shows on this icon, the usual choice. Anyone: any copy. Anyone but me: only copies from other players.")
 
     -- a Custom Icon's tracking rows and its Triggers tab (UI\AD_CustomOptions.lua)
     Options.BuildYield()
@@ -10066,16 +10070,11 @@ local function BuildIconEditor(parent)
         "activeTimePct", "activeTimeSec", "activeTimeLen", "activeTimeBefore" }, "By State",
         { state = true, kindOnly = "aura" })
     More(stateDef, "outOfStock", { "hideWhenMissing" }, { noLook = true })
-    -- an item's switch for its Can't use it row
-    More(stateDef, "states", { "itemUsability" }, { noLook = true })
     Options.BuildYield()
     Options.LookBlock("icon", "Conditions", "Missing", "auraMissing", { "showWhileMissing" }, "By State",
         { kindOnly = "aura" })
     Options.BuildYield()
     Options.LookBlock("icon", "Conditions", "Out of stock", "outOfStock", { "hideWhenMissing" }, "By State")
-    Options.BuildYield()
-    Options.LookBlock("icon", "Conditions", "Can't use it", "states", { "itemUsability" }, "By State",
-        { kindOnly = "item" })
     -- An effect block shows for a record when its kind has it and, with a
     -- switch, the switch's row would show; with none, a setting of it can
     -- show (the missing art waits on Show while missing).
@@ -10323,6 +10322,7 @@ local function BuildIconEditor(parent)
     local durDef = Block("Text", "Duration", "Duration text", "text", {
         "durationText", "durationRounding", "durationFont", "durationSize", "durationColor", "durationOutline",
         "durationShadow", "durationShadowColor", "durationShadowX", "durationShadowY", "durationAnchor", "durationX", "durationY",
+        "durationStrata",
     })
     Sub(durDef, "Format", "text", {
         "durationAbbrev", "durationDecimals", "durationDecimalThreshold", "durationShowBelow", "hideDurWithCharges",
@@ -10354,7 +10354,7 @@ local function BuildIconEditor(parent)
     -- icon's and a group buff's number have Text > Count, in their own words.
     local stackDef = Block("Text", "Stacks", "Stack & charges", "text", {
         "stackText", "stackFont", "stackSize", "stackColor", "stackOutline", "stackShadow",
-        "stackShadowColor", "stackShadowX", "stackShadowY", "stackAnchor", "stackX", "stackY", "hideChargeAtZero",
+        "stackShadowColor", "stackShadowX", "stackShadowY", "stackAnchor", "stackX", "stackY", "stackStrata", "hideChargeAtZero",
         "stackShowZero", "stackShowSingle",
     }, { kindOnly = { spell = true, item = true, timer = true, aura = true, enchant = true } })
     -- an aura's count is the game button's, which cannot move in combat
@@ -10382,7 +10382,7 @@ local function BuildIconEditor(parent)
     -- spell only: the ammo thresholds above also name the ammo kind
     local ammoDef = Block("Text", "Stacks", "Ammo stack text", "text", {
         "ammoText", "ammoFont", "ammoSize", "ammoColor", "ammoOutline", "ammoShadow",
-        "ammoAnchor", "ammoX", "ammoY",
+        "ammoAnchor", "ammoX", "ammoY", "ammoStrata",
     }, { kindOnly = "spell" })
     Sub(ammoDef, "Color by ammo count", "text", AMMO_COLORS, { noLook = true, vis = function()
         local r = SelIcon()
@@ -10397,11 +10397,11 @@ local function BuildIconEditor(parent)
     local function CountLabels(word)
         return { stackText = word, stackFont = word .. " font", stackSize = word .. " size",
             stackColor = word .. " color", stackOutline = word .. " outline", stackShadow = word .. " shadow",
-            stackAnchor = word .. " anchor", stackX = word .. " X", stackY = word .. " Y" }
+            stackAnchor = word .. " anchor", stackX = word .. " X", stackY = word .. " Y", stackStrata = word .. " strata" }
     end
     local ammoCountDef = Block("Text", "Count", "Ammo count", "text", {
         "stackText", "stackFont", "stackSize", "stackColor", "stackOutline", "stackShadow",
-        "stackAnchor", "stackX", "stackY",
+        "stackAnchor", "stackX", "stackY", "stackStrata",
     }, { kindOnly = "ammo", noLook = true, labels = CountLabels("Ammo count text"), searchLabels = true })
     Sub(ammoCountDef, "Color by ammo count", "text", AMMO_COLORS, { noLook = true, vis = function()
         local r = SelIcon()
@@ -10410,7 +10410,7 @@ local function BuildIconEditor(parent)
     -- the Defaults page shows Count in each kind's own words; the layout looks
     -- keep the generic Stack & charges block for these rows (defaultsOnly)
     local STACK_LOOK = { "stackText", "stackFont", "stackSize", "stackColor", "stackOutline", "stackShadow",
-        "stackAnchor", "stackX", "stackY" }
+        "stackAnchor", "stackX", "stackY", "stackStrata" }
     Options.BuildYield()
     Options.LookBlock("icon", "Text", "Ammo count", "text", STACK_LOOK, "Count",
         { kindOnly = "ammo", labels = CountLabels("Ammo count text"), defaultsOnly = true })
@@ -10422,7 +10422,7 @@ local function BuildIconEditor(parent)
     More(gbCountDef, "groupBuff", { "countShows" }, { noLook = true })
     More(gbCountDef, "text", {
         "stackFont", "stackSize", "stackColor", "stackOutline", "stackShadow",
-        "stackAnchor", "stackX", "stackY",
+        "stackAnchor", "stackX", "stackY", "stackStrata",
     }, { noLook = true, labels = CountLabels("Count text"), searchLabels = true })
     Options.BuildYield()
     Options.LookBlock("icon", "Text", "Group count", "text", STACK_LOOK, "Count",
@@ -10449,19 +10449,19 @@ local function BuildIconEditor(parent)
     end
     LabelPins(Block("Text", "Custom Text & Keybind", "Custom text 1", "label", {
         "labelText", "labelFont", "labelOutline", "labelSize", "labelColor", "labelAnchor",
-        "labelX", "labelY", "labelShowReady", "labelShowCooldown", "labelActiveOnly", "labelMissingOnly",
+        "labelX", "labelY", "labelStrata", "labelShowReady", "labelShowCooldown", "labelActiveOnly", "labelMissingOnly",
     }), "", "Custom text")
     LabelPins(Block("Text", "Custom Text & Keybind", "Custom text 2", "label", {
         "labelText2", "labelFont2", "labelSize2", "labelColor2", "labelAnchor2",
-        "labelX2", "labelY2", "labelShowReady2", "labelShowCooldown2", "labelActiveOnly2", "labelMissingOnly2",
+        "labelX2", "labelY2", "labelStrata2", "labelShowReady2", "labelShowCooldown2", "labelActiveOnly2", "labelMissingOnly2",
     }), "2", "Custom text 2")
     LabelPins(Block("Text", "Custom Text & Keybind", "Custom text 3", "label", {
         "labelText3", "labelFont3", "labelSize3", "labelColor3", "labelAnchor3",
-        "labelX3", "labelY3", "labelShowReady3", "labelShowCooldown3", "labelActiveOnly3", "labelMissingOnly3",
+        "labelX3", "labelY3", "labelStrata3", "labelShowReady3", "labelShowCooldown3", "labelActiveOnly3", "labelMissingOnly3",
     }), "3", "Custom text 3")
     local kbDef = Block("Text", "Custom Text & Keybind", "Keybind", "keybind", {
         "keybindEnabled", "keybindByName", "keybindStyle", "keybindFont", "keybindOutline", "keybindSize",
-        "keybindColor", "keybindAnchor", "keybindX", "keybindY", "keybindReplace",
+        "keybindColor", "keybindAnchor", "keybindX", "keybindY", "keybindStrata", "keybindReplace",
     })
     Options.BuildYield()
     if Options.TextPinRows then
@@ -11863,7 +11863,7 @@ local function BuildBarPane()
         end,
         CommitBarAura,
         barAuraVis,
-        "Type the aura's NAME to see its spell IDs and click one (a bar takes one ID: the rank you cast when you know the spell), or type the numeric ID and press Enter. Retargeting keeps every setting and position.")
+        "Type the aura's NAME and click one of its spell IDs, or type the numeric ID and press Enter. A bar takes one ID. Settings are kept.")
     local RefreshBarEdSug = Options.AuraSuggestPanel(pg, barAuraVis,
         function()
             local eb = rowBarAuraID._colCtrl
@@ -11930,7 +11930,7 @@ local function BuildBarPane()
             return Options.AuraUnitItems(r.driver, nil, (NS.DriverAura.ShapeOf(r.driver)))
         end,
         barAuraVis)
-    AT.Tooltip(barUnitRow, "On unit", "Who carries the aura. Buffs match on you, your pet, party members, players and friendly targets; debuffs on enemies. The game does not let addons match a buff on an enemy creature or a debuff on a friend by spell ID, so those stay dark (spells the game marks never-secret are the exception).")
+    AT.Tooltip(barUnitRow, "On unit", "Who carries the aura: buffs on you, your pet, party and friends, debuffs on enemies. The game hides the opposite from addons.")
     Options.BuildYield()
     local barCasterRow = AT.RowDropdown(pg, win, "Cast by",
         function()
@@ -11950,7 +11950,7 @@ local function BuildBarPane()
         function() return Options.AURA_CASTER_ITEMS end,
         barAuraVis)
     AT.Tooltip(barCasterRow, "Cast by",
-        "Anyone: any copy of the aura fills the bar. Me: only yours (or your pet's), so a Blessing from another Paladin is ignored. Anyone but me: only copies other players put up. New debuff bars start on Me, buff bars on Anyone.")
+        "Anyone: any copy fills the bar. Me: only yours or your pet's. Anyone but me: only copies from other players.")
     -- Stack bars need the aura's maximum stacks: the bar and its segments and
     -- stack colors count against it. Empty = the client's own maximum; a typed
     -- number overrides it, and clearing the field hands it back.
@@ -11976,7 +11976,7 @@ local function BuildBarPane()
             local r = SelBar()
             return trackVis() and r ~= nil and r.barKind == "aura" and r.barMode == "stack"
         end,
-        "The bar is full at this many stacks. Empty = the maximum the game itself reports for this aura (shown in the field); type a number only when that is wrong.",
+        "The bar is full at this many stacks. Empty: the maximum the game reports, shown in the field. Type a number only if it is wrong.",
         function()
             local r = SelBar()
             local n = r and Options.DetectMaxStacks(r.driver and r.driver.spellID)
@@ -12156,7 +12156,7 @@ local function BuildBarPane()
             Options.SetEnchantIDs(r.driver, Options.ParseSpellIDs(v))
             Store.Dirty("style", r.id)
         end,
-        enchBarVis, "Every enchant ID this bar fills for, separated by commas or spaces. Empty: anything on the weapon. With two of them on the weapon at once, the first listed shows.",
+        enchBarVis, "Enchant IDs this bar fills for, separated by commas or spaces. Empty: any weapon enchant. If two are on, the first listed shows.",
         "Any enchant")
     local ebNow = AT.AddRow(pg, 22, enchBarVis)
     local ebNowFS = ebNow:CreateFontString(nil, "OVERLAY")
@@ -12289,7 +12289,7 @@ local function BuildBarPane()
                 local p = Preset(RangeRec())
                 return rangeVis() and (p == "melee" or p == "caster")
             end,
-            "The spell whose range picks the band: a melee ability for Melee, a ranged spell for Caster. A spell ID or the name of a spell you know; the rank you know is checked. Empty: your class's usual one.",
+            "The spell whose range picks the band: a melee ability for Melee, a ranged spell for Caster. Empty: your class's usual one.",
             function()
                 local r, RBm = RangeRec(), NS.RangeBars
                 if not (r and RBm) then return "" end
@@ -12661,7 +12661,7 @@ local function BuildBarPane()
                 return orientVis() and r ~= nil and not r._adMulti
                     and Store.Resolve(r, "fill", "orientation") == "VERTICAL"
             end,
-            "A quarter turn: width and height swap so the bar is tall and thin, a side icon moves to the bar's end, and the texture and gradient turn with it. Switching the orientation back to Horizontal lays the bar down again.")
+            "A quarter turn: the bar becomes tall and thin, and its icon, texture and gradient turn with it.")
         -- The search walks one sample bar per kind, mostly flat ones: hand it
         -- this gate without the Vertical check plus that switch, so "stand" is
         -- found on any bar and the jump flashes Orientation.
@@ -12964,7 +12964,7 @@ local function BuildBarPane()
         return NotPips(r) and (pt == nil or pt < 0 or pt == 0)
     end
     BarBlock("Five-Second Rule", "regen", "Appearance", {
-        "fsrOn", "fsrShow", "fsrColor", "fsrWidth", "fsrDir", "fsrSound", "fsrText", "fsrTextPos", "fsrTextSize",
+        "fsrOn", "fsrShow", "fsrColor", "fsrWidth", "fsrDir", "fsrSound", "fsrText", "fsrTextPos", "fsrTextSize", "fsrTextStrata",
     }, Options.ManaBarWhen, CR, nil, { card = { when = "After a mana spell" } })
     BarBlock("Tick Spark", "regen", "Appearance", {
         "tickSpark", "tickSparkColor", "tickSparkWidth",
@@ -13002,7 +13002,7 @@ local function BuildBarPane()
     -- a label that rides the off-hand's moving edge while it swings
     BarSub(offVis, "Off-hand label", "fill", {
         "swingOffhandLabel", "swingOffhandLabelText", "swingOffhandLabelPos",
-        "swingOffhandLabelSize", "swingOffhandLabelColor",
+        "swingOffhandLabelSize", "swingOffhandLabelColor", "swingOffhandLabelStrata",
     })
     -- Halves that close in (its switch hides beside the off-hand track); the
     -- ticks before the swing lands sit on Ticks with the custom ticks. The
@@ -13197,7 +13197,7 @@ local function BuildBarPane()
     -- Options.blockFields - the runs share the one `text` section)
     local durVis = BarBlock("Duration", "text", "Text", {
         "durShow", "durRounding", "durSize", "durOutline", "durShadow", "durColor", "durAnchor",
-        "durOffsetX", "durOffsetY",
+        "durOffsetX", "durOffsetY", "durStrata",
     })
     -- A run may ride another frame (TextPinRows). Not an aura bar's duration
     -- or stack (the game's button draws them) nor a cooldown bar's countdown.
@@ -13225,7 +13225,7 @@ local function BuildBarPane()
     end
     local stkVis = BarBlock("Stack", "text", "Text", {
         "stkShow", "stkShowMax", "stkSize", "stkOutline", "stkShadow", "stkColor",
-        "stkAnchor", "stkOffsetX", "stkOffsetY", "stkHideAtZero",
+        "stkAnchor", "stkOffsetX", "stkOffsetY", "stkStrata", "stkHideAtZero",
     }, StackTextExists)
     BarPins(stkVis, "stk", "stkShow", "Stack text", function(r) return r.barKind ~= "aura" end)
     PushBar(pg, SelBar, "text", stkVis)
@@ -13239,7 +13239,7 @@ local function BuildBarPane()
     do
         local resTextVis = BarBlock("Resource", "text", "Text", {
             "resShow", "resFormat", "resWholeShards", "resSize", "resOutline", "resShadow", "resColor",
-            "resAnchor", "resOffsetX", "resOffsetY",
+            "resAnchor", "resOffsetX", "resOffsetY", "resStrata",
         })
         BarPins(resTextVis, "res", "resShow", "Resource text")
         BarSub(resTextVis, "Resource text 2", "text",
@@ -13254,14 +13254,14 @@ local function BuildBarPane()
         PushBar(pg, SelBar, "text", resTextVis)
         -- runes and essence: each recharging point's own countdown
         local rcVis = BarBlock("Recharge", "text", "Text", {
-            "rcShow", "rcSize", "rcOutline", "rcShadow", "rcColor", "rcAnchor", "rcOffsetX", "rcOffsetY",
+            "rcShow", "rcSize", "rcOutline", "rcShadow", "rcColor", "rcAnchor", "rcOffsetX", "rcOffsetY", "rcStrata",
         }, function(r) return Schema.Recharges(r) end)
         BarSub(rcVis, "Recharge format", "text", { "rcDecimalsEnabled", "rcDecimalThreshold" })
         AT.Section(pg, nil, { visibleFn = rcVis })   -- push bar below the sub (BarSub)
         PushBar(pg, SelBar, "text", rcVis)
         local hpTextVis = BarBlock("Health", "text", "Text", {
             "hpShow", "hpFormat", "hpSize", "hpOutline", "hpShadow", "hpColor",
-            "hpAnchor", "hpOffsetX", "hpOffsetY",
+            "hpAnchor", "hpOffsetX", "hpOffsetY", "hpStrata",
         })
         BarPins(hpTextVis, "hp", "hpShow", "Health text")
         BarSub(hpTextVis, "Health text 2", "text",
@@ -13282,7 +13282,7 @@ local function BuildBarPane()
         local nameVis = BarBlock("Name", "text", "Text", { "nameShow", "nameSource" })
         SectionRows(pg, "bar", "text", SelBar, nameVis, { "nameText" })
         local rest = { "nameSize", "nameOutline", "nameShadow", "nameColor", "nameAnchor",
-            "nameOffsetX", "nameOffsetY" }
+            "nameOffsetX", "nameOffsetY", "nameStrata" }
         SectionRows(pg, "bar", "text", SelBar, nameVis, rest)
         Options.LookBlock("bar", "Text", "Name", "text", rest, "Name")
         local list = Options.blockFields[nameVis]
@@ -13350,7 +13350,7 @@ local function BuildBarPane()
                 return inactiveVis() and r ~= nil and r.barKind == "swing" and not r._adMulti
                     and Store.Resolve(r, "behavior", "rangeDim") == true
             end,
-            "The spell whose range to your target decides the dim: a spell ID, or the name of a spell you know; the rank you know is checked. Empty: your class's usual one for this hand (a melee ability, Auto Shot or the wand's Shoot). No target, or a target the spell cannot check, never dims.",
+            "The spell whose range to your target decides the dim: an ID or a known spell's name. Empty: your class's usual one.",
             function()
                 local r = SelBar()
                 local SR = NS.Bars and NS.Bars.SwingRange
@@ -13918,7 +13918,7 @@ local function BuildAddWindow()
             if RefreshIconAuraSug then RefreshIconAuraSug(false) end
             if UpdateCreate then UpdateCreate() end
         end,
-        isIcon("aura"), "Type the aura's NAME to see the spell IDs that carry it, then click one (every rank comes along). Or type one or more numeric IDs, separated by commas or spaces. The first gives the icon its art and name.", "e.g. Serpent Sting or 13549, 13550", true)
+        isIcon("aura"), "Type the aura's NAME and click a spell ID, or type IDs separated by commas or spaces. The first sets the icon's art and name.", "e.g. Serpent Sting or 13549, 13550", true)
     RefreshIconAuraSug = AuraSuggest(isIcon("aura"),
         function() return addState.auraID end,
         function(v)
@@ -14152,7 +14152,7 @@ local function BuildAddWindow()
             if UpdateCreate then UpdateCreate() end
         end,
         barIsAura,
-        "Type the aura's NAME to see its spell IDs, then click one (a bar takes one ID: the rank you cast when you know the spell). Or type the numeric ID.", "e.g. Serpent Sting or 13549", true)
+        "Type the aura's NAME and click one of its spell IDs, or type the numeric ID. A bar takes one ID, the rank you cast.", "e.g. Serpent Sting or 13549", true)
     RefreshBarAuraSug = AuraSuggest(barIsAura,
         function() return addState.barAuraID end,
         function(v)
@@ -14213,7 +14213,7 @@ local function BuildAddWindow()
             return addState.cat == "Bar" and addState.barKind == "aura"
                 and addState.barMode == "stack"
         end,
-        "The bar is full at this many stacks. Empty = the maximum the game itself reports for this aura (shown in the field); type a number only when that is wrong.",
+        "The bar is full at this many stacks. Empty: the maximum the game reports, shown in the field. Type a number only if it is wrong.",
         function()
             local n = Options.DetectMaxStacks(addState.barAuraID)
             return n and AT.Tr("game says %s"):format(n) or "unknown - type the maximum"
@@ -14366,7 +14366,7 @@ local function BuildAddWindow()
     AT.RowInput(pg, "Spell ID",
         function() return addState.totemSpell or "" end,
         function(v) addState.totemSpell = v end,
-        totemVis, "The spell that puts it down: the icon follows that totem or guardian, any rank, into whatever slot it lands. Empty: whatever is in the slot.",
+        totemVis, "The spell that puts it down. The icon follows that totem or guardian, any rank, in any slot. Empty: whatever is in the slot.",
         "Optional", true)
     local addSlotRow = AT.RowDropdown(pg, addWin, "Totem slot",
         function() return addState.totemSlot or 1 end,
@@ -14998,7 +14998,7 @@ local function BuildSettingsPane()
             Store.ResetUnloadedShown()
             RefreshAll()
         end,
-        nil, "While this window is open, every layout, group, icon and bar whose load conditions fail on this character is drawn anyway, each with a small slashed eye in its corner, so you can place and style it. Each one's eye, in the sidebar and on the layout tiles, shows or hides it on its own, and flipping this switch sets them all again. Load conditions stay exactly as they are, and closing the window hides everything unloaded.")
+        nil, "While this window is open, items that fail their load conditions are drawn anyway, so you can place and style them.")
     Options.BuildYield()
     AT.RowToggle(pg, "Mark unloaded items",
         function() return Store.GetSetting("hideGhostMark") ~= true end,
@@ -15051,12 +15051,12 @@ local function BuildSettingsPane()
             Store.SetSetting("showLayoutArrows", v and true or false)
             if Engine and Engine.RefreshArrows then Engine.RefreshArrows() end
         end,
-        nil, "While this window is open, the group you are editing shows arrows on its bottom, left and right edges: green adds a row or a column on that side, red removes one. The icons stay where they are.")
+        nil, "While this window is open, the group you edit shows edge arrows: green adds a row or column on that side, red removes one.")
     Options.BuildYield()
     AT.RowToggle(pg, "Show group names",
         function() return Store.GetSetting("groupNames") ~= false end,   -- on by default
         function(v) Store.SetSetting("groupNames", v and true or false) end,
-        nil, "While this window is open, each group shows its name on its top edge, which is what you drag the group by. Off: a small green handle stays there instead; hover it to see the name.")
+        nil, "While this window is open, each group shows its name on its top edge, which you drag it by. Off: a small green handle, name on hover.")
     -- Which kinds keep their Edit chips: read through Factory.EditChipsOn
     -- (nil = all). The rebuild the setting's dirty queues re-places every chip.
     Options.BuildYield()
@@ -15072,7 +15072,7 @@ local function BuildSettingsPane()
             }
         end)
     AT.Tooltip(chipRow, "Edit buttons on screen",
-        "While this window is open, icons and bars carry a small Edit button that opens them here. Icons only or Bars only hides the other kind's buttons, None hides them all; the sidebar and the search still open every item. The buttons come back when you pick All.")
+        "While this window is open, icons and bars carry a small Edit button that opens them here. Pick which kind shows it, or none.")
     -- Read through Engine.GroupEditFrames (nil = border and background). The
     -- setting's style dirty rebuilds, which repaints every group's outline.
     Options.BuildYield()
@@ -15087,7 +15087,7 @@ local function BuildSettingsPane()
             }
         end)
     AT.Tooltip(gfRow, "Group frames while editing",
-        "The green outline and dark fill around each group while this window is open. Nothing shows each group as in play; its name tab still picks and drags it.")
+        "The green outline and dark fill around each group while this window is open. Nothing shows groups as in play. Name tabs still work.")
     Options.BuildYield()
     AT.Section(pg, "Icon Mouse")
     Options.BuildYield()
@@ -15106,12 +15106,12 @@ local function BuildSettingsPane()
         function() return Store.GetSetting("tooltipsEditOnly") == true end,
         function(v) Store.SetSetting("tooltipsEditOnly", v and true or nil) end,
         function() return Store.GetSetting("showTooltips") ~= false end,
-        "Icon tooltips show only while this options window is open, so you can tell your icons apart while you edit, and never while you play. Normally it is the other way round: tooltips while you play, none while this window is open.")
+        "Icon tooltips show only while this window is open, never while you play. Normally it is the other way round.")
     Options.BuildYield()
     AT.RowToggle(pg, "Click-through icons",
         function() return Store.GetSetting("clickThrough") ~= false end,
         function(v) Store.SetSetting("clickThrough", v and true or false) end,
-        nil, "Clicks pass through icons to the game world underneath. Tooltips still show while the toggle above is on. While this options window is open every icon takes the mouse regardless, for dragging.")
+        nil, "Clicks pass through icons to the game. Tooltips still show if the toggle above is on. Icons take the mouse while this window is open.")
     -- Button Press Highlight and Tooltip IDs are modules now (UI\AD_Modules.lua).
     -- Timer rounding: one choice for every countdown, read through
     -- Factory.TimerRounding (nil = up).
@@ -15128,7 +15128,7 @@ local function BuildSettingsPane()
             }
         end)
     AT.Tooltip(roundRow, "Round timer numbers",
-        "How every Arc Auras countdown shows part of a second: icons, aura bars, timer bars and swing bars. Up: 13.2 seconds reads 14, the way action bar cooldowns count, so a running timer never reads 0. Down: 13.2 seconds reads 13, the way buff timers and most nameplates count. Decimals, where you turned them on, show the tenths either way.")
+        "How countdown numbers round. Up: 13.2 reads 14, like action bar cooldowns. Down: 13.2 reads 13, like buff timers and nameplates.")
     -- The game's Cooldown Manager, switched off here as in the game's own
     -- options: Arc Auras reads its lists, which work either way.
     local cdmVis = function()
@@ -15199,7 +15199,7 @@ local function BuildSettingsPane()
             Store.SetSetting("minimapHide", v and true or false)
             if NS.MinimapButtonRefresh then NS.MinimapButtonRefresh() end
         end,
-        nil, AT.Tr("Hides the Arc Auras minimap button. %s always opens this window. Drag the button around the minimap rim to move it; right-click it to toggle move mode.")
+        nil, AT.Tr("Hides the minimap button. %s always opens this window. Drag the button along the rim to move it, right-click for move mode.")
             :format(NS.IsForever and "/arcui" or "/arcui2"))
     -- What's New (UI\AD_Changelog.lua): the auto-open switch writes the same UI
     -- flag as the window's own checkbox.
@@ -15755,7 +15755,7 @@ local function BuildIEPane()
         IE.Refresh()
     end)
     lo:SetPoint("LEFT", noneBtn, "RIGHT", 14, 0)
-    AT.Tooltip(lo, "Only what loads here", "Leaves out everything that does not load on this character, so the string holds only what you use here. What stays out is still listed, greyed, under each layout's NOT LOADED.")
+    AT.Tooltip(lo, "Only what loads here", "Leaves out what does not load on this character. Those items stay listed, grayed, under each layout's NOT LOADED.")
     IE.loadedOnly = lo
     local expBtn = IE.EdgeButton(bar, "Export selected", 130, COL.leadEdge, COL.ink)
     expBtn:SetPoint("RIGHT", -10, 0)
@@ -15844,11 +15844,17 @@ local function BuildIEPane()
         ieBox:SetWidth(math.max(60, (w or s:GetWidth() or 300) - 6))
         s:UpdateScroll()
     end)
-    ieBox:SetScript("OnTextChanged", function()
+    ieBox:SetScript("OnTextChanged", function(_, user)
+        -- typing over a caught string starts again from an empty box
+        if user and IE.pasted then
+            IE.pasted, IE.pasteReset = nil, true
+            ieBox:SetText("")
+        end
         ieScroll:UpdateScroll()
-        IE.boxHint:SetShown((ieBox:GetText() or "") == "")
+        IE.boxHint:SetShown(IE.BoxText() == "")
         IE.QueuePeek()
     end)
+    IE.CatchPaste(ieBox)
     -- clicking the empty well focuses the box (the editbox only spans its text)
     boxHost:EnableMouse(true)
     boxHost:SetScript("OnMouseUp", function() ieBox:SetFocus() end)
@@ -15861,7 +15867,7 @@ local function BuildIEPane()
     local clrBtn = AT.MakeSmallButton(paste, "Clear", 64)
     clrBtn:SetPoint("BOTTOMRIGHT", paste, "BOTTOMRIGHT", -10, 7)
     clrBtn:SetScript("OnClick", function()
-        ieBox:SetText("")
+        IE.SetBoxText("")
         IE.SetStatus("", true)
         IE.gameAck = nil
         IE.ShowUndo(nil)
@@ -15925,13 +15931,13 @@ local function BuildIEPane()
         return items
     end, IE.RemTargetId, function(v) ui.ieRemId = v end, function() IE.LayPane() end)
     IE.remTarget:SetPoint("LEFT", IE.whereRem, "RIGHT", 8, 0)
-    AT.Tooltip(IE.remTarget, "Reminders join", "A reminder exported on its own joins this Reminder group. A group keeps one reminder per spell, item or weapon hand, so one it already has stays out.")
+    AT.Tooltip(IE.remTarget, "Reminders join", "A reminder exported on its own joins this group. A group keeps one reminder per spell, item or weapon hand, so duplicates stay out.")
 Options.BuildYield()
     local eg = IE.Tick(IE.whereRows[4], "Bring groups in without their icons", IE.EmptyGroups, function(v)
         Store.UI().ieEmptyGroups = v or nil
     end)
     eg:SetPoint("LEFT", IE.WHERE_X, 0)
-    AT.Tooltip(eg, "Empty groups", "Each group in the string comes in without its icons: you get its place and look, and fill it yourself. Bars, and icons outside a group, still come in.")
+    AT.Tooltip(eg, "Empty groups", "Groups come in without their icons: you get the place and look, and fill them yourself. Bars and loose icons still come in.")
     IE.emptyGroups = eg
 Options.BuildYield()
     IE.BuildUpdInline(where)
@@ -15947,27 +15953,30 @@ Options.BuildYield()
     -- panel says it instead).
     impBtn:SetScript("OnClick", function()
         IE.ShowUndo(nil)
-        local text = ieBox and ieBox:GetText() or ""
+        local text = IE.BoxText()
         if text == "" then
             IE.SetStatus(AT.Tr("Paste a string first."), false)
             return
         end
-        local plan, err = Store.PlanUpdate(text)
-        if not plan then
-            IE.SetStatus(AT.Tr(err or "Import failed."), false)
-            return
-        end
-        if plan.relation == "new" and plan.otherGame and IE.gameAck ~= text then
-            IE.gameAck = text
-            IE.SetStatus(AT.Tr("%s Press Import again to bring it in."):format(IE.GameNote(plan)), false)
-            return
-        end
-        IE.gameAck = nil
-        if plan.relation == "new" then
-            IE.DoImport(text, false, plan)
-        else
-            IE.ShowUpdate(plan, text)
-        end
+        -- a big string's read is a long step: under the veil, never in the press
+        Options.RunImport(AT.Tr("Reading the string"), function() return Store.PlanUpdate(text) end,
+            function(plan, err)
+                if not plan then
+                    IE.SetStatus(AT.Tr(err or "Import failed."), false)
+                    return
+                end
+                if plan.relation == "new" and plan.otherGame and IE.gameAck ~= text then
+                    IE.gameAck = text
+                    IE.SetStatus(AT.Tr("%s Press Import again to bring it in."):format(IE.GameNote(plan)), false)
+                    return
+                end
+                IE.gameAck = nil
+                if plan.relation == "new" then
+                    IE.DoImport(text, false, plan)
+                else
+                    IE.ShowUpdate(plan, text)
+                end
+            end)
     end)
     IE.impBtn = impBtn
     -- a string you have an earlier copy of: its two ways in Import's place,
@@ -16113,10 +16122,27 @@ end
 -- The plain import, or (asCopy) a copy linked to no pack: every item gets a
 -- fresh ID, so a later update of the string reaches the first copy only.
 function IE.DoImport(text, asCopy, plan)
+    local tid = IE.TargetId()
+    local opts = { emptyGroups = IE.EmptyGroups(), reminderGroupId = IE.RemTargetId(), asCopy = asCopy or nil }
+    -- sliced under the veil (Options.RunImport): a big layout never stalls a frame
+    Options.RunImport(IE.ImportLabel(plan), function() return Store.Import(text, tid, opts) end,
+        function(res, err) IE.Imported(res, err, tid, plan) end)
+end
+
+-- the veil's words: the layout the string brings, by name
+function IE.ImportLabel(plan, update)
+    local recs = plan and plan.payload and plan.payload.records or {}
+    for _, r in ipairs(recs) do
+        if type(r) == "table" and r.type == "layout" and type(r.name) == "string" then
+            return (update and AT.Tr("Updating \"%s\"") or AT.Tr("Importing \"%s\"")):format(r.name)
+        end
+    end
+    return update and AT.Tr("Updating") or AT.Tr("Importing")
+end
+
+-- What came in: the status line, then the first new thing opens.
+function IE.Imported(res, err, tid, plan)
     do
-        local tid = IE.TargetId()
-        local res, err = Store.Import(text, tid,
-            { emptyGroups = IE.EmptyGroups(), reminderGroupId = IE.RemTargetId(), asCopy = asCopy or nil })
         if not res then
             IE.SetStatus(AT.Tr(err or "Import failed."), false)
             return
@@ -16645,7 +16671,7 @@ function IE.PaintWhere()
     IE.updInline:SetShown(upd)
     IE.whereBox.title:SetText(AT.Tr(upd and "YOU ALREADY HAVE THIS PACK" or "WHERE IT GOES"))
     -- the foot bar: Import, or the update's two ways
-    local empty = (ieBox and ieBox:GetText() or "") == ""
+    local empty = IE.BoxText() == ""
     IE.impBtn:SetShown(not upd)
     IE.impBtn:SetAlpha(empty and 0.45 or 1)
     IE.updBtn:SetShown(upd)
@@ -16783,14 +16809,87 @@ function IE.QueuePeek()
     end)
 end
 
+-- A multiline box lays itself out again after each character a paste brings,
+-- so a long string stalled the game as it went in. The box holds only
+-- PASTE_CAP bytes; the paste still arrives whole, a character at a time
+-- through OnChar, into a buffer, and once a frame passes with nothing new the
+-- string is kept (IE.pasted) while the box says what it caught.
+IE.PASTE_CAP = 2000
+function IE.CatchPaste(box)
+    box:SetMaxBytes(IE.PASTE_CAP)
+    local buf, n, seen = {}, 0, 0
+    local function Settle()
+        box:SetScript("OnUpdate", nil)
+        local s = table.concat(buf, "", 1, n)
+        for i = n, 1, -1 do buf[i] = nil end
+        n, seen = 0, 0
+        local reset = IE.pasteReset
+        IE.pasteReset = nil
+        local held = box:GetText() or ""
+        if #s >= IE.PASTE_CAP - 1 and #s > #held then
+            IE.SetBoxText(s)
+        elseif reset then
+            -- what was typed or pasted over a caught string
+            box:SetText(s)
+        elseif #held >= IE.PASTE_CAP - 1 then
+            -- the box filled but the characters never came through: it takes
+            -- the next paste whole (slower, but complete)
+            box:SetMaxBytes(0)
+            box:SetText("")
+            IE.SetStatus(AT.Tr("That paste came in cut short. Paste it once more."), false)
+        end
+    end
+    box:HookScript("OnChar", function(_, c)
+        n = n + 1
+        buf[n] = c
+        if n == 1 then
+            seen = 0
+            box:SetScript("OnUpdate", function()
+                if n == seen then Settle() else seen = n end
+            end)
+        end
+    end)
+end
+
+-- the string in the box: a caught paste, or what the box holds
+function IE.BoxText()
+    return IE.pasted or (ieBox and ieBox:GetText()) or ""
+end
+
+function IE.SetBoxText(text)
+    text = text or ""
+    if #text >= IE.PASTE_CAP - 1 then
+        IE.pasted = text
+        ieBox:SetText(AT.Tr("String pasted (%d characters)."):format(#text))
+    else
+        IE.pasted = nil
+        ieBox:SetText(text)
+    end
+end
+
+IE.peekN = 0
 function IE.ShowPeek()
-    local text = ieBox and ieBox:GetText() or ""
+    local text = IE.BoxText()
     if text == IE.peekText then return end
     IE.peekText = text
-    -- one read of the string: its payload for the lines, and what a plain
-    -- import would bring (an update says what it does on its own panel)
+    -- a big string reads in the window's slices, under the veil
+    if #text >= IE.PASTE_CAP - 1 then
+        IE.peekN = IE.peekN + 1
+        local plan, err
+        Options.WhenWork("peek:" .. IE.peekN, function() plan, err = Store.PlanUpdate(text) end,
+            function() IE.TakePeek(text, plan, err) end, { keep = true, label = AT.Tr("Reading the string") })
+        return
+    end
     local plan, err
     if text ~= "" then plan, err = Store.PlanUpdate(text) end
+    IE.TakePeek(text, plan, err)
+end
+
+-- one read of the string: its payload for the lines, and what a plain import
+-- would bring (an update says what it does on its own panel). A read the box
+-- moved on from is dropped.
+function IE.TakePeek(text, plan, err)
+    if text ~= IE.peekText then return end
     local payload = plan and plan.payload
     IE.peekData = payload and { info = Store.CleanPackInfo(payload.info), missing = Store.MissingMedia(payload),
         brings = (plan.relation == "new") and IE.Brings(payload) or nil, holds = IE.HoldsText(payload) } or nil
@@ -17211,11 +17310,18 @@ function IE.RunUpdate()
     for _, it in ipairs(plan.items) do
         if it.status == "changed" and IE.keep and IE.keep[it.inc.uid] then kept = kept + 1 end
     end
-    local res = Store.ApplyUpdate(plan, {
+    local opts = {
         parts = IE.UpdateParts(), add = IE.UpdFlag("ieAdd"), remove = IE.UpdFlag("ieRemove"),
         skip = IE.keep, revive = IE.revive == true, targetLayoutId = IE.TargetId(),
-    })
+    }
     if f then f:Hide() end
+    -- sliced under the veil, as a new import is
+    Options.RunImport(IE.ImportLabel(plan, true), function() return Store.ApplyUpdate(plan, opts) end,
+        function(res) IE.Updated(res, plan, kept) end)
+end
+
+-- What the update did: the status line, the undo.
+function IE.Updated(res, plan, kept)
     local parts = {}
     parts[#parts + 1] = IE.Count(res.updated, "Updated %d item", "Updated %d items")
     if res.added > 0 then parts[#parts + 1] = AT.Tr("added %d"):format(res.added) end
@@ -17502,15 +17608,16 @@ function Options.ImportOffer(text)
     Options.Select("ie")
     if not ieBox then return end
     IE.SetTab("import")
-    ieBox:SetText(text)
-    local plan, err = Store.PlanUpdate(text)
-    if not plan then
-        IE.SetStatus(AT.Tr(err or "Import failed."), false)
-    elseif plan.relation == "new" then
-        IE.SetStatus(AT.Tr("Press Import to bring it in."), true)
-    else
-        IE.ShowUpdate(plan, text)
-    end
+    IE.SetBoxText(text)
+    Options.RunImport(AT.Tr("Reading the string"), function() return Store.PlanUpdate(text) end, function(plan, err)
+        if not plan then
+            IE.SetStatus(AT.Tr(err or "Import failed."), false)
+        elseif plan.relation == "new" then
+            IE.SetStatus(AT.Tr("Press Import to bring it in."), true)
+        else
+            IE.ShowUpdate(plan, text)
+        end
+    end)
 end
 
 function Options.Select(selType, id)
@@ -18727,6 +18834,8 @@ end
 -- slices; without it the build runs straight through.
 function Options.BuildYield() end
 function Options.BuildStep() end
+-- a string's read pauses with the build (the loader's, set after this)
+Store.Pause = function() Options.BuildYield() end
 
 -- The light panes build with the window; the heavy ones (`lazy`: the layout
 -- pane, the editors, the layout's look tabs) on their first pick, each after
@@ -18797,15 +18906,17 @@ local PB = { want = {} }
 -- builds now. Otherwise the pick waits in `PB.want` while the background
 -- build (Options.Prebuild) does that pane first in full slices; the page on
 -- screen stays meanwhile, under a thin loading line.
-function Options.WhenPane(name, fn)
+-- opts.label: the veil's words while it waits; opts.keep: the wait survives the
+-- window shutting (an import must finish what it started)
+function Options.WhenPane(name, fn, opts)
     local L = Options.Loader
     if L and L.Busy() and not L.InBuild() and not L.Background() then
-        L.Then(function() Options.WhenPane(name, fn) end)
+        L.Then(function() Options.WhenPane(name, fn, opts) end)
         return
     end
     -- never a pane before its window (see Options.Select)
     if not win then
-        Options.WhenBuilt(function() if win then Options.WhenPane(name, fn) end end)
+        Options.WhenBuilt(function() if win then Options.WhenPane(name, fn, opts) end end)
         return
     end
     if paneBuilt[name] == true then
@@ -18814,8 +18925,8 @@ function Options.WhenPane(name, fn)
         Options.EnsurePane(name)
         fn()
     else
-        PB.want[#PB.want + 1] = { name = name, fn = fn }
-        Options.LoadLine(true)
+        PB.want[#PB.want + 1] = { name = name, fn = fn, keep = opts and opts.keep }
+        Options.LoadLine(true, opts and opts.label)
         Options.Prebuild(true)
     end
 end
@@ -18824,7 +18935,7 @@ end
 -- builds: in the loader's slices, pausing at Options.BuildYield, behind the
 -- Loading veil, then fn. Named like a pane; a name done before runs again.
 -- Without the loader it runs at once.
-function Options.WhenWork(name, work, fn)
+function Options.WhenWork(name, work, fn, opts)
     local p = PANE_BUILD[name]
     if not p then
         PANE_BUILD[name] = { work, lazy = true }
@@ -18832,7 +18943,100 @@ function Options.WhenWork(name, work, fn)
         p[1] = work
         paneBuilt[name] = nil
     end
-    Options.WhenPane(name, fn)
+    Options.WhenPane(name, fn, opts)
+end
+
+-- A big import drew every icon it brought in one frame (a 146-record layout:
+-- ~1,800 objects, after the string's decode) and the game stuttered.
+-- Options.RunImport brings it in as sliced work under the veil, which names
+-- it (label): work() makes the records (the decode is one step the library
+-- cannot pause), the engine holds the new ones back while their icons, the
+-- sidebar's rows and the layout page's tiles are made a few a slice, then draws
+-- them a group a frame; then done(work's two results). The wait survives the
+-- window shutting. Without the loader it runs at once.
+PB.importN = 0
+function Options.RunImport(label, work, done)
+    PB.importN = PB.importN + 1
+    local r1, r2
+    Options.WhenWork("import:" .. PB.importN, function()
+        -- a frame for the veil to show before the decode
+        Options.BuildYield(true)
+        local before = {}
+        Store.EachRecord(function(id) before[id] = true end)
+        r1, r2 = work()
+        local new = {}
+        Store.EachRecord(function(id, r) if not before[id] then new[#new + 1] = r end end)
+        if #new > 0 then PB.ImportSlices(new) end
+    end, function() done(r1, r2) end, { keep = true, label = label })
+end
+
+-- The pieces a new import is drawn in, held back until then.
+PB.LOOSE_PER_FRAME = 6
+function PB.ImportSlices(new)
+    Engine.HoldBack(new)
+    local layouts, groups, loose, byGroup, isNew = {}, {}, {}, {}, {}
+    for _, r in ipairs(new) do isNew[r.id] = true end
+    for _, r in ipairs(new) do
+        if r.type == "layout" then
+            layouts[#layouts + 1] = r
+        elseif r.type == "group" then
+            groups[#groups + 1] = r
+        elseif r.groupId and isNew[r.groupId] then
+            byGroup[r.groupId] = byGroup[r.groupId] or {}
+            table.insert(byGroup[r.groupId], r)
+        else
+            loose[#loose + 1] = r
+        end
+    end
+    -- the icons' frames and first look, a pause each: the bulk of the objects.
+    -- Only icons the grid draws (a handler's group keeps its icons undrawn).
+    for _, r in ipairs(new) do
+        local g = r.groupId and Store.Get(r.groupId)
+        if r.type == "icon" and Store.IsLoaded(r) and not (g and Engine.HandlerFor(g)) then
+            Factory.ApplyStyle(Factory.Ensure(r), r)
+            Options.BuildYield()
+        end
+    end
+    -- the sidebar's rows and the layout page's tiles a new layout opens to
+    local most = 0
+    for _, l in ipairs(layouts) do most = math.max(most, #Store.MembersOf(l)) end
+    for i = 1, PB.railShown + most + 8 do
+        if not railRows[i] then
+            RailRow(i):Hide()
+            Options.BuildYield()
+        end
+    end
+    if layoutPane then
+        for i = 1, most do
+            Options.LayoutTile(i)
+            Options.BuildYield()
+        end
+    end
+    -- drawn a piece a frame: the layouts, each group with its icons, then the
+    -- rest a few at a time
+    local pieces = {}
+    if #layouts > 0 then pieces[#pieces + 1] = layouts end
+    for _, g in ipairs(groups) do
+        local p = { g }
+        for _, r in ipairs(byGroup[g.id] or {}) do p[#p + 1] = r end
+        pieces[#pieces + 1] = p
+    end
+    local chunk = {}
+    for _, r in ipairs(loose) do
+        chunk[#chunk + 1] = r
+        if #chunk == PB.LOOSE_PER_FRAME then
+            pieces[#pieces + 1] = chunk
+            chunk = {}
+        end
+    end
+    if #chunk > 0 then pieces[#pieces + 1] = chunk end
+    for _, p in ipairs(pieces) do
+        Engine.LetGo(p)
+        Engine.QueueRebuild()
+        Options.BuildYield(true)
+    end
+    Engine.LetGo(nil)
+    Engine.QueueRebuild()
 end
 
 -- Pools a press would otherwise fill in one frame, made ahead in the
@@ -18940,7 +19144,12 @@ end
 
 -- The window shut: a pick still waiting on its pane is dropped, the build goes on.
 function PB.Drop()
-    PB.want = {}
+    -- an import's wait stays: what it started finishes, and says so
+    local kept = {}
+    for _, w in ipairs(PB.want) do
+        if w.keep then kept[#kept + 1] = w end
+    end
+    PB.want = kept
     Options.LoadLine(false)
     if Options.Loader then Options.Loader.Calm() end
 end
@@ -18975,7 +19184,8 @@ end
 -- and goes with the window (it is the window's child, and PB.Drop clears it on
 -- a cancel). A folded window says Loading on its bar instead.
 PB.VEIL_DELAY, PB.VEIL_W, PB.VEIL_H = 0, 240, 64
-function Options.LoadLine(on)
+-- text: what the wait is (an import names itself), else "Loading this page"
+function Options.LoadLine(on, text)
     if Options.Fold and Options.Fold.Loading then Options.Fold.Loading(on) end
     if not (win and content) then return end
     if on and not PB.veil then
@@ -18995,6 +19205,10 @@ function Options.LoadLine(on)
         local fs = box:CreateFontString(nil, "OVERLAY")
         fs:SetFont(AT.FONT, 12, "")
         fs:SetPoint("TOPLEFT", 12, -12)
+        -- an import's long layout name shortens on one line inside the box
+        fs:SetPoint("TOPRIGHT", -12, -12)
+        fs:SetJustifyH("LEFT")
+        fs:SetWordWrap(false)
         fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
         fs:SetText(AT.Tr("Loading this page"))
         local track = CreateFrame("Frame", nil, box, "BackdropTemplate")
@@ -19026,8 +19240,9 @@ function Options.LoadLine(on)
             seg:SetShown(right > left)
         end)
         v:Hide()
-        PB.veil = v
+        PB.veil, PB.veilText = v, fs
     end
+    if on and PB.veilText then PB.veilText:SetText(text or AT.Tr("Loading this page")) end
     if PB.veil then PB.veil:SetShown(on == true) end
 end
 
@@ -19113,7 +19328,7 @@ local function Build()
         Options.Search.GoFirst()
     end)
     Options.Search.box = search
-    AT.Tooltip(search, "Search", "Finds your layouts, groups, icons and bars by name or by spell, item or icon ID, and every option by its name. Click a result to jump straight to it. Enter opens the top result, Esc clears.")
+    AT.Tooltip(search, "Search", "Finds layouts, groups, icons and bars by name or ID, and options by name. Click a result to jump to it. Enter opens the top one.")
 
     -- Home, the front page (UI\AD_Home.lua), under the search box
     -- a raised button like a layout's header card, with a house, so it reads

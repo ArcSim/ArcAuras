@@ -397,8 +397,9 @@ function NL.Cards(list)
                 src = (t.image or t.text) and t or nil,
                 pick = function()
                     NL.HideBig()
-                    local rec = t.make()
-                    if rec then O.OpenLayout(rec) end
+                    -- a pack's layout comes in sliced under the veil, never in one frame
+                    O.RunImport(NS.AT.Tr("Importing \"%s\""):format(NS.AT.Tr(t.title or "")), t.make,
+                        function(rec) if rec then O.OpenLayout(rec) end end)
                 end,
                 secondary = sec,
                 hasUpdate = t.hasUpdate,

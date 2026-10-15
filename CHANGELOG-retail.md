@@ -1,5 +1,19 @@
 # Arc Auras
 
+## 3.0.3
+
+Arc Auras in your language, all the way through.
+
+### Improvements
+
+- **Translations everywhere** - Popups, tooltips, notices and option descriptions show in your language too (German, Russian, Korean and Chinese), not just the main labels.
+- **AddOns list** - Arc Auras describes itself in your language in the game's AddOns list.
+- **Trinket buffs** - A trinket icon's buff follows the trinket you are wearing, also after a swap, the way the Cooldown Manager shows it.
+
+### Bug Fixes
+
+- **Arc UI import** - Cooldown Manager icons styled in Arc UI only come over to the specs whose Cooldown Manager lists them.
+
 ## 3.0.2
 
 Totem bars, more languages, and a smoother Arc UI import.

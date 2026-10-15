@@ -13,6 +13,20 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.0.3",
+        intro = "Arc Auras in your language, all the way through.",
+        sections = {
+            { header = "Improvements", items = {
+                { title = "Translations everywhere",
+                    desc = "Popups, tooltips, notices and option descriptions show in your language too (German, Russian, Korean and Chinese), not just the main labels." },
+                { title = "AddOns list",
+                    desc = "Arc Auras describes itself in your language in the game's AddOns list." },
+                { title = "Trinket buffs",
+                    desc = "A trinket icon's buff follows the trinket you are wearing, also after a swap, the way the Cooldown Manager shows it." },
+            } },
+        },
+    },
+    {
         version = "3.0.2",
         intro = "Totem bars and more languages.",
         sections = {
@@ -1045,6 +1059,24 @@ CL.versions = {
 }
 CL.retailVersions = {
     {
+        version = "3.0.3",
+        intro = "Arc Auras in your language, all the way through.",
+        sections = {
+            { header = "Improvements", items = {
+                { title = "Translations everywhere",
+                    desc = "Popups, tooltips, notices and option descriptions show in your language too (German, Russian, Korean and Chinese), not just the main labels." },
+                { title = "AddOns list",
+                    desc = "Arc Auras describes itself in your language in the game's AddOns list." },
+                { title = "Trinket buffs",
+                    desc = "A trinket icon's buff follows the trinket you are wearing, also after a swap, the way the Cooldown Manager shows it." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Arc UI import",
+                    desc = "Cooldown Manager icons styled in Arc UI only come over to the specs whose Cooldown Manager lists them." },
+            } },
+        },
+    },
+    {
         version = "3.0.2",
         intro = "Totem bars, more languages, and a smoother Arc UI import.",
         sections = {
@@ -1545,8 +1577,8 @@ function CL.Layout()
         b.hdr:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
         b.hdr:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, -y)
         b.chev:SetDown(b.expanded)
-        b.label:SetText("|c" .. Hex(COL.ink) .. "Version " .. b.ver.version .. "|r"
-            .. ((i == 1) and ("   |c" .. Hex(COL.arc) .. "Latest|r") or ""))
+        b.label:SetText("|c" .. Hex(COL.ink) .. AT.Tr("Version %s"):format(b.ver.version) .. "|r"
+            .. ((i == 1) and ("   |c" .. Hex(COL.arc) .. AT.Tr("Latest") .. "|r") or ""))
         y = y + 26 + 6
         if b.expanded then
             b.body:SetWidth(w - 16)
@@ -1569,9 +1601,11 @@ end
 
 local function Build()
     if win then return win end
+    -- the whole phrase in the client's words; two colours while it reads English
+    local news = AT.Tr("What's New in Arc Auras")
     win = AT.CreateWindow("ArcUIv2WhatsNew", {
         w = 580, h = 620, minW = 460, minH = 420, maxW = 1000, maxH = 1200,
-        title = AT.Brand("What's New", " in Arc Auras"),
+        title = news ~= "What's New in Arc Auras" and news or AT.Brand("What's New", " in Arc Auras"),
         version = CL.CurrentVersion(),
         onResize = function() CL.Layout() end,
     })
@@ -1633,7 +1667,7 @@ local function Build()
     lbl:SetFont(AT.FONT, 12, "")
     lbl:SetPoint("LEFT", check, "RIGHT", 8, 0)
     lbl:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
-    lbl:SetText("Show after each update")
+    lbl:SetText(AT.Tr("Show after each update"))
     sw:SetScript("OnEnter", function() check:SetHover(true) end)
     sw:SetScript("OnLeave", function() check:SetHover(false) end)
     sw:SetScript("OnClick", function()

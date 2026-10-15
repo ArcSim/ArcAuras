@@ -1,9 +1,47 @@
+   |   Arc 
+  (cooldown ID 
+  /  Arc 
+  GetSpellBaseCooldown (legacy global): 
+  dir remain/elapsed: 
+  interp smooth/none: 
+  its position hidden by the game: 
+  its width readable: 
+  live bars: 
+  no custom icons or bars
+  no live icon with that name
+  no reminder groups
+  not on any action bar button (Blizzard or addon)
+ (Off Hand)
+ (moves with it)
+ Addon
+ Auras
+ Castbar
+ Enchant
+ Health
+ Swing
+ Your Action Bars
+ a Picture
+ alphaFromBool=
+ before the swing lands
+ count reset.
+ differ now.
+ from the swing's start
+ has no bars in Arc UI.
+ has no textures in Arc UI.
+ its corners to scale it, the cross to set the center. Alt drags free, Ctrl+Z undoes.
+ its own look.
+ pinned to
+ scaleTo100=
+"%s" already has a reminder for %s: pick another Reminder group, or a new one.
 "%s" comes in as a new layout.
 "%s" has this key too: only one of them opens.
 % of the aura left
+%.1f s ago
 %b %d, %Y
 %d %s has its own value for a row on this page. Reset it so it follows your defaults?
 %d %s have their own values for a row on this page. Reset them so they follow your defaults?
+%d %s in '%s' keep their own %s. Make them follow the layout?
+%d %s in '%s' keeps its own %s. Make it follow the layout?
 %d %s use the old value.
 %d %s use the old values.
 %d %s use these.
@@ -12,49 +50,96 @@
 %d %s uses the old values.
 %d %s uses these.
 %d %s uses these. It follows them.
+%d Cooldown Reminders
 %d IDs: %s +%d
 %d SPELL MATCH - click one to pick it
+%d SPELL NAME MATCH - click one to add its ID
+%d SPELL NAME MATCH - click one to fill the field
+%d SPELL NAMES MATCH - click one to add its ID
+%d SPELL NAMES MATCH - click one to fill the field
 %d SPELLS MATCH - click one to pick it
 %d bar
+%d bar in '%s' has its own value for these settings. Reset it so it follows the layout?
 %d bars
 %d bars (%s)
+%d bars in '%s' have their own values for these settings. Reset them so they follow the layout?
 %d change.
 %d changed
 %d changed (%d kept as yours)
 %d changes.
+%d characters
 %d classes
 %d enchant IDs. You can still edit them after.
 %d excluded
 %d from %s
 %d group
+%d group in '%s' has its own value for these settings. Reset it so it follows the layout?
 %d groups
+%d groups in '%s' have their own values for these settings. Reset them so they follow the layout?
 %d hero trees
 %d icon
+%d icon in '%s' has its own value for these settings. Reset it so it follows the layout?
+%d icon in this group has class and spec checks that leave out some of the group's specs.
+%d icon in this group has class checks that leave out some of the group's classes.
 %d icons
 %d icons (%s)
+%d icons in '%s' have their own values for these settings. Reset them so they follow the layout?
+%d icons in it are set to not displayed in your Cooldown Manager, so they stay out.
+%d icons in this group have class and spec checks that leave out some of the group's specs.
+%d icons in this group have class checks that leave out some of the group's classes.
 %d item
+%d item in '%s' has this layout's old %s. Give it its new ones? Its own Load When rules stay.
+%d item in this group has class and spec checks that leave out some of the group's specs.
+%d item in this group has class checks that leave out some of the group's classes.
+%d item in this layout has %s that leave out some of the layout's %s.
+%d item you deleted stays deleted.
 %d items
 %d items from %s
+%d items in '%s' have this layout's old %s. Give them its new ones? Their own Load When rules stay.
+%d items in this group have class and spec checks that leave out some of the group's specs.
+%d items in this group have class checks that leave out some of the group's classes.
+%d items in this layout have %s that leave out some of the layout's %s.
+%d items you deleted stay deleted.
 %d keep their own value for a row here.
 %d keeps its own value for a row here.
 %d kinds
 %d layout
 %d layouts
 %d layouts come in as new layouts.
+%d match for "%s"
 %d match for "%s" in every group
 %d matches
+%d matches for "%s"
 %d matches for "%s" in every group
 %d more - add a word to narrow it down.
 %d new
+%d new group kept, it holds your own items
+%d new groups kept, they hold your own items
+%d new item removed
+%d new items removed
 %d not loaded left out
 %d of %d
+%d of %d groups
+%d of %d have it
 %d of %d layout
 %d of %d layouts
 %d of %d spots, %s
+%d of 5 set pieces equipped.
+%d of them are in Arc Auras already: importing again adds a second copy.
+%d of them do not load here: the eye in the sidebar shows them.
+%d of them does not load here: the eye in the sidebar shows them.
+%d of them is in Arc Auras already: importing again adds a second copy.
+%d pack item is no longer in it
+%d pack items are no longer in it
+%d paired, %d missing in Arc Auras, %d extra in Arc Auras.  %s
+%d parts are in Arc Auras; import again any time.
 %d picked
 %d pictures
+%d profiles
 %d reminder
+%d reminder joins
 %d reminders
+%d reminders join
 %d required
 %d rule
 %d rules
@@ -63,6 +148,7 @@
 %d specs
 %d swing
 %d swings
+%d textures
 %d tick
 %d ticks
 %d unchanged
@@ -86,6 +172,8 @@
 %s elements
 %s fade out (seconds)
 %s glow
+%s go into
+%s goes into
 %s has an update. Click to update this layout; your own sizes and positions stay.
 %s has no grey out look.
 %s has no opacity look.
@@ -106,7 +194,11 @@
 %s is not on a shown action button now, so it stays at its own spot.
 %s is not shown, so it sits on its own spot.
 %s is on
+%s is on cooldown
+%s is ready
+%s is recharging
 %s is up
+%s is usable
 %s label
 %s now
 %s of %s
@@ -116,11 +208,20 @@
 %s s after cast
 %s s after ready
 %s s before it runs out
+%s shadow X
+%s shadow Y
+%s shadow color
 %s spells
 %s talents
 %s template
 %s ticked
 %s yd
+%s' left edge
+%s' right edge
+%s's left edge
+%s's right edge
+%s(Rank %d)
+%s, %s and %d more only
 %s, %s characters
 %s, +%d more
 %s, ID %s
@@ -133,6 +234,7 @@
 %s.
 %s. %d not loaded here
 %s. Click to set it up here.
+%s: %d icons
 %s: %s
 %s: When it starts
 %s: cooldown ID %s
@@ -143,10 +245,18 @@
 %s: tint
 (%d charges)
 (%d not loaded, left out)
+(a new Reminder group)
+(a new layout)
 (mixed)
+(not known yet)
+(the first layout in the string)
+(the layout in the string)
 (yours)
+) while casting
+), Elemental Blast (
 + %d more
 + Add
++ Add 
 + Add Icon
 + Add New
 + Add Reminder
@@ -166,38 +276,102 @@
 + New Layout
 + New Skin
 + New skin from this look
++%.1f per hit, +%.1f DPS
++%.1f per proc, +%.1f DPS on average
++%d for other classes
++%d layout for other classes
++%d layout not loaded here
++%d layouts for other classes
++%d layouts not loaded here
 +%d more
++%d not loaded here
+, castable now
+, cooling down
+, every rank
+, last reset: 
+, not castable now
+, position hidden 
+, shown inactive
+, usable not read yet
+, usable, on cooldown
+, width readable 
+-- combat ends
+-- combat starts
+0 hides it (the default): it shows only while the buff is missing.
 0 hides it while the hand has no weapon to enchant.
 0 hides it.
 0 hides it; the rules under the table can bring it back.
 0 hides the bar between casts.
 0 is normal. A higher priority takes over a lower one on screen, never gives way to it, and is the last out of a full queue or stack. Equal ones follow the group's Overlap Behavior.
+1 bar
+1 group
+1 icon
+1 icon in it is set to not displayed in your Cooldown Manager, so it stays out.
 1 kind
 1 match
+1 of them is in Arc Auras already: importing again adds a second copy.
+1 profile
+1 reminder
 1 rule
 1 setting differs from the group; a cyan bar marks it.
+1 texture
+3 to 10, spot 1 at the top. Fewer spots keep what sat on the others: it comes back with more.
+30 is a debuff's pandemic window. Needs no length.
+: matches again (
+A 2.6 second timer that runs out and starts again.
 A Cooldown Manager icon
+A Custom Icon or Bar
 A Custom Icon or Bar's value
+A Dynamic aura group only tracks you, your pet and your target.
 A Dynamic group only tracks you, your pet and your target: turn its Dynamic off.
 A blank layout. Add your own groups, icons and bars.
+A buff or debuff as an icon; several IDs can light one icon.
+A cast that finishes, one that is interrupted, then a channel.
+A cast while it runs: start it over, add the seconds to what is left, leave it running, or end it.
+A charge left and another coming back, over and over: the Recharging look, with its opacity, grey out, tint and glow.
 A condition turns off
 A condition turns on
 A cooldown ID names a Cooldown Manager icon, so it stays at its own spot.
 A cooldown ID names a Cooldown Manager icon.
+A deck bar fills as the deck is drawn, with a mark for each proc.
+A deck of 100 stacks holding 2 Tempest procs.
+A deck of 250 stacks holding 5 Storm Unleashed procs.
+A deck of 333 Maelstrom holding 2 Tempest procs.
+A deck of 333 stacks holding 2 Ascendance procs.
+A deck of 600 Maelstrom Weapon stacks holding 3 Doom Winds procs.
 A dim dark line along the edge, under the moving lines.
+A female voice
 A fill, like a bar
 A glow around the bar, with a trigger of its own. Works in combat.
+A grid of small tiles showing the art and the name. Click a tile to edit it. Hover it for its details, Edit and Delete.
+A group needs at least one column.
+A group needs at least one row.
 A layout for 1 class
+A layout pack you use has a newer version.
 A look of its own under a time left
 A look under a time left
+A male voice
+A mark where each spell's cost is met. It shows with Tick marks on (Appearance > Ticks).
 A mark where your next spell can be queued: press it past the mark and it goes off as soon as this cast ends.
+A missing aura
+A name, version, link and notes for your pack. Whoever imports the string sees them first.
 A named frame
+A nameplate: not offered
 A newer version is out: click to update your copy
+A newer version of this layout is out. Updates the layout you made from it; your own sizes and positions stay.
+A percent of the bar, or power with In power units on.
+A picture of your own: its FileDataID, or its path such as Interface/AddOns/MyMedia/glow. Enter applies it; empty = pick one above.
+A picture that follows an aura, a cooldown, your power, health or triggers.
+A power bar; Automatic follows the power you are using.
 A proc glow ended
 A proc glow started
 A proc shows it at full opacity
+A quarter turn: width and height swap so the bar is tall and thin, a side icon moves to the bar's end, and the texture and gradient turn with it. Switching the orientation back to Horizontal lays the bar down again.
+A rank: only that one, such as a cheaper rank you queue to save mana.
 A reactive ability lit up
+A reminder exported on its own joins this Reminder group. A group keeps one reminder per spell, item or weapon hand, so one it already has stays out.
 A returning icon
+A ring of your spells and items: hold its key, point at one and let go to cast it.
 A ring, like a cooldown
 A set duration
 A share of the time
@@ -208,51 +382,86 @@ A short word, like D
 A short word, like M
 A short word, like N
 A short word, like P
+A skin made from the default look. A bar's Skin dropdown makes one from that bar's look.
 A soft glow around the icon in this type's color. Glow size is under All.
+A spare profile in Arc UI: its groups and icons come in switched off; turn them on in their Load tab.
 A spark crosses the bar every 2 seconds and lands on each mana tick.
+A spell
+A spell ID, a link, or the name of a spell you know.
+A spell ID, a link, or the name of a spell you know. Any rank of it counts unless Only this rank is on.
+A spell ID, a link, or the name of a spell you know. Enter applies it.
 A spell ID, a spell link, or the name of a spell in your spellbook: for spells the catalog does not list.
+A spell ID, or the name of a spell you know. Any rank works: the bar follows the rank you know.
+A spell ID, or the name of a spell you know. It goes on the first empty spot; one you have not learned yet shows grey until you do.
 A spell ID, or the name of a spell you know. The rank you know is checked.
 A spell became usable
+A spell is on cooldown
+A spell is ready
+A spell is recharging
+A spell is usable
+A spell name or ID, such as Raptor Strike, Heroic Strike, Cleave or Maul. 
 A spell stopped being usable
 A spell's charges
 A spell's cooldown
+A spell's cooldown as an icon.
 A spell's cooldown ended
 A spell's cooldown started
 A spell's custom text
+A spend every half second, a proc at a third and two thirds of the deck, then a new deck.
+A spot mid-screen where your cooldowns pulse as they come back.
+A stance, form or aura from your stance bar. The icon lights up while you are in it.
+A string to share this skin.
 A swipe over each icon while it is on cooldown.
 A tick where each proc of this deck landed. A new deck clears them.
 A totem is gone
+A totem or guardian in its slot, or one of them by the spell that puts it down.
+A totem slot
 A totem was placed
+A totem with 14 of its 24 seconds left, standing still.
 A trinket or other gear reminds you only while you wear it.
+A unit's health, with incoming heals and shields.
+A weapon enchant
 A wheel loads by class, spec, talents and spells: its key cannot change during combat.
+A whole number; Enter applies it.
 A word on the icon in this type's color. Size and position are under All.
+ADD A SKIN
 ADDON
 ARC PROC - click one, then Create
+AURAS ON YOUR SPELLS
 AUTO
+Ability 
 Ability %d
 Ability (spell ID)
 Ability Colors
 Ability icon size
 Above
 Above the bar
+Above the group
 Above the pulse
 Above, left
 Above, right
 Absorb Shields
 Absorb shields
+Achievement ID
 Across fills a row, then starts the next. Down fills a column, then starts the next.
+Action Bar 
+Action Bar 1 (form or stealth page)
+Action bar %d
 Action bar button
 Action bar button (by spell)
 Action bar red and yellow
 Action bar red flash
 Action bar yellow
+Action button
 Action button flash
 Action button hover
 Action button pressed
+Action button:  
 Actions
 Active
 Active Reminders
 Active alpha
+Active glow
 Active glow X offset
 Active glow Y offset
 Active glow color
@@ -281,23 +490,41 @@ Add
 Add Item ID
 Add Spell ID
 Add Weapon Enchant
+Add a column on the left
+Add a column on the right
+Add a row at the bottom
+Add a spell
+Add a state
 Add ability color
+Add an ability
+Add an icon
+Add an icon, bar or group to this layout.
+Add an item
 Add band
 Add check
 Add new items
 Add new items (%s)
+Add one first
 Add one on it now
 Add stacks
+Add state
+Add to
+Add to this layout
 Adds spell, item, icon and Cooldown Manager IDs to game tooltips.
 Adds your off-hand's swing to this main-hand bar. Pick its look on the Appearance tab.
+After a mana spell
 After a spell that costs mana, a spark crosses the bar for the 5 seconds before spirit regen resumes.
 After cast
+After combat
+After it plays, the rule stays silent this long (aura rules: the game's limit, 5 at most). Enter applies it.
 After reload
 After the name
+Algeth'ar Puzzle Box
 Align
 Alignment
 Alive
 All
+All 
 All %d textures
 All %s icons
 All ammo icons
@@ -307,29 +534,45 @@ All bars
 All bars everywhere
 All bars in %s
 All enchant icons
+All groupbuff icons
+All groups
 All groups everywhere
 All groups in %s
+All icons
 All icons everywhere
 All icons in %s
 All item icons
+All layouts everywhere
+All notes
 All of them
+All paired icons match now.
+All powers
 All procs used
 All procs used color
 All special icons
+All specs
 All spell icons
+All stance icons
+All things everywhere
 All timer icons
 All totem icons
 All trinket icons
+All types
 Already in this layout
+Also
 Also count as empty
+Also finds the spells and items on your action bars and lets you pick which become icons. Out of combat only.
 Also in your collection
 Also these spells
+Also watches the rank you know of each spell, so this keeps working when you train 
 Also while an ability is queued for your swing
 Always
 Always show sidebar buttons
+Always: it shows all the time. Otherwise the rules below decide when it shows.
 Ambience
 Ammo
 Ammo Icon
+Ammo Stack Text
 Ammo at or below
 Ammo count
 Ammo count text
@@ -342,9 +585,12 @@ Ammo count text outline
 Ammo count text shadow
 Ammo count text size
 Ammo icon
+Ammo icons
 Ammo is low
 Ammo is low at or below
+Ammo low
 Ammo stack text
+Ammo text
 Ammo text X
 Ammo text Y
 Ammo text anchor
@@ -354,18 +600,28 @@ Ammo text outline
 Ammo text shadow
 Ammo text size
 An Arc Auras icon or bar
+An Arc Auras item: pick it in Anchor to
 An action button
 An attack missed you
 An aura
 An aura appears
 An aura drops
 An aura gains a stack
+An aura icon: its Active opacity is above 0
+An aura is missing
+An aura is up
+An aura row cannot color the texts.
+An aura row colors one continuous fill, four rows at most: not pips, runes or essence.
 An aura's custom text
 An aura's stacks
 An aura's time left
+An enchant with 25 of its 30 minutes left, standing still.
 An instant spender
 An interrupted or failed cast stays up for a moment in its color, with the reason as its name. A finished cast always goes at once.
+An item
 An item ID or an item link. A trinket or other gear reminds you only while you wear it.
+An item ID, such as a potion or a trinket. It goes on the first empty spot and is used like /use.
+An item's cooldown and count, by item ID.
 An update is out
 Anchor
 Anchor %d
@@ -381,11 +637,13 @@ Anchor this bar
 Anchor this group
 Anchor this icon
 Anchor to
+Anchor to...
 Anchored to %s
 Anchored to %s.
 Anchored to the frame %s.
 Anchored to the frame %s. It is hidden now, so this stays where it sits.
 Anchored to this
+Anchored to this one: it would loop
 Anchors 1 to %d are not there.
 Animated Picture
 Animated picture (a sheet of frames)
@@ -394,53 +652,92 @@ Animation
 Animation Tuning
 Another Custom item's timer ended
 Another anchor
+Another aura
+Another frame
+Another group on screen already moves this frame. A frame moves with one group.
+Another spell
 Another wheel
 Ants (border crawl)
 Any
 Any class
 Any enchant
+Any icon's Appearance > Look switches it later.
+Any lust on you: %s and the drums, on one icon.
+Any lust on you: Bloodlust, Heroism, Time Warp, Primal Rage, Fury of the Aspects, Harrier's Cry and the drums, on one icon.
 Any of %d items: the icon shows the best one you carry and can use.
+Any of its spells
 Any of the icon's spells, or only one of them (its ranks together). Works in combat.
 Any one of them
+Any rank
+Any rank: the marker follows whichever rank you queue. Highest rank: only your best one. 
+Any shaman imbue, every rank
 Any slot
 Any spec
 Any spell ID
 Any spell ID above lights this one icon.
 Any talent
+Any talent build
 Any text you like in place of the name. Leave it empty to show the default name.
 Anyone
 Anyone but me
 Anyone lacks it
 Anyone lacks it: a buff the whole group needs. Nobody has it: a buff you keep on one member, such as Beacon of Light, Earth Shield, Source of Magic or a Soulstone.
+Anyone, only yours (or your pet's), or only other players' copies of the aura.
+Anyone: any copy counts. Me: only yours, so your Beacon or Earth Shield, not another player's.
 Anyone: any copy of the aura fills the bar. Me: only yours (or your pet's), so a Blessing from another Paladin is ignored. Anyone but me: only copies other players put up. New debuff bars start on Me, buff bars on Anyone.
 Anyone: any copy of the aura lights the icon. Me: only yours (or your pet's), so another player's copy never does. Anyone but me: only copies other players put up.
 Appear sound
 Appearance
 Appends an Arc ID block to game tooltips everywhere - spell, aura, item, toy, mount, currency, achievement and quest IDs, each with its icon ID (and the icon the button actually shows when that differs), the Cooldown Manager's cooldown ID for spells, auras and equipped trinkets, plus talent node / entry IDs on the talent tree. Works on action bars, buffs, bags and the spellbook, not just Arc Auras icons.
 Applies to every icon in this group; an icon can override it.
+Arc Auras
+Arc Auras Layout Spotlight
 Arc Auras border
+Arc Auras closed for combat.
 Arc Auras look
+Arc Auras opens when combat ends.
+Arc Auras takes this kind with a later update of the import.
+Arc Auras' own window: not offered
 Arc Proc
+Arc Proc (deck bar)
+Arc Proc Bar
 Arc Proc Icon
+Arc Proc bar
 Arc Proc bars
 Arc Proc icon
+Arc Proc icons
 Arc Proc: %s
+Arc Procs
+Arc UI
+Arc UI Discord
+Arc UI Forever is still turned on. Arc Auras replaces it, so your displays are drawn twice right now. Your setup is already in Arc Auras: turn Arc UI Forever off to finish the move.
+Arc UI has nothing set up to copy.
+Arc UI is now Arc Auras. Pick which of your groups, icons and bars come over, placed as they are.
+Arc UI's settings can't be read while it is turned off. Turn it on and reload, then come back here.
 Arc's default
 Arc:
 Arc: %s
 ArcUI ProcTracker has no trackers set up to copy.
+ArcUI ProcTracker is moving into Arc Auras
 ArcUI ProcTracker is turned off, so its settings cannot be read. Turn it on and reload, then come back here.
+ArcUI ProcTracker moved into Arc Auras
+Arcane Blast
 Arcane Charges
+Arcane Intellect
 Art
 Art follows the spell that starts it
 Art from spell ID
+Art from spell ID (optional)
 Art while active
 Art while missing
 As is
+Ascendance (buff icon)
+Ascendance (cooldown icon)
 Aspect ratio
 Astral Power
 At %s charges left
 At a charge count
+At a stack count
 At any count
 At any value
 At least this many pieces
@@ -453,44 +750,73 @@ Atlas: %s
 Atlases (first %d)
 Attach to the plate
 Audio
+Augment Rune
+Aura 
+Aura (buff / debuff)
+Aura 344179
+Aura Bar
 Aura Duration
 Aura Duration bar
 Aura Group
+Aura IDs
 Aura Icon
 Aura Reminders
+Aura Spell ID
 Aura Stack
 Aura Stack bar
+Aura State
+Aura Swipe
 Aura active
+Aura bar  -  duration of aura %s
+Aura bar  -  stacks of aura %s
 Aura bars
+Aura cast by
+Aura duration
 Aura duration (s)
 Aura edge color
 Aura edge scale
 Aura finish flash
 Aura group  -  %d icon
+Aura group  -  %d icons
+Aura groups
 Aura icon
+Aura icons
 Aura icons always keep their spot; for auras that come and go, use an Aura Group.
 Aura icons and opacities that change near the end keep their spot: neither can be read in combat.
 Aura loop
 Aura missing
 Aura name or spell ID
+Aura name or spell IDs
 Aura on this icon
+Aura on unit
+Aura on whom
+Aura or spell
+Aura put there by
 Aura reminder size
 Aura reminder spacing
 Aura reminders sit
 Aura spell IDs
+Aura stacks
 Aura swipe
 Aura swipe color
 Aura swipe edge
 Aura swipe inset
 Aura swipe inset H
 Aura swipe inset W
+Aura text
+Aura texture
+Aura time text
+Aura to watch
 Aura type
 Aura up
 Auras
+Auras are secret here: our aura phase reads ?.
 Auto (the cast bar decides)
 Auto Shot or Shoot
 Auto rank
 Auto rank (follow my known rank)
+Auto-rank Action Bars
+Auto-rank action bar spells
 Autocast
 Autocast (sparkles)
 Automatic (current power)
@@ -517,32 +843,52 @@ Band %d: under (seconds)
 Band color
 Band text
 Bands
+Bands from
 Bands in percent of the duration
 Bar
+Bar 
 Bar Size
+Bar category
+Bar color
 Bar height
+Bar mode
 Bar scale
 Bar texture
 Bar width
 Bar's own
+Bars
 Bars of type
 Bars only
 Base alpha
+Base icon ID
+Battle Shout
+Battle Stance
+Bear Form
+Bear, Cat and caster rows that swap with your form, plus buffs, defences, items, resources, a swing timer and a castbar.
 Before that
 Before that (active)
 Before that (on cooldown)
 Below
 Below a value
 Below the bar
+Below the group
 Below the pulse
 Below, left
 Below, right
+Berserker Stance
 Between Casts
 Beyond
 Blank at zero
+Blessing of Kings
+Blessing of Might
+Blessing of Salvation
+Blessing of Wisdom
+Blessing of the Bronze
 Blizzard border
 Blizzard border with badge
 Blizzard's Bar
+Blizzard's Edit Mode is open. The frame moves back when it closes.
+Bloodlust / Heroism
 Border
 Border and background
 Border color
@@ -560,28 +906,44 @@ Bottom left
 Bottom right
 Bottom to top
 Bounce
+Bounce height (pixels)
 Box
 Box background
 Box background color
 Box height
 Box width
+Brightens the top of the window and shades its foot, for a little depth.
+Bring back the %d item you deleted
+Bring back the %d items you deleted
 Bring back the items you deleted
 Bring groups in without their icons
 Bring in a string someone shared: paste it, check what it holds and where it goes, then import.
+Bring it back this time
+Bring them back this time
+Brings %s from %s.
 Brings %s into a new ProcTracker layout.
+Brings the layouts list back.
+Browse all layouts
 Buff
+Buff 
+Buff name or spell IDs
+Buff or debuff
+Buff or debuff to watch
 Buff spell IDs
 Buffs
 Buffs and debuffs
 Buffs on a target or focus cannot be hidden by spell.
+Buffs work on you, your pet and friendly units; debuffs on a hostile target or focus.
 Button
 Button (action bar)
 Button Press Highlight
 By State
+By Value
 By class
 By procs left
 By procs used
 By the chance
+CD Bar
 CD Duration
 CD Duration bar
 CD Icon
@@ -592,72 +954,133 @@ CDM Bar
 CENTER
 CHANGED
 CONTENTS
+CONTENTS  -  %d element
+CONTENTS  -  %d element  (folded)
+CONTENTS  -  %d elements
 CONTENTS  -  %d elements  (folded)
 Can't Be Interrupted
 Can't be interrupted color
+Can't pin
+Can't read your action bars in combat.
+Can't show %s talents here. Log in on a %s to pick its talents.
+Can't show %s talents here. Log in on an %s to pick its talents.
 Can't show %s talents here. Switch to %s to pick its talents.
 Can't use and not enough resource set the opacity, instead of the lower of theirs and the state's.
 Can't use it
 Cancel pulse on cast
 Cards
+Cast bars
 Cast by
+Cast loop
 Castbar
+Castbar  -  %s
 Castbar bar
 Castbars
+Caster form
 Caster, %s
 Caster: in or out of range
 Casting
+Casts of you, your target or your focus; hidden between casts.
 Casts you cannot interrupt take this color. In combat the game hides whether a target's cast can be interrupted from addons, so this can only change how the bar looks.
+Cat Form
 Cell height
 Cell spacing
 Cell width
 Cells
 Center
+Center goes back to centering what's shown.
+Center horizontal
+Center point
+Center vertical
 Centered on the value
 Chance assumes
 Chance color
 Chance color at %d proc left
 Chance color at %d procs left
+Chance still climbing
 Chance with a decimal under 10%
+Change it too
 Change them too
 Change them too, or keep the new default for new %s only?
+Changed here: %d setting differs from the layout %s.
+Changed here: %d settings differ from the layout %s.
 Changes below apply only %s. Place and size stay the bar's.
 Changes below apply only to %s. Place and size stay the bar's.
 Changes below are the bar's own look, for every power or spec without a look of its own.
 Changes below are the bar's own look. A talent look changes only what it sets.
 Channel color
 Character
+Characters
+Charge count
+Charge loop
 Charge-gained sound
 Charged Points
 Charged color
 Charged points
 Charges left
+Charges text
+Chat window
 Check %d
 Check all
+Check now
 Check range with
 Checkmark while queued
 Chi
 Choice %s (not in this tree)
 Choose %s talents
+Choose a Picture
+Choose a frame
+Choose a talent
+Choose another talent
+Choose picture
 Choose talent
 Choose where to copy...
 Circle
+Class and Spec
 Class color (reaction for creatures)
 Class color border
 Classes
 Clear
+Clear all
+Clear log
 Clear selection
 Clear stacks when the timer ends
 Clear when no longer usable
 Clear when the proc ends
+Clears the character lock so this loads for every character again (class boxes above still apply).
 Clears the whole matrix so you can check just the classes or specs you want.
+Click a talent to require it, again to exclude it, again to drop it. Picks count only on a %s.
+Click a talent to require it, again to exclude it, again to drop it. Picks count only on a %s; spec and hero ones in their spec.
+Click a talent to require it, again to exclude it, again to drop it. Picks count only on an %s.
+Click a talent to require it, again to exclude it, again to drop it. Picks count only on an %s; spec and hero ones in their spec.
 Click a type's icon at the top to give it its own look.
+Click it and press Ctrl+C to copy it, then paste it into your browser.
+Click the element to anchor to, or the cross for the center point.
+Click to choose from every picture.
+Click to drop it
 Click to edit it. The eye hides it on screen while you edit, the lock keeps it from moving, the red x deletes it.
 Click to edit it. The eye hides it on screen while you edit, the red x deletes it.
+Click to edit it. The lock keeps it from moving, the red x deletes it.
+Click to edit it. The red x deletes it.
+Click to edit this icon
+Click to edit this reminder
+Click to fold the element list away so the layout's own settings get the whole page, or to bring it back. Drag the grip under the list to set how tall it is.
+Click to give 
+Click to hide this layout on screen while this window is open, so you can get at what sits under it. Closing the window shows it again.
+Click to pick   Right-click or Esc: cancel
+Click to pick the fill color while this row holds. Right-click to keep the bar's own.
+Click to pick the texts color while this row holds. Right-click to keep the bar's own.
+Click to pick this talent.
+Click to require this talent.
 Click what %s should anchor to. Esc cancels.
+Click, then press a key or mouse button 3 to 5 (with Shift, Ctrl or Alt if you like). 
+Click, then press the key (with Shift, Ctrl or Alt if you like). 
 Click-through
 Click-through icons
+Click: follow the spell   Shift-click: this button   Esc: cancel
+Click: follow this icon   Right-click or Esc: cancel
 Clickable (target on click)
+Clicking the icon drops the totem it shows, in combat too. Set out of combat; while this window is open the icon stays draggable.
 Clicks pass through icons to the game world underneath. Tooltips still show while the toggle above is on. While this options window is open every icon takes the mouse regardless, for dragging.
 Clockwise
 Close gaps
@@ -668,6 +1091,7 @@ Color
 Color %d
 Color %d from stack
 Color %s from %s stacks
+Color Changes
 Color by
 Color by ammo count
 Color by count
@@ -689,27 +1113,37 @@ Color when power is
 Colors
 Colors and badges
 Colors and badges keeps the game's order. Full look per type also gives each type its own size, swipe, texts and glows, in the order you pick.
+Colors the button-frame looks with the highlight color instead of their own gold and white.
 Colors the icon %s.
 Colors the icon while this look shows.
+Colors, texts and ticks of their own for each power (a druid's forms), each spec, or with and without a talent.
 Column (1:2)
 Columns
 Columns of frames
 Combat
 Combo Points
 Combo points
+Combo points on your target, as the combo bar counts them.
+Common frames
 Condition
 Conditions
 Conditions > By State sets the art while the aura is up or missing.
 Conditions sets a look for each state it can be in.
+Conjured Food
+Conjured Water
 Container
 Container background
 Container border
 Container padding
 Content or unhappy
+Cooldown Bar
 Cooldown ID
 Cooldown Manager
+Cooldown Manager  vs  Arc Auras layout "Cooldown Manager"   
+Cooldown Manager Bar
 Cooldown Manager IDs
 Cooldown Manager bar
+Cooldown Manager bar  -  %s
 Cooldown Manager bars
 Cooldown Manager entry %s
 Cooldown Manager flash
@@ -718,7 +1152,14 @@ Cooldown Manager icon (by spell)
 Cooldown Manager look
 Cooldown Manager path, bound
 Cooldown Manager path, no Doom Winds icon found
+Cooldown Manager unavailable
+Cooldown Manager:  
+Cooldown Reminder test
+Cooldown Reminder: %d reminders
+Cooldown bar  -  charges of spell %s
+Cooldown bar  -  duration of spell %s
 Cooldown bars
+Cooldown glow
 Cooldown glow X offset
 Cooldown glow Y offset
 Cooldown glow color
@@ -743,6 +1184,8 @@ Cooldown loop
 Cooldown markers
 Cooldown on this icon
 Cooldown swipe
+Cooldown text
+Cooldown texture
 Cooldown tint
 Cooldown tint color
 Cooldown-start sound
@@ -750,10 +1193,17 @@ Cooldown: %s
 Cooldowns, Utility and Buffs groups under your character, ready to fill.
 Cooling down, %d s left
 Copied: %s
+Copies one of the Cooldown Manager's Tracked Bars, its timer and all.
 Copies the rows of this sub-panel onto the chosen target. Copy semantics - no live link; the target keeps its own values from then on.
+Copies this group's class and spec checks onto those icons, so they load wherever the group does.
+Copies this group's class checks onto those icons, so they load wherever the group does.
+Copies this layout's class and spec checks onto those items (and its talent checks when it has any), so they load wherever the layout does. Their Load When rules stay.
+Copies this layout's class checks onto those items (and its talent checks when it has any), so they load wherever the layout does. Their Load When rules stay.
 Copy
 Copy and turn off
+Copy it with Ctrl+C.
 Copy its bars into a new layout
+Copy link
 Copy this page to
 Copy to
 Cost & Regen
@@ -761,6 +1211,7 @@ Cost Preview
 Cost color
 Cost icon side
 Cost icon size (0 = bar height)
+Cost mark
 Cost opacity
 Cost ticks from spell IDs
 Count
@@ -788,11 +1239,17 @@ Counterclockwise
 Counting down
 Counting down: the spark starts at the bar's full end and moves back. Counting up: the other way.
 Counting up
+Counts a spell's charges, an aura's stacks or custom stacks.
+Counts down a spell's cooldown, an aura's time left or a custom timer.
+Counts down the spell's cooldown; blank while it is ready or only the global cooldown runs.
+Counts only this exact rank (this spell ID), not any rank of the spell.
+Counts your party or raid between pulls.
 Create
 Create %d Icon
 Create %d Icons
 Create Reminder
 Create a layout to begin - it is one movable block on your screen.
+Create as
 Crop
 Crop the bottom edge (%)
 Crop the left edge (%)
@@ -801,6 +1258,7 @@ Crop the pictures to the icons' shape
 Crop the right edge (%)
 Crop the top edge (%)
 Cropped (5:4)
+Currency ID
 Current value
 Curse
 Curse border
@@ -810,7 +1268,9 @@ Curse glow
 Curse label
 Custom
 Custom Bar
+Custom Bars
 Custom Icon
+Custom Icons
 Custom Text & Keybind
 Custom bands
 Custom bar  -  stacks, %s
@@ -819,7 +1279,9 @@ Custom color per procs left
 Custom icon
 Custom icon ID
 Custom icon from
+Custom item
 Custom name text
+Custom points
 Custom rules
 Custom text
 Custom text %d
@@ -843,9 +1305,11 @@ Custom text size
 Custom texts keep full opacity
 Custom texts stay at full opacity while the active look dims, whatever Keep texts bright says.
 Custom texts stay at full opacity while the icon dims, whatever Keep texts bright says.
+Custom texture
 Custom tick scale (0 = auto)
 Custom ticks (comma list)
 Custom ticks are percent
+Custom ticks, 
 Custom ticks, seconds from the swing's start
 Custom triggers
 Custom values
@@ -856,10 +1320,15 @@ Cut off previous sound
 Cut the icon to
 Cut the icons to
 Cutoff fade-out (seconds)
+Cycle bands
 DIALOG
 DOWN
+DPS and Protection rows, buffs, debuffs, defences, items, your stance and missing-buff reminders, rage, a swing timer and a castbar.
+DRE (Enhancement)
+DRE (Restoration)
 Damage role
 Dark
+Dark backing line
 Dead or a ghost
 Debuff
 Debuff type looks
@@ -872,7 +1341,10 @@ Decimals below (s)
 Decimals under (seconds)
 Deck %d / %d
 Deck Position
+Deck bar
+Deck bar  -  %s
 Deck colors
+Deck loop
 Deck position
 Deck position anchor
 Deck position color
@@ -901,6 +1373,7 @@ Deck position text size
 Deck position, all procs used
 Deck position, no procs used
 Deck position, some procs used
+Deep navy, a calm blue accent.
 Default
 Default (WoW setting)
 Default (the group's)
@@ -909,6 +1382,8 @@ Default Alert Sound
 Default Animation
 Default seconds
 Defaults
+Defensive Stance
+Definition ID
 Delay before fading (seconds)
 Delete %d
 Delete %d elements?
@@ -922,10 +1397,18 @@ Delete Reminder
 Delete Skin
 Delete selection
 Delete the %s '%s'?
+Delete the group '%s' and its %d icon?
+Delete the group '%s' and its %d icons?
+Delete the group '%s' and its %d reminder?
+Delete the group '%s' and its %d reminders?
 Delete the group '%s'?
 Delete the icon '%s'?
 Delete the layout '%s' and everything inside it?
 Delete the skin "%s"? The bars that wear it keep its look as their own.
+Delete this from the layout. You are asked to confirm first.
+Deletes everything selected, a group with its icons. Asks first.
+Demo HUD
+Demon Armor
 Desaturate on cooldown
 Desaturate on no resource
 Desaturate when out of stock
@@ -961,28 +1444,51 @@ Disease label
 Dispel border look
 Dispel types
 Divider color
+Divine Spirit
 Doesn't load until your character knows the spell above (any rank), and loads by itself the moment you learn it.
 Doesn't load until your character knows this spell (any rank), and loads by itself the moment you learn it.
+Doesn't load while the Cooldown Manager lists this aura as not learned (a talent you don't have).
+Don't ask again
 Done
+Done editing
 Doom Winds
+Doom Winds (buff icon)
 Down, like buff timers
+Drag a spell from the list, your spellbook, your bags or your bars onto a spot. Right-click a spot to empty it.
+Drag an element to move it, its handles to size it. Drag the outline to move everything,
+Drag any of them to move them together. Arrows nudge them all.
 Drag it onto a spot, or click to add it.
 Drag it to move it. Right-click to take it off.
+Drag the layout anywhere on your screen.
 Drag to make the layouts list wider or narrower.
+Drag up or down to set how much of the page the element list takes.
+Drag, size and anchor this layout's elements on your screen.
 Drag: move this button
 Drain: the time left
 Drawn on screen while this window is open, with an "unloaded" tag. It loads on: %s. Click to hide it again.
+Driven by
 Drop sound
+Drops every talent picked in this tree. Other classes' and specs' picks stay.
+Drops every talent picked in this tree. Other classes' picks stay.
+Drops the own values items of this kind hold for the rows on this page, so they follow your defaults. It asks first and says how many.
 Drops this icon's own looks, so it takes the ones its defaults set.
 Drops this icon's own looks, so it takes the ones its layout sets.
+Drops this item's own values for the settings here that its layout sets, so they follow the layout again. Settings the layout leaves alone keep this item's values.
+Drops this reminder's own appearance settings, so every one of them follows the group again.
+Drops your saved default for these rows, so they read Arc's again. It asks whether the items you have change too.
+Druid by Emity
 Duplicate
 Duration
+Duration Bar
+Duration Text
 Duration anchor
 Duration color
 Duration decimals
 Duration offset X
 Duration offset Y
 Duration outline
+Duration over
+Duration running
 Duration shadow
 Duration shadow X
 Duration shadow Y
@@ -1001,16 +1507,26 @@ Duration text size
 Dynamic
 Each band colors its point and every point after it.
 Each band colors the countdown under its share of the whole time.
+Each band that shows in turn, nearest first, then the look with no target, one and a half seconds each.
 Each change
+Each element's own
+Each element's own, %d higher
+Each element's own, %d lower
+Each group in the string comes in without its icons: you get its place and look, and fill it yourself. Bars, and icons outside a group, still come in.
+Each icon group, and your free icons, gets a skin you pick in Masque's options: picture size and crop, border, backdrop and gloss.
+Each icon shows only while its buff is missing, in combat too.
 Each icon's Text > Custom Text & Keybind sets the text's size, color and position.
 Each number in the custom list wears its own colour, in the order you typed them; the Tick color is the first.
+Each power (druid forms)
 Each rule: when something happens, only if its conditions hold, then what it does.
 Each shows in its own slot while its aura is missing; the pulse keeps its spot.
+Each spec
 Each spell's or item's name beside its icon.
 Each stack runs out on its own
 Each type on its own line
 Each type shows up to Rows by Columns of its auras.
 Each type starts a new line. Off: the types follow straight on, with no gap between them.
+Earth Shock
 Ease In
 Ease In/Out
 Ease Out
@@ -1021,7 +1537,10 @@ Edge only when no charges
 Edge scale
 Edit
 Edit %s
+Edit Mode
+Edit Reminder
 Edit buttons on screen
+Edit frames
 Edit on screen
 Edit together
 Edit together needs icons only, or bars only.
@@ -1032,7 +1551,19 @@ Editor's order
 Editor's order keeps your order. Time left puts the aura closest to running out first; auras that never end come last.
 Edits the name in place. Enter saves, Escape cancels.
 Effects that eat healing before it lands.
+Either choice
 Elemental Blast
+Elemental Blast (
+Emity's Discord
+Emity's latest version: a Defences row, a row for trinkets and potions, poison reminders for both hands, gradient bars, and long cooldowns shown only while on cooldown.
+Emity's latest version: a Defences row, a row for trinkets, a potion, your weapon enchant and stance, a new DPS rotation row, gradient bars, and long cooldowns shown only while on cooldown.
+Emity's latest version: a Defences row, a row for trinkets, potions and your weapon enchant, more buffs, and long cooldowns shown only while on cooldown.
+Emity's latest version: a Defences row, a row for trinkets, potions, mana gems, your weapon enchant and armor, gradient bars, and long cooldowns shown only while on cooldown.
+Emity's latest version: a Defences row, a row for trinkets, potions, your weapon enchant and aspect, a new rotation row, gradient bars, and long cooldowns shown only while on cooldown.
+Emity's latest version: a Defences row, a row for trinkets, potions, your weapon enchant and aura, Turn Undead, gradient bars, and long cooldowns shown only while on cooldown.
+Emity's latest version: a Defences row, a row for trinkets, potions, your weapon enchant and form, more target debuffs, and long cooldowns shown only while on cooldown.
+Emity's latest version: a Defences row, a row for trinkets, potions, your weapon enchant and form, the racial priest spells, gradient bars, and long cooldowns shown only while on cooldown.
+Emity's latest version: a Defences row, a row for trinkets, potions, your weapon enchant and soul shards, more debuffs, gradient bars, and long cooldowns shown only while on cooldown.
 Empties
 Empty
 Empty Layout
@@ -1041,11 +1572,16 @@ Empty groups
 Empty health color
 Empty pip tint
 Empty spots close up while you play: a spot with no icon, or with an icon that is not loaded.
+Empty your cursor first
 Enable sound
 Enchant Bar
+Enchant ID
 Enchant IDs
 Enchant Icon
+Enchant State
+Enchant bars
 Enchant icon
+Enchant icons
 End it
 Ends at the value
 Ends early when you cast
@@ -1056,15 +1592,25 @@ Energy
 English
 Enough for %s
 Enough power for a spell
+Enough power: you could pay its cost now. Usable: the game would let you cast it. Ready: off cooldown.
+Entry ID
 Essence
+Every %s, by spec and talents
+Every 2 s
 Every X percent
 Every bar in this layout uses these looks unless it sets its own.
+Every box checked = any hero talent tree.
+Every box checked = any role. It applies together with class and spec.
 Every box checked = shows everywhere.
+Every charge ready.
+Every charge spent, then each one recharges in turn: slot fills, recharge colour, count and countdown.
 Every class
+Every default of this kind back to Arc's. It asks first, then whether the items you have change too.
 Every enchant ID this bar fills for, separated by commas or spaces. Empty: anything on the weapon. With two of them on the weapon at once, the first listed shows.
 Every enchant ID this icon lights for, separated by commas or spaces. Empty: anything on the weapon. With two of them on the weapon at once, the first listed shows.
 Every food counts.
 Every group in this layout uses these looks unless it sets its own.
+Every icon
 Every icon in the group as the game's Cooldown Manager draws it: rounded corners, border, shadow and swipe.
 Every icon in this layout uses these looks unless it sets its own.
 Every item of this kind: the icon follows the one you last used, as the Cooldown Manager's does.
@@ -1072,15 +1618,22 @@ Every other kind
 Every other kind of %s (%d)
 Every point
 Every rank counts, from anyone.
+Every rank of the buff, and its group version, separated by commas or spaces. A member counts as having it with any of them on.
+Every row on this page back to Arc's value. It asks whether the items you have change too.
 Every spell ID this icon lights for, separated by commas or spaces - one icon for all of them, and the game shows whichever is up. The first ID gives the icon its art and name.
 Every stack added runs its own timer (the rule's seconds, else Default seconds) and drops off when it ends.
 Every texture and font it uses is on this PC.
 Everyone has it
 Everything
+Everything in this box
 Everything is up to date
 Everything shows fully while this window is open. Close it to see the fade.
 Everything, only what loads on this character, a section per class, or one class's items with what every class shares.
+Excluded: click to drop the condition.
+Excluded: this never loads while you have it. Click to drop the condition.
+Explosive Trap
 Export
+Export failed.
 Export selected
 Export selection
 Extend it by the seconds
@@ -1096,17 +1649,22 @@ Fade Curve (override)
 Fade Settings
 Fade When
 Fade out (s)
+Fade out (seconds)
 Fade time (seconds)
 Faded opacity
+Fades only while EVERY checked condition is true. This wins over Full Opacity When.
 Fades out the game's own bar for this resource while this bar is loaded.
+Fades while any checked condition is true. This wins over Full Opacity When.
 Failed color
 Favorites
 Felguard is out
 Felhunter is out
 Female
+Feral Spirit
 Fill
 Fill & Colors
 Fill across first
+Fill and texts: the highest row that holds wins. A glow shows while its row holds.
 Fill closes in from both ends
 Fill color
 Fill color at every stack
@@ -1115,6 +1673,8 @@ Fill direction
 Fill direction of the picture
 Fill down first
 Fill follows
+Fill it from my action bars
+Fill loop
 Fill mode
 Fill order
 Fill padding
@@ -1122,20 +1682,26 @@ Fill up: the time passed
 Fills up
 Filters the spellbook below by name, or by the start of a spell ID.
 Find the icon again
+Finds the spells and items on your action bars and lets you pick which become icons in this group. Out of combat only.
 Finds your layouts, groups, icons and bars by name or by spell, item or icon ID, and every option by its name. Click a result to jump straight to it. Enter opens the top result, Esc clears.
 Fine-tuning for the rows above. Click to show or hide it.
 Fine-tuning for the rows above; some differ from their default. Click to show or hide it.
+Fine-tuning for this one. Click to show or hide it.
 Finish flash
+Fire Trap
 Fire even while on cooldown
 Fires each time the game updates this spell's cooldown, and for some buffs as they come and go.
 Fires only while the spell's proc glow is up, on top of the trigger's own timing. An item checks its use spell.
 Fires the first trigger once, as it will in play, even where the conditions would keep it quiet.
+Fires the moment the spell's own requirement is met (a dodge, a proc that activates it, enough mana), even while it is still cooling down.
 First ammo threshold (at or below)
 First ammo threshold color
 First threshold (%)
 First threshold color
 Five-Second Rule
 Five-second rule
+Flametongue Totem
+Flametongue Weapon
 Flash
 Flash (urgent)
 Flash Step Speed
@@ -1147,45 +1713,77 @@ Flip the picture left to right
 Flip the picture upside down
 Flying
 Focus
+Focus frame
+Focus's casts
 Fold
 Fold bars and free icons
 Fold in half
 Folds the layouts list away - the editor gets the full window width.
+Folds the window down to its title bar. Click an Edit button on screen to switch what you edit; click here again to see its settings.
 Follow defaults
 Follow layout
 Follow my rank
 Follows the group's appearance.
+Follows the power in use
+Follows the rank of each spell you know, so a newly trained rank keeps working.
+Follows the rank of this spell you know, so a newly trained rank keeps working.
+Follows the spell it tracks.
 Follows your equipped ammo. Nothing to set here.
 Follows your mouse cursor while you play. While this window is open it sits at its own spot; set where it sits next to the cursor with My point and the offsets.
 Follows your mouse cursor.
 Font
 For
 For a charge spell that also locks for a while after each cast: show its charges and recharge, not that lock.
+Forget center
 Forget default
+Forgets the selection and goes back to the layout.
 Format
 Forms and Stances
 Frame
 Frame %d
 Frame level
 Frame level bump
+Frame name
 Frame strata
 Frame: %s
 Frames
+Frames that move with it
 Free Icon
+Free icon
 Free icon  -  %s, keeps its own position
+Free icons
+Free icons %d
+Free icons: %d
 Free in %s
+Free in the layout
+Free it
+Free position
 Free text. Empty = none.
 Free: it sits at its own Position.
+Freezing Trap
 From
+From Cooldown Manager
+From Your Action Bars
+From its anchor
 From layout %s: %d settings here follow it.
 From layout %s: 1 setting here follows it.
+From my action bars
+From the center point
 From the game's combat text
+From the middle of your screen
+From your action bars
+Frost Trap
+Frostbrand Weapon
 Full Opacity When
 Full at (stacks)
 Full charges color
 Full charges color value
 Full health color
 Full look per type
+Full opacity only while EVERY checked condition is true; faded the rest of the time.
+Full opacity only while your target is in range of %s. With no target it stays faded.
+Full opacity only while your target is out of range of %s. With no target it stays faded.
+Full opacity while at least one checked condition is true; faded the rest of the time.
 Full pool while idle
 Full power
 Full power color
@@ -1194,15 +1792,20 @@ Further out color
 Further out marker
 Fury
 GCD
+GCD & Wand
 GCD swipe color
 GCD tracker mode
 Game default
 Game default puts your own auras first. Time left puts the aura closest to running out first; auras that never end come last.
+Game's own color
 Gap between cells
 Gap between segments
 Gear needs repair
+Give the new icons the Cooldown Manager's look: its rounded corners, border and shadow?\n\n
 Give the new icons the Cooldown Manager's look: its rounded corners, border and shadow?\n\nAny icon's Appearance > Look switches it later.
+Global look (Arc UI profile '%s')
 Glow
+Glow 
 Glow %d
 Glow %d X offset
 Glow %d Y offset
@@ -1256,17 +1859,26 @@ Glow when ready
 Glow when shields pass full health
 Glow when usable
 Glow while active
+Glow while all procs are used
+Glow while not active
 Glow while on cooldown
 Glow while out of range
 Glow while out of totem range
+Glow while procs are left
+Glow while queued
 Glow while ready
 Glow while recharging
 Glow while suggested
+Glow while the aura is up
 Glow while the pet is
+Glow while the timer runs
 Glow while toggled on
+Glow with no charges
 Glows
+Glows and art
 Glows while Shoot, Auto Shot or melee Attack is on, or while a pet ability is set to autocast.
 Glows while the game's Assisted Highlight suggests this spell next. Turn that highlight on in the game's options.
+Got it
 Gradient
 Gradient direction
 Gradient end color
@@ -1279,20 +1891,39 @@ Greys the icon out %s.
 Greys the icon out while this look shows.
 Grid
 Group
+Group 
+Group  -  %d icon
+Group  -  %d icons
+Group Buff
+Group Buff (party / raid)
+Group Buff Icon
+Group Buff icon
 Group Editing
 Group Settings
+Group buff icons
 Group count
 Group frames while editing
+Group kind
+Group layout
 Group leader
+Group name
+Groups and icons can override these.
 Groups came in empty: %s left out.
+Groups stop at %d columns.
+Groups stop at %d rows.
+Groups, icons and bars go into
 Groups, icons, bars
 Grows the glow past the bar's sides (below 0: inside), in screen pixels.
 Grows the glow past the bar's top and bottom (below 0: inside), in screen pixels.
+Guaranteed (100%)
 Guaranteed sound
 HIGH
 HORIZONTAL
 Half health color
 Half of the bar
+Happy, Content or Unhappy; blank with no pet out.
+Harvest counter
+Has it: %s
 Have (3)
 Have / total (3/5)
 Have a focus
@@ -1302,14 +1933,18 @@ Heal absorb color
 Heal absorb opacity
 Heal absorbs
 Healer role
+Healing Potion
 Heals & Shields
 Heals opacity
 Health
+Health Bar
 Health Colors
 Health anchor
 Health bar
+Health bar  -  %s
 Health bars
 Health gradient
+Health of
 Health offset X
 Health offset Y
 Health outline
@@ -1321,11 +1956,19 @@ Health text pin target
 Health text pinned to
 Health text shows
 Health text size
+Health texture
 Hear the chosen sound once, on this icon's sound channel.
+Hear the chosen sound once.
+Hear the text once.
 Hear the voice
+Hear the words once.
+Hear this trigger's sound once, on the group's sound channel.
+Hear this trigger's text once, in the group's voice.
 Height
 Height (0 = auto)
 Here no procs used means: %s; all used: %s.
+Hero Talents
+Hero tree 
 Heroic Strike, Cleave, Maul or Raptor Strike: its cost shows from the moment it is queued until the swing lands.
 Heroic dungeon
 Heroic raid
@@ -1344,16 +1987,21 @@ Hide charge count at zero
 Hide duration while charges remain
 Hide icon art
 Hide minimap button
+Hide names
 Hide preview icon while editing
 Hide sidebar
 Hide these spells
 Hide when inactive
 Hide when ready
+Hide while editing
 Hides between casts; shows a sample cast while this window is open.
+Hides it on screen while this window is open, so you can get at what sits under it. Closing the window shows it again.
 Hides the Arc Auras minimap button. %s always opens this window. Drag the button around the minimap rim to move it; right-click it to toggle move mode.
 Hides the game's own castbar under your character while this castbar is loaded. Turning it off brings the game's castbar back on your next cast.
+Hides this update here until the next version. The tag on the layout in the sidebar stays.
 Hides while the unit is not there; always shows while this window is open.
 High threat
+Highest rank
 Highlight color
 Highlight icons when you press their button
 Highlight lasts
@@ -1362,7 +2010,10 @@ Hold for (s)
 Hold interrupted and failed casts
 Holds
 Holds %s.
+Holds on every power.
 Holds only while the bar shows %s.
+Holds the proc glow lit on a ready icon.
+Holds the ready glow lit.
 Holds:
 Holy Power
 Home
@@ -1371,14 +2022,28 @@ Horizontal packs each row sideways; Vertical packs each column up or down.
 Hot chance color
 Hot from (%)
 Hover a frame on screen, a game frame or one of your Arc Auras items, and click it. Right-click or Esc cancels.
+Hover a game frame on screen and click it. Right-click or Esc cancels.
+Hover a game frame, an action button, a Cooldown Manager icon or an Arc Auras icon and left-click it. Right-click or Esc cancels.
 Hovering an icon shows its spell, item or totem tooltip.
+How big the preview is against the bar's real size. Click to fit the whole bar in view again.
 How every Arc Auras countdown shows part of a second: icons, aura bars, timer bars and swing bars. Up: 13.2 seconds reads 14, the way action bar cooldowns count, so a running timer never reads 0. Down: 13.2 seconds reads 13, the way buff timers and most nameplates count. Decimals, where you turned them on, show the tenths either way.
 How far the glow reaches past the icon: 1 sits on its edge.
+How far your target is, in colored range bands you can edit.
+How fast a line is spoken. 0 follows WoW's own speech rate.
 How it looks in each state
+How it shows
+How long a flash shows. While the button is held, the highlight also stays at least this long, so a click (which casts when you let go) still shows.
+How long after that rule last fired this one may fire (Not after: may not fire). Enter applies it.
+How long it shows after each cast.
 How long the bar takes to fade away when a cast ends (after the hold, when that is on). 0 = it goes at once.
 How long the button glow takes to fade when it stops. 0: it goes at once.
+How long the timer runs when a rule starts it with no seconds of its own. Enter applies it.
 How long the timer runs, and each stack when stacks run out on their own, when a rule gives no seconds. Enter applies it.
+How long the timer runs, or an added stack lasts; 0 takes the item's Default seconds. Decimals work (1.5). Enter applies it.
+How long, in seconds; decimals work (1.5). Enter applies it.
 How many
+How many charges are up; Blank at zero below hides the 0.
+How many in your party or raid have a buff.
 How many nameplates get a row, in the order the game numbers them. Each one keeps a set of frames ready.
 How many rows of auras show, each Columns wide; up to 40 auras. The rest show as others end.
 How many stacks the next spender eats; the chance is for that many draws.
@@ -1386,15 +2051,22 @@ How many you carry, on items that stack, such as potions.
 How the bar looks in each state
 How visible the icon is %s.
 How visible the icon is on cooldown until On cooldown's opacity starts.
+How visible the icon is until this opacity starts. 0 hides it.
 How visible the icon is while the aura is up, until Active's opacity starts.
 How visible the icon is while this look shows. 0 hides it.
+Hunter Traps
 Hunter bands
+Hunter by Emity
 I don't know this spell
 I know this spell
 ID %s
+ID or name
 IDs in tooltips
+IMPORT A SKIN
 IN RANGE
+Ice Trap
 Icon
+Icon 
 Icon Group
 Icon ID
 Icon IDs
@@ -1405,8 +2077,12 @@ Icon border
 Icon border color
 Icon border thickness
 Icon color
+Icon from
 Icon group  -  %d icon
+Icon group  -  %d icons
+Icon groups
 Icon height
+Icon kind
 Icon offset X
 Icon offset Y
 Icon override (spell/texture ID)
@@ -1437,15 +2113,26 @@ Icons on cooldown
 Icons only
 Icons that use this group's size keep their picture's shape: its edges are cropped, never stretched.
 Icons with no shape of their own take this one.
+Icons, bars, texts and the gaps between them grow together.
 Ignore hard ICD
 Ignore spell overrides
 Imbue damage with your weapon
+Immolation Trap
 Imp is out
 Import
 Import / Export
 Import a Layout
+Import as a copy
 Import as a new copy
+Import failed.
+Import from Arc UI
+Import from ArcUI ProcTracker
 Imported %s.
+Imported into the layouts your earlier import made.
+Imported: %d new layouts are in the sidebar.
+Imported: 1 new layout is in the sidebar.
+Imported: the new ProcTracker layout is in the sidebar.
+In Shadowform
 In a battleground
 In a delve
 In a dungeon
@@ -1454,23 +2141,29 @@ In a party
 In a raid group
 In a raid instance
 In a scenario
+In a stance
 In an arena
 In an instance
 In combat
 In combat the click area follows: %s.
+In combat the count waits for the fight to end.
 In combat the game hides buffs, so the count stops; this shows the icon, without a count, while it reminds, drawn by the game.
 In combat the game hides whether a target's cast can be interrupted from addons, so the bar still hides those casts but cannot do anything else about them (no sound, no alert).
 In it
+In it, then not in it, then in it again.
 In or out of combat
 In or out of melee range (%s yards), any class. A spell typed here replaces it.
 In or out of range of %s.
+In power units
 In stock
 In the IDs block
 In the last 30%
 In the stance
 In this layout
 In this skin
+In this stance
 In use
+In use on %s in Arc UI: loads on %s.
 In whole screen pixels.
 In your collection
 In your collection.
@@ -1481,33 +2174,68 @@ Incoming color
 Incoming heals
 Incoming mana
 Indoors
+Info text
 Inherit follows the group, then the layout, then Settings.
 Insanity
 Inset
+Instant (
+Interface/ICONS/Warlock_ Bloodstone
+Interface/ICONS/Warlock_ Healthstone
 Interrupted color
+It can't be dragged on screen.
+It fires once the enchant has this many charges or fewer left. Enter applies it.
+It keeps its spot in its Dynamic group.
 It lasts (seconds)
+It pulses when its cooldown is back; add more triggers after.
+It pulses when the enchant is missing; add more triggers after.
+It shows beside the pulse while the aura is missing, in combat too.
+It sits by the group and moves with it.
 It sits on the first one that is on screen, top to bottom.
 It starts as this state's look. When several hold, the top one wins.
 It starts out of combat, or after a /reload.
 It wears the spell whose cast started its timer: one Fire Trap icon for whichever fire trap you laid.
 Item
+Item 
+Item Category 
 Item ID
 Item IDs
 Item Icon
+Item Level %d
+Item State
 Item icon
+Item icons
 Item level
+Item stacks
+Item time left
+Items in the string that you do not have yet come in, where it puts them.
+Items that came from this pack but are no longer in the string go. Anything you added yourself always stays.
+Items you deleted
 Its Can't use it look shows while the game says you can't use the item yet.
+Its Dynamic group hides it on cooldown.
 Its Masque skin draws the border and the shadow.
 Its Masque skin sets the picture's size, crop and shape.
+Its auras come after those of the type now on its right.
+Its auras come before those of the type now on its left.
+Its bars become a new layout of groups: same spells, sizes and places. Then it turns off.
+Its buff
 Its group orders by Time left, so in play it wears a new aura icon's look.
 Its group turns this look on: the group's Appearance > Icons.
+Its groups come from Arc UI's shared layout '%s'.
 Its layout is locked, so it stays put anyway.
 Its look
+Its marker shows where it comes off cooldown and while it is queued.
 Its own icon
 Its own spot
+Its own spot, or riding another frame: it follows that frame and goes back to its own spot while the frame is not on screen.
+Its point
+Its reminders and their pulse, sound and glow.
+Its rules (the Triggers tab) start its timer and count its stacks from events you pick.
+Its rules are on the Triggers tab: they start its timer and count its stacks.
+Its rules go on the Triggers tab once it is made.
 Its rules on the Triggers tab start its timer and count its stacks.
 Its totem
 Its totem or an aura
+Its triggers are on the Triggers tab: they decide when the picture shows, and a fill runs with their timer.
 Joins the end
 Jumps to where the swing lands
 Keep bright
@@ -1521,8 +2249,11 @@ Keep texts bright while missing
 Keep the dim copy while not active
 Keep the swipe bright while active
 Keep the swipe bright while dimmed
+Keep this texture under Favorites.
 Keep typing: at least 3 letters of the name
 Keeps + and the eye on every sidebar row. Off: they show when the row is under the mouse, so names get more room.
+Key to drop it
+Key to open it
 Keybind
 Keybind X
 Keybind Y
@@ -1540,50 +2271,92 @@ Known Spell
 LAYOUTS
 LEFT
 LINK
+LOG (a mismatch that held 
 LOW
+Label %d
 Label on the off-hand's edge
 Label position
 Label size
+Labels & Keybind
 Lasts (seconds)
 Latency color
 Latency zone
 Later swings color
+Latest
 Layout
+Layout 
 Layout Packs
 Layout looks
+Layout scale
 Layouts
 Layouts for %d classes
 Leave combat first
 Leave combat to read your Cooldown Manager.
+Leaves out everything that does not load on this character, so the string holds only what you use here. What stays out is still listed, greyed, under each layout's NOT LOADED.
+Leaves the items you have alone and brings a second copy in.
+Leaves this item as you have it. The rest of the update still comes in.
 Left
 Left click targets the unit and right click opens its menu, in combat too; the click area shows while the unit exists.
+Left edges
+Left of
 Left of the bar
+Left of the group
 Left of the pulse
 Left out, the group has one already: %s.
 Left to right
 Left-click: options
+Lethal Poison
+LibDeflate did not load
 Light
+Light's Potential
+Lighter charcoal, a blue accent.
+Lightning Shield
+Lightning or Water Shield
 Lights for any enchant on the weapon: an imbue, a poison, an oil or a stone.
 Lights up an icon the moment you press its button, cast it from a macro or use a trinket.
+Line length (0 = auto)
 Linear
+Lined up by
 Lines up with %s
+Lists every item the update changes, adds or drops, with a Keep mine tick on each changed one.
+Lit while an enchant is on the weapon: an imbue, a poison, an oil or a stone.
 Live rows show buffs on you or your pet and debuffs on your target.
 Load Conditions
 Load When
 Load conditions: %s
+Load conditions: %s  -  not loaded on this character. Its eye shows it while you edit
 Load only while
 Loaded here
 Loaded on this character
 Loading
 Loading options
 Loading this page
+Loads only once you know %s.
+Loads only once you know %s. Known now.
+Loads only once you know %s. Not known now.
+Loads only while EVERY checked condition is true. Unloaded, it is gone completely - no mouse, no sounds, no spot in a dynamic group - and it is back the moment that changes, in combat too.
+Loads only while EVERY checked condition is true. Unloaded, it is hidden with no mouse and back the moment that changes, in combat too; the game still plays its aura sounds.
+Loads only while at least one checked condition is true. Unloaded, it is gone completely - no mouse, no sounds, no spot in a dynamic group - and it is back the moment that changes, in combat too.
+Loads only while at least one checked condition is true. Unloaded, it is hidden with no mouse and back the moment that changes, in combat too; the game still plays its aura sounds.
+Loads only while you don't know %s.
+Loads only while you don't know %s. Known now.
+Loads only while you don't know %s. Not known now.
 Loads only while you wear at least %d of %s (%d worn now).
 Lock grid size
 Lock in place
+Lock position
+Locked by its layout
+Locked in place: no dragging. Arrows nudge by one pixel, Shift by ten.
 Locked to another character: %s
+Locked: it stays where it is. Unlock it beside its eye in the list.
+Locked: unlock it to delete it.
 Look
+Look for
+Look per form or spec
+Look up
 Looking up %s in the spell list...
 Looks
+Looks for
 Lower case (cs2, m4)
 MEDIUM
 Made %s, yours is from %s.
@@ -1591,6 +2364,8 @@ Made %s.
 Made for %s: some spells and items may not work here.
 Made with Arc Auras %s, newer than yours: update Arc Auras to get every setting in it.
 Maelstrom
+Mage Armor
+Mage by Emity
 Magic
 Magic border
 Magic color
@@ -1598,17 +2373,25 @@ Magic color wash
 Magic glow
 Magic label
 Main Hand
+Main Hand Enchant
 Main hand
+Make a layout first.
 Make them follow
+Makes a copy of each selected item right beside it (a group with its icons) and selects the copies.
 Makes a copy of this reminder, every trigger included, in the same group.
 Makes a copy right beside this one - a layout or group with everything inside it.
 Makes a reminder of it in this group, or opens the one it has.
 Makes a reminder of the enchant on that weapon (an imbue, a poison, an oil or a stone), or opens the one it has.
+Makes one share string from everything ticked above.
+Makes the whole layout bigger or smaller, growing from its center point (the cross on the map).
 Makes these rows, as they are now, the default for this kind. It asks whether the items you have change too.
 Male
 Mana
+Mana Gem
+Mana Potion
 Mark each proc
 Mark it while it can't be used
+Mark of the Wild
 Mark unloaded items
 Marker color
 Marker color tints the icon. Spell's own colors keeps the real icon, with the marker color as its outline.
@@ -1627,13 +2410,16 @@ Match target width (height if standing)
 Match the anchor target
 Match the bar's size
 Match the group
+Match the layout
 Match width adjust
+Max chance reached
 Max stacks
 Max stacks color
 Max stacks color at %s
 Max stacks color value
 Maximum
 Me (or my pet)
+Me: only your own copy of the aura shows on this icon (the usual choice - another player's copy is not your cooldown). Anyone: any copy. Anyone but me: only copies other players put up.
 Measured from
 Melee attack is on
 Melee, %s
@@ -1641,6 +2427,8 @@ Melee, %s yd
 Melee: in or out of range
 Mid chance color
 Middle
+Midnight Ink
+Midnight Ink, a step lighter.
 Minimap
 Minutes and seconds (1:30)
 Missing
@@ -1653,35 +2441,55 @@ Missing icon from
 Missing skin
 Missing tint
 Missing tint color
+Missing: %s
 Modules
+Monkey, Hawk, Cheetah, Beast, Pack and Wild, in the order you learn them.
+Moonkin Form
 More
+More %s options
 More fade options
 More frame options
 More glow options
 More inset options
+More options
+More packs from the maker. Click to copy the link.
 More text options
 More usability options
 Most people want one row of 3 to 6 there.
 Motion
 Motion size
+Mount ID
 Mounted
 Mouse
 Mouse cursor
 Mouseover
 Move
+Move X
+Move Y
 Move down
 Move left
 Move or copy to
 Move right
+Move them
 Move to
 Move to...
 Move up
+Move, size and anchor this layout's elements right on your screen.
+Moved away
 Movement
+Moves every element together.
+Moves it right (or left, below zero) from that spot.
+Moves it up (or down, below zero) from that spot.
+Moves the layout one pixel. Shift-click moves it ten.
+Moves the selection to the picked place. Positions and settings travel with each item.
 Moves this into another layout - or, for an icon, into a group. Position and settings travel with it.
+Moves with it
 Moving mark
 Moving, shooting
 Music
+My Layouts
 My point
+My totem bar's pick
 Mythic 0 dungeon
 Mythic raid
 Mythic+ keystone
@@ -1691,6 +2499,8 @@ N seconds before it runs out
 NAME
 NEW
 NEW BAND
+NEW SKIN
+NEW VERSION
 NO LONGER IN THE PACK
 NONE
 NOT LOADED
@@ -1699,6 +2509,7 @@ NOTES
 Name
 Name anchor
 Name color
+Name of
 Name offset X
 Name offset Y
 Name or spell ID
@@ -1714,6 +2525,7 @@ Named frame...
 Named frame: no name entered yet, so it stays free.
 Nameplate stand-in
 Nameplates covered
+Nature's Guardian
 Nearest first: the target is in the first band whose checks all hold.
 Need all of them
 Need any one
@@ -1730,19 +2542,29 @@ Next Swing
 Next rank:
 No %s layout from %s yet, so this shows the newest.
 No %s yet. New ones start with these.
+No Arc Proc is written for your class yet.
 No Cooldown Manager icon of %s is shown, so it sits on its own spot.
 No Cooldown Manager icon with cooldown ID %s is shown now, so it stays at its own spot.
 No Fade (snap off)
+No abilities yet: add one below.
 No action button with %s is shown, so it sits on its own spot.
 No bar wears it yet
 No buff named %s was found. Type the buff's name as its tooltip shows it.
 No cap
+No charges
 No checks yet: this band never holds.
+No deck bar is written for your class yet.
 No favorites yet: click the star on a texture to keep it here.
+No frame by that name right now. It pins once the frame exists.
 No frame called %s exists, so it stays free.
+No hero talent trees on this character yet.
+No hero talents to show.
+No hero talents yet.
 No icon with cooldown ID %s is shown, so it sits on its own spot.
+No layout named Cooldown Manager: build one from New Layout > From Cooldown Manager.
 No layout packs here yet. Made a layout others would like? Post it with a screenshot on the Arc UI Discord to be featured here.
 No layouts yet. Start one with + New Layout.
+No named frame here
 No notes.
 No pack name
 No picture matches.
@@ -1750,6 +2572,7 @@ No procs used color
 No range rule
 No range rule.
 No reminders yet: pick a spell below, add one by ID, or press + Add Reminder.
+No rules yet: add one to say when it plays.
 No rules yet: it shows as active until a rule starts its timer or counts stacks.
 No set rule
 No set rule.
@@ -1757,14 +2580,19 @@ No shield equipped
 No skins yet. Make one with + New Skin, or from a bar's Skin dropdown.
 No spell entered yet, so it stays at its own spot.
 No spell has that name
+No spell of yours matches.
 No spell rule
 No spell rule.
 No spell yet: add one below.
+No spells listed yet.
 No spells listed yet: add one by ID below.
+No spells listed yet: type a spell ID.
+No stance
 No such condition
 No talent tree on this character yet.
 No talent tree on this character: talent conditions do not apply.
 No target
+No text
 No texture has "%s" in its name.
 No type
 No type border
@@ -1779,8 +2607,11 @@ No-resource tint
 No-resource tint color
 Nobody has it
 Node %s
+Node ID
 Node, entry and definition IDs on talent tree buttons.
+Non-Lethal Poison
 None
+None (always shown)
 None (free position)
 None in this string
 None of its anchors is there: it sits at its own Position.
@@ -1791,11 +2622,15 @@ Normal look
 Normal look keeps the group's border. Your color uses this type's color below. The Blizzard ones are the game's own debuff borders.
 Normal raid
 Not active
+Not active, then a timer starts and runs out, then Not active again.
 Not after rule %d
 Not attacking
 Not casting
+Not drawn on screen for now. Click to show it again. Closing this window shows everything again.
 Not enough resource
+Not in a stance.
 Not in combat
+Not in combat.
 Not in it
 Not in the stance
 Not in your Tracked Bars now: move it there in the Cooldown Manager.
@@ -1806,10 +2641,16 @@ Not learned yet: it casts once you learn it.
 Not loaded here
 Not loaded on this character. It loads on: %s. Click to draw it on screen while this window is open. Its load conditions stay as they are.
 Not loaded on this character. It loads on: %s. The sidebar View keeps it off screen; Everything shows it.
+Not now
+Not on this character's stance bar: it lights up on one that has it.
+Not right? Delete the layout and import it again.
 Not set
+Not shown
 Not shown by your Cooldown Manager
 Not taken
 Not taken: %s
+Not taken: click to drop it.
+Not there
 Nothing
 Nothing changed here yet.
 Nothing checked.
@@ -1817,24 +2658,36 @@ Nothing checked: full opacity, unless Fade When says otherwise.
 Nothing checked: no condition, so the sections above decide alone.
 Nothing differs from what you have.
 Nothing else
+Nothing found
+Nothing found on your action bars.
 Nothing here matches: the name search below still works.
 Nothing here yet - add the first icon
 Nothing in it yet
 Nothing in this layout yet.
 Nothing in your spellbook has that name: its spell ID still works
 Nothing in your spellbook matches: a spell ID below still works.
+Nothing in your spellbook matches: a spell ID still works.
 Nothing is anchored to this yet.
 Nothing is hidden while the target or focus is friendly.
+Nothing moves with it yet. Add a game frame, e.g. your player frame.
 Nothing on it now
 Nothing on this weapon now.
+Nothing on this wheel yet
 Nothing pasted yet.
 Nothing picked
+Nothing picked yet - click a talent to pick it, again for Not taken.
+Nothing picked yet - click a talent to pick it.
 Nothing picked yet: click an Arc Proc above.
 Nothing required yet - click a talent to require it, again to exclude it.
 Nothing shows yet
 Nothing ticked yet.
 Nothing to set here.
+Nothing to undo.
 Nothing would change; importing again brings in a second copy.
+Nudge down
+Nudge left
+Nudge right
+Nudge up
 Number format
 Number of ammo thresholds
 Number of glows
@@ -1852,7 +2705,9 @@ OUT OF RANGE
 OUTLINE
 Off
 Off Hand
+Off Hand Enchant
 Off hand
+Off in Proc Tracker
 Off keeps its settings, greyed out.
 Off-hand
 Off-hand color
@@ -1866,6 +2721,10 @@ Off. Tick the box at the top of the card to change these.
 Off: a Nature wolf's arrival credits the proc (Rolling Thunder or Feral Spirit). On: the Cooldown Manager's Doom Winds icon does, which needs the icon shown there.
 Off: a recharging point is its own color at half brightness.
 Off: an icon not yet reached is greyed out.
+Off: every %s loads them, each by its own specs and talents. Cast bars always stay on %s.
+Off: silent while you are in a party.
+Off: silent while you are in a raid group.
+Off: silent while you are not in a group.
 Off: the bar shows its no-band look while the target is in this band.
 Off: this trigger plays its sound or speech only, with no pulse.
 Off: this trigger pulses silently. A new trigger starts silent.
@@ -1882,6 +2741,10 @@ On cooldown's opacity waits until little time is left; before that the icon take
 On it now: %s.
 On proc
 On proc (proc glow turns on)
+On ranked realms, follow whichever rank of this spell you know now.
+On ranked realms, read whichever rank of this spell you know now.
+On ranked realms, track whichever rank of this spell you currently know. Re-resolves on spell changes.
+On screen
 On the Cooldown Manager icon for %s.
 On the Cooldown Manager icon of %s.
 On the Cooldown Manager icon with cooldown ID %s.
@@ -1889,39 +2752,61 @@ On the action button holding %s (%s).
 On the action button holding %s.
 On the action button with %s.
 On the bar
+On the group
 On the icon with cooldown ID %s.
 On this icon
+On top
 On unit
 On use (when cast)
+On your screen
+On: adding stacks also starts the timer over, with the seconds below.
 On: every Arc Proc resets the moment a key starts, so a reset is never missed. Off: on the gate drop, which keeps the skip working.
 On: icons pack (Show while missing ones too). Off: every aura keeps its spot.
 On: it glows while this look shows. Click to switch it.
 On: the debuffs start on the line after the buffs. Off: they follow straight on.
+On: the rule fires only while the conditions below hold. Off drops them.
+On: the skin sets it for every bar that wears it. Off: each bar keeps its own.
+On: the spell's own requirement decides (a dodge, a proc, enough mana), even while it is still cooling down. Off: only when it can be cast now, usable and off cooldown.
+On: the trigger fires for your pet's casts of the spell as well as yours.
 On: this opacity while none is left. Off: it keeps its opacity.
+On: this opacity while toggled on. Off: it keeps its opacity.
 On: this trigger has its own pulse duration and animation tuning. Off drops them, and the reminder's apply.
 Once an ability is off cooldown.
+Once the proc glow goes, the pulse this trigger started leaves the screen, the queue and the hold.
+Once the spell stops being usable, the pulse this trigger started leaves the screen, the queue and the hold.
+One card per element with its preview, kind, load conditions, Edit and Delete.
 One color
+One editor for every selected icon (or bar): the rows they all share, read from the first one; a change lands on all of them.
+One layer for every element of this layout, or each element's own layer moved up or down.
+One look
 One motion (seconds)
 One option of a choice talent
 One per tick
 One pulse (seconds)
 One run (seconds)
 One stance
+One totem, by its spell ID
+One totem: that totem, any rank, in whatever slot it lands. A totem slot: 
 One you have not learned yet stays grey until you do.
+One-time catch-up: moves EVERY action bar spell to the top rank you know, including lower ranks you placed on purpose.
+Only a spell row has a cost to mark.
 Only fire when proc is active
 Only if
 Only if it is not running
+Only in combat
 Only load once learned
 Only load while this hand holds a weapon
 Only new
 Only new %s
 Only new ones
+Only on %s
 Only on-use trinkets (hide passive ones)
 Only out of combat
 Only the types ticked under Tracking, Dispel types, show, so only they have an icon.
 Only this character
 Only this rank
 Only what I changed
+Only what loads here
 Only what loads on this character
 Only when out of stock
 Only while holding Shift
@@ -1929,23 +2814,35 @@ Only while on cooldown
 Only while ready
 Only while this window is open
 Only your own
+Only your own copy of the aura shows, not another player's.
 Opacity
 Open
 Open By State
 Open my copy
 Open world
+Opens Import / Export with exactly this selection ticked and its share string ready to copy.
 Opens Import / Export with just this reminder ticked and its share string ready to copy: its triggers, load conditions and its own appearance.
 Opens Import / Export with just this ticked and its share string ready to copy.
+Opens a picker for this group's spells and items right after Create. Out of combat only.
 Opens every More options fold in the editors, so the fine-tuning rows show without a click. Off: they wait behind their fold.
+Opens it. The Anchor panel on its Position tab holds the link back to this one.
+Opens its editor.
+Opens the Add window aimed at this element.
 Opens the Add window for a spell, an item, a weapon enchant or a missing aura to be reminded of.
+Opens the talent tree: click a talent for this rule, again for Not taken.
+Opens the talent tree: the bar keeps one look while you have the talent you pick, one while you don't.
 Optional
+Or type a spell ID
 Order
 Orientation
 Other
+Other classes' Arc Procs too. Each loads only for its own class.
 Other heals color
 Other spells this icon can show, separated by commas. It turns to the last of them you cast, else shows the first one you know.
+Out of Shadowform
 Out of combat
 Out of range
+Out of range glow
 Out of range glow X offset
 Out of range glow Y offset
 Out of range glow color
@@ -1970,6 +2867,7 @@ Out of totem range tint
 Out of totem range tint color
 Out-of-range alpha
 Out-of-range color
+Out-of-range glow
 Out-of-range glow X offset
 Out-of-range glow Y offset
 Out-of-range glow color
@@ -2011,17 +2909,23 @@ PACK INFO
 PASTE A STRING
 PICK AN AURA - click to fill
 Pack direction
+Pack info
 Pain
 Pairs like META=M, NUMPAD=N, applied before the key is shortened.
+Paladin Aura
+Paladin by Emity
 Pandemic border
 Panel
 Panel scale
 Part of the picture shown
 Part of the pictures shown
 Party
+Party %d
 Party %s
+Party frames
 Party member %d
 Paste a layout someone shared with you.
+Paste a skin string someone shared.
 Paste a string first.
 Paste a string here (Ctrl+V).
 Paste a string to see where each part goes.
@@ -2030,7 +2934,10 @@ Percent of the aura
 Percent of the most
 Percent, no sign
 Pet
+Pet action bar
 Pet battle
+Pet buff
+Pet frame
 Pet happiness
 Pet has no target
 Pet health at or below (%)
@@ -2042,24 +2949,43 @@ Pet is not happy
 Pet is on Passive
 Pet is out
 Pet is unhappy
+Pet not happy
 Pick Frame
 Pick a class first: its specs are listed then.
 Pick a condition
 Pick a place...
+Pick a stance
 Pick a talent, then the look to edit: with it or without it.
+Pick an Arc Proc, then Create: a deck bar fills as the deck is drawn.
+Pick an Arc Proc, then Create: it lands in the group under Add to, or free.
 Pick an icon or bar on screen.
 Pick an item
+Pick any color for the icon and bar previews to sit on.
+Pick at least one part.
 Pick each group's skin in Masque's options: /msq.
+Pick it on screen
+Pick one
+Pick one...
+Pick what comes over from Arc UI. Arc UI stays as it is, and you can import again any time.
 Pick what comes over from Proc Tracker into a ProcTracker layout. You can import again any time.
+Pick what the text is, then what drives it.
+Pick which Arc UI groups, icons, bars and looks come into Arc Auras.
+Pick which ArcUI ProcTracker icons and bars come into Arc Auras, placed as they are.
 Picked for %s: a click picks it for this spec instead.
 Picked: %s
+Picked: click to drop it.
+Picking a frame waits until combat ends.
 Picture
+Picture ID or path
 Picture blend
 Picture color
+Picture driven by
 Picture fill follows
 Picture shows
+Picture to show
 Picture zoom (%)
 Pictures by stack count
+Pinned to
 Pinned to your target's nameplate. Place it with the offsets below.
 Pins to your target's nameplate. Nothing targeted now: hidden while you play.
 Pins to your target's nameplate. The preview above shows it on a stand-in; place it with the offsets.
@@ -2088,11 +3014,19 @@ Play a sound when the aura drops
 Play a sound when the cooldown starts
 Play a sound when the next draw is guaranteed
 Play a sound when usable
+Play in a party
+Play in a raid
 Play on screen
 Play sound
+Play when solo
 Player
 Player (you)
+Player cast bar
+Player frame
+Plays a sound or speaks when something happens. Nothing shows on screen.
 Plays the first reminder once, with this group's look and sound.
+Plays this preview on the bar itself, in its real place and size. Press again, pick something else, or close this window to stop.
+Plays this preview on the icon itself, in its real place and size. Press again, pick something else, or close this window to stop.
 Plays this reminder once with the look set here, even where the conditions would keep it quiet.
 Point Colors
 Point color
@@ -2107,10 +3041,18 @@ Position
 Position X
 Position Y
 Power
+Power 
 Power %s
+Power Infusion
+Power Infusion received: an aura icon of the buff on you.
+Power Word: Fortitude
 Power at or above %s
+Power at or above a value
 Power at or below %s
+Power at or below a value
 Power color
+Power shown
+Power texture
 Power type
 Prefix
 Preset
@@ -2124,11 +3066,15 @@ Preview Voice
 Preview as
 Preview background: %s
 Preview in
+Priest by Emity
 Priority
 Proc
 Proc (Blizzard)
+Proc Bar
 Proc Chance
 Proc Count
+Proc Tracker
+Proc chance
 Proc chance text
 Proc chance text X
 Proc chance text Y
@@ -2199,6 +3145,7 @@ Procs left
 Procs left, of the deck's
 Procs used
 Procs used, of the deck's
+Protected by the game: not offered
 Pulse
 Pulse Duration (override)
 Pulse Duration (seconds)
@@ -2209,9 +3156,18 @@ Pulse size (%)
 Pulse timer
 Pulse while it shows
 Put all %d of your %s defaults back to Arc's?
+Put it back
+Puts a copy of the selection in the picked place and leaves the originals where they are. Each copy keeps its settings, name and position.
+Puts back what the update changed, added or removed. The layout's page offers it too, until its next update.
+Puts back what the update changed, added or removed. Your changes since to the items it changed go too.
 Puts each layout's bars and free icons in the sidebar under BARS and FREE ICONS folds. Off: they list in place among its groups.
+Puts it back at once when the game or another addon moves it. Off: it goes back the next time the group moves.
+Puts the layout's center point in the middle of your screen.
+Puts the middle of what's shown in the middle of your screen. Scale grows from there.
+Puts the picked template's spells on the wheel, in place of what is on it now.
 Puts the rows of this sub-panel back: to the layout's values where its layout sets them, to the defaults for this thing everywhere else (a saved default still counts).
 PvP flagged
+Quest ID
 Quest border
 Question mark until set
 Questions or help? Join the Arc UI Discord
@@ -2224,15 +3180,21 @@ Queued color
 Queued marker
 Queued rides
 Queued rides the swing
+Quiet for (seconds)
+RAID BUFFS
 RIGHT
 ROGUE
+Rage Potion
 Raid Finder
 Raid encounter
 Range Bar
+Range bar  -  %s
 Range bars
 Range check spell
 Ranged
+Rank 
 Rank %d of %d
+Ranked realms (WoW Forever): the icon resolves by NAME to the rank you currently know, so learning a new rank never needs a new spell ID. Off = it tracks the exact ID above; you can also pin a rank there.
 Rated PvP
 Reaches every kind with that row: %d kinds, %d %s.
 Reaction color
@@ -2276,6 +3238,9 @@ Ready text string
 Ready tint
 Ready tint color
 Ready's and Recharging's grey wait while it is out of range, lacks the resource or can't be used; their own grey applies then.
+Ready, a fake cooldown, then ready again (a charge spell: Ready, Recharging, No charges and back). Swipe, texts, dims and glows loop.
+Ready, the timer runs, the aura is up, then the cooldown runs out to Ready again.
+Ready, then a short cooldown, then ready again: the fill, threshold colours and countdown text.
 Recently used
 Recharge
 Recharge color
@@ -2295,6 +3260,7 @@ Recharge text size
 Recharge-start sound
 Recharging
 Recharging alpha
+Recharging glow
 Recharging glow X offset
 Recharging glow Y offset
 Recharging glow color
@@ -2317,17 +3283,24 @@ Recharging glow thickness
 Recharging tint
 Recharging tint color
 Refills at every pulse, counted from when the totem went down.
+Rejuvenation Potion
+Reload now
+Remind me of
 Remind while
 Reminder
 Reminder Group
 Reminder group  -  %d reminder
+Reminder group  -  %d reminders
+Reminder groups
 Reminder: %s
 Reminder: none
 Reminders
+Reminders join
 Remove
 Remove band
 Remove items the pack dropped
 Remove items the pack dropped (%s)
+Remove last 
 Remove last band
 Remove last color
 Remove last health text
@@ -2335,10 +3308,15 @@ Remove last resource text
 Remove last stack picture
 Remove last threshold
 Remove stacks
+Remove the bottom row
+Remove the left column
+Remove the right column
 Remove this look
 Remove this skin from the bar
+Remove this spell
 Remove this trigger
 Removes this check from the band.
+Removes this state.
 Rename
 Repeat
 Repeat across
@@ -2347,8 +3325,11 @@ Replace
 Replace Guard (seconds)
 Replacement forms (Windstrike, proc spells) normally drive this bar's cooldown. On = pin the BASE spell instead.
 Replacement forms (Windstrike, proc spells) normally drive this icon's cooldown and art. On = pin the BASE spell instead.
+Replaces this bar's own bands with the picked preset: the texts, colors and checks you changed are lost.
+Required: click to exclude it instead.
 Rescan
 Reset
+Reset 
 Reset Curse
 Reset Disease
 Reset Magic
@@ -2359,14 +3340,18 @@ Reset all %d
 Reset animation tuning
 Reset the count
 Reset the timer and stacks
+Reset this look
 Reset this page
 Reset to layout
 Reset to preset
 Reset to skin
+Resets the items in this layout that set their own value here, so they follow the layout again. It asks first and says how many.
 Resize
 Resource
+Resource Bar
 Resource anchor
 Resource bar
+Resource bar  -  %s
 Resource bars
 Resource color
 Resource offset X
@@ -2388,15 +3373,31 @@ Reverse swipe
 Right
 Right away (%s)
 Right away. Click to make it wait for the last seconds.
+Right edges
+Right of
 Right of the bar
+Right of the group
 Right of the pulse
 Right to left
 Right-click clears it.
+Right-click clears it. While Arc Auras is loaded the key drops this totem instead of its usual action.
+Right-click clears it. While Arc Auras is loaded, the key opens this wheel instead of its usual action.
 Right-click: move layouts
+Righteous Fury
 Ring runs
 Ring starts at (degrees from the top)
+Riptides since last proc
+Rockbiter Weapon
 Rockbiter, Flametongue and Windfury Weapon, sharpening stones and weightstones: what each adds per hit and per second with your main-hand weapon, to compare them.
+Rockbiter, Flametongue, Frostbrand and Windfury, in the order you learn them.
+Rogue by Emity
+Rolling Thunder
 Rotate texture
+Rotation and utility rows, buffs, debuffs, defences, items and missing-buff reminders, mana, a swing timer and a castbar.
+Rotation and utility rows, buffs, debuffs, defences, items and missing-buff reminders, mana, a wand swing timer and a castbar.
+Rotation and utility rows, buffs, debuffs, defences, items and poison reminders, energy, combo points, a swing timer and a castbar.
+Rotation and utility rows, buffs, debuffs, defences, items, missing-buff reminders, mana, swing timers and a castbar.
+Rotation and utility rows, totems, buffs, debuffs, defences, items and missing-buff reminders, mana, a swing timer and a castbar.
 Round down
 Round timer numbers
 Round up
@@ -2413,6 +3414,7 @@ Runes
 Runic Power
 Running or not
 SKINS
+Safe Mythic+ Reset 
 Safe Mythic+ reset
 Same as Settings
 Same as fill
@@ -2427,13 +3429,16 @@ Say when the next draw is guaranteed
 Say when usable
 Sayaad is out
 Scale
+Scale grows from here. Drag it in Edit on screen to set it.
 Screen position
+Scroll bar width
 Search
 Search all %d textures
 Search by name or ID
 Search everything...
 Search talents
 Search your spells
+Searches the spell list for the buff by its name.
 Second ammo threshold (at or below)
 Second ammo threshold color
 Second half color
@@ -2445,33 +3450,58 @@ Seconds after cast
 Seconds after ready
 Seconds before it runs out
 Seconds between pulses (0 = the totem's own)
+Seconds left
+Seconds need the aura's length: click to set it.
 Seconds need the full length, which the game does not tell addons.
+Seconds this trigger's pulse runs, from 0.1 up to 600.
 Segment colors
 Segment count (0 = auto)
 Segment spacing
 Segmented
 Segmented bar
 Segments
+Select All
+Select None
+Select all
 Selected: press Ctrl+C to copy it, then paste it anywhere.
 Selection
 Separate X/Y spacing
 Separate aura swipe inset W/H
 Separate inset W/H
+Set 
 Set Pieces Rule
+Set by this layout: %d.  %d bar keeps its own value.
+Set by this layout: %d.  %d bars keep their own values.
+Set by this layout: %d.  %d group keeps its own value.
+Set by this layout: %d.  %d groups keep their own values.
+Set by this layout: %d.  %d icon keeps its own value.
+Set by this layout: %d.  %d icons keep their own values.
+Set by this layout: %d.  Every bar here follows it.
+Set by this layout: %d.  Every group here follows it.
+Set by this layout: %d.  Every icon here follows it.
 Set per rule
 Set stacks
 Set the totem's spell ID first.
 Sets icon width and height together and crops the pictures to fit.
+Sets the rows of this page as the default of the kinds picked. It asks whether the items you have change too.
 Sets width and height together and crops the picture to fit.
 Settings
+Settings > Cooldown Manager turns it back on.
 Several units
 Shadow
+Shadow Protection
 Shadow size
+Shaman Imbue
+Shaman by Emity
 Shaman in my group
 Shape
 Share it on the Arc UI Discord with a screenshot.
+Share of the aura left
 Share your setup: tick what goes in, then make its string.
 Shared
+Shared Media
+Shared by every spoken line in Arc Auras. The volume and the tick are WoW's own text to speech settings.
+Shared media
 Shield color
 Shield equipped
 Shield look
@@ -2483,6 +3513,8 @@ Short of rage or mana
 Short value (5.2k)
 Short-of-cost tint
 Show
+Show %s
+Show & Hide
 Show Curse auras. Tick any dispel types to show only those; none ticked shows every aura.
 Show Disease auras. Tick any dispel types to show only those; none ticked shows every aura.
 Show Magic auras. Tick any dispel types to show only those; none ticked shows every aura.
@@ -2490,6 +3522,7 @@ Show Poison auras. Tick any dispel types to show only those; none ticked shows e
 Show What's New after an update
 Show a cooldown
 Show active art while toggled on
+Show after each update
 Show an aura
 Show as active while
 Show by value
@@ -2505,6 +3538,7 @@ Show custom text %d only while the aura is missing
 Show custom text on cooldown
 Show custom text only while out of totem range
 Show custom text only while the aura is missing
+Show every Arc Proc
 Show every option
 Show everywhere - clears every class and spec restriction.
 Show group names
@@ -2529,10 +3563,14 @@ Show proc chance text on cooldown
 Show proc count text
 Show proc count text on cooldown
 Show pulse icon
+Show sidebar
 Show spell cost while casting
 Show tenths
+Show the bar bigger. When it no longer fits, drag the preview to look around.
+Show the bar smaller. The mouse wheel over the preview zooms too.
 Show the off-hand on this bar
 Show the pulse timer
+Show the time left too
 Show this band
 Show tooltip
 Show tooltips
@@ -2542,17 +3580,25 @@ Show under this many seconds left
 Show unloaded items while editing
 Show violations text
 Show violations text on cooldown
+Show when
+Show while
 Show while missing
 Showing %d of %d spells
 Showing now
+Shown icon ID
 Shown while editing
 Shows
 Shows %s, your totem bar's %s pick, while no %s totem is down.
+Shows a drag handle on every layout. Drag it where you want, then lock.
 Shows as
+Shows only the rows where your default differs from Arc's.
+Shows this window in English instead of your game's language. Takes effect after a /reload.
+Shows while the aura is missing
 Shows while you have none of: %s.
 Shrink the group to fit
 Size
 Size & Frame
+Size & Position
 Size and Time
 Skin
 Skin icons with Masque
@@ -2561,20 +3607,29 @@ Skyriding
 Slate
 Slide into place
 Slide time (s)
+Slot 
 Slot %d
 Smooth fill
+Snap back
+Soft light
 Solo
 Some conditions here are for the other game version and are ignored.
 Some procs used color
 Some words
+Someone has it
 Someone lacks it
+Something else keeps moving this frame. Snap back pauses until the layout changes.
+Something here is new in this version.
 Soul Fragments
 Soul Shards
 Sound
+Sound  -  %s
 Sound Channel
 Sound Effects
+Sound between messages
 Sound channel
 Sound kit %d
+Sound name
 Sound when regen resumes
 Sounds
 Spacing
@@ -2588,47 +3643,72 @@ Speak
 Speak text
 Speak this text
 Spec
+Spec 
 Spec %s
 Spec %s (another class)
 Speech Rate
+Speech rate
+Speech volume
 Spell
+Spell 
 Spell %s
 Spell Catalog
+Spell Cooldown
 Spell ID
 Spell ID or name
 Spell ID: %s
 Spell IDs
 Spell IDs to leave out of this group, separated by commas or spaces.
+Spell IDs whose cast ends it before its time, such as a spender. Optional.
+Spell IDs whose cast starts the time, any rank, separated by commas. Empty: this icon's spell.
 Spell IDs, comma separated
 Spell IDs: %s
+Spell State
 Spell and item IDs
+Spell charges
+Spell cooldown
 Spell cost marks: COST MARK on a row in Conditions > By State.
 Spell costs
+Spell icons
 Spell icons on cost ticks
 Spell in range
 Spell is ready
+Spell name or ID
+Spell or name
 Spell out of range
 Spell queue tick
+Spell ranks only exist on WoW Forever.
+Spell text
+Spell to watch
 Spell's own colors
 Spells
+Spells and Items
 Spender Maelstrom cost
 Spin clockwise
 Spin counterclockwise
 Spoken by the game's text to speech, in the voice Arc Auras speaks with. Empty says nothing.
+Spoken by the game's text to speech, in the voice its options pick.
+Spots on the wheel
 Square
 Square (1:1)
 Stack
+Stack & Charges
 Stack & charges
 Stack (side-by-side)
+Stack Bar
 Stack Colors
 Stack Direction
+Stack Pictures
 Stack Spacing
 Stack anchor
+Stack bar  -  %s stacks
+Stack cap
 Stack color
 Stack count
 Stack count text
 Stack count, up to
 Stack hides at zero
+Stack loop
 Stack offset X
 Stack offset Y
 Stack outline
@@ -2662,16 +3742,27 @@ Stacks %s: fill color
 Stacks are above 0
 Stacks at least
 Stacks at most
+Stacks clear when the timer ends
 Stacks drawn
 Stacks drawn, of the deck's size
 Stacks left in the deck
 Stacks left, of the deck's size
 Stacks never pass this. Empty = no cap. Enter applies it.
+Stacks never pass this; in stack mode the bar is full here. Empty = no cap. Enter applies it.
+Stacks text
+Stacks to add, remove or set (set takes 0). Enter applies it.
 Stagger
+Stance
+Stance Icon
+Stance bar
+Stance icon
+Stance icons
 Stance loop
+Stance spell ID
 Stand the bar up
 Start from a template
 Start mode
+Start the import
 Start the timer
 Starter Layout
 Starts at the value
@@ -2681,14 +3772,19 @@ State colors
 Static
 Status: %s
 Stay until cast
+Stays unloaded while any checked condition is true. This wins over Load When.
 Stays where it came back
 Stealthed
+Stop on screen
 Stop the timer
+Stops it being dragged on screen.
+Storm Unleashed
 Strip (2:1)
 Striped shield
 Style
 Suffix
 Suggested
+Suggested glow
 Suggested glow X offset
 Suggested glow Y offset
 Suggested glow color
@@ -2711,8 +3807,11 @@ Suggested glow thickness
 Swimming
 Swing
 Swing Bar
+Swing after swing at your weapon's speed.
+Swing bar  -  %s
 Swing bars
 Swing count (+1, +2)
+Swing loop
 Swing tick %d color
 Swing tick %d time before it lands (s)
 Swing tick color
@@ -2727,18 +3826,25 @@ Swipe inset
 Swipe inset H
 Swipe inset W
 Swipe only when no charges
+Switches it on with the same look.
 Switches the skin on with a talent, or without it.
 TEMPLATE - click one to fill in every rank's enchant ID
+TEMPLATE - click one to start the wheel with it
 TEMPLATE - click one, then Create
+TEMPLATE - pick one, then Use template
 THICKOUTLINE
 TOP
 TOPLEFT
 TOPRIGHT
+TRACKED BY THE COOLDOWN MANAGER
 TYPE THE AURA'S NAME to see its spell IDs, or type the IDs
 TYPE THE SPELL'S NAME to pick it from your spellbook, or type its ID
 Taken
+Taken: click for Not taken instead.
 Takes its spot back
+Takes this anchor off the list.
 Talent
+Talent 
 Talent %s
 Talent %s (not in this tree)
 Talent IDs
@@ -2751,19 +3857,28 @@ Talents: none, shows on any build. The Talents button by a class picks its talen
 Tall (2:3)
 Tank role
 Target
+Target Range
 Target Range Rule
+Target cast bar
+Target frame
 Target in range
 Target is friendly
 Target is hostile
+Target of target
 Target out of range
 Target point
 Target range band
+Target range rule
+Target's casts
 Target's nameplate
+Tempest (Elemental)
 Tenths below (seconds)
 Tenths near the end
 Tenths under (seconds)
 Test Alert
+Test voice
 Text
+Text  -  %s
 Text %d anchor
 Text %d color
 Text %d offset X
@@ -2772,6 +3887,7 @@ Text %d shows
 Text %d size
 Text color
 Text color outside the thresholds
+Text element
 Text font
 Text in the band's color
 Text outline
@@ -2782,12 +3898,20 @@ Text threshold %d value
 Text threshold colors
 Text thresholds in power units
 Text to Speech
+Text to speech: when set, it is spoken instead of the sound.
+Text type
 Texts
 Texts take the bar's color
 Texture
+Texture  -  %s
+Texture name
 Textures
 Textures you use show here.
 That anchor target no longer exists, so it stays free.
+That frame can't move this way: an Arc Auras frame, the whole screen, or what this group is anchored to.
+The 
+The Active look, its timer running with its swipe and duration text. Drag any text on the icon to place it.
+The Algeth'ar Puzzle Box's haste: 20 seconds from its use; dying clears it.
 The Arc Proc's own
 The Cooldown Manager look draws the border and the shadow.
 The Cooldown Manager look sets the picture's size, crop and shape.
@@ -2795,84 +3919,205 @@ The Cooldown Manager's cooldown IDs for spells, auras and equipped trinkets: one
 The Cooldown Manager's soft shadow frame around the icon art.
 The ID block shows only when Shift is held as the tooltip opens.
 The ID of what the tooltip shows: a spell, aura, item, toy, mount, currency, achievement or quest.
+The Light's Potential potion: 30 seconds from the drink, each drink restarts it; dying clears it.
+The Not active look, with no timer running.
+The On cooldown look: the timer idle and its cooldown spell cooling down.
+The Ready look: the timer idle and its cooldown spell ready.
+The Timer running look, its timer frozen with its swipe and duration text. Drag any text on the icon to place it.
 The Tracked Bars entry this bar copies, its timer and all. The Cooldown Manager's own bar must stay on: set the Tracked Bars' opacity to 0 in Edit Mode to hide it.
 The action bar's yellow check on the icon while it waits for your next swing.
 The art's spell
+The aura at 3 stacks.
+The aura comes up with a fake duration (swipe and duration text), drops to its missing look, and comes back.
+The aura counts down, drops off, and comes back: threshold colours and the duration text.
 The aura icons in this group are kept for when you switch back.
 The aura lasts
 The aura lasts (seconds)
+The aura with 60% of its duration left.
 The aura's full length, which the game keeps from addons: seconds need it, percent does not. 0 = not set: always shown.
 The aura's full length. The game keeps the real length from addons, so a threshold in seconds needs it; percent does not. 0 = not set: the glow shows the whole time.
 The aura's icon
+The aura's spell ID, or the spell whose cooldown it follows: an ID, a link or the name of a spell you know. Enter applies it.
+The aura's spell IDs, comma separated.
+The aura's spell IDs, comma separated. Any caster's copy counts.
+The aura's spell IDs, separated by commas or spaces. A buff or debuff usually has the ID of the spell that puts it up; add every rank's ID if they differ. The game shows whichever is up.
+The aura's spell IDs, separated by commas or spaces. Tracking sets its unit.
+The aura's spell IDs, separated by commas or spaces; any of them counts.
+The aura's spell IDs, separated by commas or spaces; any of them shows the picture.
+The aura's spell IDs, separated by commas. A debuff usually has the ID of the spell that puts it up.
+The band your target is in; blank with no target or a friendly one.
+The bar
+The bar at 3 stacks, or at its Max stacks when that is lower.
+The bar at 60%, standing still.
+The bar between swings.
+The bar in the middle of a cast, standing still.
 The bar is full at this many stacks. Empty = the maximum the game itself reports for this aura (shown in the field); type a number only when that is wrong.
+The bar part way through its timer.
 The bar shows half the power; past the middle it fills again in the second half color.
+The bar with no timer running.
+The bar's look.
+The bar's own look
+The bars that wear it keep its look as their own.
+The buff this totem puts on you, as its tooltip names it. The Out of range look shows while the totem is out and this buff is not on you. Empty: the totem's name without Totem.
+The chance climbs 1% per Riptide since the last proc.
+The chance climbs per qualifying harvest; needs the 2-piece set.
 The chance of a proc
+The class this skin switches on for.
 The color %s.
+The cooldown lasts (seconds)
 The cooldown swipe keeps its own opacity while the icon dims, so only the art fades.
 The count
+The count of your equipped ammo; blank with the slot empty.
+The count the "Ammo is low" load and visibility condition uses. An icon's warning glow and ammo count colors have their own thresholds.
 The countdown stays hidden until this many seconds are left.
+The deck half drawn, with a mark where each proc landed.
 The dim copy stays when the picture hides: no aura, no timer, a cooldown not ready.
 The end of your cast that your connection's delay covers: start the next cast once the fill reaches it.
 The fill behind this group while the options window is open; opacity 0 means none.
 The fill shows how many of this deck's procs are used: none, some or all. Off: the Fill color.
 The first time you log in after Arc Auras updates, a window opens once with what changed in the new version.
 The full look starts out of combat, or after a /reload.
+The game does not let addons match this aura type on that unit by spell ID.
+The game draws it with the aura, in combat too. Buffs work on you, your pet and friendly units; debuffs on a hostile target or focus.
+The game frame's name, as Pick Frame shows it. Enter applies it.
+The game holds this frame still in combat. It moves when combat ends.
+The game keeps an aura's length from addons, so seconds need it. A share needs none.
+The game keeps the aura's length from addons: 0 shows the words the whole time it is up.
+The game plays aura sounds itself, so they work in combat, for anyone's copy of the aura.
+The game plays it, in combat too; Load When and the gap between cues don't apply.
 The game protects %s, so it stays free.
 The game sent a spell update
+The game's clock, as the minimap shows it.
 The game's debuff border
+The game's own cooldown and buff icons and bars, as in its options. Items pinned to its icons stand free until it is back on.
 The game's own gold art, untinted, so the color steps aside. Intensity still applies.
+The global name of a frame, e.g. ElvUF_Player. A frame that does not exist counts as not there.
+The global name of a game frame, e.g. PlayerFrame or ElvUF_Player.
 The glow waits for combat; out of combat the bar shows without it.
 The glow waits for combat; out of combat the icon shows without it.
 The green outline and dark fill around each group while this window is open. Nothing shows each group as in play; its name tab still picks and drags it.
+The group
 The group takes its %s with it.
 The group's box hugs the icons that are showing; anything anchored to it moves with it.
+The group's point
+The group's spot can't be read right now. The frame moves once it can.
 The groups take their %s with them.
+The health preview: 65% health with incoming heals and shields, in your colours and texts.
 The icon
+The icon and bar previews sit on this color.
 The icon as the game's Cooldown Manager draws it: its rounded corners, its border and shadow, and its swipe.
+The icon's cooldown ID, its exact entry in the Cooldown Manager: the crosshair on an icon fills it. Empty uses the spell above.
+The icon's exact entry in the Cooldown Manager; Pick Frame on an icon fills it. Empty uses the spell above.
 The icon's file ID, the base icon when an override swapped the art, and the icon the button shows when that differs.
+The import did not run.
+The internal cooldown as a timer: 45 s, less with Natural Harmony.
+The item
+The item's own stacks, before this rule acts. Empty = no such condition.
+The item, or several: the icon shows the first one you carry and can use.
+The items that used the old values take the new ones.
+The items you have keep their look; only new ones start with these. Leaving the page does the same.
+The kinds that take this page's rows, each where it has the row. Nothing happens until you press Copy.
 The label's own color
 The layout's center point
+The layout's distance from the spot it's pinned to, in whole units.
+The line to speak.
 The look the rows below change. Bar's own is the look when no skin applies; a skin switches on when its conditions hold, the first from the top.
+The look the rows below change. The bar shows it while you edit; anything a look leaves alone follows the bar's own.
+The look while the aura is missing: the ghost with its Missing icon, alpha and desaturation.
+The look while the aura is up: its Aura Active art, alpha, tint, border and glow, on the same kind of button the game shows. Drag any text to place it.
+The look while the aura on this icon is up: the aura's button over the cooldown, in the Aura Active look, with its stacks. Drag its texts to place them.
+The look while you are in the stance (any stance, for your current one). Drag any text on the icon to place it.
+The look while you are not in it (no stance, for your current one).
 The mana the next tick adds glows past the fill, brightens as the tick nears, then lands. Empty while the five-second rule runs.
 The middle of your screen
+The mirror is not loaded.
+The move did not run.
+The nearest band that shows, standing still.
+The new look shows after a reload
+The next tick
 The number beside a marker that comes back in a later swing.
+The numeric item ID.
+The opacity starts with this many seconds left.
+The original bright cyan.
+The pack items you deleted come back with this update. Unticked, they stay deleted.
+The pack's name. Whoever imports the string sees it first.
 The part of a shield that doesn't fit past full health draws over the end of the health, so a shield on a full-health unit still shows.
 The picture again, dimmed, behind it: the empty part of a fill. It hides with the picture.
+The picture as it looks while active; a fill or a ring stands at 60%.
 The picture grows and shrinks gently, in combat too.
 The picture is a sheet of frames, played in order over and over.
 The picture keeps its shape at any width and height: its edges are cropped, never stretched.
 The picture, border, swipe, shadow and glows follow the shape.
+The point of the frame that goes on the group.
+The power this row holds on. All powers: whatever power the bar shows.
 The pulse stays at full, with no fade and no time limit, until you cast the spell (or use the item), or until its trigger's Clear when option ends it. On use pulses and previews still run their time.
+The ready look with no animation. Drag any text on the icon to place it.
+The ready look, with the Ready text when it is on.
 The resize lands when you let go of the slider.
 The resource texts change color at their own power values, apart from the bar's colors.
 The resource texts wear the fill's color, the bar's own or a row's. A row's own text color wins.
+The row holds for any spell left in it.
+The rule fires only while this spell is off its cooldown (the GCD never counts). Empty = no such condition.
+The same enchant counting down, as it looks in play.
+The same totem counting down, as it looks in play.
 The set gate is the Set Pieces Rule on Load Conditions.
 The sets on the gear you wear now are listed; with fewer pieces on, the item goes inert.
 The shield is in Appearance > Icon, the color in Appearance > Fill & Colors.
 The specs this skin switches on in. Pick several or Any spec.
+The spell that puts it down: the bar follows that totem or guardian, any rank, into whatever slot it lands. Empty: whatever is in the slot.
+The spell that puts it down: the icon follows that totem or guardian, any rank, into whatever slot it lands.
+The spell that puts it down: the icon follows that totem or guardian, any rank, into whatever slot it lands. Empty: whatever is in the slot.
+The spell that puts the totem down, any rank. Empty: this icon's spell.
+The spell whose button or icon it rides: a spell ID, a link or the name of a spell you know. Enter applies it.
+The spell whose button or icon it rides: a spell ID, a link or the name of a spell you know. Several ranks' IDs may be listed. Enter applies it.
+The spell whose cooldown it shows. Empty: the art's spell.
+The spell whose icon it wears. A spell ID, a link, or the name of a spell you know.
 The spell whose icon it wears; Appearance > Icon > Art > Custom icon wins over it. A spell ID, a link, or the name of a spell you know.
 The spell whose range picks the band: a melee ability for Melee, a ranged spell for Caster. A spell ID or the name of a spell you know; the rank you know is checked. Empty: your class's usual one.
+The spell whose range to your target decides the dim: a spell ID, or the name of a spell you know; the rank you know is checked. Empty: your class's usual one for this hand (a melee ability, Auto Shot or the wand's Shoot). No target, or a target the spell cannot check, never dims.
 The spell whose range to your target decides the rule: a spell ID, or the name of a spell you know. Any rank works: the rank you know is checked.
 The spell's icon
+The spell's name or ID.
+The spells it watches (any spell but these: the ones it skips), comma separated: IDs, links or names. Any rank.
+The spot on your screen the layout keeps its distance from when the resolution or UI scale changes.
 The stack count
 The stack count that fills it. 0 = the aura's most, or the custom item's Max stacks.
 The stacks
+The stacks climb to Max stacks, then clear: the fill and the count.
+The stacks climb to the maximum and drop: stack colours, the max colour and the count.
+The stacks, then the timer in brackets: 3 (7.2).
+The stance or form you are in, or one lit while you are in it.
+The stance's spell ID: one this character does not have, such as another class's.
 The state that lights it: an aura up or missing, or a spell Ready, Recharging (a charge used) or On cooldown (none left).
 The swipe keeps its own opacity while Active opacity dims the icon, so only the art fades.
+The text
 The text to speak is set on each trigger.
+The text with a sample value, in its font, colour and box.
+The texture
 The time left
+The time left on a weapon's enchant, with its charges.
+The time left on one of your totems or guardians, by the spell that puts it down or by its slot.
 The timer
 The timer is not running
 The timer is running
 The timer runs
 The timer runs or stacks are above 0
+The timer runs out, rests, and starts again.
 The top look wins when several hold.
+The totem bar button this icon follows.
+The totem or guardian slot to watch. The icon lights while anything is in it.
 The totem or guardian slot to watch. The icon lights while anything is in it. A shaman's slots hold: %s.
+The tracked cooldown spell.
 The tracked item, or several: the icon shows the first one you carry and can use. Retargeting keeps every setting and position.
 The tracked spell. Retargeting re-keys the driver and keeps every setting and position.
 The unit's name
+The value counts power (45 energy, 2000 mana) instead of a percent of the bar.
+The value runs from empty to full and back: threshold colours, pips and every text follow it.
+The wheel
+The wheel is full: empty a spot first.
 The whole cooldown
 The whole picture
+Their own class and spec checks
 Their own class checks
 Then
 Thick line
@@ -2883,12 +4128,27 @@ Third ammo threshold color
 Third threshold (%)
 Third threshold color
 This %s fails its load conditions on this character (%s). It exists and can be edited; it just does not show here. Click its eye to draw it on screen while you edit.
+This bar wears as many skins as it can.
+This bar's aura
 This bar's name
+This bar's spell
 This character
+This frame stops moving with the group and goes back to where it was.
+This group follows the cursor or a nameplate. A frame can't keep up with it.
+This group holds %d icons, and they would not fit. Move one out first.
+This group is not on screen, so the frame stays where it was.
 This group reminds you of it already.
+This group shows up to %d auras already.
 This hero tree is not the one chosen.
 This icon's own rules wait until Close gaps is off: set these on the Aura Group.
+This is how Arc Auras speaks.
+This item itself: not offered
+This layout stops setting these. Everything that followed it goes back to its own defaults.
+This option is active
+This option is not active
+This spell has no charges: Recharging never lights.
 This string
+This string can't be read.
 This string is older than your copy
 This string is older than your copy of %s: updating would bring back its older settings.
 This string updates items you have
@@ -2919,11 +4179,14 @@ Tick mode
 Tick spark
 Tick spark color
 Tick spark width
+Tick the trackers to bring over. They arrive in the same places with the same looks and switch off in ArcUI ProcTracker.
 Tick thickness
 Tick thickness anchor
 Tick what to share above, then press Export selected. The string shows here.
 Ticks
+Ticks them all, or unticks them all when all are ticked.
 Tiles
+Time Left
 Time before it lands (s)
 Time left
 Time left in
@@ -2936,9 +4199,13 @@ Time text color
 Time text position
 Time text size
 Timer
+Timer State
 Timer bar  -  %ss
+Timer bars
 Timer loop
 Timer running
+Timer seconds
+Timer text
 Timers
 Timewalking
 Tint
@@ -2946,6 +4213,7 @@ Tint the dim copy
 Tint the look with the color
 Tint while short of its cost
 Tints the icon in this type's color. Color wash strength is under All.
+Toggle glow
 Toggle glow X offset
 Toggle glow Y offset
 Toggle glow color
@@ -2976,39 +4244,82 @@ Top
 Top left
 Top right
 Top to bottom
+Totem / Guardian
+Totem / Guardian Duration
+Totem Bar
 Totem Icon
+Totem Slot 
+Totem State
+Totem and aura gone
+Totem bar  -  %s
 Totem bars
+Totem down
 Totem from spell ID
+Totem gone
 Totem icon
+Totem icons
+Totem or aura up
 Totem slot
+Toy Item ID
+Tracked Bars
+Tracked Buffs
 Tracked auras
 Tracked auras: the aura icons you add to this group, matched by spell ID. All auras on a unit: every buff or debuff on one unit, drawn by the game, with no icons to add.
 Tracked bar
+Tracked spell
 Tracking
 Tracks %s  (%s)
 Tracks an unknown Arc Proc: this bar came from a newer version.
 Tracks an unknown Arc Proc: this icon came from a newer version.
+Travel forms
+Tree of Life
+Tries it later.
+Tries it sooner.
 Trigger %d
 Trigger 1, as it will fire
 Trigger group
+Trigger type
 Triggers
+Trinket %d
 Trinket 1 (top)
 Trinket 2 (bottom)
 Trinket Icon
 Trinket icon
+Trinket icons
 Trinket slot
+Trueshot Aura
+Try part of a name, an ID, or an option's name.
+Turn Arc UI on and reload
+Turn ArcUI ProcTracker off and reload
 Turn and Zoom
 Turn it off
+Turn it off and reload
+Turn it on and reload
 Turn off the game's Cooldown Manager
 Turn the picture (degrees)
+Type /reload once to turn these on.
 Type a frame name or pick one.
 Type a number.
+Type a spell ID
+Type a spell name or ID; click a suggestion to fill it.
+Type a spell or a cooldown ID, or pick an icon.
+Type a spell or pick a button.
 Type a spell: your class has no usual one for this preset.
 Type order
 Type the aura's NAME to see its spell IDs and click one (a bar takes one ID: the rank you cast when you know the spell), or type the numeric ID and press Enter. Retargeting keeps every setting and position.
+Type the aura's NAME to see its spell IDs, then click one (a bar takes one ID: the rank you cast when you know the spell). Or type the numeric ID.
+Type the aura's NAME to see the spell IDs that carry it, then click one (every rank comes along). Or type one or more numeric IDs, separated by commas or spaces. The first gives the icon its art and name.
+Type the aura's name and click one to add its ID, or type IDs separated by commas or spaces. Any of them counts.
+Type the aura's name and click one to add its ID, or type IDs separated by commas or spaces. Any of them lights the glow.
+Type the buff's NAME to see the spell IDs that carry it, then click one (every rank comes along). Add the group version's too.
+Type the spell ID
 Type the spell to check.
+Type the spell's name and click it below, or type its ID and press Enter.
+Type the spell's name and click it below, or type its ID and press Enter. Any of the row's spells counts.
 UP
+UPDATE THESE PARTS
 Uncheck all
+Unchecks every condition in this list.
 Under %d minutes
 Under 1 hour
 Under the name
@@ -3021,30 +4332,44 @@ Undo the update
 Unhappy
 Unit
 Units
+Unknown spell
 Unlit cell opacity
 Unlit icon opacity
 Unlit icons in color
 Unloaded items drawn while this window is open carry a small slashed eye in their corner. Turn this off to draw them without it.
 Unlock
 Untick all
+Untick spells without a cooldown - there is no reliable way to check that here.
+Untick to keep the Arc Auras look.
 Unusable alpha
 Unusable tint
 Unusable tint color
 Up, like action bar cooldowns
 Update
+Update all
+Update available
 Update my copy
+Update my copy changes the items you have, part by part. Import as a new copy leaves them alone and brings a second copy in.
+Update undone: %d item back as before
+Update undone: %d items back as before
+Updated %d item
+Updated %d items
 Updated from a pack string on %s.
 Updated from a pack string.
 Updated to version %s on %s.
 Updated to version %s.
 Updates
 Updates %s
+Updates every layout that has a pack update. Press twice.
 Updating would bring back its older settings.
+Upgrade all bars now
 Upgraded %d buttons
+Upgraded 1 button
 Upper case (SC2, M4)
 Usability colors while on cooldown
 Usability looks only while ready
 Usability opacity replaces the state's
+Usable glow
 Usable glow X offset
 Usable glow Y offset
 Usable glow color
@@ -3067,13 +4392,23 @@ Usable glow thickness
 Usable overrides dim
 Usable shows it at full opacity
 Usable sound
+Use English
+Use as center
 Use group appearance
 Use group scale
+Use my current rank
 Use power color
 Use template
+Use texture
 Use the Cooldown Manager instead of the wolf
 Use the group's size
+Use this as the layout's center?
 Use this layout
+Used while the anchors above it are not on screen, with the same points and offsets.
+Using astral power
+Using energy
+Using mana
+Using rage
 VERSION
 VERTICAL
 Value
@@ -3097,13 +4432,16 @@ Violations text size
 Visibility
 Voice
 Voidwalker is out
+WHAT TO DO
 WHAT TO SHARE
 WHAT'S IN IT
 WHERE IT GOES
 WORN BY
+Waits for this exact rank (the spell ID above), not just any rank of the spell.
 Wand GCD
 Wand swipe color
 War Mode on
+Warlock by Emity
 Warning
 Warning glow
 Warning glow X offset
@@ -3125,49 +4463,74 @@ Warning glow speed
 Warning glow strata
 Warning glow style
 Warning glow thickness
+Warrior by Emity
+Watched in this order: the first unit that has the aura is the one you see.
 Watches the Main Hand enchant
 Watches the Off Hand enchant
 Watches the item %s  (ID %s)
 Watches the item (ID %s)
 Watches the spell %s  (ID %s)
 Watches the spell (ID %s)
+Watching.
+Watching: everything matches.
 Weapon
+Weapon Enchant
+Weapon Enchant Bar
 Weapon enchant bars
 Wearing pieces of
+Wearing pieces of a set
 Welcome back
 Welcome back, %s
+What a type leaves alone follows the layout's icon look.
 What changed in each version
+What drives it
+What every type shares: wash strength, label size and spot, glow size, and the order of a full look.
 What it anchors to. Anchors added after it are tried in order while it is not on screen.
+What it says. Enter applies it.
+What it says. Tracking can change it later.
+What lights this glow: an aura (a buff or debuff, on any unit) or a spell's cooldown.
 What the bar says while the target is in this band.
+What the pack is for, or what changed in this version.
+What the sidebar calls it.
 What the stack text shows. Tokens: {left} {drawn} {size} {procs} {procsLeft} {max} {chance} {viol} {count}. Empty: the Arc Proc's own.
+What this page sets. An item's layout looks and its own values win over it; Arc's default is what it starts from.
+What to do
 What to say
 What's New
+What's New in Arc Auras
 What's new: %s
 Wheel
+Wheel  -  %s
+Wheel name
 Wheel size (%)
 When
 When %s.
 When N charges are left
 When a Cast Ends
+When a charge returns
 When a proc lifts it
 When cast again
 When does this trigger fire?
 When it falls off
 When it gains a stack
 When it goes on
+When it shows
 When it starts
 When it's missing
 When it's missing (falls off, or none is on)
 When little time is left
 When out of range
 When queued
+When queued: while it waits to go off with your next swing. After cast: from the cast until the swing it went off in lands.
 When ready
 When ready (cooldown done)
+When recharging starts
 When states overlap
 When texts stay bright
 When the aura appears
 When the aura drops
 When the cooldown starts
+When the last charge is spent
 When the next draw is guaranteed
 When the timer ends
 When the timer runs out, the stacks go back to 0 with it.
@@ -3175,15 +4538,28 @@ When the timer starts
 When two apply at once, the one higher in the list wins.
 When usable
 When usable (can be cast now)
+When usable, cooldown ignored
+When you learn a new rank, every action bar button that held the previous top rank moves up to the new one. Lower ranks you placed on purpose are left alone. Macros are never touched. Bars only change out of combat.
+When you learn a new rank, your action bar buttons move up to it, out of combat.
 When you press an action button, cast a spell through a macro or use a trinket, every icon of that ability on screen lights up for a moment: feedback on the icon you are watching, not the bar. Spells, items and trinkets; every rank of a spell counts as the same ability.
 Where Position X and Y count from. Either way it moves and scales with its layout.
+Where a group, icon or bar shared without its layout lands. It starts on a layout that loads on this character.
 Where an ability comes off cooldown: this swing, or a later one marked +1, +2.
 Where an icon goes when it shows again. Only for a single row or column.
+Where each item sits (its group, or free and where), its anchor, sizes, strata and mouse. Off keeps your own placement.
+Where it sits: its edge against the group's.
+Where on the group that point goes.
+Where the layout's center point (the cross on the map) sits from the spot it's pinned to, in whole pixels.
 Where the rows of this sub-panel go: everything of this type, one layout, one group, one other thing, or every icon of this kind. Nothing happens until you press Copy.
+Where the selection goes: free in a layout, or, for icons, into a group that takes them. A selected group takes its icons along. Nothing happens until you press Move or Copy.
+Where they load
+Where to find the pack or you, a page or a Discord. It shows as text to copy.
 Which Casts
+Which of the game's volume sliders its sounds come out of.
 Which part of each picture stays when its edges are cropped.
 Which part of the picture stays when its edges are cropped.
 Whichever lands first
+While 
 While %s
 While a charge comes back it keeps Recharging's look: can't use, not enough resource and out of range wait until it is ready.
 While a totem or guardian from the first spell is out, the icon shows its time instead of the aura.
@@ -3194,6 +4570,7 @@ While an ability waits to go off with your next swing.
 While casting
 While equipped
 While in stock
+While it is active
 While it is on cooldown
 While it is queued without the rage or mana to pay for it, the icon takes this color: that swing lands as a plain hit.
 While it is ready
@@ -3202,10 +4579,13 @@ While its timer is idle it shows this spell's cooldown, then its Ready look.
 While missing
 While not active
 While on cooldown
+While out of range
 While out of stock
 While procs are left
 While procs left
+While queued
 While ready
+While recharging
 While suggested
 While the aura is missing
 While the aura is up
@@ -3214,6 +4594,7 @@ While the aura is up, its border takes the game's colour for its type: Magic, Cu
 While the aura is up, only once little time is left, only while the aura is missing, or always. Works in combat.
 While the button is held
 While the timer is idle at 0 stacks, the count shows this many: a pool reads full before its first use. Empty = off.
+While the timer runs
 While this bar is not loaded, its count stops until the next reset.
 While this icon is not loaded, its count stops until the next reset.
 While this window is open a dim icon marks the spot; drag its name tab to move it.
@@ -3223,12 +4604,24 @@ While this window is open, each group shows its name on its top edge, which is w
 While this window is open, every layout, group, icon and bar whose load conditions fail on this character is drawn anyway, each with a small slashed eye in its corner, so you can place and style it. Each one's eye, in the sidebar and on the layout tiles, shows or hides it on its own, and flipping this switch sets them all again. Load conditions stay exactly as they are, and closing the window hides everything unloaded.
 While this window is open, icons and bars carry a small Edit button that opens them here. Icons only or Bars only hides the other kind's buttons, None hides them all; the sidebar and the search still open every item. The buttons come back when you pick All.
 While this window is open, the group you are editing shows arrows on its bottom, left and right edges: green adds a row or a column on that side, red removes one. The icons stay where they are.
+While toggled on
+Who carries the aura. Buffs match on friends and you, debuffs on enemies.
 Who carries the aura. Buffs match on you, your pet, party members, players and friendly targets; debuffs on enemies. The game does not let addons match a buff on an enemy creature or a debuff on a friend by spell ID, so those stay dark (spells the game marks never-secret are the exception).
+Who carries the aura: a buff on you, a debuff on your target, or another unit.
+Who carries the aura: you for a buff you put up, your target for a debuff you put on it. You, then your target shows yours on you first, as the Cooldown Manager does. Buffs on enemy creatures and debuffs on friends stay dark: the game hides them from addons.
 Whole shards only
+Whose aura
+Whose casts
 Wide (3:2)
 Width
 Width (0 = auto)
+Windfury Totem
+Windfury Weapon
+Wing Clip for melee, then Auto Shot with the 10 and 20 yard checks.
+Wing Clip for melee, then Auto Shot with the 20 yard check.
+Wins over the rows below it.
 With
+With 
 With %s
 With %s left. Click to change it.
 With Close gaps on, set these on the Aura Group.
@@ -3238,19 +4631,34 @@ With both aura types, or on nameplates, it shows as Colors and badges.
 With both, the hide list applies to the buffs only.
 With both, the hide list applies to the debuffs only.
 With more than one row and column, a returning icon always takes its spot back.
+With no charges
+With or without a talent
 With the bar
 With the look set here
 With this window open, every icon keeps its spot.
+With your weapon (%.2f speed)
 Within
 Within seconds
 Within seconds after rule
+Without 
 Without %s
+WoW Forever
+WoW's own option: a short tick when a spoken line ends.
+WoW's own text to speech volume, so it also sets chat narration.
+WoW's voice
+WoW's voice is the one picked in WoW's own options. Male or female picks a matching voice from your system's list.
 Wobble
+Wobble (degrees)
 Words after the value. Not on a countdown the game draws (a spell's time left, an aura's).
 Words before the value. Not on a countdown the game draws (a spell's time left, an aura's).
 Words you type
+Writes each element's name over its box, here and while you move the layout on screen.
 X %d, Y %d. Drag to move; the Text tab holds the sliders.
+X offset
+Y offset
+YOU ALREADY HAVE THIS PACK
 YOU DELETED
+YOUR CLASS
 YOUR STRING
 You
 You absorbed an attack
@@ -3278,28 +4686,49 @@ You were hit
 You were immune
 You, in melee
 You, then your target
+Your Arc UI setup
+Your Arcane Blast stacks: up to 4, each cast restarts their 8 seconds; any other spell or dying clears them.
 Your Casts
+Your Cooldown Manager could not be read just now. Try again in a moment.
+Your Cooldown Manager layout is ready. Turn off the game's own Cooldown Manager now?\n\n
 Your Cooldown Manager layout is ready. Turn off the game's own Cooldown Manager now?\n\nSettings > Cooldown Manager turns it back on.
 Your Cooldown Manager lists no auras here.
+Your Cooldown Manager shows no spells yet.
+Your Cooldown Manager's bars as groups: same spells, sizes and places. Then hide its bars in Edit Mode.
+Your Masque skins on Arc Auras icons, aura icons included: pick one per icon group in Masque.
+Your Tracked Bars are empty: add the entry to them in the Cooldown Manager first.
 Your attack missed
 Your attack was blocked
 Your attack was dodged
 Your attack was parried
 Your cast was interrupted
+Your casts
 Your class
+Your class preset
 Your color
 Your combo points changed
 Your current stance
 Your current stance: the stance, form or aura you are in, greyed while in none. One stance: that one, lit while you are in it.
 Your default
+Your eight trackings, in the order you learn them.
+Your equipped ammo and its count.
+Your fire trap, Immolation or Explosive: 60 seconds from laying it, then its burn on your target, its cooldown and Ready.
 Your focus
+Your frost trap, Freezing or Ice: 60 seconds from laying it, then its effect on your target, its cooldown and Ready.
 Your gear's item level, as each game reports it. After the name reads Name (34); under the name adds an Item Level line.
 Your heals color
 Your health is low
+Your layout could be featured here.
+Your layout could be next.
 Your layouts are up to date.
+Your layouts, groups, icons and bars
+Your layouts, what changed and the Spotlight.
 Your mana is low
+Your name
+Your own
 Your own sizes and positions stay.
 Your own words
+Your own words, shown on the state you pick.
 Your own: %s
 Your pet
 Your pet blocked
@@ -3309,12 +4738,16 @@ Your pet took a critical hit
 Your pet was hit
 Your pet's casts count too
 Your power
+Your power, health, a name and more.
 Your target
 Your target changed
 Your target died
 Your ticks changed since. Press Export selected again for a new string.
 Your totem bar has no %s totem picked yet: pick one in its flyout.
 Your totem bar is not up yet: it comes with your first totem.
+Your trackers now run here, in the same places with the same looks: see the ProcTracker layout. They are switched off in ArcUI ProcTracker, so nothing shows twice.
+Your traps in a row: each shows while it is armed or burning, the rest close up.
+Your version of the pack, for example 1.2. An update and its undo name it.
 Zoom (pop in + fade)
 Zoom Peak Scale
 Zoom Peak Scale (override)
@@ -3324,8 +4757,14 @@ Zoom Settle Speed
 Zoom Settle Speed (override)
 Zoom Start Scale
 Zoom Start Scale (override)
+Zoom in
+Zoom out
 Zoom: %s
+a Sound item plays what each one is set to: nothing to default
+a charge is coming back
 a layout
+a new rank. The IDs you typed still count.
+a proc is still in the deck
 a spell not picked yet
 above %s
 added %d
@@ -3333,19 +4772,33 @@ always
 and
 and %d more IDs
 another frame
+at its own spot
 at least
 at most
 aura %s
+aura on target
+aura on you
 auras %s +%d
+bars set to the target's nameplate: 
 below %s
 between
 beyond %s yd
+bloodlust heroism time warp primal rage fury of the aspects harrier's cry drums
+build slice ends
+build slice starts
+by its own points (Position > Anchor)
 by kind
+caster and travel form
 center
 chance %s
+character of its class
 chars
 chosen
 circle
+class and spec checks
+class checks
+class, spec and talent checks
+classes
 current power
 custom color
 custom icon, %s
@@ -3354,14 +4807,25 @@ drain
 e.g. %d
 e.g. %d, %d
 e.g. 2825, 32182, 80353
+e.g. Core Rotation
 e.g. PlayerFrame
+e.g. Power Word: Fortitude
+e.g. READY
+e.g. Serpent Sting or 13549
+e.g. Serpent Sting or 13549, 13550
+e.g. Stormstrike or 17364
 each bar's own
+edit mode on
+empty
 enchant %s
 end
 equipped ammo
+every Arc Proc count reset.
 every character
+every charge is spent
 every class
 every look
+every proc in the deck is used
 exactly
 excluded
 excluded, taken
@@ -3369,21 +4833,43 @@ fill
 for
 from %s
 from Defaults
+from QOL
+from Settings
+from its profile '%s'
 game says %s
 group
+group buff icon
+group buff icons
 groups, bars and icons
 has an update
 have an update
 hero %s
+hidden while the options window is open
 icon ID %s
 idle
 in %s
+in %s  -  duration mode
+in %s  -  stack mode
 in %s - keeps its own position and conditions
 inherit
 into %s
 it
+it is active
+it is not active
+it is on cooldown
+it is ready
+it is recharging
+it waits for your next swing
+item
 item %s
+items
 items %s +%d
+its aura is up
+its conditions keep it quiet now
+its internal cooldown is ready
+its internal cooldown runs
+its totem is down
+its totem is down or its aura is up
 its use spell
 its use spell, %s
 keep
@@ -3393,50 +4879,78 @@ layout "%s"
 left out
 less than
 level %d
+little time is left
 melee range (%s yd)
 mixed
 more than
+name or ID
 needs Devourer
 needs Restoration
 newer
+no Arc Proc called 
+no Cooldown Manager API
 no aura
 no entry picked
 no key
+no range engine
 no rules yet
+no saved layout answer
+no set for 
 no sound
 no spell
+no such layout
+no such skin
 no trigger
+no weapon in that hand
 no words yet
 none
 none for this hand: type a spell
+not an Arc Auras export string
+not an Arc Auras skin string
 not chosen
 not for this character
+not in combat
 not in this tree
 not loaded
+not loaded here
+not read yet
 not taken
 not talented
 not worn
 nothing matches "%s"
+nothing picked
 nothing this version can use
 nothing ticked
+nothing ticked to export
 nothing ticked yet
+nothing to import
+nothing to undo
 nowhere
 off
 on
 on %d of %d
 on %s
 on cooldown
+on the group's
 one stance, none picked yet
 one stance: %s
 optional
 optional: a name, version, link and notes whoever imports it sees first
 own
+paste a skin string first
+paste an export string first
 plays when %s
+press Ctrl+C to copy
 procs %d / %d
 ready
 removed %d
 ring
+running, %.1f s left
+s, then its end)
+saved layout did not decode
 seconds
+seconds left on the aura
+seconds left on the cooldown
 shows when %s holds %s numbers or more
 shows when %s is %s
 shows when %s is %s or %s
@@ -3449,29 +4963,58 @@ sound
 sound registered
 sound waiting for a quiet moment
 speaks when %s
+specs
 spell %s
 spells %s +%d
 square
 start
+string holds nothing to import
+switched on
 taken
+talent checks
 talent not taken
 target range
 text
 texture
 that totem
+the Arc Proc's own
+the Arc Proc's own: 
+the Cooldown Reminder
+the aura is missing
+the aura is up
 the band's name
 the bar's own colors
+the build's waiting work ran (show, refresh)
 the center point
+the cooldown runs
+the editor's own pick, in the words of the group's shape
 the fill color
+the game's Assisted Highlight suggests it next
+the icon look
+the last 30% of it
 the mouse cursor
+the old power-stack bar, no longer made
 the power color, %s
+the press highlight
+the proc glow is up
+the set duration runs
 the spell's name
+the store is not loaded
 the target's nameplate
+the timer is idle and its cooldown is done
+the timer is idle and its cooldown runs
+the timer runs
+the totem is out
+the totem is out and its buff is not on you
 the unit's name
+the weapon has it
+the whole cooldown
+the whole time it is up
 this pack
 this power
 this spell
 this spell, %s
+this string was made with Arc Auras %s and needs a newer version: update Arc Auras to import it
 tick a layout to give its pack a name
 totem slot %s
 tracking
@@ -3481,11 +5024,15 @@ trinket slot %s
 type a spell
 unknown
 unknown - type it (5 until then)
+unknown - type the maximum
 unknown Arc Proc
+unreadable entry in 
 version %s
+whatever is in it. My totem bar's pick: the totem your totem bar drops for an element, shown 
 wheel
 when
 when no skin applies
+while a charge comes back
 while every proc is used, or its timer runs
 while it can still proc
 while it can't be used
@@ -3493,24 +5040,57 @@ while it is active
 while it is not active
 while it is on cooldown
 while it is ready
+while it is toggled on
+while its aura is down
+while its aura is up
 while no totem is out
+while none is down; a click or a key can drop it.
 while none is left
 while the aura is missing
 while the aura is up
+while the buff is covered
+while the buff is missing
+while the game lights it up
+while the game suggests it next
 while the totem is out
+while the totem is out and its buff is not on you
+while the warning is on
 while the weapon has none
 while the weapon has the enchant
 while this hand holds no weapon
+while you are in it
+while you are not in it
+while you don't have 
+while you have 
 while you have ammo
 while you lack the resource for it
 while your target is out of range
 who has buff %s
+window show hook done
+window shows, edit mode turns on
 within %s yd
 wolf path (%s)
 wolf talent
 words
 x
+you are in a stance
+you are in it
+you can cast it now
+your ammo runs low
 your current stance
 your layout
+your pet is not happy
+your pet's health is low
+your target is out of range
+{left} {drawn} {size}: the deck. {procs} {procsLeft} {max}: its procs. {chance}: the chance. 
 {left} {drawn} {size}: the deck. {procs} {procsLeft} {max}: its procs. {chance}: the chance. {viol}: violations. {count}: a counter.
+{viol}: violations. {count}: a counter.
+|cff3fc9f2Arc Auras IDs|r
+|cff3fc9f2Arc Auras keys:|r /adkeys <spell id or name> - list the bar buttons that hold it
+|cff3fc9f2Arc Auras keys|r for %s (cache %s, by-name index %s)
+|cff3fc9f2Arc Auras reminders:|r cooldowns %s, casts %s, procs %s, enchants %s, usable %s
+|cff3fc9f2Arc Auras state:|r /adstate <icon name> - print that icon's live alpha ladder
+|cff3fc9f2Arc Auras:|r 
+|cff3fc9f2Arc|r Auras
+|cff3fc9f2Arc|r Auras mirror check
 |cff3fc9f2Arc|r|cffd5e2f2 Auras|r

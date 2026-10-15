@@ -1,8 +1,13 @@
 ## Interface: 120100, 120105, 16001
 ## Title: |cff3fc9f2Arc|r Auras
 ## Notes: Icons, icon groups and bars for your cooldowns, auras and resources, all set up from one panel. /arcauras or /arcui2
+## Notes-deDE: Symbole, Symbolgruppen und Balken für deine Abklingzeiten, Auren und Ressourcen, alles in einem Fenster eingerichtet. /arcauras oder /arcui2
+## Notes-koKR: 재사용 대기시간, 오라, 자원을 위한 아이콘, 아이콘 그룹, 막대를 하나의 창에서 설정합니다. /arcauras 또는 /arcui2
+## Notes-ruRU: Значки, группы значков и полосы для ваших восстановлений, аур и ресурсов. Все настройки в одном окне. /arcauras или /arcui2
+## Notes-zhCN: 为你的技能冷却、光环和资源提供图标、图标组和状态条，全部在一个面板中设置。/arcauras 或 /arcui2
+## Notes-zhTW: 為你的技能冷卻、光環和資源提供圖示、圖示群組和量條，全部在一個面板中設定。/arcauras 或 /arcui2
 ## Author: Arc
-## Version: 3.0.2
+## Version: 3.0.3
 ## IconTexture: Interface\AddOns\ArcAuras\Textures\ArcAuras_Icon_256
 ## SavedVariables: ArcAurasDB
 ## OptionalDeps: ArcUI, Masque

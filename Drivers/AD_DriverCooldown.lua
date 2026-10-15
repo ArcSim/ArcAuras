@@ -941,6 +941,75 @@ Events.On("BAG_UPDATE_DELAYED", "adcd_potion", QueueLearn)
 Events.On("PLAYER_REGEN_ENABLED", "adcd_potion", QueueLearn)
 Driver.QueueLearnPotions = QueueLearn
 
+-- A trinket's on-use buff on its icon, as the Cooldown Manager shows it: its
+-- "On this icon" aura (driver.overlay with worn) takes the buff IDs of the
+-- trinket in the slot now, so it follows a swap as the icon's cooldown does.
+-- Plain reads only; trinkets swap out of combat, and a new set re-sends the
+-- filters, which waits out combat. IDs typed by hand end the following.
+function Driver.TrinketOverlay()
+    return { on = true, worn = true, auraType = "buff", unit = "player" }
+end
+
+-- the Manager's entries for the slot (the IDs it matches the buff by), then the
+-- worn trinket's use spell; empty while nothing can be read
+function Driver.WornBuffIDs(slot)
+    local out, seen = {}, {}
+    local function Add(v)
+        if type(v) == "number" and not (issecretvalue and issecretvalue(v)) and v > 0 and not seen[v] then
+            seen[v] = true
+            out[#out + 1] = v
+        end
+    end
+    local CV, M = C_CooldownViewer, NS.CDMMirror
+    if CV and CV.GetCooldownViewerCategorySet and CV.GetCooldownViewerCooldownInfo and M then
+        for _, name in ipairs({ "EquipSlotEssential", "EquipSlotTracked" }) do
+            local set = CV.GetCooldownViewerCategorySet(M.Cat(name), true)
+            if type(set) == "table" and M.Plain(set) then
+                for i = 1, #set do
+                    local info = M.Plain(set[i]) and M.CopyInfo(CV.GetCooldownViewerCooldownInfo(set[i]))
+                    if info and info.equipSlot == slot then
+                        for _, v in ipairs(M.AuraIDs(info)) do Add(v) end
+                    end
+                end
+            end
+        end
+    end
+    local iid = GetInventoryItemID and GetInventoryItemID("player", slot)
+    if type(iid) == "number" and not (issecretvalue and issecretvalue(iid)) and C_Item and C_Item.GetItemSpell then
+        local _, sid = C_Item.GetItemSpell(iid)
+        Add(sid) -- raw-id: an item's use spell
+    end
+    return out
+end
+
+function Driver.LearnTrinkets()
+    if not Store.EachRecord then return end
+    local bySlot = {}
+    Store.EachRecord(function(id, rec)
+        local d = rec.type == "icon" and rec.kind == "trinket" and type(rec.driver) == "table" and rec.driver
+        local ov = d and type(d.overlay) == "table" and d.overlay
+        if not (ov and ov.worn == true) then return end
+        local slot = tonumber(d.slotID) or 13
+        bySlot[slot] = bySlot[slot] or Driver.WornBuffIDs(slot)
+        local ids = bySlot[slot]
+        -- nothing readable now (item data not in yet): the last set stays
+        if #ids == 0 or table.concat(Store.AuraIDList(ov), ",") == table.concat(ids, ",") then return end
+        local own = {}
+        for i, v in ipairs(ids) do own[i] = v end
+        ov.spellID = own[1]
+        ov.spellIDs = (#own > 1) and own or nil
+        Store.Dirty("style", id)
+    end)
+end
+
+local function QueueTrinkets()
+    Events.Coalesce("adcd_trinket", Driver.LearnTrinkets)
+end
+Events.On("PLAYER_ENTERING_WORLD", "adcd_trinket", QueueTrinkets)
+Events.On("PLAYER_EQUIPMENT_CHANGED", "adcd_trinket", QueueTrinkets)
+if C_CooldownViewer then Events.On("COOLDOWN_VIEWER_DATA_LOADED", "adcd_trinket", QueueTrinkets) end
+Driver.QueueLearnTrinkets = QueueTrinkets
+
 -- the item to show, or nil while a read is unreadable
 function Driver.PickItem(d)
     if d.category then return Driver.CategoryItem(d) end

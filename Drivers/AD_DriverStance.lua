@@ -16,6 +16,12 @@ local Events = NS.Events
 local DS = {}
 NS.DriverStance = DS
 
+-- the client's words; English while the theme is not loaded
+local function Tr(s)
+    local AT = NS.AT
+    return AT and AT.Tr and AT.Tr(s) or s
+end
+
 DS.KEY = "adstance"
 DS.EVENTS = { "UPDATE_SHAPESHIFT_FORM", "UPDATE_SHAPESHIFT_FORMS" }
 DS.attached = {}   -- [iconId] = { rec, frame, on }
@@ -164,15 +170,15 @@ end
 function DS.Tooltip(rec)
     DS.Fresh()
     if DS.Mode(rec) == "current" and not DS.cur then
-        GameTooltip:SetText(rec.name or "Stance")
-        GameTooltip:AddLine("Not in a stance.", 0.7, 0.7, 0.7)
+        GameTooltip:SetText(rec.name or Tr("Stance"))
+        GameTooltip:AddLine(Tr("Not in a stance."), 0.7, 0.7, 0.7)
         return
     end
     local sid = Store.RecordSpellID(rec.driver, DS.Shown(rec))
     if sid and C_Spell and C_Spell.DoesSpellExist and C_Spell.DoesSpellExist(sid) then
         GameTooltip:SetSpellByID(sid)
     else
-        GameTooltip:SetText(rec.name or "Stance")
+        GameTooltip:SetText(rec.name or Tr("Stance"))
     end
 end
 

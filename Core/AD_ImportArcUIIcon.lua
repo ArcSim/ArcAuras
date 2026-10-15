@@ -492,6 +492,8 @@ function IA.MapCooldownIcon(eff, kind, ctx)
     local o = {}
     local kS = IA.IconScale(ctx)
     local isSpell = kind == "spell"
+    -- a trinket's on-use buff is its aura phase, as a spell's aura is
+    local phased = isSpell or (kind == "trinket" and ctx.hasAura == true)
     local sv = type(eff.cooldownStateVisuals) == "table" and eff.cooldownStateVisuals or {}
     local rs = type(sv.readyState) == "table" and sv.readyState or {}
     local cs = type(sv.cooldownState) == "table" and sv.cooldownState or {}
@@ -662,16 +664,16 @@ function IA.MapCooldownIcon(eff, kind, ctx)
     -- have nothing to read. An icon whose aura the game has not answered for (offline) is planned
     -- as one that may have it. A Duration Override covers the spell's own aura phase; its totem or
     -- fixed time wears the Aura Active look, written with it.
-    if isSpell and doPhase then
+    if phased and doPhase then
         if ctx.hasAura == true and not ctx.iao then Note(ctx, "a Duration Override over the spell's own aura phase") end
         if aa.glowWhenMissing == true then Note(ctx, "a glow while the aura is missing, beside a Duration Override") end
-    elseif isSpell and ctx.iao and ctx.hasAura ~= false then
+    elseif phased and ctx.iao and ctx.hasAura ~= false then
         if aa.desaturateWhenInactive == true then Note(ctx, "grey while the aura is down, on an icon that ignores its aura") end
         if aa.glow == true or aa.glowWhenMissing == true then Note(ctx, "an aura glow on an icon that ignores its aura") end
         if aa.activeAlphaEnabled == true then Note(ctx, "an aura opacity on an icon that ignores its aura") end
-    elseif isSpell and ctx.hasAura ~= false and doAura then
+    elseif phased and ctx.hasAura ~= false and doAura then
         if ctx.hasAura == true then Note(ctx, "a Duration Override aura over the spell's own aura phase") end
-    elseif isSpell and ctx.hasAura ~= false then
+    elseif phased and ctx.hasAura ~= false then
         Put(o, "auraActive", "overlayArt", "spell")
         Put(o, "auraActive", "overlayDesatInactive", aa.desaturateWhenInactive == true)
         Put(o, "auraActive", "activeAlpha", aa.activeAlphaEnabled == true and (tonumber(aa.activeAlpha) or 1) or 1)
@@ -809,7 +811,7 @@ function IA.MapCooldownIcon(eff, kind, ctx)
         Put(o, "outOfStock", "outTintEnabled", os.tint == true)
         if os.tint == true then Put(o, "outOfStock", "outTintColor", V1Named(os.tintColor or {}, { 0.5, 0.5, 0.5, 1 })) end
     end
-    if isSpell and ctx.hasAura ~= false and not ctx.iao then
+    if phased and ctx.hasAura ~= false and not ctx.iao then
         IA.MapPandemicBorder(o, eff, ctx, kS, (aa.glow == true) and 1 or 0, 1)
         IA.MapAuraSwipeInset(o, sw, kS, pad)
     end

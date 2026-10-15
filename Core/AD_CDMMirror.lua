@@ -370,7 +370,9 @@ function M.PieceFor(info, cat)
         return { kind = bar and "aurabar" or "aura", aura = aura, totem = not bar, name = M.NameOf(M.NameSpell(info)) }
     end
     if type(info.equipSlot) == "number" then
-        return { kind = "trinket", slot = info.equipSlot }
+        -- its on-use buff unless HideAura; the IDs read now only start it
+        local buff = not M.HasFlag(info.flags, M.Flag("HideAura"))
+        return { kind = "trinket", slot = info.equipSlot, buff = buff, buffIDs = buff and M.AuraIDs(info) or nil }
     end
     if type(info.spellCategoryID) == "number" then
         return { kind = "item", spellCategoryID = info.spellCategoryID, what = M.ITEM_CATEGORY[info.spellCategoryID] }
@@ -692,7 +694,16 @@ function M.NewIconFor(p, groupId)
         return S.NewIcon("aura", d, groupId, nil, p.name or M.NameOf(d.spellID) or ("Aura " .. d.spellID))
     end
     if p.kind == "trinket" then
-        return S.NewIcon("trinket", { slotID = p.slot }, groupId, nil, p.slot == 14 and "Trinket 2" or "Trinket 1")
+        local d = { slotID = p.slot }
+        -- the trinket worn in the slot names its buff (Drivers\AD_DriverCooldown.lua LearnTrinkets)
+        local DC = NS.DriverCooldown
+        if p.buff and DC and DC.TrinketOverlay then
+            d.overlay = DC.TrinketOverlay()
+            local ids = p.buffIDs or {}
+            d.overlay.spellID, d.overlay.spellIDs = ids[1], (#ids > 1) and M.Copy(ids) or nil
+            if DC.QueueLearnTrinkets then DC.QueueLearnTrinkets() end
+        end
+        return S.NewIcon("trinket", d, groupId, nil, p.slot == 14 and "Trinket 2" or "Trinket 1")
     end
     if p.kind == "item" then
         -- the category's item, as Blizzard's icon follows it (Drivers\AD_DriverCooldown.lua CategoryItem)

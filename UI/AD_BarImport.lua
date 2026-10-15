@@ -201,9 +201,11 @@ end
 -- earlier open just gets hidden, so only one is ever on screen.
 local function OpenPicker(rows, onCreate)
     if BI._win then BI._win:Hide() end
+    -- the whole phrase in the client's words; two colours while it reads English
+    local from = AT.Tr("From Your Action Bars")
     local win = AT.CreateWindow(nil, {
         w = 460, h = 520, minW = 420, minH = 320, resizable = false,
-        title = AT.Brand("From", " Your Action Bars"),
+        title = from ~= "From Your Action Bars" and from or AT.Brand("From", " Your Action Bars"),
     })
     BI._win = win
     local pg = AT.NewPage(win)

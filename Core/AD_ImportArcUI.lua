@@ -8,6 +8,12 @@ local ADDON, NS = ...
 local IA = NS.ImportArcUI or {}
 NS.ImportArcUI = IA
 
+-- the picker's words in the player's language; English where the theme is not loaded
+local function Tr(s)
+    local AT = NS.AT
+    return AT and AT.Tr and AT.Tr(s) or s
+end
+
 IA.STAMP = "ArcUI v1"
 
 -- Class file tags by class id, as GetClassInfo answers them; the game's answer wins
@@ -1305,7 +1311,18 @@ function IA.ResolveCDM(cdID, iao, opts)
     local cat = tonumber(info.category)
     local sid = tonumber(info.spellID)
     if cat == 7 and tonumber(info.equipSlot) then
-        return { kind = "trinket", driver = { slotID = tonumber(info.equipSlot) }, name = "Trinket " .. (tonumber(info.equipSlot) == 14 and 2 or 1) }
+        local slot = tonumber(info.equipSlot)
+        local res = { kind = "trinket", driver = { slotID = slot }, name = "Trinket " .. (slot == 14 and 2 or 1) }
+        -- its on-use buff over it, as the Cooldown Manager shows it: the trinket worn in the
+        -- slot names the buff (Drivers\AD_DriverCooldown.lua LearnTrinkets), the IDs read now start it
+        local M = NS.CDMMirror
+        res.hasAura = not M.HasFlag(info.flags, M.Flag("HideAura"))
+        if res.hasAura and not iao then
+            local ids = M.AuraIDs(info)
+            res.driver.overlay = { on = true, worn = true, auraType = "buff", unit = "player",
+                spellID = ids[1], spellIDs = (#ids > 1) and ids or nil }
+        end
+        return res
     end
     -- a bag item by its category (potions, healthstones) has no spell: the item icon that
     -- follows the category, as the Cooldown Manager import builds it (Core\AD_CDMMirror.lua)
@@ -1531,6 +1548,37 @@ function IA.GatePart(c, who)
     end
 end
 
+-- The specs whose profiles place each cooldown id in a group or free (a model character).
+function IA.PlacedBySpec(C)
+    local out = {}
+    for _, S in ipairs(type(C) == "table" and C.specs or {}) do
+        for _, P in ipairs(S.profiles or {}) do
+            for skey in pairs(P.placements or {}) do
+                out[skey] = out[skey] or {}
+                out[skey][S.key] = true
+            end
+        end
+    end
+    return out
+end
+
+-- Whether a styled id no group of this profile holds is in this spec's Cooldown Manager.
+-- The game answers for the character logged in; else an id that one other spec alone
+-- places is that spec's, and its look here came over in a copied icon table. Two specs
+-- placing it marks a class spell, which every spec's Manager lists.
+function IA.UnplacedHere(ctx, skey, classID, specIndex, isMe)
+    local id, opts = tonumber(skey), ctx.opts
+    if isMe and id and classID and specIndex and opts.cdmInSpec then
+        local here = opts.cdmInSpec(id, classID, specIndex)
+        if here ~= nil then return here end
+    end
+    local by = ctx.placedIn and ctx.placedIn[tostring(skey)]
+    if not by or by[ctx.specKey] then return true end
+    local n = 0
+    for _ in pairs(by) do n = n + 1 end
+    return n ~= 1
+end
+
 -- Plans one profile of one spec (a model profile, IA.ReadV1): its groups, icons and free
 -- icons, a part of its character's one layout (IA.Plan). The live profile loads in its spec;
 -- every other one is kept dormant, as v1 never switches to it (its talent conditions are not
@@ -1568,7 +1616,8 @@ function IA.PlanProfile(ctx, P, S, plan)
     local placed = {}
     -- the Cooldown Manager's own choice of what shows can be read for this character only
     local cdmClass, cdmSpec = IA.SpecKey(ctx.specKey)
-    local cdmHere = opts.cdmShown ~= nil and cdmClass ~= nil and ctx.charKey == IA.CurrentChar()
+    local isMe = ctx.charKey == IA.CurrentChar()
+    local cdmHere = opts.cdmShown ~= nil and cdmClass ~= nil and isMe
     local function Icon(key, place)
         IA.Yield()
         local kk, id = IA.KeyKind(key)
@@ -1711,21 +1760,29 @@ function IA.PlanProfile(ctx, P, S, plan)
         if pl.pos.type ~= "group" then Icon(pl.key, pl.pos) end
     end
     -- styled icons never placed anywhere (they sat in the Cooldown Manager's own viewer): the
-    -- game's category names their default group, or they go free at the centre
+    -- game's category names their default group, or they go free at the centre. Only the
+    -- ones this spec's Manager lists: v1 showed a styled id only where the Manager drew it
     local unplaced = {}
     for skey, raw in pairs(settings) do
         if not placed[skey] and type(raw) == "table" and next(raw) ~= nil and IA.KeyKind(skey) == "cdm" then unplaced[#unplaced + 1] = skey end
     end
     table.sort(unplaced)
     for _, skey in ipairs(unplaced) do
-        ctx.counts.unplaced = ctx.counts.unplaced + 1
-        local info = opts.cooldown and opts.cooldown(tonumber(skey))
-        local cat = type(info) == "table" and tonumber(info.category)
-        if cat then
-            local home = (cat == 1) and "Utility" or ((cat == 0 or cat == 5 or cat == 7) and "Essential" or "Buffs")
-            if byName[home] then Icon(skey, { type = "group", target = home }) else Icon(skey, { type = "free", x = 0, y = 0 }) end
+        if not IA.UnplacedHere(ctx, skey, cdmClass, cdmSpec, isMe) then
+            Dropped(cov, "icon:dropped.cdm: not in this spec's Cooldown Manager",
+                "styled in this spec, but only another spec's Cooldown Manager lists it", true)
+            ctx.counts.iconsDropped = ctx.counts.iconsDropped + 1
+            ctx.counts.otherSpec = (ctx.counts.otherSpec or 0) + 1
         else
-            Need(cov, "unplaced styled cooldowns (the game's category picks Buffs / Essential / Utility)")
+            ctx.counts.unplaced = ctx.counts.unplaced + 1
+            local info = opts.cooldown and opts.cooldown(tonumber(skey))
+            local cat = type(info) == "table" and tonumber(info.category)
+            if cat then
+                local home = (cat == 1) and "Utility" or ((cat == 0 or cat == 5 or cat == 7) and "Essential" or "Buffs")
+                if byName[home] then Icon(skey, { type = "group", target = home }) else Icon(skey, { type = "free", x = 0, y = 0 }) end
+            else
+                Need(cov, "unplaced styled cooldowns (the game's category picks Buffs / Essential / Utility)")
+            end
         end
     end
     for _, g in ipairs(L.groups) do
@@ -3879,6 +3936,7 @@ function IA.Plan(db, opts)
             -- the character); its cast bars stay in CL, one per character as in v1
             local BL = { name = charName .. " bars", key = "layout:bars:" .. charKey, charKey = charKey, forBars = true,
                 c = {}, pos = { x = 0, y = 0 }, o = {}, parts = {}, bars = {}, reminders = {}, later = {} }
+            ctx.placedIn = IA.PlacedBySpec(C)
             for _, S in ipairs(C.specs) do
                 plan.counts.specs = plan.counts.specs + 1
                 ctx.specKey, ctx.classID = S.key, S.classID
@@ -3901,11 +3959,11 @@ function IA.Plan(db, opts)
                     local pnode = { id = "profile:" .. L.key, kind = "profile", label = tostring(P.name) .. " (" .. tag .. ")", tag = tag, children = {},
                         name = tostring(P.name), layoutKey = CL.key, linked = L.linked }
                     for _, g in ipairs(L.groups) do
-                        local lf = Leaf(pnode, "group", g.unit, ("%s: %d icons"):format(g.name, #g.icons), #g.icons, CL.key, g.name)
+                        local lf = Leaf(pnode, "group", g.unit, Tr("%s: %d icons"):format(g.name, #g.icons), #g.icons, CL.key, g.name)
                         lf.cdmHidden = g.cdmHidden
                     end
                     if #L.icons > 0 then
-                        local lf = Leaf(pnode, "free", L.freeUnit, ("Free icons: %d"):format(#L.icons), #L.icons, CL.key, "Free icons")
+                        local lf = Leaf(pnode, "free", L.freeUnit, Tr("Free icons: %d"):format(#L.icons), #L.icons, CL.key, "Free icons")
                         lf.cdmHidden = L.cdmHidden
                     end
                     if #pnode.children > 0 then specNode.children[#specNode.children + 1] = pnode end
@@ -3958,7 +4016,7 @@ function IA.Plan(db, opts)
                 if #CL.reminders > 0 then
                     local nrem = 0
                     for _, RG in ipairs(CL.reminders) do nrem = nrem + #RG.reminders end
-                    Leaf(snode, "reminders", CL.unitReminders, ("Cooldown Reminder: %d reminders"):format(nrem), nrem, CL.key, "Cooldown Reminder")
+                    Leaf(snode, "reminders", CL.unitReminders, Tr("Cooldown Reminder: %d reminders"):format(nrem), nrem, CL.key, "Cooldown Reminder")
                 end
                 node.children[#node.children + 1] = snode
             end
@@ -3975,7 +4033,7 @@ function IA.Plan(db, opts)
                 local look = { unit = "look:" .. charKey, profile = profName, defaults = IA.PlanDefaults(ctx),
                     press = IA.PressHighlight(type(charDB) == "table" and charDB.bphSettings or nil, cov) }
                 plan.looks[charKey] = look
-                Leaf(node, "look", look.unit, ("Global look (Arc UI profile '%s')"):format(tostring(profName)), 1, nil, "Arc UI's icon look")
+                Leaf(node, "look", look.unit, Tr("Global look (Arc UI profile '%s')"):format(tostring(profName)), 1, nil, "Arc UI's icon look")
                 -- the press highlight it had on is its own pick
                 if look.press then
                     look.pressUnit = "press:" .. charKey
@@ -4167,8 +4225,7 @@ function IA.GameOpts()
         -- character logged in: its default category (hidden when flagged so), then the
         -- player's moves (Blizzard's merge, Core\AD_CDMMirror.lua). nil = can't tell.
         local saved
-        o.cdmShown = function(id, classID, specIndex)
-            if type(id) ~= "number" or type(classID) ~= "number" or type(specIndex) ~= "number" then return nil end
+        local function Saved()
             if saved == nil then
                 local raw = CV.GetLayoutData()
                 if type(raw) ~= "string" or not MM.Plain(raw) then
@@ -4179,6 +4236,11 @@ function IA.GameOpts()
                     saved = MM.Decode(raw) or "unknown"
                 end
             end
+            return saved
+        end
+        o.cdmShown = function(id, classID, specIndex)
+            if type(id) ~= "number" or type(classID) ~= "number" or type(specIndex) ~= "number" then return nil end
+            Saved()
             if saved == "unknown" then return nil end
             local info = MM.CopyInfo(CV.GetCooldownViewerCooldownInfo(id))
             if not (info and type(info.category) == "number") then return nil end
@@ -4196,6 +4258,35 @@ function IA.GameOpts()
                 end
             end
             return cat ~= MM.HIDDEN_ACTIVE and cat ~= MM.HIDDEN_PASSIVE
+        end
+        -- whether an entry is in one spec's Cooldown Manager at all, for the character logged
+        -- in: the spec in play by its category sets, another by its saved layout's order, which
+        -- Blizzard writes with every entry of that spec. nil = can't tell.
+        local inPlay
+        o.cdmInSpec = function(id, classID, specIndex)
+            if type(id) ~= "number" or type(classID) ~= "number" or type(specIndex) ~= "number" then return nil end
+            local tag = classID * 10 + specIndex
+            if tag == MM.Tag() then
+                if inPlay == nil and CV.GetCooldownViewerCategorySet then
+                    inPlay = {}
+                    for _, name in ipairs(MM.CATS) do
+                        local ids = CV.GetCooldownViewerCategorySet(MM.Cat(name), true)
+                        if type(ids) ~= "table" or not MM.Plain(ids) then inPlay = false break end
+                        for i = 1, #ids do
+                            if MM.Plain(ids[i]) then inPlay[ids[i]] = true end
+                        end
+                    end
+                end
+                if type(inPlay) ~= "table" then return nil end
+                return inPlay[id] == true
+            end
+            local lay = type(Saved()) == "table" and MM.ActiveLayout(saved, tag) or nil
+            local order = type(lay) == "table" and lay[1]
+            if type(order) ~= "table" or #order == 0 then return nil end
+            for i = 1, #order do
+                if order[i] == id then return true end
+            end
+            return false
         end
     end
     local SI = rawget(_G, "C_SpecializationInfo")
@@ -4308,11 +4399,11 @@ end
 -- this run makes it, loads on the character alone.
 function IA.Apply(plan, picks, how)
     local Store = NS.Store
-    if not (Store and plan and plan.layouts) then return nil, "nothing to import" end
+    if not (Store and plan and plan.layouts) then return nil, Tr("nothing to import") end
     local lock = rawget(_G, "InCombatLockdown")
-    if lock and lock() then return nil, "not in combat" end
+    if lock and lock() then return nil, Tr("not in combat") end
     local db = rawget(_G, "ArcAurasDB")
-    if type(db) ~= "table" then return nil, "the store is not loaded" end
+    if type(db) ~= "table" then return nil, Tr("the store is not loaded") end
     local stamp = IA.Stamp(true)
     if picks == nil then
         picks = {}
@@ -4322,7 +4413,7 @@ function IA.Apply(plan, picks, how)
     local function Picked(unit) return unit ~= nil and picks[unit] == true and leaves[unit] ~= nil end
     local any = false
     for unit in pairs(picks) do if Picked(unit) then any = true break end end
-    if not any then return nil, "nothing picked" end
+    if not any then return nil, Tr("nothing picked") end
     local res = { layouts = 0, groups = 0, icons = 0, bars = 0, reminders = 0, skipped = 0, anchorsDropped = 0, units = 0, firstLayoutId = nil }
     local Schema = NS.Schema
     local function Live(id, kind)

@@ -545,7 +545,7 @@ function TR.Build()
     win = AT.CreateWindow("ArcAurasTalentPicker", {
         w = 1120, h = 640, minW = 700, minH = 440, maxW = 1800, maxH = 1300,
         scaleH = Options.MAIN_H,
-        title = NS.AT.Brand("Arc", " Talents"),
+        title = NS.AT.Brand("Arc", " " .. Tr("Talents")),
         onResize = function() TR.Layout() end,
     })
 

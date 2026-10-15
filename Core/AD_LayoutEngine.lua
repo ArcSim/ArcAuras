@@ -11,6 +11,12 @@ local Factory = NS.Factory
 local Engine = {}
 NS.LayoutEngine = Engine
 
+-- the client's words; English while the theme is not loaded
+local function Tr(s)
+    local AT = NS.AT
+    return AT and AT.Tr and AT.Tr(s) or s
+end
+
 local WHITE = "Interface\\Buttons\\WHITE8X8"
 
 local layoutFrames = {}   -- [layoutId] = container
@@ -995,7 +1001,7 @@ local function EnsureGroupChrome(gf)
             GameTooltip:SetOwner(bar, "ANCHOR_TOP")
             GameTooltip:SetText(bar._adName, 1, 1, 1)
             if bar._adLocked then
-                GameTooltip:AddLine("Locked: it stays where it is. Unlock it beside its eye in the list.",
+                GameTooltip:AddLine(Tr("Locked: it stays where it is. Unlock it beside its eye in the list."),
                     0.8, 0.8, 0.8, true)
             end
             GameTooltip:Show()
@@ -1614,19 +1620,18 @@ local ARROW_TIP = {
 local function ArrowTooltip(b)
     local s = b._adSpec
     GameTooltip:SetOwner(b, "ANCHOR_CURSOR")
-    GameTooltip:SetText(ARROW_TIP[s.edge][s.add], 1, 1, 1)
+    GameTooltip:SetText(Tr(ARROW_TIP[s.edge][s.add]), 1, 1, 1)
     if not b._adOK then
-        local line = (s.edge == "bottom") and "row" or "column"
+        local rows = s.edge == "bottom"
         local why
         if b._adWhy == "max" then
-            why = "Groups stop at " .. (b._adCount or 20) .. " " .. line .. "s."
+            why = Tr(rows and "Groups stop at %d rows." or "Groups stop at %d columns."):format(b._adCount or 20)
         elseif b._adWhy == "cap" then
-            why = "This group shows up to " .. (b._adCount or 40) .. " auras already."
+            why = Tr("This group shows up to %d auras already."):format(b._adCount or 40)
         elseif b._adWhy == "min" then
-            why = "A group needs at least one " .. line .. "."
+            why = Tr(rows and "A group needs at least one row." or "A group needs at least one column.")
         elseif b._adWhy == "full" then
-            why = "This group holds " .. (b._adCount or 0)
-                .. " icons, and they would not fit. Move one out first."
+            why = Tr("This group holds %d icons, and they would not fit. Move one out first."):format(b._adCount or 0)
         end
         if why then GameTooltip:AddLine(why, 1, 0.5, 0.5, true) end
     end

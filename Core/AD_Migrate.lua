@@ -67,7 +67,7 @@ local function BuildNotice()
     body:SetPoint("RIGHT", f, "RIGHT", -14, 0)
     body:SetJustifyH("LEFT")
     body:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
-    body:SetText("Arc UI Forever is still turned on. Arc Auras replaces it, so your displays are drawn twice right now. Your setup is already in Arc Auras: turn Arc UI Forever off to finish the move.")
+    body:SetText(AT.Tr("Arc UI Forever is still turned on. Arc Auras replaces it, so your displays are drawn twice right now. Your setup is already in Arc Auras: turn Arc UI Forever off to finish the move."))
 
     local later = AT.MakeQuietButton(f, "Not now", 90)
     later:SetPoint("BOTTOMRIGHT", -14, 14)

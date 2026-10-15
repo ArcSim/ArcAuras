@@ -15,6 +15,12 @@ if not Options then return end
 local IW = {}
 Options.ImportArcUI = IW
 
+-- text built here in the player's language; English where the theme is not loaded
+local function Tr(s)
+    local AT = NS.AT
+    return AT and AT.Tr and AT.Tr(s) or s
+end
+
 -- Sizes in UI units: the design board draws its window at 1.17 times these.
 IW.CHARS_W = 214      -- the CHARACTERS box
 IW.CHAR_H = 22        -- a character row
@@ -34,8 +40,8 @@ IW.SWATCH_W, IW.SWATCH_H = 40, 10
 IW.THUMB_W, IW.THUMB_H = 44, 26
 -- a box lists its own kind and the kinds Arc UI made from the same tab (a mirrored aura
 -- bar comes in as a Cooldown Manager bar, a summon's as a totem bar)
-IW.BAR_BOXES = { { "aura", "AURA BARS", also = { cdmbar = true, totembar = true } }, { "cooldown", "COOLDOWN BARS" },
-    { "resource", "RESOURCE BARS" }, { "cast", "CAST BARS" }, { "timer", "TIMER BARS" } }
+IW.BAR_BOXES = { { "aura", Tr("Aura bars"), also = { cdmbar = true, totembar = true } }, { "cooldown", Tr("Cooldown bars") },
+    { "resource", Tr("Resource bars") }, { "cast", Tr("Cast bars") }, { "timer", Tr("Timer bars") } }
 IW.TABS = { { "icons", "Icons" }, { "bars", "Bars" }, { "tex", "Textures" } }
 IW.LATER_TIP = "Arc Auras takes this kind with a later update of the import."
 
@@ -65,7 +71,15 @@ local function Pill(parent)
     return p
 end
 
-local function Plural(n, one, many) return n .. " " .. (n == 1 and one or many) end
+-- a count in words, each form its own key: one ("1 profile") or many ("%d profiles")
+local function Plural(n, one, many) return (n == 1) and one or many:format(n) end
+
+-- a box header: its words translated, then in capitals where every letter is Latin
+-- (string.upper would split any other), as the theme writes its section titles
+local function Caps(s)
+    if type(s) ~= "string" or s:find("[\128-\255]") then return s end
+    return s:upper()
+end
 
 -- The leaf units under a node (a leaf is its own).
 local function Leaves(node, out)
@@ -204,20 +218,20 @@ local function ProfileCounts(leaves)
         end
         if counted then icons = icons + (lf.n or 0) end
     end
-    local g = Plural(groups, "group", "groups")
-    if any and inGroups < groups then g = inGroups .. " of " .. g end
-    return g .. " · " .. Plural(icons, "icon", "icons")
+    local g = Plural(groups, Tr("1 group"), Tr("%d groups"))
+    if any and inGroups < groups then g = Tr("%d of %d groups"):format(inGroups, groups) end
+    return g .. " · " .. Plural(icons, Tr("1 icon"), Tr("%d icons"))
 end
 
 local function ProfileTip(spec, p)
     local sname = spec.label or ""
     local tip
     if p.tag == "active" then
-        tip = ("In use on %s in Arc UI: loads on %s."):format(sname, sname)
+        tip = Tr("In use on %s in Arc UI: loads on %s."):format(sname, sname)
     else
         tip = "A spare profile in Arc UI: its groups and icons come in switched off; turn them on in their Load tab."
     end
-    if p.linked then tip = tip .. (" Its groups come from Arc UI's shared layout '%s'."):format(p.linked) end
+    if p.linked then tip = tip .. " " .. Tr("Its groups come from Arc UI's shared layout '%s'."):format(p.linked) end
     return tip
 end
 
@@ -465,7 +479,7 @@ local function PaintBody(w)
         b:ClearAllPoints()
         b:SetPoint("TOPLEFT", W.body, "TOPLEFT", 0, -y)
         b:SetWidth(w)
-        b.title:SetText(title)
+        b.title:SetText(Caps(title))
         b.right:SetText(right or "")
         -- two or more ticks in a box: one on its head ticks or unticks them all
         local many = leaves ~= nil and #leaves >= 2
@@ -516,12 +530,12 @@ local function PaintBody(w)
         if not has then return end
         local key, on, who = node.charKey, charOnly[node.charKey] == true, tostring(node.name)
         local cls = ClassName(node.classTag)
-        if cls == "" then cls = "character of its class" end
-        local b = NewBox("WHERE THEY LOAD")
-        PaintRow(NextRow(), 1, y, w - 2, IW.BAR_H, { check = on and "on" or "off", name = "Only on " .. who,
-            nameCol = on and COL.ink or COL.dim, right = (not on) and ("Every " .. cls .. ", by spec and talents") or nil,
-            tipT = "Only on " .. who,
-            tipB = ("Off: every %s loads them, each by its own specs and talents. Cast bars always stay on %s."):format(cls, who),
+        if cls == "" then cls = Tr("character of its class") end
+        local b = NewBox(Tr("Where they load"))
+        PaintRow(NextRow(), 1, y, w - 2, IW.BAR_H, { check = on and "on" or "off", name = Tr("Only on %s"):format(who),
+            nameCol = on and COL.ink or COL.dim, right = (not on) and Tr("Every %s, by spec and talents"):format(cls) or nil,
+            tipT = Tr("Only on %s"):format(who),
+            tipB = Tr("Off: every %s loads them, each by its own specs and talents. Cast bars always stay on %s."):format(cls, who),
             onTick = function()
                 charOnly[key] = (not on) or nil
                 Touch()
@@ -534,7 +548,7 @@ local function PaintBody(w)
             local profs = spec.children or {}
             local all = {}
             for _, p in ipairs(profs) do Leaves(p, all) end
-            local b = NewBox(string.upper(spec.label or ""), Plural(#profs, "profile", "profiles"), all)
+            local b = NewBox(spec.label or "", Plural(#profs, Tr("1 profile"), Tr("%d profiles")), all)
             for _, p in ipairs(profs) do
                 local leaves = Leaves(p)
                 local st = State(leaves)
@@ -562,14 +576,14 @@ local function PaintBody(w)
                         local c = Chip(nc)
                         c:SetFrameLevel(W.body:GetFrameLevel() + 3)
                         local label
-                        if lf.kind == "free" then label = "Free icons " .. tostring(lf.n or 0)
+                        if lf.kind == "free" then label = Tr("Free icons %d"):format(lf.n or 0)
                         elseif (lf.n or 0) > 0 then label = tostring(lf.name) .. " " .. lf.n
-                        else label = tostring(lf.name) .. " · empty" end
+                        else label = tostring(lf.name) .. " · " .. Tr("empty") end
                         c.fs:SetText(label)
                         local hid = tonumber(lf.cdmHidden) or 0
                         c.tipT = (hid > 0) and tostring(lf.name) or nil
                         c.tipB = (hid > 0) and ((hid == 1) and "1 icon in it is set to not displayed in your Cooldown Manager, so it stays out."
-                            or ("%d icons in it are set to not displayed in your Cooldown Manager, so they stay out."):format(hid)) or nil
+                            or Tr("%d icons in it are set to not displayed in your Cooldown Manager, so they stay out."):format(hid)) or nil
                         local cw = math.ceil(c.fs:GetStringWidth() or 40) + 18
                         if cx + cw > w - 10 and cx > IW.CHIP_X then
                             cx = IW.CHIP_X
@@ -598,19 +612,19 @@ local function PaintBody(w)
         for _, lf in ipairs(Kids(node, "look")) do also[#also + 1] = lf end
         for _, lf in ipairs(Kids(node, "press")) do also[#also + 1] = lf end
         if #also > 0 then
-            local b = NewBox("ALSO", nil, also)
+            local b = NewBox(Tr("Also"), nil, also)
             for _, lf in ipairs(also) do
                 local on = picks[lf.unit] == true
                 local detail, tip, label = "", nil, lf.name or lf.label
                 if lf.kind == "reminders" then
-                    detail = Plural(lf.n or 0, "reminder", "reminders")
+                    detail = Plural(lf.n or 0, Tr("1 reminder"), Tr("%d reminders"))
                     tip = "Its reminders and their pulse, sound and glow."
                 elseif lf.kind == "look" then
                     local look = plan.looks and plan.looks[node.charKey]
-                    detail = ("from its profile '%s'"):format(tostring(look and look.profile or "Default"))
+                    detail = Tr("from its profile '%s'"):format(tostring(look and look.profile or "Default"))
                     tip = "Untick to keep the Arc Auras look."
                 else
-                    detail = "switched on"
+                    detail = Tr("switched on")
                     tip = "Switches it on with the same look."
                 end
                 PaintRow(NextRow(), 1, y, w - 2, IW.ROW_H, { check = on and "on" or "off", name = label,
@@ -661,7 +675,7 @@ local function PaintBody(w)
             end
         end
         if not any then
-            local b = NewBox("BARS")
+            local b = NewBox(Tr("Bars"))
             PaintRow(NextRow(), 1, y, w - 2, 30, { name = tostring(node.name) .. " has no bars in Arc UI.", nameCol = COL.faint })
             y = y + 30
             EndBox(b)
@@ -671,7 +685,7 @@ local function PaintBody(w)
         local list = node.textures or {}
         local lv = {}
         for _, t in ipairs(list) do if t.unit then lv[#lv + 1] = { unit = t.unit } end end
-        local b = NewBox("TEXTURES", tostring(#list), lv)
+        local b = NewBox(Tr("Textures"), tostring(#list), lv)
         for _, t in ipairs(list) do
             local detail = (t.debuff and "Debuff" or "Buff") .. " · " .. t.w .. " x " .. t.h
             if t.unit then
@@ -854,21 +868,22 @@ local function PaintFoot()
         text, text2 = said.text or "", said.text2 or ""
         col = said.bad and { 1, 0.45, 0.4 } or { 0.498, 0.824, 0.557 }
     elseif #who == 0 then
-        text, col = "Nothing ticked yet.", COL.dim
+        text, col = Tr("Nothing ticked yet."), COL.dim
     else
         local bits = {}
-        if nProf > 0 then bits[#bits + 1] = Plural(nProf, "profile", "profiles") end
-        if nBars > 0 then bits[#bits + 1] = Plural(nBars, "bar", "bars") end
-        if nTex > 0 then bits[#bits + 1] = Plural(nTex, "texture", "textures") end
-        if nRem > 0 then bits[#bits + 1] = (nRem == 1) and "the Cooldown Reminder" or (nRem .. " Cooldown Reminders") end
-        if look then bits[#bits + 1] = "the icon look" end
-        if press then bits[#bits + 1] = "the press highlight" end
+        if nProf > 0 then bits[#bits + 1] = Plural(nProf, Tr("1 profile"), Tr("%d profiles")) end
+        if nBars > 0 then bits[#bits + 1] = Plural(nBars, Tr("1 bar"), Tr("%d bars")) end
+        if nTex > 0 then bits[#bits + 1] = Plural(nTex, Tr("1 texture"), Tr("%d textures")) end
+        if nRem > 0 then bits[#bits + 1] = Plural(nRem, Tr("the Cooldown Reminder"), Tr("%d Cooldown Reminders")) end
+        if look then bits[#bits + 1] = Tr("the icon look") end
+        if press then bits[#bits + 1] = Tr("the press highlight") end
+        -- the list's last two joined as one sentence piece, so each language picks its "and"
         local list = bits[1] or ""
-        if #bits > 1 then list = table.concat(bits, ", ", 1, #bits - 1) .. " and " .. bits[#bits] end
-        text = ("Brings %s from %s."):format(list, (#who == 1) and who[1] or (#who .. " characters"))
+        if #bits > 1 then list = Tr("%s and %s"):format(table.concat(bits, ", ", 1, #bits - 1), bits[#bits]) end
+        text = Tr("Brings %s from %s."):format(list, (#who == 1) and who[1] or Tr("%d characters"):format(#who))
         if again > 0 then
-            text2 = ((again == 1) and "1 of them is" or (again .. " of them are"))
-                .. " in Arc Auras already: importing again adds a second copy."
+            text2 = (again == 1) and Tr("1 of them is in Arc Auras already: importing again adds a second copy.")
+                or Tr("%d of them are in Arc Auras already: importing again adds a second copy."):format(again)
         end
     end
     W.sum:SetText(text)
@@ -898,9 +913,9 @@ function IW.Paint()
     end
     if not ok then
         if IA and IA.Available() then
-            W.off:SetText("Arc UI has nothing set up to copy.")
+            W.off:SetText(Tr("Arc UI has nothing set up to copy."))
         else
-            W.off:SetText("Arc UI's settings can't be read while it is turned off. Turn it on and reload, then come back here.")
+            W.off:SetText(Tr("Arc UI's settings can't be read while it is turned off. Turn it on and reload, then come back here."))
             W.offBtn:Show()
         end
         W.off:Show()
@@ -985,10 +1000,10 @@ function IW.BuildPane(parent)
     pane = CreateFrame("Frame", nil, parent)
     W.note = Font(pane, 12, COL.ink)
     W.note:SetPoint("TOPLEFT", 4, -2)
-    W.note:SetText("Pick what comes over from Arc UI. Arc UI stays as it is, and you can import again any time.")
+    W.note:SetText(Tr("Pick what comes over from Arc UI. Arc UI stays as it is, and you can import again any time."))
     -- CHARACTERS: the list, Tick all and Untick all on its foot
     local cb = Box(pane)
-    cb.title:SetText("CHARACTERS")
+    cb.title:SetText(Caps(Tr("Characters")))
     cb:SetPoint("TOPLEFT", pane, "TOPLEFT", 0, -IW.NOTE_H)
     cb:SetPoint("BOTTOMLEFT", pane, "BOTTOMLEFT", 0, 6 + IW.FOOT_H + IW.GAP)
     cb:SetWidth(IW.CHARS_W)
@@ -1075,14 +1090,14 @@ function IW.DoImport()
     if not (IA and plan) then return end
     local lock = rawget(_G, "InCombatLockdown")
     if lock and lock() then
-        said = { text = "Not in combat.", bad = true }
+        said = { text = Tr("Not in combat."), bad = true }
         IW.Paint()
         return
     end
     if next(picks) == nil then return end
     local res, err = IA.Apply(plan, picks, { charOnly = charOnly })
     if not res then
-        said = { text = err or "The import did not run.", bad = true }
+        said = { text = err or Tr("The import did not run."), bad = true }
         IW.Paint()
         return
     end
@@ -1092,10 +1107,10 @@ function IW.DoImport()
     picks = {}
     local n = res.layouts or 0
     local text
-    if n == 0 then text = "Imported into the layouts your earlier import made."
-    elseif n == 1 then text = "Imported: 1 new layout is in the sidebar."
-    else text = ("Imported: %d new layouts are in the sidebar."):format(n) end
-    said = { text = text, text2 = "Not right? Delete the layout and import it again." }
+    if n == 0 then text = Tr("Imported into the layouts your earlier import made.")
+    elseif n == 1 then text = Tr("Imported: 1 new layout is in the sidebar.")
+    else text = Tr("Imported: %d new layouts are in the sidebar."):format(n) end
+    said = { text = text, text2 = Tr("Not right? Delete the layout and import it again.") }
     if Options.RefreshAll then Options.RefreshAll() end
     IW.Paint()
 end
@@ -1199,13 +1214,13 @@ end)
 -- The card's line: what the import does, and what is in Arc Auras from it now.
 function IW.CardDesc()
     local IA = NS.ImportArcUI
-    local base = "Pick which Arc UI groups, icons, bars and looks come into Arc Auras."
+    local base = Tr("Pick which Arc UI groups, icons, bars and looks come into Arc Auras.")
     local done = IA and IA.DoneCount() or 0
     if done == 0 or not plan then return base end
     local here = 0
     for unit in pairs(plan.leaves or {}) do if IA.UnitLive(unit, plan) then here = here + 1 end end
     if here == 0 then return base end
-    return base .. (" %d parts are in Arc Auras; import again any time."):format(here)
+    return base .. " " .. Tr("%d parts are in Arc Auras; import again any time."):format(here)
 end
 
 -- The card's picture: Arc UI's own icon handing its icons to an Arc Auras square.

@@ -7,6 +7,12 @@ local ADDON, NS = ...
 
 local LF = {}
 NS.LayoutFollow = LF
+
+-- the client's words; English while the theme is not loaded
+local function Tr(s)
+    local AT = NS.AT
+    return AT and AT.Tr and AT.Tr(s) or s
+end
 NS.Options.LayoutFollow = LF
 
 -- seconds a layout look must stay put before the offer (a slider drag sends
@@ -59,13 +65,13 @@ function LF.OfferWho(layout, old)
         cls = cls or e.cls
         tal = tal or e.tal
     end
-    local what = (cls and tal) and "class, spec and talent checks" or tal and "talent checks"
-        or "class and spec checks"
-    local one = n == 1
-    LF.Ask("ARCUIV2_LAYOUT_WHO",
-        ("%d %s in '%s' %s this layout's old %s. Give %s its new ones? %s own Load When rules stay.")
-            :format(n, one and "item" or "items", layout.name or "?", one and "has" or "have", what,
-                one and "it" or "them", one and "Its" or "Their"),
+    local what = (cls and tal) and Tr("class, spec and talent checks") or tal and Tr("talent checks")
+        or Tr("class and spec checks")
+    -- one whole sentence per count, so each language words it as a whole
+    local ask = n == 1
+        and Tr("%d item in '%s' has this layout's old %s. Give it its new ones? Its own Load When rules stay.")
+        or Tr("%d items in '%s' have this layout's old %s. Give them its new ones? Their own Load When rules stay.")
+    LF.Ask("ARCUIV2_LAYOUT_WHO", ask:format(n, layout.name or "?", what),
         function()
             S.ApplyWho(layout, list)
             LF.Refresh()
@@ -117,15 +123,15 @@ function LF.OfferLooks()
     -- one family named by its own word (icon, group, bar), a mix as items
     local fams = {}
     for f in pairs(nouns) do fams[#fams + 1] = f end
-    local noun = "item"
+    local noun = one and Tr("item") or Tr("items")
     for _, lt in ipairs(NS.Options.LOOK_TABS or {}) do
-        if #fams == 1 and lt.family == fams[1] then noun = lt.one end
+        if #fams == 1 and lt.family == fams[1] then noun = Tr(one and lt.one or lt.many) end
     end
     table.sort(labels)
-    LF.Ask("ARCUIV2_LAYOUT_LOOK",
-        ("%d %s%s in '%s' %s %s own %s. Make %s follow the layout?")
-            :format(n, noun, one and "" or "s", layout.name or "?", one and "keeps" or "keep",
-                one and "its" or "their", table.concat(labels, ", "), one and "it" or "them"),
+    for i, l in ipairs(labels) do labels[i] = Tr(l) end
+    local ask = one and Tr("%d %s in '%s' keeps its own %s. Make it follow the layout?")
+        or Tr("%d %s in '%s' keep their own %s. Make them follow the layout?")
+    LF.Ask("ARCUIV2_LAYOUT_LOOK", ask:format(n, noun, layout.name or "?", table.concat(labels, ", ")),
         function()
             for _, p in ipairs(todo) do
                 local l = S.Get(p.id)
@@ -141,7 +147,6 @@ NS.Events.OnMessage("AD_LAYOUT_LOOK", "layoutfollow", LF.OnLook)
 -- spec boxes that leave out some of the layout's, and Match the layout.
 function LF.Rows(pg, ctx, tabVisible, anySpecs)
     local AT, S = NS.AT, NS.Store
-    local what = anySpecs and "class and spec checks" or "class checks"
     local function Strays()
         local r = ctx()
         return (r and r.type == "layout") and S.LayoutClassStrays(r) or {}
@@ -153,9 +158,10 @@ function LF.Rows(pg, ctx, tabVisible, anySpecs)
     note._sync = function()
         local n = #Strays()
         if fs then
-            fs:SetText(("%d %s in this layout %s %s that leave out some of the layout's %s.")
-                :format(n, n == 1 and "item" or "items", n == 1 and "has" or "have", what,
-                    anySpecs and "specs" or "classes"))
+            local line = n == 1 and Tr("%d item in this layout has %s that leave out some of the layout's %s.")
+                or Tr("%d items in this layout have %s that leave out some of the layout's %s.")
+            fs:SetText(line:format(n, anySpecs and Tr("class and spec checks") or Tr("class checks"),
+                anySpecs and Tr("specs") or Tr("classes")))
         end
         if sync then sync() end
     end
@@ -165,7 +171,8 @@ function LF.Rows(pg, ctx, tabVisible, anySpecs)
         S.MatchLayout(r, S.LayoutClassStrays(r))
         AT.LayoutPage(pg)
         LF.Refresh()
-    end, vis, 150, "Their own " .. what)
-    AT.Tooltip(row.button, "Match the layout", "Copies this layout's " .. what
-        .. " onto those items (and its talent checks when it has any), so they load wherever the layout does. Their Load When rules stay.")
+    end, vis, 150, anySpecs and "Their own class and spec checks" or "Their own class checks")
+    AT.Tooltip(row.button, "Match the layout", anySpecs
+        and "Copies this layout's class and spec checks onto those items (and its talent checks when it has any), so they load wherever the layout does. Their Load When rules stay."
+        or "Copies this layout's class checks onto those items (and its talent checks when it has any), so they load wherever the layout does. Their Load When rules stay.")
 end

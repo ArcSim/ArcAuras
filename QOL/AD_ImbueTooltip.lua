@@ -9,6 +9,12 @@ local ADDON, NS = ...
 local IT = {}
 NS.ImbueTooltip = IT
 
+-- the client's words; English while the theme is not loaded
+local function Tr(s)
+    local AT = NS.AT
+    return AT and AT.Tr and AT.Tr(s) or s
+end
+
 IT.SETTING = "tooltipImbueDamage"
 IT.MAIN_HAND = 16
 -- attack power per point of damage per second of swing
@@ -132,12 +138,12 @@ end
 
 -- the two lines for a gain: which weapon, then the numbers
 function IT.Lines(speed, perHit, dps, avg)
-    local head = ("With your weapon (%.2f speed)"):format(speed)
+    local head = Tr("With your weapon (%.2f speed)"):format(speed)
     local body
     if avg then
-        body = ("+%.1f per proc, +%.1f DPS on average"):format(perHit, dps)
+        body = Tr("+%.1f per proc, +%.1f DPS on average"):format(perHit, dps)
     else
-        body = ("+%.1f per hit, +%.1f DPS"):format(perHit, dps)
+        body = Tr("+%.1f per hit, +%.1f DPS"):format(perHit, dps)
     end
     return head, body
 end

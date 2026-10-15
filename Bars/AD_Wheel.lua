@@ -8,6 +8,12 @@ local ADDON, NS = ...
 local WH = {}
 NS.Wheels = WH
 
+-- the client's words; English while the theme is not loaded
+local function Tr(s)
+    local AT = NS.AT
+    return AT and AT.Tr and AT.Tr(s) or s
+end
+
 WH.MIN, WH.MAX, WH.COUNT = 3, 10, 6
 WH.CIRCLE = "Interface\\CharacterFrame\\TempPortraitAlphaMask"
 -- |cos| past this puts a name beside its icon, not above or below it (sin 22.5)
@@ -321,7 +327,7 @@ function WH.FillDial(d, shown, n, look, names)
 
     local COL = NS.AT.PALETTES.classic.col
     d.emptyText:SetFont(STANDARD_TEXT_FONT, g.font, "")
-    d.emptyText:SetText("Nothing on this wheel yet")
+    d.emptyText:SetText(Tr("Nothing on this wheel yet"))
     d.emptyText:ClearAllPoints()
     d.emptyText:SetPoint("TOP", d.ring, "CENTER", 0, -g.S(20 * k))
     d.emptyText:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])

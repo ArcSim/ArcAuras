@@ -5,6 +5,12 @@ local ADDON, NS = ...
 local MO = {}
 NS.CDMMirrorOptions = MO
 
+-- the client's words; English while the theme is not loaded
+local function Tr(s)
+    local AT = NS.AT
+    return AT and AT.Tr and AT.Tr(s) or s
+end
+
 MO.TITLE = "From Cooldown Manager"
 MO.DESC = "Your Cooldown Manager's bars as groups: same spells, sizes and places. Then hide its bars in Edit Mode."
 MO.SAY = {
@@ -86,7 +92,7 @@ function MO.Say(text)
     local COL = NS.AT.COL
     for _, c in ipairs(row and row._cards or {}) do
         if c.entry == MO.entry and c.desc then
-            c.desc:SetText(text)
+            c.desc:SetText(Tr(text))
             c.desc:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
         end
     end
@@ -120,11 +126,12 @@ function MO.AskLook(onPick)
         return
     end
     local d = StaticPopupDialogs[MO.LOOK_POPUP] or {
-        button1 = "Its look", button2 = "Arc Auras look", timeout = 0, whileDead = true, hideOnEscape = false,
+        timeout = 0, whileDead = true, hideOnEscape = false,
         preferredIndex = 3,
     }
     StaticPopupDialogs[MO.LOOK_POPUP] = d
-    d.text = MO.LOOK_TEXT
+    -- the game's popup draws these as given
+    d.text, d.button1, d.button2 = Tr(MO.LOOK_TEXT), Tr("Its look"), Tr("Arc Auras look")
     -- the next frame, so the next question can take a popup of its own
     d.OnAccept = function() C_Timer.After(0, function() onPick(true) end) end
     d.OnCancel = function(_, _, reason)
@@ -145,11 +152,11 @@ end
 function MO.OfferOff()
     if not (MO.CDMOn() and StaticPopupDialogs and StaticPopup_Show) then return end
     local d = StaticPopupDialogs[MO.OFF_POPUP] or {
-        button1 = "Turn it off", button2 = "Keep it", timeout = 0, whileDead = true, hideOnEscape = true,
+        timeout = 0, whileDead = true, hideOnEscape = true,
         preferredIndex = 3,
     }
     StaticPopupDialogs[MO.OFF_POPUP] = d
-    d.text = MO.OFF_TEXT
+    d.text, d.button1, d.button2 = Tr(MO.OFF_TEXT), Tr("Turn it off"), Tr("Keep it")
     d.OnAccept = function()
         C_CVar.SetCVar("cooldownViewerEnabled", "0")
         if NS.LayoutEngine and NS.LayoutEngine.QueueRebuild then NS.LayoutEngine.QueueRebuild() end

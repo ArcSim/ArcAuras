@@ -850,6 +850,8 @@ end
 function Options.SetAuraSpellIDs(d, ids)
     d.spellID = ids[1]
     d.spellIDs = (#ids > 1) and ids or nil
+    -- IDs picked by hand stay: a trinket's aura stops following the trinket worn
+    d.worn = nil
 end
 -- A name search's pick joins the IDs already there instead of replacing them.
 -- True when the list changed.
@@ -906,14 +908,21 @@ end
 -- `on`, kept while off so switching back on restores it. The first switch-on
 -- guesses: the spell's own ID (a classic buff carries its spell's ID) plus the
 -- rank you know, a debuff on your target if the spell is harmful, else a buff.
+-- A trinket's follows the trinket worn in its slot, as its cooldown does.
 function Options.OverlayOf(rec)
     return rec and rec.driver and rec.driver.overlay or nil
 end
 function Options.SetOverlayOn(rec, on)
     if not (rec and rec.driver) then return end
     local ov = rec.driver.overlay
+    local DC = NS.DriverCooldown
     if on then
-        if type(ov) ~= "table" then
+        if type(ov) ~= "table" and rec.kind == "trinket" and DC and DC.TrinketOverlay then
+            ov = DC.TrinketOverlay()
+            local ids = DC.WornBuffIDs(tonumber(rec.driver.slotID) or 13)
+            ov.spellID, ov.spellIDs = ids[1], (#ids > 1) and ids or nil
+            rec.driver.overlay = ov
+        elseif type(ov) ~= "table" then
             -- an item's or a trinket's use spell stands in for the spell
             local sid = (NS.DriverPhase and NS.DriverPhase.OwnSpell(rec)) or tonumber(rec.driver.spellID)
             -- the spell's aura and, on ranked realms, your rank of it (the
@@ -19347,7 +19356,7 @@ end
 function Options.CombatBlocked()
     if not InCombatLockdown() then return false end
     Options._openAfterCombat = true
-    if UIErrorsFrame then UIErrorsFrame:AddMessage("Arc Auras opens when combat ends.", 1, 0.82, 0) end
+    if UIErrorsFrame then UIErrorsFrame:AddMessage(AT.Tr("Arc Auras opens when combat ends."), 1, 0.82, 0) end
     return true
 end
 
@@ -19387,7 +19396,7 @@ if Events then
         if not (win and win:IsShown()) then return end
         win:Hide()
         if addWin and addWin:IsShown() then addWin:Hide() end
-        if UIErrorsFrame then UIErrorsFrame:AddMessage("Arc Auras closed for combat.", 1, 0.82, 0) end
+        if UIErrorsFrame then UIErrorsFrame:AddMessage(AT.Tr("Arc Auras closed for combat."), 1, 0.82, 0) end
     end)
     Events.On("PLAYER_REGEN_ENABLED", "adoptcombat", function()
         if not Options._openAfterCombat then return end

@@ -14,6 +14,12 @@ local Factory = NS.Factory
 local GB = {}
 NS.DriverGroupBuff = GB
 
+-- the client's words; English while the theme is not loaded
+local function Tr(s)
+    local AT = NS.AT
+    return AT and AT.Tr and AT.Tr(s) or s
+end
+
 GB.EVENTS = { "UNIT_AURA", "GROUP_ROSTER_UPDATE", "UNIT_CONNECTION", "UNIT_HEALTH",
     "PLAYER_ENTERING_WORLD", "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED" }
 -- A raid layer holds this many members, each owning every PER-th stripe of
@@ -694,12 +700,12 @@ end
 function GB.TooltipLines(rec)
     local a = GB.attached[rec.id]
     if not (a and a.total) then
-        GameTooltip:AddLine("Counts your party or raid between pulls.", 1, 1, 1, true)
+        GameTooltip:AddLine(Tr("Counts your party or raid between pulls."), 1, 1, 1, true)
         return
     end
-    GameTooltip:AddLine(("%d of %d have it"):format(a.have, a.total), 1, 1, 1)
+    GameTooltip:AddLine(Tr("%d of %d have it"):format(a.have, a.total), 1, 1, 1)
     if GB.inCombat then
-        GameTooltip:AddLine("In combat the count waits for the fight to end.", 0.7, 0.7, 0.7, true)
+        GameTooltip:AddLine(Tr("In combat the count waits for the fight to end."), 0.7, 0.7, 0.7, true)
         return
     end
     local nobody = GB.Nobody(rec)
@@ -712,6 +718,6 @@ function GB.TooltipLines(rec)
         end
     end
     if #names > 0 then
-        GameTooltip:AddLine((nobody and "Has it: " or "Missing: ") .. table.concat(names, ", "), 1, 0.82, 0, true)
+        GameTooltip:AddLine(Tr(nobody and "Has it: %s" or "Missing: %s"):format(table.concat(names, ", ")), 1, 0.82, 0, true)
     end
 end

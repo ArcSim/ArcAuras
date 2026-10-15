@@ -70,9 +70,11 @@ ET.FOLD_TITLES = { fade = "More fade options", frame = "More frame options", glo
 -- value inside only shows in its tooltip.
 function ET.NewFold(pg, key, word, ctx)
     local f = setmetatable({ key = key, ctx = ctx, items = {}, pg = pg }, Fold)
-    local title = "More options"
+    local title, shown = "More options", nil
     if type(word) == "string" and word ~= "" then
         title = ET.FOLD_TITLES[word] or ("More %s options"):format(word)
+        -- a word with no title of its own: the sentence and the word translate apart
+        if not ET.FOLD_TITLES[word] then shown = Tr("More %s options"):format(Tr(word)) end
     end
     f.title = title
     local row = AT.AddRow(pg, 24, function() return f:HeadShown() end)
@@ -89,7 +91,7 @@ function ET.NewFold(pg, key, word, ctx)
     fs:SetFont(AT.FONT, 12, "")
     fs:SetPoint("LEFT", chev, "RIGHT", 4, 0)
     fs:SetWordWrap(false)
-    fs:SetText(Tr(title))
+    fs:SetText(shown or Tr(title))
     local nb = CreateFrame("Frame", nil, row, "BackdropTemplate")
     nb:SetHeight(16)
     nb:SetPoint("LEFT", fs, "RIGHT", 8, 0)

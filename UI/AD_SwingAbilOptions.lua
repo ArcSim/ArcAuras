@@ -8,6 +8,12 @@ local function SA() return NS.Bars and NS.Bars.SwingAbil end
 
 local function Secret(v) return issecretvalue ~= nil and issecretvalue(v) == true end
 
+-- the client's words; English while the theme is not loaded
+local function Tr(s)
+    local AT = NS.AT
+    return AT and AT.Tr and AT.Tr(s) or s
+end
+
 -- A row's label: the spell's icon, then its name (the rank the player knows),
 -- marked while no rank of it is known.
 function Options.SwingAbilLabel(id)
@@ -17,12 +23,12 @@ function Options.SwingAbilLabel(id)
     local known = St.KnowsSpell(tonumber(id)) ~= false
     local tex = (CS and CS.GetSpellTexture and CS.GetSpellTexture(sid)) or 134400
     local nm = CS and CS.GetSpellName and CS.GetSpellName(sid)
-    if Secret(nm) or type(nm) ~= "string" or nm == "" then nm = "Spell " .. tostring(id) end
+    if Secret(nm) or type(nm) ~= "string" or nm == "" then nm = Tr("Spell %s"):format(tostring(id)) end
     local text = ("|T%s:18:18:0:0:64:64:5:59:5:59|t  %s"):format(tostring(tex), nm)
     if not known then
         local f = NS.AT.COL.faint
         local function B(v) return math.floor(v * 255 + 0.5) end
-        text = text .. ("  |cff%02x%02x%02x(not known yet)|r"):format(B(f[1]), B(f[2]), B(f[3]))
+        text = text .. ("  |cff%02x%02x%02x%s|r"):format(B(f[1]), B(f[2]), B(f[3]), Tr("(not known yet)"))
     end
     return text
 end

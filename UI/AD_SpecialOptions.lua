@@ -508,7 +508,7 @@ function Options.SpecialIconRows(pg, ctx, trackVis, owner)
     Line(22, function()
         local def = Def()
         if not (def and def.Pieces) then return "" end
-        return ("%d of 5 set pieces equipped."):format(def.Pieces())
+        return Tr("%d of 5 set pieces equipped."):format(def.Pieces())
     end, setVis)
     AT.RowDesc(pg, "The set gate is the Set Pieces Rule on Load Conditions.", 20, setVis)
     AT.Section(pg, nil)

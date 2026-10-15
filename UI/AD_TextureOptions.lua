@@ -196,9 +196,11 @@ TPO.CELL, TPO.GAP, TPO.HEAD = 64, 6, 26
 function TPO.BuildPicker()
     if TPO.win then return TPO.win end
     local AT, COL = NS.AT, NS.AT.COL
+    -- the whole phrase in the client's words; two colours while it reads English
+    local pick = Tr("Choose a Picture")
     local win = AT.CreateWindow("ArcAurasPicturePicker", {
         w = 600, h = 560, minW = 420, minH = 360, maxW = 1400, maxH = 1200,
-        title = NS.AT.Brand("Choose", " a Picture"),
+        title = pick ~= "Choose a Picture" and pick or NS.AT.Brand("Choose", " a Picture"),
     })
     local body = CreateFrame("Frame", nil, win)
     body:SetPoint("TOPLEFT", 8, -38)

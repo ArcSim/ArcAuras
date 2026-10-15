@@ -39,7 +39,10 @@ end
 
 local function AddLine(tooltip, key, value)
     if value == nil then return end
-    tooltip:AddDoubleLine(KEY_COLOR .. key .. "|r", value, 1, 1, 1, 1, 1, 1)
+    -- the label in the client's words; the game's tooltip draws it as given
+    local AT = NS.AT
+    local label = AT and AT.Tr and AT.Tr(key) or key
+    tooltip:AddDoubleLine(KEY_COLOR .. label .. "|r", value, 1, 1, 1, 1, 1, 1)
 end
 
 -- The block's lines are gathered first, so an id with nothing left to show

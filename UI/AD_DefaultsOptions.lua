@@ -69,6 +69,7 @@ D.WORDS = {
         wheel = K("Wheel", "wheel", "wheels", "Wheels"),
         special = K("Arc Proc bar", "Arc Proc bar", "Arc Proc bars", "Arc Proc bars"),
         cdmbar = K("Cooldown Manager Bar", "Cooldown Manager bar", "Cooldown Manager bars", "Cooldown Manager bars"),
+        totembar = K("Totem Bar", "totem bar", "totem bars", "Totem bars"),
     },
     iconGroup = {
         cooldown = K("Icon Group", "icon group", "icon groups", "Icon groups"),
@@ -111,6 +112,7 @@ function D.BarKinds()
     if C_Spell and C_Spell.IsSpellInRange then out[#out + 1] = "range" end
     if NS.DriverCustom then out[#out + 1] = "timer" end
     if NS.CDMBars then out[#out + 1] = "cdmbar" end
+    if NS.TotemBars then out[#out + 1] = "totembar" end
     return out
 end
 

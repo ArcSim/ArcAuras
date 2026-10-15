@@ -141,6 +141,9 @@ function DT.Changed()
     -- a spell icon showing its totem (Drivers\AD_DriverPhase.lua)
     local P = NS.DriverPhase
     if P and P.OnTotems then Events.Coalesce("adphase_totems", P.OnTotems) end
+    -- a totem bar's time (Bars\AD_TotemBar.lua)
+    local TB = NS.TotemBars
+    if TB and TB.OnTotems then Events.Coalesce("adtotembar_all", TB.OnTotems) end
 end
 
 -- Every slot from scratch, from plain reads where the game allows them.

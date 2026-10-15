@@ -910,11 +910,16 @@ Default Animation
 Default seconds
 Defaults
 Delay before fading (seconds)
-Delete
 Delete %d
 Delete %d elements?
 Delete %s from the layout. You are asked to confirm first.
 Delete %s?
+Delete Bar
+Delete Group
+Delete Icon
+Delete Layout
+Delete Reminder
+Delete Skin
 Delete selection
 Delete the %s '%s'?
 Delete the group '%s'?
@@ -2972,6 +2977,7 @@ Top left
 Top right
 Top to bottom
 Totem Icon
+Totem bars
 Totem from spell ID
 Totem icon
 Totem slot

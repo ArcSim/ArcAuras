@@ -1337,6 +1337,8 @@ function LT.LayStrip(id)
             box(st.hBox, 34)
             stepper(st.hPlus)
         end
+        -- it names what it deletes, as the panel's Delete buttons do
+        st.del.fs:SetText(Tr(Options.DeleteLabel and Options.DeleteLabel(Store.Get(id)) or "Delete"))
         LT.PaintDelete(st.del, { id })
         local right = { { st.del, S(UIK.Width(st.del.fs) + 26), S(28) }, { st.delRule, 1, ruleH },
             { st.edit, S(UIK.Width(st.edit.fs) + 30), S(28) }, { st.close, S(26), S(26) } }

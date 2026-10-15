@@ -2595,10 +2595,9 @@ local function ResourceSyncType(entry)
     return true
 end
 
--- A curve's answer for the power now: a plain colour object from the client
--- (the curve is ours), or nil when it reads secret (restricted power). The
--- States table's power rows ask theirs (Bars\AD_ResColors.lua).
-local function CurveRGBA(entry, curve)
+-- A curve's colour object for the power now, straight from the client; it
+-- may be secret (restricted power), so it only goes into colour setters.
+local function CurveColor(entry, curve)
     local RP = Bars.ResPowers
     local col
     if RP and RP.Pseudo(entry.powerType) then
@@ -2607,23 +2606,53 @@ local function CurveRGBA(entry, curve)
     else
         col = UnitPowerPercent("player", entry.powerType, false, curve)
     end
-    if col ~= nil and type(col) ~= "number" and col.GetRGBA then
+    if col ~= nil and type(col) ~= "number" and col.GetRGBA then return col end
+    return nil
+end
+
+-- A number curve's answer for the power now (a glow's alpha), possibly secret,
+-- so it only goes into SetAlpha.
+local function CurveValue(entry, curve)
+    local RP = Bars.ResPowers
+    if RP and RP.Pseudo(entry.powerType) then return RP.CurveColor(entry.powerType, curve) end
+    return UnitPowerPercent("player", entry.powerType, false, curve)
+end
+
+-- A curve's plain answer for the power now, or nil; the fifth return is
+-- true when the client answered secret (restricted power). The States
+-- table's power rows ask theirs (Bars\AD_ResColors.lua).
+local function CurveRGBA(entry, curve)
+    local col = CurveColor(entry, curve)
+    if col then
         local cr, cg, cb, ca = col:GetRGBA()
         if cr ~= nil and not (issecretvalue and (issecretvalue(cr) or issecretvalue(ca))) then
             return cr, cg, cb, ca or 1
         end
+        return nil, nil, nil, nil, true
     end
     return nil
 end
 
 -- the fill colour for this refresh: the highest States row that holds and
--- colours the fill (Bars\AD_ResColors.lua), else the power colour
+-- colours the fill (Bars\AD_ResColors.lua), else the power colour. Power rows
+-- the game keeps secret colour it through the client's curve over that
+-- plain colour; the fifth return says the colour is the client's (secret).
 local function ResourceColor(entry)
     local rec = entry.rec
     local CRm = Bars.ResColor
     local rc = CRm and entry.crRows and CRm.Pick(entry)
-    if rc then return rc[1], rc[2], rc[3], rc[4] or 1 end
-    return PowerColorOf(rec, entry.powerType)
+    local r, g, b, a
+    if rc then r, g, b, a = rc[1], rc[2], rc[3], rc[4] or 1 else r, g, b, a = PowerColorOf(rec, entry.powerType) end
+    -- kept plain: the texts fall back to it while the fill's colour is secret
+    entry.cuR, entry.cuG, entry.cuB, entry.cuA = r, g, b, a or 1
+    if entry.crHidden and not entry.pipsOn then
+        local col = CRm.HiddenColor(entry, "fill", r, g, b, a or 1)
+        if col then
+            local hr, hg, hb, ha = col:GetRGBA()
+            return hr, hg, hb, ha, true
+        end
+    end
+    return r, g, b, a
 end
 
 
@@ -2708,6 +2737,27 @@ local function ResourceTextTint(entry, r, g, b, barMoved)
     local rec, shell = entry.rec, entry.shell
     local mode, tr, tg, tb, ta = "own", nil, nil, nil, nil
     local t = entry.crText
+    local CRm = Bars.ResColor
+    local textFill = t == nil and R(rec, "rescolors", "resTextFill") == true
+    if entry.crHidden and CRm and CRm.TextHidden(entry, textFill) then
+        -- power rows the game keeps secret: each text takes the client's
+        -- colour every pass, never compared; the cache is cleared so the
+        -- plain colours paint again after
+        entry.txMode = nil
+        for _, run in ipairs(RES_RUNS) do
+            local fs = shell.texts[run.key]
+            if fs then
+                local c = t or R(rec, "text", TEXT_DEF_BY_KEY[run.key].colour) or { 0.95, 0.97, 1, 1 }
+                local col = CRm.HiddenColor(entry, (t or textFill) and "text" or run.key, c[1], c[2], c[3], c[4] or 1, textFill)
+                if col then
+                    fs:SetTextColor(col:GetRGBA())
+                else
+                    fs:SetTextColor(c[1], c[2], c[3], c[4] or 1)
+                end
+            end
+        end
+        return
+    end
     if t then
         mode, tr, tg, tb, ta = "x", t[1], t[2], t[3], t[4] or 1
     elseif R(rec, "rescolors", "resTextFill") == true then
@@ -2845,6 +2895,34 @@ local function PaintPips(entry)
     end
     -- second laps and charged points paint over these
     if res and Bars.ResCells then Bars.ResCells.Painted(entry) end
+end
+
+-- Resource pips while power rows read secret (Bars\AD_ResColors.lua): each pip
+-- that wears the bar's colour takes the client's curve colour every pass; a
+-- pip's own max or band colour stays. p.pr.. keep the plain colour. Pips the
+-- resource powers own (runes, essence) shade their recharging cells from it
+-- and are left plain. True when it painted, so the plain pass repaints after.
+local PIP_OWN = {}
+local function HiddenPips(entry)
+    local CRm = Bars.ResColor
+    local n = entry.pipCount or 0
+    if n == 0 or not (CRm and entry.crHidden) then return false end
+    local RP = Bars.ResPowers
+    if RP and (RP.OwnsPips(entry) or entry.powerType == RP.ESSENCE) then return false end
+    local col = CRm.HiddenColor(entry, "pip", entry.cuR, entry.cuG, entry.cuB, entry.cuA)
+    if not col then return false end
+    local tint = R(entry.rec, RES_CELL.sec, RES_CELL.tint)
+    if tint == nil then tint = 0 end
+    local r, g, b, a = col:GetRGBA()
+    for i = 1, n do
+        local p = entry.pips[i]
+        if p and PipColor(entry, i, n, PIP_OWN, 0, 0, 1) == PIP_OWN then
+            p.litBar:SetStatusBarColor(r, g, b, a)
+            p.dim:SetVertexColor(r, g, b, tint)
+        end
+    end
+    if Bars.ResCells then Bars.ResCells.Painted(entry) end
+    return true
 end
 
 -- An icon cell's picture: the custom bar's own (a file or an atlas), else its
@@ -3194,20 +3272,41 @@ local function ResourceRefresh(entry)
         PredictLayout(entry)
     end
 
-    local r, g, b, a = ResourceColor(entry)
-    local barMoved = entry.cr ~= r or entry.cg ~= g or entry.cb ~= b or entry.ca ~= a
-    if barMoved then
-        -- the alpha rides along: the pips paint from this cache
-        entry.cr, entry.cg, entry.cb, entry.ca = r, g, b, a
+    local r, g, b, a, hidden = ResourceColor(entry)
+    if hidden then
+        -- the client's colour for secret power is never compared: painted
+        -- every pass, the cache cleared so the plain colour paints again after
+        entry.cr, entry.cg, entry.cb, entry.ca = nil, nil, nil, nil
         shell.fill:SetStatusBarColor(r, g, b, a)
-        if entry.pipsOn then
-            PaintPips(entry)
-        elseif Bars.ResCells then
-            Bars.ResCells.Painted(entry)   -- the bar-style slots wear it too
+        if Bars.ResCells then Bars.ResCells.Painted(entry) end
+        ResourceTextTint(entry, nil, nil, nil, true)
+    else
+        local barMoved = entry.cr ~= r or entry.cg ~= g or entry.cb ~= b or entry.ca ~= a
+        if barMoved then
+            -- the alpha rides along: the pips paint from this cache
+            entry.cr, entry.cg, entry.cb, entry.ca = r, g, b, a
+            shell.fill:SetStatusBarColor(r, g, b, a)
+            if entry.pipsOn then
+                PaintPips(entry)
+            elseif Bars.ResCells then
+                Bars.ResCells.Painted(entry)   -- the bar-style slots wear it too
+            end
         end
+        -- pips under power rows that read secret take the client's colour
+        -- every pass; back on plain power the plain colours paint again
+        if entry.pipsOn then
+            if HiddenPips(entry) then
+                entry.pipsHidden = true
+            elseif entry.pipsHidden then
+                entry.pipsHidden = nil
+                if not barMoved then PaintPips(entry) end
+            end
+        end
+        -- the texts: a row's colour, the bar's colour, or their own colours
+        ResourceTextTint(entry, r, g, b, barMoved)
     end
-    -- the texts: a row's colour, the bar's colour, or their own colours
-    ResourceTextTint(entry, r, g, b, barMoved)
+    -- glows of rows that read secret follow the power through the client's alpha
+    if entry.crGlowHidden and Bars.Glow and Bars.Glow.RowsAlpha then Bars.Glow.RowsAlpha(entry) end
 
     local cur = ResourceCurrent(pt)
     if cur == nil then return end
@@ -6821,8 +6920,9 @@ Bars.Kit = {
     -- the health percent scale, the font probe and the aura engine's gates
     ResourceCurrent = ResourceCurrent, HealthScale = HB.Scale, ProvenFontPath = ProvenFontPath,
     AuraSecretNow = AuraSecretNow, AuraEngineUp = AuraEngineUp,
-    -- a resource curve's plain answer for the power now (the States power rows)
-    CurveRGBA = CurveRGBA,
+    -- a resource curve's plain answer for the power now (the States power
+    -- rows), and its colour object for the setters when power reads secret
+    CurveRGBA = CurveRGBA, CurveColor = CurveColor, CurveValue = CurveValue,
     -- a running swing's start, length and end (GetTime plus PLAYER_SWING's
     -- plain duration), or nil between swings
     SwingClock = function(e)

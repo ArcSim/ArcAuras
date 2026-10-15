@@ -310,7 +310,7 @@ IA.BAR_MAP = {
     ["behavior.showOnSpec"] = { special = "specs" },
     ["behavior.talentConditions"] = { special = "talents" },
     ["behavior.talentMatchMode"] = { special = "talents" },
-    ["behavior.hideBuffIcon"] = { gap = "no Cooldown Manager icon to hide", nv = true },
+    ["behavior.hideBuffIcon"] = { special = "hideIcon" },
     ["behavior.hideBlizzardFrame"] = { gap = "the game's own resource frame stays; Arc Auras hides only the cast bar's", nv = true },
     ["behavior.forceShow"] = { gap = "a preview switch, not a setting", nv = true },
     ["tracking"] = { special = "identity" },
@@ -581,6 +581,7 @@ IA.BAR_SPECIALS = {
     position = "the bar's pos", anchor = "anchor.* (a group by name, width matched)",
     thresholds = "thresholds.thresh2..4 + threshEnabled / Count / AsSeconds / Ref, behind durationColorCurveEnabled; bands in value order, the most urgent three of v1's four",
     hideWhen = "c.fadeWhen + c.fadeAlpha", specs = "c.specs", talents = "c.talents / talentsNot", identity = "the record itself",
+    hideIcon = "the tracked Cooldown Manager icon stays out of the import in the bar's specs (IA.BarHides)",
     freeText = "text.stkAnchor / durAnchor / nameAnchor = CENTER + offsets from the bar (a free-dragged text, its drag point turned into its centre)",
     chargeText = "a cooldown bar's charge text (stk*) and a charge bar's timer text (dur*), which win over the generic text keys there",
     font = "text.font (the first text font the player changed from v1's default: stack, duration, name, recharge)",
@@ -1157,6 +1158,13 @@ function IA.PlaceCells(g, icons, cov, ppu)
     end
     if maxR + 1 > rows then rows = maxR + 1 Put(g.o, "arrangement", "rows", rows) end
     if maxC + 1 > cols then cols = maxC + 1 Put(g.o, "arrangement", "cols", cols) end
+    -- v1 packs a one-row group into that one row however many icons show (a one-column
+    -- group into its column), where Arc Auras wraps past its cells: the row takes them all
+    if v.packed and rows == 1 and #icons > cols then
+        cols = #icons Put(g.o, "arrangement", "cols", cols)
+    elseif v.packed and cols == 1 and rows > 1 and #icons > rows then
+        rows = #icons Put(g.o, "arrangement", "rows", rows)
+    end
     local over = { 0, 0, 0, 0 }
     local own, auras = false, false
     for _, I in ipairs(icons) do
@@ -1326,8 +1334,10 @@ function IA.ResolveCDM(cdID, iao, opts)
     if cat == 2 or cat == 3 or cat == 4 or cat == 6 or cat == 8 then
         if not sid or sid == 0 then return nil, "an aura icon with no spell id (an equipment buff)" end
         -- the Cooldown Manager shows an aura only while it lists it as learned (a talent
-        -- taken): the icon keeps the entry and asks it (Store.CdmKnown)
-        local d = Lanes({ cdmID = tonumber(cdID), onlyKnown = true }, M.AuraIDs(info))
+        -- taken): the icon keeps the entry and asks it (Store.CdmKnown). Its icon shows the
+        -- entry's totem or guardian first, then the aura, as the Manager does (NS.CDMMirror
+        -- PieceFor does the same for its icons)
+        local d = Lanes({ cdmID = tonumber(cdID), onlyKnown = true, totem = true }, M.AuraIDs(info))
         return { kind = "aura", driver = d, name = (opts.spellName and opts.spellName(named)) or ("Aura " .. named) }
     end
     if not sid or sid == 0 then return nil, "a cooldown with no spell id" end
@@ -1476,6 +1486,34 @@ end
 
 -- A profile's place inside its character's layout, on one of its records' conditions:
 -- its spec only, never for a spare one (an icon's own spec list keeps the specs both name).
+-- The Cooldown Manager entries v1 kept hidden in one spec because a switched-on
+-- aura bar of that spec tracks them with Hide buff icon: the bar's entry and
+-- its alternates. v1 drew the bar there, never the icon. nil when none.
+function IA.BarHides(charDB, classID, specID, opts)
+    local bars = type(charDB) == "table" and type(charDB.bars) == "table" and charDB.bars or {}
+    local out
+    for _, i in ipairs(IA.OrderedKeys(bars)) do
+        local cfg = IA.V1AceFirst(bars[i], i, "aura")
+        local tr = type(cfg) == "table" and type(cfg.tracking) == "table" and cfg.tracking or nil
+        local bh = type(cfg) == "table" and type(cfg.behavior) == "table" and cfg.behavior or nil
+        if tr and bh and tr.enabled == true and bh.hideBuffIcon == true then
+            local specs = IA.Specs(bh.showOnSpecs, classID, opts)
+            if not specs or (specID and specs[specID]) then
+                local function Add(id)
+                    id = tonumber(id)
+                    if id and id > 0 then
+                        out = out or {}
+                        out[math.floor(id)] = true
+                    end
+                end
+                Add(tr.cooldownID)
+                for _, alt in ipairs(type(tr.alternateCooldownIDs) == "table" and tr.alternateCooldownIDs or {}) do Add(alt) end
+            end
+        end
+    end
+    return out
+end
+
 function IA.GatePart(c, who)
     if who.never then c.loadNever = { always = true } end
     if not who.specs then return end
@@ -1556,6 +1594,14 @@ function IA.PlanProfile(ctx, P, S, plan)
                 -- counted where it sat, for the picker's words
                 local gp = place.type == "group" and place.target and byName[place.target]
                 if gp then gp.cdmHidden = (gp.cdmHidden or 0) + 1 else L.cdmHidden = (L.cdmHidden or 0) + 1 end
+                return
+            end
+            -- a bar of this spec tracked it with Hide buff icon: v1 drew the bar, not the icon
+            if ctx.barHides and ctx.barHides[id] then
+                Dropped(cov, "icon:dropped.cdm: hidden by a bar that tracks it",
+                    "a bar that tracks it hid it in Arc UI (Hide buff icon)", true)
+                ctx.counts.iconsDropped = ctx.counts.iconsDropped + 1
+                ctx.counts.barHidden = (ctx.counts.barHidden or 0) + 1
                 return
             end
             if not res and not why then
@@ -2692,9 +2738,19 @@ function IA.CdmAuraIDs(opts, tr)
     return (#ids > 0) and ids or nil
 end
 
--- The per-character bar stores -> plan bars (a character's shared layout). Each
--- bar is its own pick, keyed by where v1 keeps it so the key outlives a session;
--- a bar of a kind the import does not carry yet goes on L.later.
+-- A summon's spell as its Cooldown Manager entry shows it (the tooltip override
+-- first: an entry may rest on a spec passive), the spell a totem bar follows.
+function IA.SummonSpell(opts, cooldownID)
+    local info = opts and opts.cooldown and cooldownID and opts.cooldown(cooldownID)
+    local M = NS.CDMMirror
+    if type(info) ~= "table" or info.spellCategoryID ~= nil or not (M and M.ArtSpell) then return nil end
+    return M.ArtSpell(info)
+end
+
+-- The per-character bar stores -> plan bars (the character's bars layout; its cast bars,
+-- one per character in v1, go to own, the character's layout). Each bar is its own pick,
+-- keyed by where v1 keeps it so the key outlives a session; a bar of a kind the import
+-- does not carry yet goes on L.later.
 -- v1's timer bars (their own engine, Bars\ArcUI_CooldownBars.lua) -> Custom Bars (barKind
 -- "timer", the rules of Drivers\AD_DriverCustom.lua): Timer mode runs the timer, Stack mode
 -- counts stacks, Toggle mode is a stack of one its trigger turns on and off.
@@ -3099,8 +3155,9 @@ function IA.SkinBars(L, B, cfg, kindType, ctx, Relook)
     return extra
 end
 
-function IA.PlanBars(ctx, charDB, L)
+function IA.PlanBars(ctx, charDB, L, own)
     local cov, counts = ctx.cov, ctx.counts
+    own = own or L
     local route = function(row, path)
         if row.gap then return nil, row.gap end
         if row.special then return "(" .. row.special .. ")" end
@@ -3138,14 +3195,31 @@ function IA.PlanBars(ctx, charDB, L)
                 tt = "buff"
             end
             local name = (type(tr.buffName) == "string" and tr.buffName ~= "") and tr.buffName or ("Aura " .. tostring(sid))
-            -- v1's CDM Timer Mirror: a duration bar fed by the Cooldown Manager's own bar; a
-            -- summon's time (totem, ground effect, pet) is the Manager's bar too
+            -- v1's CDM Timer Mirror: a duration bar fed by the Cooldown Manager's own bar
             local summon = tt == "totem" or tt == "ground" or tt == "pet"
-            local mirror = ((tr.cdmMirror == true and tr.useDurationBar == true) or summon) and tonumber(tr.cooldownID)
+            local mirror = (tr.cdmMirror == true and tr.useDurationBar == true) and tonumber(tr.cooldownID)
+            -- a summon (totem, ground effect, pet): v1 read its slot off the entry and drew the
+            -- slot's time, so it comes in as a totem bar on the spell the entry shows
+            local entry = summon and tonumber(tr.cooldownID)
             if summon and tr.dynamicMaxDuration == false then
-                Dropped(cov, "bar:tracking.maxDuration", "a Cooldown Manager bar fills over the game's own length")
+                Dropped(cov, "bar:tracking.maxDuration", "a totem bar fills over the totem's own length")
             end
-            if mirror and mirror > 0 then
+            if entry and entry > 0 then
+                local ids = IA.CdmAuraIDs(ctx.opts, tr)
+                local spell = IA.SummonSpell(ctx.opts, entry) or ((sid and sid > 0) and sid or nil)
+                local B = { barKind = "totembar", name = name, unit = unitBase .. "aura|" .. tostring(i),
+                    driver = { spellID = spell, spellIDs = (ids and #ids > 1) and ids or nil, slot = (not spell) and 1 or nil },
+                    o = {}, c = {} }
+                IA.MapBarLook(B, IA.V1FillBar(cfg, "aura"), IA.BAR_MAP, ctx)
+                IA.Cover(cov, cfg, IA.BAR_MAP, route, nil, "bar")
+                L.bars[#L.bars + 1] = B
+                counts.bars.totembar = (counts.bars.totembar or 0) + 1
+                counts.bars.totembar = counts.bars.totembar + IA.SkinBars(L, B, cfg, "buff", ctx, function(c2)
+                    local T = { barKind = B.barKind, driver = B.driver, o = {}, c = {} }
+                    IA.MapBarLook(T, IA.V1FillBar(c2, "aura"), IA.BAR_MAP, ctx)
+                    return T
+                end)
+            elseif mirror and mirror > 0 then
                 local B = { barKind = "cdmbar", name = name, unit = unitBase .. "aura|" .. tostring(i),
                     driver = { cooldownID = math.floor(mirror), spellID = (sid and sid > 0) and sid or nil },
                     o = {}, c = {} }
@@ -3361,9 +3435,9 @@ function IA.PlanBars(ctx, charDB, L)
         local B = BuildCast(raw, unit, name, key, defaults, posRaw)
         if not B then return end
         IA.Cover(cov, raw, IA.CAST_MAP, castRoute, nil, "cast")
-        L.bars[#L.bars + 1] = B
+        own.bars[#own.bars + 1] = B
         counts.bars.cast = (counts.bars.cast or 0) + 1
-        counts.bars.cast = counts.bars.cast + IA.SkinBars(L, B, raw, "castbar", ctx, function(c2, entry)
+        counts.bars.cast = counts.bars.cast + IA.SkinBars(own, B, raw, "castbar", ctx, function(c2, entry)
             local carries = type(entry.categories) == "table" and entry.categories.position == true
             local T = BuildCast(c2, unit, name, key, defaults, (not carries) and posRaw or nil) or { o = {} }
             if not carries then T.pos, T.anchor = nil, nil end
@@ -3800,6 +3874,11 @@ function IA.Plan(db, opts)
             -- the character's icon tooltips off in v1: the layout's mouse tier (clicks keep Arc
             -- Auras' click-through, which never caught anything on these icons)
             if C.noTips then Put(CL.o, "mouse", "showTooltip", "off") end
+            -- its other bars and textures: a layout of their own that every character of the
+            -- class loads, each bar by its own specs and talents (the import's Only on adds
+            -- the character); its cast bars stay in CL, one per character as in v1
+            local BL = { name = charName .. " bars", key = "layout:bars:" .. charKey, charKey = charKey, forBars = true,
+                c = {}, pos = { x = 0, y = 0 }, o = {}, parts = {}, bars = {}, reminders = {}, later = {} }
             for _, S in ipairs(C.specs) do
                 plan.counts.specs = plan.counts.specs + 1
                 ctx.specKey, ctx.classID = S.key, S.classID
@@ -3807,6 +3886,7 @@ function IA.Plan(db, opts)
                 ctx.specID = S.specID
                 ctx.specName = S.specName
                 ctx.rawProfiles = S.raw
+                ctx.barHides = IA.BarHides(charDB, S.classID, S.specID, opts)
                 local specNode = { id = "spec:" .. charKey .. "|" .. S.key, kind = "spec", label = ctx.specName, children = {},
                     specID = S.specID, index = S.index }
                 for _, P in ipairs(S.profiles) do
@@ -3854,21 +3934,26 @@ function IA.Plan(db, opts)
             if anyClass then CL.c.classes = { [anyClass] = true } end
             node.classID = C.classID or ctx.classID
             node.classTag = node.classID and IA.ClassTag(node.classID, opts) or anyClass
+            -- no class known: the class gate cannot hold them, the character does
+            if node.classTag then BL.c.classes = { [node.classTag] = true } else BL.c.chars = { [charKey] = true } end
+            node.barsLayout = BL
             IA.Yield()
-            IA.PlanBars(ctx, charDB, CL)
+            IA.PlanBars(ctx, charDB, BL, CL)
             IA.Yield()
             IA.PlanReminders(ctx, charDB, CL)
             -- what the panel lists without a pick yet: bars of a kind the import
             -- does not carry, and Arc UI's textures
-            node.later = CL.later
-            node.textures = IA.PlanTextures(ctx, charDB, CL)
-            if #CL.bars > 0 or #CL.reminders > 0 then
+            node.later = BL.later
+            node.textures = IA.PlanTextures(ctx, charDB, BL)
+            if #BL.bars > 0 or #CL.bars > 0 or #CL.reminders > 0 then
                 hadLayout = true
                 local snode = { id = "shared:" .. charKey, kind = "shared", label = "Bars and reminders", children = {} }
                 -- a pick per bar: the player brings the ones they use
-                for _, B in ipairs(CL.bars) do
-                    local lf = Leaf(snode, "bar", B.unit, B.name, 1, CL.key, B.name)
-                    lf.bar = B
+                for _, BX in ipairs({ BL, CL }) do
+                    for _, B in ipairs(BX.bars) do
+                        local lf = Leaf(snode, "bar", B.unit, B.name, 1, BX.key, B.name)
+                        lf.bar = B
+                    end
                 end
                 if #CL.reminders > 0 then
                     local nrem = 0
@@ -3877,8 +3962,12 @@ function IA.Plan(db, opts)
                 end
                 node.children[#node.children + 1] = snode
             end
-            if hadLayout then
+            if #CL.parts > 0 or #CL.bars > 0 or #CL.reminders > 0 then
                 plan.layouts[#plan.layouts + 1] = CL
+                plan.counts.layouts = plan.counts.layouts + 1
+            end
+            if #BL.bars > 0 then
+                plan.layouts[#plan.layouts + 1] = BL
                 plan.counts.layouts = plan.counts.layouts + 1
             end
             -- the character's global look (its account profile's two layers) as saved defaults
@@ -4034,8 +4123,8 @@ function IA.CurrentChar()
     return name .. "-" .. (type(realm) == "string" and realm or "")
 end
 
--- The picker's first state: this character's active profiles, bars, reminders and
--- global look; nothing of the other characters, nothing that is in Arc Auras now.
+-- This character's active profiles, bars, reminders and global look; nothing of the
+-- other characters, nothing that is in Arc Auras now. The picker starts empty.
 function IA.DefaultPicks(plan)
     local picks = {}
     local me = IA.CurrentChar()
@@ -4215,8 +4304,9 @@ end
 -- every unit stamped. A layout made on an earlier run (the stamp's ids) takes new parts
 -- of it; a part imported before whose layout still exists comes in again as a fresh
 -- copy (the old one stays for the player to delete). A player's own records are never
--- touched. Refused in combat.
-function IA.Apply(plan, picks)
+-- touched. Refused in combat. how.charOnly[charKey]: that character's bars layout, when
+-- this run makes it, loads on the character alone.
+function IA.Apply(plan, picks, how)
     local Store = NS.Store
     if not (Store and plan and plan.layouts) then return nil, "nothing to import" end
     local lock = rawget(_G, "InCombatLockdown")
@@ -4268,6 +4358,7 @@ function IA.Apply(plan, picks)
             lay = Store.NewLayout(L.name)
             lay.pos = { x = 0, y = 0 }
             lay.c = Copy(L.c)
+            if L.forBars and how and how.charOnly and how.charOnly[L.charKey] then lay.c.chars = { [L.charKey] = true } end
             IA.WriteO(lay, L.o)
             stamp.layouts[key] = lay.id
             res.layouts = res.layouts + 1

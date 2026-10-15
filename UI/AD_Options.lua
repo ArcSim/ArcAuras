@@ -176,6 +176,8 @@ local BAR_TABS = {
     special  = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
     -- a copy of a Cooldown Manager Tracked Bar (Bars\AD_CDMBar.lua, rows in UI\AD_CDMBarOptions.lua)
     cdmbar   = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    -- a totem's time left (Bars\AD_TotemBar.lua, rows in UI\AD_TotemBarOptions.lua)
+    totembar = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
     -- a Sound item draws nothing: its rules, and when it loads (Bars\AD_SoundItem.lua)
     sound    = { "Tracking", "Load Conditions" },
 }
@@ -360,6 +362,8 @@ local function BarPillText(barKind, barMode)
     if barKind == "special" then return "Arc Proc Bar", Options.ICON_PILL_COLORS.special end
     -- an aura's timer, copied from the Cooldown Manager: the aura family's purple
     if barKind == "cdmbar" then return "CDM Bar", PURPLE end
+    -- the totem family's lime, as on its icon pill
+    if barKind == "totembar" then return "Totem Bar", Options.ICON_PILL_COLORS.totem end
     return stack and "CD Stack" or "CD Duration", YELLOW
 end
 
@@ -4216,7 +4220,7 @@ local function BarTexture(rec)
     end
     -- the spell the bar reads, or its aura (each question's own entry); a
     -- Cooldown Manager bar keeps its entry's picture spell there
-    if rec.barKind == "cooldown" or rec.barKind == "cdmbar" then
+    if rec.barKind == "cooldown" or rec.barKind == "cdmbar" or rec.barKind == "totembar" then
         local sid = Store.RecordSpellID(d)
         return sid and C_Spell.GetSpellTexture(sid) or nil
     end
@@ -6187,6 +6191,7 @@ local function RefreshLayoutPane()
         -- only Edit and the tiles navigate; the card body stays inert so a
         -- stray click never yanks the view away from the layout
         row.edit:SetScript("OnClick", function() Options.Select("group", g.id) end)
+        row.del:SetLabel("Delete Group", 56)
         row.del:SetScript("OnClick", function() Options.ConfirmDelete(g) end)
     end
     local function IconCard(ic)
@@ -6217,6 +6222,7 @@ local function RefreshLayoutPane()
         row.thumbHit:SetScript("OnClick", function() Options.SelectIconHome(ic) end)
         row.badge:SetText(Tr((Store.BadgeText(ic))))
         row.edit:SetScript("OnClick", function() Options.SelectIconHome(ic) end)
+        row.del:SetLabel("Delete Icon", 56)
         row.del:SetScript("OnClick", function() Options.ConfirmDelete(ic) end)
     end
     local function BarCard(b)
@@ -6263,6 +6269,8 @@ local function RefreshLayoutPane()
             Line("Deck bar  -  %s", Options.SpecialBarWhat and Options.SpecialBarWhat(b) or "Arc Proc")
         elseif b.barKind == "cdmbar" then
             Line("Cooldown Manager bar  -  %s", Options.CDMBarWhat and Options.CDMBarWhat(b) or "")
+        elseif b.barKind == "totembar" then
+            Line("Totem bar  -  %s", Options.TotemBarWhat and Options.TotemBarWhat(b) or "")
         else
             row.sub:SetText(Tr(b.barMode == "stack" and "Cooldown bar  -  charges of spell %s"
                 or "Cooldown bar  -  duration of spell %s"):format(tostring(d.spellID or "?")))
@@ -6272,6 +6280,7 @@ local function RefreshLayoutPane()
         row.thumbHit:SetScript("OnClick", function() Options.Select("bar", b.id) end)
         row.badge:SetText((Store.BadgeText(b)))
         row.edit:SetScript("OnClick", function() Options.Select("bar", b.id) end)
+        row.del:SetLabel("Delete Bar", 56)
         row.del:SetScript("OnClick", function() Options.ConfirmDelete(b) end)
     end
     -- In a layout that loads here, members that do not load here follow the
@@ -6979,7 +6988,7 @@ Options.BAR_KIND_WORDS = { cooldown = "cooldown bar", aura = "aura bar", swing =
     resource = "resource bar", health = "health bar", cast = "cast bar", enchant = "enchant bar",
     range = "range bar", text = "text bar", texture = "texture bar", wheel = "wheel bar",
     special = "special bar", sound = "sound bar", timer = "timer bar", stack = "stack bar",
-    cdmbar = "Cooldown Manager bar" }
+    cdmbar = "Cooldown Manager bar", totembar = "totem bar" }
 function Options.BarKindWord(kind)
     return AT.Tr(Options.BAR_KIND_WORDS[kind] or ((kind or "") .. " bar"))
 end
@@ -7008,6 +7017,14 @@ function Options.DeleteQuestion(rec)
         return Tr("Delete the icon '%s'?"):format(name)
     end
     return Tr("Delete the %s '%s'?"):format(tostring(rec.type), name)
+end
+
+-- A Delete button names what it deletes: a player pressed the group's
+-- Delete meaning the icon's.
+Options.DELETE_WORDS = { layout = "Delete Layout", group = "Delete Group", icon = "Delete Icon",
+    bar = "Delete Bar", reminder = "Delete Reminder" }
+function Options.DeleteLabel(rec)
+    return Options.DELETE_WORDS[rec and rec.type or ""] or "Delete"
 end
 
 function Options.ConfirmDelete(rec)
@@ -7054,7 +7071,7 @@ local function BuildLayoutPane()
     layoutHeader = MakeHeader(layoutPane)
 
     -- Move on screen lives in the Overview's Place block (UI\AD_LayoutOverview.lua)
-    local del = AT.MakeSmallButton(layoutPane, "Delete", 56)
+    local del = AT.MakeSmallButton(layoutPane, "Delete Layout", 56)
     del:SetPoint("TOPRIGHT", -4, -2)
     del:SetScript("OnClick", function() Options.ConfirmDelete(SelLayout()) end)
     local addBtn = AT.MakeSmallButton(layoutPane, "+ Add", 52)
@@ -7497,7 +7514,7 @@ end
 Options.LOOK_BAR_WORDS = { cooldown = "Cooldown bars", aura = "Aura bars", swing = "Swing bars",
     resource = "Resource bars", health = "Health bars", cast = "Castbars", enchant = "Weapon enchant bars",
     range = "Range bars", text = "Texts", texture = "Textures", wheel = "Wheels", special = "Arc Proc bars",
-    sound = "Sounds", cdmbar = (NS.IsForever ~= true) and "Cooldown Manager bars" or nil }
+    sound = "Sounds", cdmbar = (NS.IsForever ~= true) and "Cooldown Manager bars" or nil, totembar = "Totem bars" }
 
 -- The element list folds by itself while Overview (its own element list) or
 -- Looks is open, so those pages get the height; the CONTENTS bar still opens
@@ -8810,7 +8827,7 @@ local function BuildIconEditor(parent)
     head._badge = head:CreateFontString(nil, "OVERLAY")
     head._badge:SetFont(AT.FONT, 9, "")
     head._badge:SetTextColor(SHR[1], SHR[2], SHR[3])
-    head._del = AT.MakeSmallButton(head, "Delete", 56)
+    head._del = AT.MakeSmallButton(head, "Delete Icon", 56)
     head._del:SetPoint("RIGHT", -8, 0)
     head._del:SetScript("OnClick", function() Options.ConfirmDelete(SelIcon()) end)
     BandActions(head, head._name, SelIcon, { rightOf = head._del,
@@ -10598,7 +10615,7 @@ local function BuildGroupPane()
         local group = SelGroup()
         if group then Options.OpenAdd(group.layoutId, group.id) end
     end)
-    local del = AT.MakeSmallButton(groupPane, "Delete", 56)
+    local del = AT.MakeSmallButton(groupPane, "Delete Group", 56)
     del:SetPoint("RIGHT", addIcon, "LEFT", -5, 0)
     del:SetScript("OnClick", function() Options.ConfirmDelete(SelGroup()) end)
     -- cooldown groups only (Store.GroupTakes): RefreshGroupPane shows/hides it
@@ -11636,7 +11653,7 @@ local function BuildBarPane()
     panes.bar = barPane
     barHeader = MakeHeader(barPane)
 
-    local del = AT.MakeSmallButton(barPane, "Delete", 56)
+    local del = AT.MakeSmallButton(barPane, "Delete Bar", 56)
     del:SetPoint("TOPRIGHT", -4, -2)
     del:SetScript("OnClick", function() Options.ConfirmDelete(SelBar()) end)
     barHeader._btns = { del }
@@ -12310,6 +12327,7 @@ local function BuildBarPane()
     Options.BuildYield()
     if Options.SpecialBarRows then Options.SpecialBarRows(pg, SelBar, trackVis) end
     if Options.CDMBarTrackRows then Options.CDMBarTrackRows(pg, SelBar, trackVis, win) end
+    if Options.TotemBarTrackRows then Options.TotemBarTrackRows(pg, SelBar, trackVis, win) end
 
     Options.BuildYield()
     ConditionRows(pg, SelBar, BarTabVisible("Load Conditions"))
@@ -13293,7 +13311,7 @@ local function BuildBarPane()
             "hideWhenInactive", "hiddenAlpha",
         }, function(r)
             return r.barKind == "aura" or r.barKind == "timer" or r.barKind == "swing" or r.barKind == "enchant"
-                or r.barKind == "cdmbar"
+                or r.barKind == "cdmbar" or r.barKind == "totembar"
         end, "By State")
         -- Swing bars: dim while the target is out of range of a spell, the
         -- bar's own or its hand's usual one (the field's kinds hide the sub on
@@ -14003,6 +14021,10 @@ local function BuildAddWindow()
             if Options.CDMBarAddRows and NS.CDMBars then
                 items[#items + 1] = { value = "cdmbar", text = "Cooldown Manager Bar" }
             end
+            -- a totem's time left (its rows load first)
+            if Options.TotemBarAddRows and NS.TotemBars then
+                items[#items + 1] = { value = "totembar", text = "Totem Bar" }
+            end
             -- capability probe, never a build gate: swing bars exist only
             -- where the client ships C_SwingTimer (WoW Forever)
             if C_SwingTimer then
@@ -14032,6 +14054,7 @@ local function BuildAddWindow()
             return addState.cat == "Bar" and addState.barKind == "range"
         end)
     if Options.CDMBarAddRows then Options.CDMBarAddRows(pg, addWin, addState) end
+    if Options.TotemBarAddRows then Options.TotemBarAddRows(pg, addWin, addState) end
     AT.RowDropdown(pg, addWin, "Weapon",
         function() return addState.enchantHand or "main" end,
         function(v) addState.enchantHand = v end,
@@ -14452,6 +14475,8 @@ local function BuildAddWindow()
                 return Options.CustomBarDriver ~= nil
             elseif bk == "cdmbar" then
                 return Options.CDMBarCanCreate ~= nil and Options.CDMBarCanCreate(addState)
+            elseif bk == "totembar" then
+                return Options.TotemBarCanCreate ~= nil and Options.TotemBarCanCreate(addState)
             end
             return true
         elseif addState.cat == "Text" then
@@ -14664,6 +14689,10 @@ local function BuildAddWindow()
                 if not Options.CDMBarDriver then return end
                 driver, name = Options.CDMBarDriver(addState)
                 if not driver then return end
+                mode = nil
+            elseif bk == "totembar" then
+                if not Options.TotemBarDriver then return end
+                driver, name = Options.TotemBarDriver(addState)
                 mode = nil
             elseif bk == "aura" then
                 -- the field holds the ID by now (a picked name fills it in)
@@ -17621,7 +17650,7 @@ Options.Search = {
             stack = "stack bars", swing = "swing bars", resource = "resource bars", cast = "castbars",
             health = "health bars", enchant = "enchant bars", range = "range bars",
             text = "text elements", texture = "textures", wheel = "wheels", special = "Arc Proc bars", sound = "sounds",
-            cdmbar = "Cooldown Manager bars" },
+            cdmbar = "Cooldown Manager bars", totembar = "totem bars" },
         group = { aura = "aura groups", cooldown = "icon groups", reminder = "reminder groups" },
     },
     -- the ui fields a sample walk moves (put back by RestoreUI)

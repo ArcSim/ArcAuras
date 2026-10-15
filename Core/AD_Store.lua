@@ -1050,7 +1050,7 @@ function Store.Normalize()
                 and rec.barKind ~= "range" and rec.barKind ~= "text"
                 and rec.barKind ~= "texture" and rec.barKind ~= "wheel"
                 and rec.barKind ~= "special" and rec.barKind ~= "sound"
-                and rec.barKind ~= "cdmbar" then
+                and rec.barKind ~= "cdmbar" and rec.barKind ~= "totembar" then
                 rec.barKind = "cooldown"
             end
             -- a timer (custom) bar fills with its timer or with its stacks
@@ -1120,6 +1120,13 @@ function Store.Normalize()
             if rec.barKind == "cdmbar" then
                 local cd = tonumber(rec.driver.cooldownID)
                 rec.driver.cooldownID = (cd and cd > 0) and math.floor(cd) or nil
+            end
+            -- a totem bar follows its spell's totem, else its slot (Bars\AD_TotemBar.lua)
+            if rec.barKind == "totembar" then
+                local sid = tonumber(rec.driver.spellID)
+                rec.driver.spellID = (sid and sid > 0) and math.floor(sid) or nil
+                local slot = tonumber(rec.driver.slot)
+                rec.driver.slot = (slot and slot >= 1 and slot <= 4) and math.floor(slot) or nil
             end
         end
         if rec.type == "icon" and rec.kind == "timer" then
@@ -5082,7 +5089,7 @@ end
 function Store.BarTemplate(rec, put)
     local barKind = rec.barKind
     if barKind == "cooldown" or barKind == "aura" or barKind == "enchant" or barKind == "special"
-        or barKind == "cdmbar" then
+        or barKind == "cdmbar" or barKind == "totembar" then
         put("icon", "iconShow", true)
     end
     -- A deck bar marks where each proc landed.
@@ -5196,7 +5203,8 @@ function Store.NewBar(layoutId, barKind, driver, name, barMode)
         and barKind ~= "aura" and barKind ~= "resource" and barKind ~= "health"
         and barKind ~= "cast" and barKind ~= "enchant" and barKind ~= "range"
         and barKind ~= "text" and barKind ~= "texture" and barKind ~= "wheel"
-        and barKind ~= "special" and barKind ~= "sound" and barKind ~= "cdmbar" then
+        and barKind ~= "special" and barKind ~= "sound" and barKind ~= "cdmbar"
+        and barKind ~= "totembar" then
         barKind = "cooldown"
     end
     local id = NewId()

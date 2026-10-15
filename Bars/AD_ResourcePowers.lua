@@ -188,16 +188,17 @@ function RP.Color(pt)
     return nil
 end
 
--- The percent Lua may read, for the colour curve and the percent text: stagger's
--- of health (GetStaggerPercentage carries no secrecy on any client), an
+-- The percent Lua may read, for the colour curve and the percent text: the
+-- stagger pool over max health, as Blizzard's stagger bar draws it (never
+-- GetStaggerPercentage: that is the character sheet's Stagger stat), an
 -- aura-held count over its cap while both read plain. Vengeance falls back to
 -- its aura's stacks when Soul Cleave's count is secret.
 function RP.PlainPercent(pt)
     if pt == RP.STAGGER then
-        local PD = C_PaperDollInfo
-        local p = PD and PD.GetStaggerPercentage and PD.GetStaggerPercentage("player")
-        if not Plain(p) then return nil end
-        return p
+        local cur = UnitStagger and UnitStagger("player")
+        local max = UnitHealthMax("player")
+        if not (Plain(cur) and Plain(max) and max > 0) then return nil end
+        return math.min(100, cur / max * 100)
     end
     if not RP.SPEC_OF[pt] then return nil end
     local cur, max = RP.Current(pt), RP.Max(pt)

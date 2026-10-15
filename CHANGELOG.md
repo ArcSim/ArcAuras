@@ -1,5 +1,19 @@
 # Arc Auras
 
+## 3.0.2
+
+Totem bars and more languages.
+
+### New Features
+
+- **Totem bars** - A new bar for the time left on one of your totems or guardians, picked by the spell that puts it down or by its slot.
+- **More languages** - German, Russian and Chinese (Simplified and Traditional). Spanish, French, Italian and Portuguese can be translated by players on CurseForge.
+
+### Improvements
+
+- **Delete buttons** - Every Delete button says what it deletes.
+- **Pixel glows** - Aura icons and bars draw the same pixel glow as cooldown icons with the same settings.
+
 ## 3.0.1
 
 Bar skins and shaped glows.

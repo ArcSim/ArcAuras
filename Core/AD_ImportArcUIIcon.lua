@@ -720,7 +720,9 @@ function IA.MapCooldownIcon(eff, kind, ctx)
         Put(o, "swipe", "edgeScale", Clamp(tonumber(sw.edgeScale), 0.1, 3))
     end
     if isSpell then
-        Put(o, "swipe", "gcdSwipe", sw.noGCDSwipe == true and "hidden" or "both")
+        -- v1 drew the GCD on a Cooldown Manager icon with the icon's own edge switch
+        local gcd = (ctx.cdm == false or sw.showEdge ~= false) and "both" or "swipe"
+        Put(o, "swipe", "gcdSwipe", sw.noGCDSwipe == true and "hidden" or gcd)
         Put(o, "swipe", "swipeWaitForNoCharges", sw.swipeWaitForNoCharges == true)
         Put(o, "swipe", "edgeWaitForNoCharges", sw.edgeWaitForNoCharges == true)
     end

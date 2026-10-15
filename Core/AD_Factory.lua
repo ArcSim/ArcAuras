@@ -3351,6 +3351,12 @@ local function GlowPixel(host, W, H, n, th, period, r, g, bl, a, len, back)
     local cycle = 2 * (W + H) / n
     local dur = math.max(0.01, period / n)
     local band = DASH_AUTO
+    -- automatic: the glow library's own length, so a pixel glow drawn here looks
+    -- like the same settings on a cooldown icon (the library draws those)
+    if not (type(len) == "number" and len > 0) then
+        local auto = math.min(math.floor((W + H) * (2 / n - 0.1)), math.min(W, H))
+        len = (auto > 0) and auto or nil
+    end
     if type(len) == "number" and len > 0 then
         local best
         for k, lit in ipairs(DASH_BANDS) do

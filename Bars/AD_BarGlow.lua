@@ -694,11 +694,28 @@ function G.RowShow(st, k)
     -- _adRow is the row's place in the list; a row left out for another power has none
     local CRm = Bars.ResColor
     local rr = CRm and CRm.Built(e, host._adRow)
-    local want = (rr ~= nil and rr.hold == true) and (not host._adCombat or G.ForCombat())
+    local hid = rr ~= nil and rr.hidden == true
+    local want = (rr ~= nil and (rr.hold == true or hid)) and (not host._adCombat or G.ForCombat())
     want = want and true or false
     if want ~= (host:IsShown() == true) then
         host:SetShown(want)
         if want then G.Wake(host) end
+    end
+    G.RowAlpha(host, e, rr, want and hid)
+end
+
+-- A row that reads secret keeps its glow shown and takes the client's alpha
+-- (1 where the row holds, Bars\AD_ResColors.lua CR.HiddenAlpha); any other
+-- row's glow is back at full alpha.
+function G.RowAlpha(host, e, rr, hid)
+    if hid then
+        local CRm = Bars.ResColor
+        local a = CRm and CRm.HiddenAlpha(e, rr)
+        if a ~= nil then host:SetAlpha(a) else host:SetAlpha(0) end
+        host._adHid = true
+    elseif host._adHid then
+        host._adHid = nil
+        host:SetAlpha(1)
     end
 end
 
@@ -707,6 +724,19 @@ function G.RowsHeld(e)
     local st = G.state[e.rec and e.rec.id]
     if not (st and st.entry == e) then return end
     for k in pairs(st.row) do G.RowShow(st, k) end
+end
+
+-- Every power tick while a row with a glow reads secret: those glows take
+-- the client's alpha again (ResourceRefresh).
+function G.RowsAlpha(e)
+    local st = G.state[e.rec and e.rec.id]
+    if not (st and st.entry == e) then return end
+    local CRm = Bars.ResColor
+    for _, host in pairs(st.row) do
+        if host._adHid and host:IsShown() then
+            G.RowAlpha(host, e, CRm and CRm.Built(e, host._adRow), true)
+        end
+    end
 end
 
 -- The live pass, at the end of every EnsureBar (and a pips bar's resize).

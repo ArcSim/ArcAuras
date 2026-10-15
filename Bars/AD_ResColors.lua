@@ -234,30 +234,51 @@ end
 
 -- One power row's curve: alpha 1 where it holds. UnitPowerPercent evaluates
 -- it C-side, so the possibly secret value never reaches Lua; cached by share.
-local function PowerCurve(rr, p)
-    if rr.curve and rr.curveP == p then return rr.curve end
-    local curve = C_CurveUtil.CreateColorCurve()
+-- A power row's steps as (share, 1 where it holds else 0) points, rising
+-- along 0..1: a step's edge past either end is left out.
+local function Steps(when, p, add)
     local EPS = CR.EPS
-    -- points rise along 0..1: a step's edge past either end is left out
     local last
     local function P(x, a)
         if x < 0 or x > 1 or (last and x <= last) then return end
         last = x
-        curve:AddPoint(x, CreateColor(1, 1, 1, a))
+        add(x, a)
     end
-    if rr.when == "below" then
+    if when == "below" then
         P(0, 1) P(p, 1) P(p + EPS, 0) P(1, 0)
-    elseif rr.when == "above" then
+    elseif when == "above" then
         P(0, 0) P(p - EPS, 0) P(p, 1) P(1, 1)
     else
         P(0, 0) P(1 - EPS, 0) P(1, 1)
     end
+end
+
+local function PowerCurve(rr, p)
+    if rr.curve and rr.curveP == p then return rr.curve end
+    local curve = C_CurveUtil.CreateColorCurve()
+    Steps(rr.when, p, function(x, a) curve:AddPoint(x, CreateColor(1, 1, 1, a)) end)
     rr.curve, rr.curveP = curve, p
     return curve
 end
 
+-- A row that reads secret: its glow's alpha from the client, 1 where the row
+-- holds (a number curve with the same steps). nil without a share or a curve.
+function CR.HiddenAlpha(e, rr)
+    local p = rr and rr.share
+    if not (p and C_CurveUtil and C_CurveUtil.CreateCurve and K.CurveValue) then return nil end
+    if not (rr.aCurve and rr.aCurveP == p) then
+        local curve = C_CurveUtil.CreateCurve()
+        Steps(rr.when, p, function(x, a) curve:AddPoint(x, a) end)
+        rr.aCurve, rr.aCurveP = curve, p
+    end
+    return K.CurveValue(e, rr.aCurve)
+end
+
+-- true / false, or nil when the client answers secret (restricted power):
+-- then CR.HiddenColor colours from the row's share
 local function PowerHolds(e, rr)
     local p = RowShare(e, rr)
+    rr.share = p
     if not p then return false end
     if e.isPreview then
         -- the preview's sample is plain: its share of the bar (PV.PaintResource)
@@ -268,8 +289,8 @@ local function PowerHolds(e, rr)
         return s >= 1 - CR.EPS
     end
     if not (C_CurveUtil and C_CurveUtil.CreateColorCurve and CreateColor and K.CurveRGBA) then return false end
-    local _, _, _, a = K.CurveRGBA(e, PowerCurve(rr, p))
-    -- restricted power reads secret: no row holds, as no band drew
+    local _, _, _, a, hidden = K.CurveRGBA(e, PowerCurve(rr, p))
+    if hidden then return nil end
     return a ~= nil and a > 0.5
 end
 
@@ -310,16 +331,19 @@ end
 -- the bar's own) and the texts' (e.crText). The fill's winner (e.crWin)
 -- darkens the aura rows under it; e.crColor is kept for the fold's second
 -- lap. The editor's preview wears the row its table has open, and its power
--- rows follow the sample.
+-- rows follow the sample. Power rows the game keeps secret are unknown here:
+-- those above every row that holds go to e.crHide (fill and text lists), and
+-- CR.HiddenColor colours them C-side over what this returns.
 function CR.Pick(e)
     local rows = e.crRows
     if not rows then
-        e.crColor, e.crText = nil, nil
+        e.crColor, e.crText, e.crHidden = nil, nil, nil
         return nil
     end
     local pv = e.isPreview == true
     local sel = pv and CR.PreviewRow(e.rec) or nil
-    local win, col, txt, moved = nil, nil, nil, false
+    local win, col, txt, twin, moved = nil, nil, nil, nil, false
+    local H, nf, nt, glowHid = e.crHide, 0, 0, false
     for _, rr in ipairs(rows) do
         local h = false
         if pv then
@@ -328,6 +352,30 @@ function CR.Pick(e)
         elseif rr.needs then
             if CR.POWER[rr.when] then h = PowerHolds(e, rr) else h = SpellHolds(rr) end
         end
+        -- a row that reads secret shows its glow through the client's alpha
+        -- (CR.HiddenAlpha), wherever it sits in the list
+        local hid = (h == nil) or nil
+        if rr.hidden ~= hid then
+            rr.hidden = hid
+            moved = true
+        end
+        if hid and rr.glow then glowHid = true end
+        if h == nil then
+            if not H then
+                H = { f = {}, t = {}, cache = {} }
+                e.crHide = H
+            end
+            if not col and rr.fill and rr.lua then
+                nf = nf + 1
+                H.f[nf] = rr
+            end
+            if not txt and rr.text then
+                nt = nt + 1
+                H.t[nt] = rr
+            end
+            -- the aura lanes under it read it as not holding
+            h = false
+        end
         if rr.hold ~= h then
             rr.hold = h
             moved = true
@@ -335,16 +383,111 @@ function CR.Pick(e)
         if h then
             -- an aura row's colour is its lane's; in the preview it is the open row's
             if not col and rr.fill and (rr.lua or pv) then win, col = rr.idx, rr.fill end
-            if not txt and rr.text then txt = rr.text end
+            if not txt and rr.text then txt, twin = rr.text, rr.idx end
         end
     end
-    e.crColor, e.crText = col, txt
+    if H then
+        H.nf, H.nt, H.win, H.twin, H.rows = nf, nt, win, twin, rows
+        H.max = Bars.PlainMax and Bars.PlainMax(e) or nil
+    end
+    e.crColor, e.crText, e.crHidden = col, txt, (nf > 0 or nt > 0) or nil
+    e.crGlowHidden = glowHid or nil
     if e.crWin ~= win then
         e.crWin = win
         CR.Visible(e)
     end
     if moved and not pv and Bars.Glow and Bars.Glow.RowsHeld then Bars.Glow.RowsHeld(e) end
     return col
+end
+
+-- The first row of a hidden list that holds at share x, as PowerCurve's
+-- steps hold: at or below its share, at or above, or the full bar.
+local function HeldAt(list, n, x)
+    for i = 1, n do
+        local rr = list[i]
+        local p = rr.share
+        if (rr.when == "below" and x <= p) or (rr.when == "above" and x >= p) or (rr.when == "full" and x >= 1) then
+            return rr
+        end
+    end
+    return nil
+end
+
+-- the shares where a hidden list's rows start or stop holding
+local function Edges(xs, list, n)
+    local EPS = CR.EPS
+    for i = 1, n do
+        local rr = list[i]
+        if rr.when == "below" then
+            xs[#xs + 1] = rr.share
+            xs[#xs + 1] = rr.share + EPS
+        elseif rr.when == "above" then
+            xs[#xs + 1] = rr.share - EPS
+            xs[#xs + 1] = rr.share
+        else
+            xs[#xs + 1] = 1 - EPS
+        end
+    end
+end
+
+-- Whether the texts take the client's colour: a hidden text row, or the
+-- fill's colour (textFill) while the fill's is hidden.
+function CR.TextHidden(e, textFill)
+    local H = e.crHidden and e.crHide
+    return H ~= nil and (H.nt > 0 or (textFill == true and H.nf > 0))
+end
+
+-- The client's colour object for one column while power reads secret, or nil:
+-- the fill slots (the fill, the fold's lap, the pips) take the fill rows over
+-- the plain colour given, a text slot the text rows over it (textFill: the
+-- fill's colour at that share, from the fill rows over the fill's plain colour
+-- e.cuR..). The curve is worked out from plain shares and colours and kept
+-- until any of them moves; the answer may be secret, so it only goes into
+-- colour setters.
+local FILL_SLOT = { fill = true, fold = true, pip = true }
+function CR.HiddenColor(e, slot, ur, ug, ub, ua, textFill)
+    local H = e.crHidden and e.crHide
+    if not (H and C_CurveUtil and C_CurveUtil.CreateColorCurve and CreateColor and K.CurveColor) then return nil end
+    local isText = not FILL_SLOT[slot]
+    local useF = (not isText) or textFill == true
+    local nf, nt = useF and H.nf or 0, isText and H.nt or 0
+    if nf == 0 and nt == 0 then return nil end
+    local fr, fg, fb, fa = e.cuR, e.cuG, e.cuB, e.cuA
+    local c = H.cache[slot]
+    if not (c and c.rows == H.rows and c.win == H.win and c.twin == H.twin and c.max == H.max and c.nf == nf
+        and c.nt == nt and c.ur == ur and c.ug == ug and c.ub == ub and c.ua == ua and c.tf == textFill
+        and (not textFill or (c.fr == fr and c.fg == fg and c.fb == fb and c.fa == fa))) then
+        local xs = { 0, 1 }
+        Edges(xs, H.f, nf)
+        Edges(xs, H.t, nt)
+        table.sort(xs)
+        local curve = C_CurveUtil.CreateColorCurve()
+        local last
+        for _, x in ipairs(xs) do
+            if x >= 0 and x <= 1 and (last == nil or x > last) then
+                last = x
+                local r, g, b, a
+                local hit = (nt > 0) and HeldAt(H.t, nt, x) or nil
+                if hit then
+                    r, g, b, a = hit.text[1], hit.text[2], hit.text[3], hit.text[4] or 1
+                elseif isText and textFill then
+                    -- the texts wear the fill's colour, full alpha as on plain power
+                    local fh = HeldAt(H.f, nf, x)
+                    if fh then r, g, b = fh.fill[1], fh.fill[2], fh.fill[3] else r, g, b = fr, fg, fb end
+                    a = 1
+                elseif not isText then
+                    local fh = HeldAt(H.f, nf, x)
+                    if fh then r, g, b, a = fh.fill[1], fh.fill[2], fh.fill[3], fh.fill[4] or 1 end
+                end
+                if r == nil then r, g, b, a = ur, ug, ub, ua end
+                curve:AddPoint(x, CreateColor(r, g, b, a or 1))
+            end
+        end
+        c = { curve = curve, rows = H.rows, win = H.win, twin = H.twin, max = H.max, nf = nf, nt = nt,
+            ur = ur, ug = ug, ub = ub, ua = ua, tf = textFill, fr = fr, fg = fg, fb = fb, fa = fa }
+        H.cache[slot] = c
+    end
+    return K.CurveColor(e, c.curve)
 end
 
 -- a live bar's colour again, after a row's state may have moved; `always`:
@@ -735,7 +878,7 @@ function CR.Styled(e)
     -- crUsab: a row reads usability (its events); crAura: one rides a lane;
     -- crIdx: the running rows by list place; crOff: the ones left out
     e.crRows, e.crUsab, e.crAura, e.crIdx, e.crOff, e.crPowered = rows, false, false, nil, skip, powered == true
-    if not rows then e.crColor, e.crText, e.crWin = nil, nil, nil end
+    if not rows then e.crColor, e.crText, e.crWin, e.crHidden, e.crGlowHidden = nil, nil, nil, nil, nil end
     local bySlot = {}
     for _, rr in ipairs(rows or {}) do
         e.crIdx = e.crIdx or {}
@@ -853,7 +996,7 @@ function CR.Release(e)
     if e.isPreview then return end
     local id = e.rec and e.rec.id
     if id then SyncWatches(id, nil) end
-    e.crRows, e.crWin, e.crColor, e.crText = nil, nil, nil, nil
+    e.crRows, e.crWin, e.crColor, e.crText, e.crHidden, e.crHide, e.crGlowHidden = nil, nil, nil, nil, nil, nil, nil
     e.crIdx, e.crOff, e.crPowered = nil, nil, nil
     local st = id and CR.state[id]
     if st and st.entry == e then

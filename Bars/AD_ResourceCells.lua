@@ -456,7 +456,10 @@ function RC.Painted(entry)
         end
         return
     end
+    -- while power rows read secret entry.cr is cleared: the plain colour under
+    -- them (ResourceColor's cu) keeps the slots and their recharge shade
     local r, g, b, a = entry.cr, entry.cg, entry.cb, entry.ca
+    if r == nil then r, g, b, a = entry.cuR, entry.cuG, entry.cuB, entry.cuA end
     if r == nil then r, g, b, a = K.BarColorOf(rec) end
     for i = 1, entry.rsCount or 0 do
         local s = entry.rslots[i]
@@ -474,7 +477,14 @@ function RC.Painted(entry)
     if entry.foldOn and entry.foldBar then
         -- a colour rule that holds wears the whole bar, the second lap too
         local fc = entry.crColor or K.R(rec, "resource", "foldColor") or { 1, 0.5, 0, 1 }
-        entry.foldBar:SetStatusBarColor(fc[1], fc[2], fc[3], fc[4] or 1)
+        -- power rows the game keeps secret: the client's curve over that colour
+        local CRm = Bars.ResColor
+        local col = entry.crHidden and CRm and CRm.HiddenColor(entry, "fold", fc[1], fc[2], fc[3], fc[4] or 1)
+        if col then
+            entry.foldBar:SetStatusBarColor(col:GetRGBA())
+        else
+            entry.foldBar:SetStatusBarColor(fc[1], fc[2], fc[3], fc[4] or 1)
+        end
     end
 end
 

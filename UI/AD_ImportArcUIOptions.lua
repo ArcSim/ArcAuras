@@ -32,15 +32,17 @@ IW.FOOT_H = 40        -- the foot bar, Import on it
 IW.LIST_FOOT_H = 28   -- Tick all and Untick all under the characters
 IW.SWATCH_W, IW.SWATCH_H = 40, 10
 IW.THUMB_W, IW.THUMB_H = 44, 26
--- a box lists its own kind and the kinds Arc UI made from the same tab (a summon's or a
--- mirrored aura bar comes in as a Cooldown Manager bar)
-IW.BAR_BOXES = { { "aura", "AURA BARS", also = { cdmbar = true } }, { "cooldown", "COOLDOWN BARS" },
+-- a box lists its own kind and the kinds Arc UI made from the same tab (a mirrored aura
+-- bar comes in as a Cooldown Manager bar, a summon's as a totem bar)
+IW.BAR_BOXES = { { "aura", "AURA BARS", also = { cdmbar = true, totembar = true } }, { "cooldown", "COOLDOWN BARS" },
     { "resource", "RESOURCE BARS" }, { "cast", "CAST BARS" }, { "timer", "TIMER BARS" } }
 IW.TABS = { { "icons", "Icons" }, { "bars", "Bars" }, { "tex", "Textures" } }
 IW.LATER_TIP = "Arc Auras takes this kind with a later update of the import."
 
 local pane, plan, offer
 local picks, opened = {}, {}
+-- the characters whose bars load on them alone (Only on), by character key
+local charOnly = {}
 local sel, sub = nil, "icons"
 -- the foot bar's lines after an import or a refusal: { text, text2, bad }
 local said
@@ -48,7 +50,7 @@ local W = { chars = {}, boxes = {}, rows = {}, chips = {} }
 -- for harnesses: the widgets, and the state they paint
 IW.W = W
 function IW.Get()
-    return { plan = plan, picks = picks, sel = sel, sub = sub, said = said, opened = opened, pane = pane }
+    return { plan = plan, picks = picks, sel = sel, sub = sub, said = said, opened = opened, pane = pane, charOnly = charOnly }
 end
 
 -- the page's parts, shared with the Proc Tracker tab (UI\AD_Options.lua)
@@ -161,6 +163,8 @@ local function BarDetail(B)
         return (d.unit == "focus") and "Focus" or (d.unit == "target") and "Target" or "You"
     elseif B.barKind == "cdmbar" then
         return "Cooldown Manager bar"
+    elseif B.barKind == "totembar" then
+        return "Totem"
     end
     return ""
 end
@@ -503,6 +507,28 @@ local function PaintBody(w)
         W.body:SetHeight(1)
         return 0
     end
+    -- the character's bars layout loads on every character of its class, or Only on it
+    local function LoadsBox(kindOk)
+        local BL = node.barsLayout
+        if not (BL and BL.c.classes) then return end
+        local has = false
+        for _, B in ipairs(BL.bars) do if kindOk(B.barKind) then has = true break end end
+        if not has then return end
+        local key, on, who = node.charKey, charOnly[node.charKey] == true, tostring(node.name)
+        local cls = ClassName(node.classTag)
+        if cls == "" then cls = "character of its class" end
+        local b = NewBox("WHERE THEY LOAD")
+        PaintRow(NextRow(), 1, y, w - 2, IW.BAR_H, { check = on and "on" or "off", name = "Only on " .. who,
+            nameCol = on and COL.ink or COL.dim, right = (not on) and ("Every " .. cls .. ", by spec and talents") or nil,
+            tipT = "Only on " .. who,
+            tipB = ("Off: every %s loads them, each by its own specs and talents. Cast bars always stay on %s."):format(cls, who),
+            onTick = function()
+                charOnly[key] = (not on) or nil
+                Touch()
+            end })
+        y = y + IW.BAR_H
+        EndBox(b)
+    end
     if sub == "icons" then
         for _, spec in ipairs(Kids(node, "spec")) do
             local profs = spec.children or {}
@@ -640,6 +666,7 @@ local function PaintBody(w)
             y = y + 30
             EndBox(b)
         end
+        LoadsBox(function(k) return k ~= "texture" end)
     else
         local list = node.textures or {}
         local lv = {}
@@ -668,6 +695,7 @@ local function PaintBody(w)
             y = y + 30
         end
         EndBox(b)
+        LoadsBox(function(k) return k == "texture" end)
     end
     y = y - IW.BOX_GAP
     W.body:SetHeight(math.max(1, y))
@@ -898,13 +926,13 @@ function IW.Paint()
     PaintFoot()
 end
 
--- The plan of every character, with this character's in-use profiles, bars and
--- looks ticked.
+-- The plan of every character, this character's selected. Nothing starts ticked:
+-- the player picks what comes over, so nothing slips in unchecked.
 function IW.ReadPlan()
     local IA = NS.ImportArcUI
     if not (IA and IA.Available()) then return end
     plan = IA.Preview()
-    picks = plan and IA.DefaultPicks(plan) or {}
+    picks = {}
     local me = IA.CurrentChar()
     sel = CharNode(me) and me or (plan and plan.tree[1] and plan.tree[1].charKey) or nil
     -- the first profile opens to show its groups
@@ -1052,7 +1080,7 @@ function IW.DoImport()
         return
     end
     if next(picks) == nil then return end
-    local res, err = IA.Apply(plan, picks)
+    local res, err = IA.Apply(plan, picks, { charOnly = charOnly })
     if not res then
         said = { text = err or "The import did not run.", bad = true }
         IW.Paint()

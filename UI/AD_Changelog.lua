@@ -13,6 +13,24 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.0.2",
+        intro = "Totem bars and more languages.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Totem bars",
+                    desc = "A new bar for the time left on one of your totems or guardians, picked by the spell that puts it down or by its slot." },
+                { title = "More languages",
+                    desc = "German, Russian and Chinese (Simplified and Traditional). Spanish, French, Italian and Portuguese can be translated by players on CurseForge." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Delete buttons",
+                    desc = "Every Delete button says what it deletes." },
+                { title = "Pixel glows",
+                    desc = "Aura icons and bars draw the same pixel glow as cooldown icons with the same settings." },
+            } },
+        },
+    },
+    {
         version = "3.0.1",
         intro = "Bar skins and shaped glows.",
         sections = {
@@ -1026,6 +1044,38 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.0.2",
+        intro = "Totem bars, more languages, and a smoother Arc UI import.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Totem bars",
+                    desc = "A new bar for the time left on one of your totems or guardians, picked by the spell that puts it down or by its slot." },
+                { title = "More languages",
+                    desc = "German, Russian and Chinese (Simplified and Traditional). Spanish, French, Italian and Portuguese can be translated by players on CurseForge." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Arc UI import",
+                    desc = "Nothing comes pre-ticked: you pick what to bring over." },
+                { title = "Imported bars",
+                    desc = "Bars load on every character of their class by their own spec and talent settings, with a tick to keep them on one character." },
+                { title = "Imported icons",
+                    desc = "Cooldown Manager icons show their totem first, icons Arc UI hid behind a bar stay hidden, and totem bars come over as totem bars." },
+                { title = "Delete buttons",
+                    desc = "Every Delete button says what it deletes." },
+                { title = "Pixel glows",
+                    desc = "Aura icons and bars draw the same pixel glow as cooldown icons with the same settings." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Resource bar states",
+                    desc = "Power states like \"at or above 90\" color the bar, its text, its points and its glows during fights, dungeons and raids too." },
+                { title = "Stagger",
+                    desc = "The stagger percent and stagger states follow your stagger, not the Stagger stat." },
+                { title = "Arc UI import",
+                    desc = "A one-row group no longer wraps to two rows, and the GCD swipe matches Arc UI." },
+            } },
+        },
+    },
     {
         version = "3.0.1",
         intro = "Import from Arc UI (work in progress), bar skins, and shaped glows.",

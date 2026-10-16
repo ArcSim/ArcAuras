@@ -1350,6 +1350,11 @@ local function FeedTotem(a)
     local slot
     if DT then slot = DT.SlotFor(a.rec) else slot = (a.rec.driver and a.rec.driver.slot) or 1 end
     local dur = slot and GetTotemDuration and GetTotemDuration(slot)
+    -- on its way (Show from the cast): timed from the cast until its slot lights
+    if not dur and DT and DT.Predict then
+        local at, len = DT.Predict(a.rec)
+        if at then dur = DT.CastDuration(a, at, len) end
+    end
     if dur and a.shadow.SetCooldownFromDurationObject then
         a.shadow:SetCooldownFromDurationObject(dur, true)
         a.frame.cooldown:SetCooldownFromDurationObject(dur, true)

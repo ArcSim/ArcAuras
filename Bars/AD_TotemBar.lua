@@ -50,13 +50,21 @@ function TB.Track(e)
     local d = e.rec.driver or {}
     local sid = TB.SpellID(e.rec)
     local list = (sid and type(d.spellIDs) == "table") and d.spellIDs or nil
+    -- a spell with several out at once: which one the bar times and how they
+    -- count; its wait for the slot and Show from the cast ride along
+    local only = sid and DT.Which(d) or nil
+    local by = (only and DT.ByOrder(d)) and "order" or nil
+    local wait = sid and tonumber(d.slotWait) or nil
+    local fromCast = (sid and d.fromCast == true) or nil
     local p = e.tbPseudo
     if p and p.driver.spellID == sid and p.driver.slot == TB.Slot(e.rec) then -- raw-id: the same pick, not a match
-        p.driver.spellIDs = list
+        local pd = p.driver
+        pd.spellIDs, pd.which, pd.whichBy, pd.slotWait, pd.fromCast = list, only, by, wait, fromCast
         return
     end
     -- re-pointed under the same key: no detach, so the slots are not re-read
-    e.tbPseudo = { id = TB.KEY .. tostring(e.rec.id), driver = { spellID = sid, spellIDs = list, slot = TB.Slot(e.rec) } }
+    e.tbPseudo = { id = TB.KEY .. tostring(e.rec.id), driver = { spellID = sid, spellIDs = list,
+        slot = TB.Slot(e.rec), which = only, whichBy = by, slotWait = wait, fromCast = fromCast } }
     DT.Attach(e.tbPseudo)
 end
 
@@ -70,6 +78,11 @@ function TB.Refresh(e)
     local DT = NS.DriverTotem
     local slot = e.tbPseudo and DT and DT.SlotFor(e.tbPseudo)
     local dur = slot and GetTotemDuration and GetTotemDuration(slot)
+    -- on its way (Show from the cast): timed from the cast until its slot lights
+    if not dur and e.tbPseudo and DT and DT.Predict then
+        local at, len = DT.Predict(e.tbPseudo)
+        if at then dur = DT.CastDuration(e, at, len) end
+    end
     local shell = e.shell
     if dur then
         local drain = (R(e.rec, "fill", "fillMode") or "drain") == "drain"

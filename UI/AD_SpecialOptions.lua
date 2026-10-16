@@ -581,8 +581,7 @@ SO.STACK_LABELS = { stackText = "%s", stackFont = "%s font", stackSize = "%s siz
     stackY = "%s Y", stackStrata = "%s strata" }
 SO.LABEL_LABELS = { labelFont = "%s font", labelSize = "%s size", labelColor = "%s color",
     labelAnchor = "%s anchor", labelX = "%s X", labelY = "%s Y", labelStrata = "%s strata", labelShowReady = "Show %s" }
-SO.TOKENS = "{left} {drawn} {size}: the deck. {procs} {procsLeft} {max}: its procs. {chance}: the chance. "
-    .. "{viol}: violations. {count}: a counter."
+SO.TOKENS = "{left} {drawn} {size}: the deck. {procs} {procsLeft} {max}: its procs. {chance}: the chance. {viol}: violations. {count}: a counter."
 
 -- A text's Shows pick over its template field: the usual ones, Off (withOff:
 -- a text with no switch of its own) and "Your own words", which opens the

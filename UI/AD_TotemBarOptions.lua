@@ -42,6 +42,12 @@ function Options.TotemBarAddRows(pg, owner, addState)
         function() return Options.TotemSlotItems() end,
         function() return Vis() and not SpellOf(addState.totemBarSpell) end)
     AT.Tooltip(slotRow, "Totem slot", Options.TotemSlotTip)
+    local inSlot = AT.RowDropdown(pg, owner, "Which one",
+        function() return addState.totemBarWhich or 0 end,
+        function(v) addState.totemBarWhich = tonumber(v) or 0 end,
+        function() return Options.TotemWhichItems() end,
+        function() return Vis() and SpellOf(addState.totemBarSpell) ~= nil end)
+    AT.Tooltip(inSlot, "Which one", Options.TOTEM_WHICH_TIP)
 end
 
 function Options.TotemBarCanCreate(addState)
@@ -52,7 +58,8 @@ end
 function Options.TotemBarDriver(addState)
     local sid = SpellOf(addState.totemBarSpell)
     local slot = (not sid) and (tonumber(addState.totemBarSlot) or 1) or nil
-    return { spellID = sid, slot = slot }, TO.NameFor(sid, slot)
+    local only = sid and tonumber(addState.totemBarWhich)
+    return { spellID = sid, slot = slot, which = (only and only >= 1) and only or nil }, TO.NameFor(sid, slot)
 end
 
 -- A card line: the totem's spell, else its slot.
@@ -85,6 +92,7 @@ function Options.TotemBarTrackRows(pg, ctx, trackVis, owner)
             if sid == SpellOf(r.driver.spellID) then return end
             r.driver.spellID = sid
             r.driver.slot = (not sid) and (tonumber(r.driver.slot) or 1) or nil
+            if not sid then r.driver.which, r.driver.whichBy, r.driver.slotWait, r.driver.fromCast = nil, nil, nil, nil end
             r.name = TO.NameFor(sid, r.driver.slot)
             Store.Dirty("tree")
             Options.RefreshAll()
@@ -109,5 +117,37 @@ function Options.TotemBarTrackRows(pg, ctx, trackVis, owner)
             return Vis() and r ~= nil and not SpellOf(r.driver.spellID)
         end)
     AT.Tooltip(slotRow, "Totem slot", Options.TotemSlotTip)
+    local inSlot = AT.RowDropdown(pg, owner, "Which one",
+        function()
+            local r = Rec()
+            local DT = NS.DriverTotem
+            return (r and DT and DT.Which(r.driver)) or 0
+        end,
+        function(v)
+            local r = Rec()
+            if not r then return end
+            v = tonumber(v) or 0
+            r.driver.which = (v >= 1) and v or nil
+            Store.Dirty("style", r.id)
+        end,
+        function() return Options.TotemWhichItems() end,
+        function()
+            local r = Rec()
+            return Vis() and r ~= nil and SpellOf(r.driver.spellID) ~= nil
+        end)
+    AT.Tooltip(inSlot, "Which one", Options.TOTEM_WHICH_TIP)
+    -- how it counts, and when it lands after the cast (UI\AD_TotemOptions.lua)
+    if Options.TotemWhichByRow then
+        Options.TotemWhichByRow(pg, Rec, function()
+            local r = Rec()
+            return Vis() and r ~= nil and SpellOf(r.driver.spellID) ~= nil
+        end, owner)
+    end
+    if Options.TotemTimingRows then
+        Options.TotemTimingRows(pg, Rec, function()
+            local r = Rec()
+            return Vis() and r ~= nil and SpellOf(r.driver.spellID) ~= nil
+        end, owner)
+    end
     AT.Section(pg, nil)
 end

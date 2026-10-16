@@ -1,5 +1,23 @@
 # Arc Auras
 
+## 3.0.6
+
+Totems and guardians: one icon each when several are out, and ones that land late.
+
+### New Features
+
+- **Which one** - A totem or guardian icon or bar following a spell can show the First, Second, Third or Fourth when several are out at once, counted by the totem slots in use or by the order they came out.
+- **Show from the cast** - A totem or guardian icon or bar can light the moment you cast, timed from the cast, before it lands.
+
+### Improvements
+
+- **Translations** - A few tooltips and messages that stayed in English now show in your language.
+
+### Bug Fixes
+
+- **Guardians that land late** - A guardian that appears a moment after your cast now lights its icon. Out of combat it needs nothing; in combat, set Wait for its slot on the Tracking tab.
+- **Charges on icons showing an aura** - A spell icon that shows an aura on it keeps its charge count on top, over its glows, and its Stack text strata can be set there too.
+
 ## 3.0.5
 
 Move texts by hand, pin any text, and Arc Proc texts.

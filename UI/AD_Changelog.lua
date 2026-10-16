@@ -13,6 +13,28 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.0.6",
+        intro = "Two hawks out at once, one icon each, and ready-made Summon Hawk icons.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Which one",
+                    desc = "A totem or guardian icon or bar following a spell can show the First, Second, Third or Fourth when several are out at once, counted by the totem slots in use or by the order they came out." },
+                { title = "Show from the cast",
+                    desc = "A totem or guardian icon or bar can light the moment you cast, timed from the cast, before it lands." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Summon Hawk templates",
+                    desc = "Add > Icon > Totem / Guardian has Summon Hawk First and Second ready-made: click one, then Create." },
+                { title = "Translations",
+                    desc = "A few tooltips and messages that stayed in English now show in your language." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Guardians that land late",
+                    desc = "A guardian that appears a moment after your cast, like Summon Hawk, now lights its icon. Out of combat it needs nothing; in combat, set Wait for its slot on the Tracking tab (1.5 s for the hawk)." },
+            } },
+        },
+    },
+    {
         version = "3.0.5",
         intro = "Move texts by hand and pin any text.",
         sections = {
@@ -1106,6 +1128,28 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.0.6",
+        intro = "Totems and guardians: one icon each when several are out, and ones that land late.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Which one",
+                    desc = "A totem or guardian icon or bar following a spell can show the First, Second, Third or Fourth when several are out at once, counted by the totem slots in use or by the order they came out." },
+                { title = "Show from the cast",
+                    desc = "A totem or guardian icon or bar can light the moment you cast, timed from the cast, before it lands." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Translations",
+                    desc = "A few tooltips and messages that stayed in English now show in your language." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Guardians that land late",
+                    desc = "A guardian that appears a moment after your cast now lights its icon. Out of combat it needs nothing; in combat, set Wait for its slot on the Tracking tab." },
+                { title = "Charges on icons showing an aura",
+                    desc = "A spell icon that shows an aura on it keeps its charge count on top, over its glows, and its Stack text strata can be set there too." },
+            } },
+        },
+    },
     {
         version = "3.0.5",
         intro = "Move texts by hand, pin any text, and Arc Proc texts.",

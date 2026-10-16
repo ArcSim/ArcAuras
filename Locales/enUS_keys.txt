@@ -28,7 +28,6 @@
  from the swing's start
  has no bars in Arc UI.
  has no textures in Arc UI.
- its corners to scale it, the cross to set the center. Alt drags free, Ctrl+Z undoes.
  its own look.
  pinned to
  scaleTo100=
@@ -207,6 +206,7 @@
 %s or %s
 %s out of range
 %s points
+%s s
 %s s after cast
 %s s after ready
 %s s before it runs out
@@ -370,7 +370,6 @@ A proc glow ended
 A proc glow started
 A proc shows it at full opacity
 A quarter turn: the bar becomes tall and thin, and its icon, texture and gradient turn with it.
-A rank: only that one, such as a cheaper rank you queue to save mana.
 A reactive ability lit up
 A reminder exported on its own joins this group. A group keeps one reminder per spell, item or weapon hand, so duplicates stay out.
 A returning icon
@@ -402,7 +401,7 @@ A spell is on cooldown
 A spell is ready
 A spell is recharging
 A spell is usable
-A spell name or ID, such as Raptor Strike, Heroic Strike, Cleave or Maul. 
+A spell name or ID, such as Raptor Strike, Heroic Strike or Maul. Its marker shows where it comes off cooldown and while it is queued.
 A spell stopped being usable
 A spell's charges
 A spell's cooldown
@@ -569,7 +568,7 @@ Also count as empty
 Also finds the spells and items on your action bars and lets you pick which become icons. Out of combat only.
 Also in your collection
 Also these spells
-Also watches the rank you know of each spell, so this keeps working when you train 
+Also watches the rank you know of each spell, so this keeps working when you train a new rank. The IDs you typed still count.
 Also while an ability is queued for your swing
 Always
 Always show sidebar buttons
@@ -672,7 +671,6 @@ Ants (border crawl)
 Any
 Any class
 Any enchant
-Any icon's Appearance > Look switches it later.
 Any lust on you: %s and the drums, on one icon.
 Any lust on you: Bloodlust, Heroism, Time Warp, Primal Rage, Fury of the Aspects, Harrier's Cry and the drums, on one icon.
 Any of %d items: the icon shows the best one you carry and can use.
@@ -680,7 +678,7 @@ Any of its spells
 Any of the icon's spells, or only one of them (its ranks together). Works in combat.
 Any one of them
 Any rank
-Any rank: the marker follows whichever rank you queue. Highest rank: only your best one. 
+Any rank: whichever rank you queue. Highest rank: only your best one. A rank: only that one, like a cheaper rank queued to save mana.
 Any shaman imbue, every rank
 Any slot
 Any spec
@@ -1086,8 +1084,8 @@ Click to pick the texts color while this row holds. Right-click to keep the bar'
 Click to pick this talent.
 Click to require this talent.
 Click what %s should anchor to. Esc cancels.
-Click, then press a key or mouse button 3 to 5 (with Shift, Ctrl or Alt if you like). 
-Click, then press the key (with Shift, Ctrl or Alt if you like). 
+Click, then press a key (with Shift, Ctrl or Alt if you like). Right-click clears it. The key drops this totem, not its usual action.
+Click, then press a key or mouse button 3 to 5 (with Shift, Ctrl or Alt if you like). Right-click clears it. Replaces its usual action.
 Click-through
 Click-through icons
 Click: follow the spell   Shift-click: this button   Esc: cancel
@@ -1247,6 +1245,7 @@ Countdown position
 Countdown size
 Countdown strata
 Countdown text
+Counted by
 Counter text
 Counter text X
 Counter text Y
@@ -1479,7 +1478,7 @@ Doom Winds
 Doom Winds (buff icon)
 Down, like buff timers
 Drag a spell from the list, your spellbook, your bags or your bars onto a spot. Right-click a spot to empty it.
-Drag an element to move it, its handles to size it. Drag the outline to move everything,
+Drag an element to move it, its handles to size it; the outline moves all, corners scale, the cross sets the center. Alt drags free.
 Drag any of them to move them together. Arrows nudge them all.
 Drag it onto a spot, or click to add it.
 Drag it to move it. Right-click to take it off.
@@ -1703,6 +1702,7 @@ Fill mode
 Fill order
 Fill padding
 Fill up: the time passed
+Fills in the spell and Which one; Create adds a %s s wait for its slot.
 Fills up
 Filters the spellbook below by name, or by the start of a spell ID.
 Find the icon again
@@ -1718,6 +1718,7 @@ Fires as soon as the spell's own requirement is met (a proc, enough mana), even 
 Fires each time the game updates this spell's cooldown, and for some buffs as they come and go.
 Fires only while the spell's proc glow is up, on top of the trigger's own timing. An item checks its use spell.
 Fires the first trigger once, as it will in play, even where the conditions would keep it quiet.
+First
 First ammo threshold (at or below)
 First ammo threshold color
 First threshold (%)
@@ -1763,6 +1764,7 @@ Forget default
 Forgets the selection and goes back to the layout.
 Format
 Forms and Stances
+Fourth
 Frame
 Frame %d
 Frame level
@@ -1825,7 +1827,6 @@ Game's own color
 Gap between cells
 Gap between segments
 Gear needs repair
-Give the new icons the Cooldown Manager's look: its rounded corners, border and shadow?\n\n
 Give the new icons the Cooldown Manager's look: its rounded corners, border and shadow?\n\nAny icon's Appearance > Look switches it later.
 Global look (Arc UI profile '%s')
 Glow
@@ -2063,6 +2064,7 @@ How it looks in each state
 How it shows
 How long a flash shows. A held button keeps the highlight at least this long, so clicks that cast on release still show.
 How long after that rule last fired this one may fire (Not after: may not fire). Enter applies it.
+How long after your cast it may land and still light this in combat. One that flies in first needs longer (Summon Hawk: 1.5 s).
 How long it shows after each cast.
 How long the bar takes to fade away when a cast ends (after the hold, when that is on). 0 = it goes at once.
 How long the button glow takes to fade when it stops. 0: it goes at once.
@@ -2255,7 +2257,6 @@ Its group turns this look on: the group's Appearance > Icons.
 Its groups come from Arc UI's shared layout '%s'.
 Its layout is locked, so it stays put anyway.
 Its look
-Its marker shows where it comes off cooldown and while it is queued.
 Its own icon
 Its own spot
 Its own spot, or riding another frame: it follows that frame and goes back to its own spot while the frame is not on screen.
@@ -2346,6 +2347,7 @@ Lighter charcoal, a blue accent.
 Lightning Shield
 Lightning or Water Shield
 Lights for any enchant on the weapon: an imbue, a poison, an oil or a stone.
+Lights the moment you cast, timed from the cast, until it lands in its slot. Needs one cast out of combat to learn its time.
 Lights up an icon the moment you press its button, cast it from a macro or use a trinket.
 Line length (0 = auto)
 Linear
@@ -2821,7 +2823,7 @@ One pulse (seconds)
 One run (seconds)
 One stance
 One totem, by its spell ID
-One totem: that totem, any rank, in whatever slot it lands. A totem slot: 
+One totem: any rank, any slot. A totem slot: whatever is in it. My totem bar's pick: its totem, shown with none down; click drops it.
 One you have not learned yet stays grey until you do.
 One-time catch-up: moves EVERY action bar spell to the top rank you know, including lower ranks you placed on purpose.
 Only a spell row has a cost to mark.
@@ -2869,6 +2871,7 @@ Opens the talent tree: the bar keeps one look while you have the talent you pick
 Optional
 Or type a spell ID
 Order
+Order out
 Orientation
 Other
 Other classes' Arc Procs too. Each loads only for its own class.
@@ -3418,8 +3421,6 @@ Right of the group
 Right of the pulse
 Right to left
 Right-click clears it.
-Right-click clears it. While Arc Auras is loaded the key drops this totem instead of its usual action.
-Right-click clears it. While Arc Auras is loaded, the key opens this wheel instead of its usual action.
 Right-click: move layouts
 Righteous Fury
 Ring runs
@@ -3476,6 +3477,7 @@ Search everything...
 Search talents
 Search your spells
 Searches the spell list for the buff by its name.
+Second
 Second ammo threshold (at or below)
 Second ammo threshold color
 Second half color
@@ -3523,7 +3525,6 @@ Sets icon width and height together and crops the pictures to fit.
 Sets the rows of this page as the default of the kinds picked. It asks whether the items you have change too.
 Sets width and height together and crops the picture to fit.
 Settings
-Settings > Cooldown Manager turns it back on.
 Several units
 Shadow
 Shadow Protection
@@ -3578,6 +3579,7 @@ Show custom text only while the aura is missing
 Show every Arc Proc
 Show every option
 Show everywhere - clears every class and spec restriction.
+Show from the cast
 Show group names
 Show icon
 Show in combat
@@ -3647,6 +3649,8 @@ Slide into place
 Slide time (s)
 Slot 
 Slot %d
+Slots in use
+Slots in use: First is the lowest totem slot, and the one left moves up. Order out: each keeps its icon until it ends.
 Smooth fill
 Snap back
 Soft light
@@ -4168,6 +4172,7 @@ Then
 Thick line
 Thick outline
 Thin line
+Third
 Third ammo threshold (at or below)
 Third ammo threshold color
 Third threshold (%)
@@ -4490,6 +4495,7 @@ WHAT TO SHARE
 WHAT'S IN IT
 WHERE IT GOES
 WORN BY
+Wait for its slot
 Waits for this exact rank (the spell ID above), not just any rank of the spell.
 Wand GCD
 Wand swipe color
@@ -4608,6 +4614,7 @@ Where this sub-panel's rows go: all of this type, one layout, one group, one ite
 Where to find the pack or you, a page or a Discord. It shows as text to copy.
 Which Casts
 Which of the game's volume sliders its sounds come out of.
+Which one
 Which part of each picture stays when its edges are cropped.
 Which part of the picture stays when its edges are cropped.
 Whichever lands first
@@ -4686,6 +4693,7 @@ With both, the hide list applies to the debuffs only.
 With more than one row and column, a returning icon always takes its spot back.
 With no charges
 With or without a talent
+With several out at once: the First, the Second... Counted by picks how they are counted.
 With the bar
 With the look set here
 With this window open, every icon keeps its spot.
@@ -4744,7 +4752,6 @@ Your Arc UI setup
 Your Arcane Blast stacks: up to 4, each cast restarts their 8 seconds; any other spell or dying clears them.
 Your Casts
 Your Cooldown Manager could not be read just now. Try again in a moment.
-Your Cooldown Manager layout is ready. Turn off the game's own Cooldown Manager now?\n\n
 Your Cooldown Manager layout is ready. Turn off the game's own Cooldown Manager now?\n\nSettings > Cooldown Manager turns it back on.
 Your Cooldown Manager lists no auras here.
 Your Cooldown Manager shows no spells yet.
@@ -4817,7 +4824,6 @@ Zoom: %s
 a Sound item plays what each one is set to: nothing to default
 a charge is coming back
 a layout
-a new rank. The IDs you typed still count.
 a proc is still in the deck
 a spell not picked yet
 above %s
@@ -5083,7 +5089,6 @@ unknown - type the maximum
 unknown Arc Proc
 unreadable entry in 
 version %s
-whatever is in it. My totem bar's pick: the totem your totem bar drops for an element, shown 
 wheel
 when
 when no skin applies
@@ -5099,7 +5104,6 @@ while it is toggled on
 while its aura is down
 while its aura is up
 while no totem is out
-while none is down; a click or a key can drop it.
 while none is left
 while the aura is missing
 while the aura is up
@@ -5137,9 +5141,7 @@ your layout
 your pet is not happy
 your pet's health is low
 your target is out of range
-{left} {drawn} {size}: the deck. {procs} {procsLeft} {max}: its procs. {chance}: the chance. 
 {left} {drawn} {size}: the deck. {procs} {procsLeft} {max}: its procs. {chance}: the chance. {viol}: violations. {count}: a counter.
-{viol}: violations. {count}: a counter.
 |cff3fc9f2Arc Auras IDs|r
 |cff3fc9f2Arc Auras keys:|r /adkeys <spell id or name> - list the bar buttons that hold it
 |cff3fc9f2Arc Auras keys|r for %s (cache %s, by-name index %s)

@@ -82,8 +82,7 @@ function Options.SwingAbilRows(pg, ctx, vis, owner)
     -- ranks exist on Forever only
     local ranked = NS.IsForever == true
     local maxN = (SA() and SA().Max()) or 8
-    local rankTip = "Any rank: the marker follows whichever rank you queue. Highest rank: only your best one. "
-        .. "A rank: only that one, such as a cheaper rank you queue to save mana."
+    local rankTip = "Any rank: whichever rank you queue. Highest rank: only your best one. A rank: only that one, like a cheaper rank queued to save mana."
 
     AT.RowDesc(pg, "No abilities yet: add one below.", 20, function() return onVis() and #List() == 0 end)
     for i = 1, maxN do
@@ -132,8 +131,7 @@ function Options.SwingAbilRows(pg, ctx, vis, owner)
         function() return pending end,
         function(v) pending = v or "" end,
         function() return onVis() and #List() < maxN end,
-        "A spell name or ID, such as Raptor Strike, Heroic Strike, Cleave or Maul. "
-            .. "Its marker shows where it comes off cooldown and while it is queued.",
+        "A spell name or ID, such as Raptor Strike, Heroic Strike or Maul. Its marker shows where it comes off cooldown and while it is queued.",
         "name or ID", true)
     local box = addRow._colCtrl
     -- the box is read and cleared before focus drops: the focus-lost commit

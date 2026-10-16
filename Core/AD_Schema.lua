@@ -568,8 +568,8 @@ end
 Schema.TEXT_STRATA = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }
 
 -- Hidden while the text is pinned to another frame (it draws over that one),
--- and for `under` (a spell's countdown and charges) while an aura overlay's
--- button covers the spell's look.
+-- and for `under` (a spell's countdown) while an aura overlay's button covers
+-- the spell's look.
 function Schema.TextStrataShows(rec, sec, pinKey, under)
     local Store, TA, D = NS.Store, NS.TextAnchor, NS.DriverAura
     if not (rec and Store) then return true end
@@ -1978,7 +1978,7 @@ Schema.icon = {
         stackY = { adv = "text", d = 0, t = "int", min = -200, max = 200, kinds = STK, label = "Stack text Y", dep = { field = "stackText" } },
         stackStrata = { adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, kinds = { spell = true, item = true, timer = true,
             ammo = true, enchant = true, special = true, groupbuff = true }, label = "Stack text strata",
-            showIf = function(r) return Schema.TextStrataShows(r, "text", "stackPinTo", true) end, dep = { field = "stackText" } },
+            showIf = function(r) return Schema.TextStrataShows(r, "text", "stackPinTo") end, dep = { field = "stackText" } },
         stackShadow = { adv = "text", d = false, t = "bool", kinds = STK, label = "Stack text shadow", dep = { field = "stackText" } },
         stackShadowColor = { adv = "text", d = { 0, 0, 0, 1 }, t = "color", alpha = true, kinds = STK, label = "Stack shadow color",
             dep = { { field = "stackText" }, { field = "stackShadow" } } },

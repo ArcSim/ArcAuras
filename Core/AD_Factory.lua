@@ -899,8 +899,6 @@ local function ApplyStateAlpha(f, a, preserveText)
     -- Labels kept to the aura's absence live under the button, not on the host.
     if f._adMissClip then f._adMissClip:SetAlpha(ta) end
     if f._adMissGlow then f._adMissGlow:SetAlpha(a) end
-    -- The charge count's low host (aura overlay) dims like the text host.
-    if f._adLowText then f._adLowText:SetAlpha(ta) end
     if f.stackText then PaintText(f.stackText, ta) end
     if f.cooldown.GetCountdownFontString then
         local cfs = f.cooldown:GetCountdownFontString()
@@ -938,7 +936,6 @@ local function TimedPaint(f)
         f._adLabelHost:SetAlpha(f._adLabelsBright and TimedValue(f, T.late > 0 and 1 or 0, T.before > 0 and 1 or 0) or ta)
     end
     if f._adMissClip then f._adMissClip:SetAlpha(ta) end
-    if f._adLowText then f._adLowText:SetAlpha(ta) end
     if f.stackText then TimedText(f, f.stackText, T) end
     if f.cooldown.GetCountdownFontString then
         local cfs = f.cooldown:GetCountdownFontString()
@@ -2229,21 +2226,8 @@ function Factory.ApplyStyle(f, rec)
         local pinned = TA ~= nil and TA.live[cfs] ~= nil
         if not pinned and cfs:GetParent() ~= home and not (sh and cfs:GetParent() == sh) then cfs:SetParent(home) end
     end
-    -- With an aura overlay the button shows the aura's count in that corner,
-    -- so the charges move to a low host at +3, between the swipe (+2) and the
-    -- button (+5), and show while the aura is down.
-    if overlay then
-        local low = f._adLowText
-        if not low then
-            low = CreateFrame("Frame", nil, f)
-            low:SetAllPoints()
-            f._adLowText = low
-        end
-        if plainLvl then low:SetFrameLevel(hostLvl + 3) end
-        if f.stackText:GetParent() ~= low then f.stackText:SetParent(low) end
-    elseif f._adLowText and f.stackText:GetParent() == f._adLowText then
-        f.stackText:SetParent(f.textHost)
-    end
+    -- The charges stay on the text host with an aura overlay too: over the
+    -- aura's button and every glow, beside the aura's timer.
 
     -- Frames are sized, not scaled (pixel-exact edges), so values given for a
     -- 36px icon scale here by the real height; the border stays in pixels.
@@ -2383,8 +2367,7 @@ function Factory.ApplyStyle(f, rec)
         f.stackText:Hide()
     end
     Factory.TextStrata(f, f.stackText, "stack",
-        (stacks and not overlay and rec.kind ~= "aura") and R("text", "stackStrata") or nil,
-        overlay and f._adLowText or f.textHost)
+        (stacks and rec.kind ~= "aura") and R("text", "stackStrata") or nil, f.textHost)
 
     -- Ammo text: styled and shown here, filled by the driver.
     local ammo = NS.Schema.Applies(NS.Schema.icon.text.fields.ammoText, NS.Schema.icon.text, rec.kind)

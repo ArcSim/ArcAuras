@@ -13,6 +13,198 @@ local BAR_ORDER = { 2, 1, 3, 4 }
 local MODIFIERS = { LSHIFT = true, RSHIFT = true, LCTRL = true, RCTRL = true,
     LALT = true, RALT = true, LMETA = true, RMETA = true }
 
+-- A spell-tracked totem that lands a moment after the cast (Summon Hawk flies
+-- in first): how long a cast waits for its slot (driver.slotWait, nil = the
+-- short default) and Show from the cast (driver.fromCast), in
+-- Drivers\AD_DriverTotem.lua. Rec: the icon or bar being edited; vis: its spell
+-- rows show. Shared by the totem bars.
+-- Ready-made totem icons, picked in the Add window ("TEMPLATE - click one,
+-- then Create", as the item lists are): a click fills the spell and Which one;
+-- Create adds the wait for its slot and the name while the picks still match.
+Options.TOTEM_TEMPLATES = {
+    -- two hawks out at once, each landing a moment after the cast
+    { key = "hawk1", spell = 1293241, which = 1, wait = 1.5 },
+    { key = "hawk2", spell = 1293241, which = 2, wait = 1.5 },
+}
+
+-- the ones this client knows (a spell it has no name for is not offered)
+function Options.TotemTemplates()
+    local DT = NS.DriverTotem
+    local out = {}
+    for _, t in ipairs(Options.TOTEM_TEMPLATES) do
+        if DT and DT.SpellName(t.spell) then out[#out + 1] = t end -- raw-id: the template's own spell
+    end
+    return out
+end
+
+function Options.TotemTemplateName(t)
+    local DT = NS.DriverTotem
+    local nm = DT and DT.SpellName(t.spell) or tostring(t.spell) -- raw-id: the template's own spell
+    return ("%s (%s)"):format(nm, Options.TotemWhichWord(t.which))
+end
+
+-- the template the Add window's picks match now, or nil
+function Options.TotemTemplateFor(sid, which)
+    sid, which = tonumber(sid), tonumber(which) or 0
+    if not sid then return nil end
+    for _, t in ipairs(Options.TotemTemplates()) do
+        if t.spell == sid and t.which == which then return t end -- raw-id: the template's own spell
+    end
+    return nil
+end
+
+Options.TT_CELL, Options.TT_PITCH, Options.TT_CAP = 32, 36, 13
+
+-- The Add window's squares: one per template, its spell's art with its Which
+-- number in the corner; the one the picks match stays cyan.
+function Options.TotemTemplateRows(pg, owner, addState, vis)
+    local AT, COL = NS.AT, NS.AT.COL
+    local cell, pitch, top = Options.TT_CELL, Options.TT_PITCH, Options.TT_CAP
+    local row = AT.AddRow(pg, pitch + 8 + top, function() return vis() and #Options.TotemTemplates() > 0 end)
+    row._tplGrid = true
+    local cap = row:CreateFontString(nil, "OVERLAY")
+    cap:SetFont(AT.FONT, 9, "")
+    cap:SetPoint("TOPLEFT", 10, -2)
+    cap:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
+    cap:SetText(AT.Tr("TEMPLATE - click one, then Create"))
+    row._cap = cap
+    local cells = {}
+    local function Lit(t)
+        return t ~= nil and Options.TotemTemplateFor(addState.totemSpell, addState.totemWhich) == t
+    end
+    local function Cell(i)
+        if cells[i] then return cells[i] end
+        local b = CreateFrame("Button", nil, row, "BackdropTemplate")
+        b:SetSize(cell, cell)
+        b:SetPoint("LEFT", row, "LEFT", 10 + (i - 1) * pitch, -top / 2)
+        AT.Skin(b, COL.well, COL.line)
+        b.tex = b:CreateTexture(nil, "ARTWORK")
+        b.tex:SetPoint("TOPLEFT", 2, -2)
+        b.tex:SetPoint("BOTTOMRIGHT", -2, 2)
+        b.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        b.num = b:CreateFontString(nil, "OVERLAY")
+        b.num:SetFont(AT.FONT, 11, "OUTLINE")
+        b.num:SetPoint("BOTTOMRIGHT", -2, 2)
+        function b.Edge(hot)
+            local c = (Lit(b._t) and COL.arc) or (hot and COL.focus) or COL.line
+            b:SetBackdropBorderColor(c[1], c[2], c[3], 1)
+        end
+        b:SetScript("OnEnter", function()
+            local t = b._t
+            if not t then return end
+            b.Edge(true)
+            GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
+            GameTooltip:SetText(Options.TotemTemplateName(t), COL.ink[1], COL.ink[2], COL.ink[3])
+            GameTooltip:AddLine(AT.Tr("Fills in the spell and Which one; Create adds a %s s wait for its slot.")
+                :format(("%g"):format(t.wait)), COL.dim[1], COL.dim[2], COL.dim[3], true)
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function()
+            b.Edge(false)
+            if GameTooltip:IsOwned(b) then GameTooltip:Hide() end
+        end)
+        b:SetScript("OnClick", function()
+            local t = b._t
+            if not t then return end
+            AT.CloseDropdown()
+            addState.totemSpell, addState.totemWhich = tostring(t.spell), t.which
+            AT.LayoutPage(pg)
+        end)
+        cells[i] = b
+        return b
+    end
+    row._cells = cells
+    row._sync = function()
+        local list = Options.TotemTemplates()
+        for i, t in ipairs(list) do
+            local b = Cell(i)
+            b._t, b._adTpl = t, t.key
+            b.tex:SetTexture((C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(t.spell)) or 134400) -- raw-id: the template's own spell
+            b.num:SetText(tostring(t.which))
+            b.Edge(false)
+            b:Show()
+        end
+        for i = #list + 1, #cells do
+            cells[i]._t, cells[i]._adTpl = nil, nil
+            cells[i]:Hide()
+        end
+    end
+    return row
+end
+
+-- How a Which pick counts (driver.whichBy): the slots in use, lowest first
+-- (nil), or the order they came out ("order"). Rec / vis as below; it shows
+-- only with a Which pick.
+function Options.TotemWhichByRow(pg, Rec, vis, owner)
+    local AT, Store = NS.AT, NS.Store
+    local DT = NS.DriverTotem
+    if not DT then return end
+    local row = AT.RowDropdown(pg, owner, "Counted by",
+        function()
+            local r = Rec()
+            return (r and DT.ByOrder(r.driver)) and "order" or "slot"
+        end,
+        function(v)
+            local r = Rec()
+            if not r then return end
+            r.driver.whichBy = (v == "order") and "order" or nil
+            Store.Dirty("style", r.id)
+        end,
+        function()
+            return { { value = "slot", text = "Slots in use" }, { value = "order", text = "Order out" } }
+        end,
+        function()
+            local r = Rec()
+            return vis() and r ~= nil and DT.Which(r.driver) ~= nil
+        end)
+    -- one literal, so the translator finds the whole sentence
+    AT.Tooltip(row, "Counted by",
+        "Slots in use: First is the lowest totem slot, and the one left moves up. Order out: each keeps its icon until it ends.")
+end
+
+function Options.TotemTimingRows(pg, Rec, vis, owner)
+    local AT, Store = NS.AT, NS.Store
+    local DT = NS.DriverTotem
+    if not DT then return end
+    local Tr = AT.Tr
+    local function Secs(v) return Tr("%s s"):format(("%g"):format(v)) end
+
+    local wait = AT.RowDropdown(pg, owner, "Wait for its slot",
+        function()
+            local r = Rec()
+            local v = r and tonumber(r.driver.slotWait)
+            return (v and v > 0) and v or 0
+        end,
+        function(v)
+            local r = Rec()
+            if not r then return end
+            v = tonumber(v) or 0
+            r.driver.slotWait = (v > 0) and v or nil
+            Store.Dirty("style", r.id)
+        end,
+        function()
+            local out = { { value = 0, text = Secs(DT.PAIR_WINDOW), raw = true } }
+            for _, s in ipairs(DT.WAITS) do out[#out + 1] = { value = s, text = Secs(s), raw = true } end
+            return out
+        end,
+        vis)
+    AT.Tooltip(wait, "Wait for its slot",
+        "How long after your cast it may land and still light this in combat. One that flies in first needs longer (Summon Hawk: 1.5 s).")
+
+    AT.RowToggle(pg, "Show from the cast",
+        function()
+            local r = Rec()
+            return r ~= nil and r.driver.fromCast == true
+        end,
+        function(v)
+            local r = Rec()
+            if not r then return end
+            r.driver.fromCast = v and true or nil
+            Store.Dirty("style", r.id)
+        end,
+        vis, "Lights the moment you cast, timed from the cast, until it lands in its slot. Needs one cast out of combat to learn its time.")
+end
+
 -- ctx: the selected icon. vis: the Tracking tab shows. owner: the window the
 -- dropdown lists open on. refresh: the panel's full refresh.
 function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
@@ -55,9 +247,9 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
             if v == "spell" then
                 d.bar, d.follow = nil, "spell"
             elseif v == "bar" then
-                d.bar, d.follow, d.spellID = true, nil, nil
+                d.bar, d.follow, d.spellID, d.which, d.whichBy, d.slotWait, d.fromCast = true, nil, nil, nil, nil, nil, nil
             else
-                d.bar, d.follow, d.spellID = nil, nil, nil
+                d.bar, d.follow, d.spellID, d.which, d.whichBy, d.slotWait, d.fromCast = nil, nil, nil, nil, nil, nil, nil
             end
             if DT then DT.Track(r) end
             Store.Dirty("tree")
@@ -72,9 +264,7 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
             return items
         end,
         function() return vis() and Rec() ~= nil end)
-    AT.Tooltip(follow, "Follow", "One totem: that totem, any rank, in whatever slot it lands. A totem slot: "
-        .. "whatever is in it. My totem bar's pick: the totem your totem bar drops for an element, shown "
-        .. "while none is down; a click or a key can drop it.")
+    AT.Tooltip(follow, "Follow", "One totem: any rank, any slot. A totem slot: whatever is in it. My totem bar's pick: its totem, shown with none down; click drops it.")
 
     -- One totem: the spell that puts it down.
     AT.RowInput(pg, "Spell ID",
@@ -100,6 +290,25 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
         spellVis,
         "The spell that puts it down: the icon follows that totem or guardian, any rank, into whatever slot it lands.",
         "Type the spell ID")
+    -- a spell with several out at once: one icon per slot
+    local inSlot = AT.RowDropdown(pg, owner, "Which one",
+        function()
+            local r = Rec()
+            return (r and DT and DT.Which(r.driver)) or 0
+        end,
+        function(v)
+            local r = Rec()
+            if not r then return end
+            v = tonumber(v) or 0
+            r.driver.which = (v >= 1) and v or nil
+            Store.Dirty("style", r.id)
+        end,
+        function() return Options.TotemWhichItems() end,
+        spellVis)
+    AT.Tooltip(inSlot, "Which one", Options.TOTEM_WHICH_TIP)
+    Options.TotemWhichByRow(pg, Rec, spellVis, owner)
+    -- when it lands after the cast: measured, waited for, or shown from the cast
+    Options.TotemTimingRows(pg, Rec, function() return spellVis() and Rec().driver.spellID ~= nil end, owner)
 
     local slotRow = AT.RowDropdown(pg, owner, "Totem slot",
         function() local r = Rec() return r and (r.driver.slot or 1) end,
@@ -233,8 +442,7 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
     keyRow._sync = function()
         if not capturing then kb.fs:SetText(KeyWords(Rec())) end
     end
-    AT.Tooltip(kb, "Key to drop it", "Click, then press the key (with Shift, Ctrl or Alt if you like). "
-        .. "Right-click clears it. While Arc Auras is loaded the key drops this totem instead of its usual action.")
+    AT.Tooltip(kb, "Key to drop it", "Click, then press a key (with Shift, Ctrl or Alt if you like). Right-click clears it. The key drops this totem, not its usual action.")
 
     -- One totem: the buff its Out of range look waits on, looked up by name.
     local function rangeVis()

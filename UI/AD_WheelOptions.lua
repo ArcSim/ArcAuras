@@ -690,8 +690,7 @@ function Options.WheelRows(pg, ctx, vis, owner)
     keyRow._sync = function()
         if not capturing then kb.fs:SetText(KeyWords(Rec())) end
     end
-    AT.Tooltip(kb, "Key to open it", "Click, then press a key or mouse button 3 to 5 (with Shift, Ctrl or Alt if you like). "
-        .. "Right-click clears it. While Arc Auras is loaded, the key opens this wheel instead of its usual action.")
+    AT.Tooltip(kb, "Key to open it", "Click, then press a key or mouse button 3 to 5 (with Shift, Ctrl or Alt if you like). Right-click clears it. Replaces its usual action.")
 
     -- another wheel on the same key: only one of them opens
     local function Clash(r)

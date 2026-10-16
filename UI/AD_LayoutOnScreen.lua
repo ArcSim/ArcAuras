@@ -33,8 +33,7 @@ local CORNER_GRAB = 3           -- a corner's grab reaches this far past its squ
 local CORNER_MIN = 4            -- a press this close to the point gives no ratio to scale by
 local FIT_ROOM = 32             -- chrome keeps this much of the screen's width free
 local KEY = "adlayoutscreen"
-local HINT = "Drag an element to move it, its handles to size it. Drag the outline to move everything,"
-    .. " its corners to scale it, the cross to set the center. Alt drags free, Ctrl+Z undoes."
+local HINT = "Drag an element to move it, its handles to size it; the outline moves all, corners scale, the cross sets the center. Alt drags free."
 local HINT_PICK = "Click the element to anchor to, or the cross for the center point."
 local ASK = "Use this as the layout's center?"
 local HINT_LOCKED = "Locked in place: no dragging. Arrows nudge by one pixel, Shift by ten."

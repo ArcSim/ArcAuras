@@ -407,6 +407,22 @@ function Options.RecPillText(rec)
     return Options.IconPillText(rec.kind)
 end
 
+-- Which one of a spell-tracked totem: Any (0), then the First to the Fourth,
+-- each word a Tr literal so the key list has it.
+Options.TOTEM_WHICH = { "First", "Second", "Third", "Fourth" }
+function Options.TotemWhichWord(i)
+    local Tr = AT.Tr
+    return ({ Tr("First"), Tr("Second"), Tr("Third"), Tr("Fourth") })[i] or ""
+end
+function Options.TotemWhichItems()
+    local out = { { value = 0, text = "Any" } }
+    for i = 1, #Options.TOTEM_WHICH do
+        out[#out + 1] = { value = i, text = Options.TotemWhichWord(i), raw = true }
+    end
+    return out
+end
+Options.TOTEM_WHICH_TIP = "With several out at once: the First, the Second... Counted by picks how they are counted."
+
 -- Totem slots by element on Forever (NS.DriverTotem.SlotName).
 function Options.TotemSlotItems()
     local out = {}
@@ -817,8 +833,7 @@ function Options.InfoMark(row, title, body, vis)
     return m
 end
 -- Follow my rank: aura icons, the aura on a spell icon and aura bars (Forever).
-Options.FOLLOW_RANK_DESC = "Also watches the rank you know of each spell, so this keeps working when you train "
-    .. "a new rank. The IDs you typed still count."
+Options.FOLLOW_RANK_DESC = "Also watches the rank you know of each spell, so this keeps working when you train a new rank. The IDs you typed still count."
 -- keep: the current unit, listed even when no longer allowed.
 function Options.AuraUnitItems(d, auraType, keep)
     local items = {}
@@ -14406,6 +14421,8 @@ local function BuildAddWindow()
     local totemVis = isIcon("totem")
     AT.RowDesc(pg, "A totem or guardian in its slot, or one of them by the spell that puts it down.", 20,
         totemVis)
+    -- ready-made ones (UI\AD_TotemOptions.lua): a click fills the rows below
+    if Options.TotemTemplateRows then Options.TotemTemplateRows(pg, addWin, addState, totemVis) end
     AT.RowInput(pg, "Spell ID",
         function() return addState.totemSpell or "" end,
         function(v) addState.totemSpell = v end,
@@ -14420,6 +14437,15 @@ local function BuildAddWindow()
             return totemVis() and not (sid and sid > 0)
         end)
     AT.Tooltip(addSlotRow, "Totem slot", Options.TotemSlotTip)
+    local addInSlot = AT.RowDropdown(pg, addWin, "Which one",
+        function() return addState.totemWhich or 0 end,
+        function(v) addState.totemWhich = tonumber(v) or 0 end,
+        function() return Options.TotemWhichItems() end,
+        function()
+            local sid = tonumber(addState.totemSpell)
+            return totemVis() and sid ~= nil and sid > 0
+        end)
+    AT.Tooltip(addInSlot, "Which one", Options.TOTEM_WHICH_TIP)
     AT.RowInput(pg, "Group name",
         function() return addState.groupName or "" end,
         function(v) addState.groupName = v end,
@@ -14671,7 +14697,13 @@ local function BuildAddWindow()
             if sid and sid <= 0 then sid = nil end
             local name = (sid and C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) -- raw-id: the Add window's typed spell
                 or ("Totem Slot " .. slot)
-            local rec = Store.NewIcon("totem", { slot = slot, spellID = sid }, dest, layoutId, name)
+            local only = sid and tonumber(addState.totemWhich)
+            -- a template the picks still match adds its wait and its name
+            local tpl = Options.TotemTemplateFor and Options.TotemTemplateFor(sid, only)
+            if tpl then name = Options.TotemTemplateName(tpl) end
+            local rec = Store.NewIcon("totem", { slot = slot, spellID = sid,
+                which = (only and only >= 1) and only or nil, slotWait = tpl and tpl.wait or nil },
+                dest, layoutId, name)
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
         elseif iconKind == "ammo" then
             -- Nothing to configure: the icon is the ammo slot.

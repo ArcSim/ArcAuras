@@ -1,5 +1,23 @@
 # Arc Auras
 
+## 3.0.6
+
+Two hawks out at once, one icon each, and ready-made Summon Hawk icons.
+
+### New Features
+
+- **Which one** - A totem or guardian icon or bar following a spell can show the First, Second, Third or Fourth when several are out at once, counted by the totem slots in use or by the order they came out.
+- **Show from the cast** - A totem or guardian icon or bar can light the moment you cast, timed from the cast, before it lands.
+
+### Improvements
+
+- **Summon Hawk templates** - Add > Icon > Totem / Guardian has Summon Hawk First and Second ready-made: click one, then Create.
+- **Translations** - A few tooltips and messages that stayed in English now show in your language.
+
+### Bug Fixes
+
+- **Guardians that land late** - A guardian that appears a moment after your cast, like Summon Hawk, now lights its icon. Out of combat it needs nothing; in combat, set Wait for its slot on the Tracking tab (1.5 s for the hawk).
+
 ## 3.0.5
 
 Move texts by hand and pin any text.

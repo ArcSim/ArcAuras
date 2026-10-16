@@ -118,8 +118,7 @@ end
 -- Before a build: the Cooldown Manager's look or ours, off unless picked. Two
 -- buttons and no Escape: a popup's Escape answers as its second button.
 MO.LOOK_POPUP = "ARCAURAS_CDM_LOOK"
-MO.LOOK_TEXT = "Give the new icons the Cooldown Manager's look: its rounded corners, border and shadow?\n\n"
-    .. "Any icon's Appearance > Look switches it later."
+MO.LOOK_TEXT = "Give the new icons the Cooldown Manager's look: its rounded corners, border and shadow?\n\nAny icon's Appearance > Look switches it later."
 function MO.AskLook(onPick)
     if not (StaticPopupDialogs and StaticPopup_Show) then
         onPick(false)
@@ -143,8 +142,7 @@ end
 -- After a build, while the game's own Cooldown Manager is on: one question,
 -- turn it off now? Yes is Settings > Cooldown Manager's own switch.
 MO.OFF_POPUP = "ARCAURAS_CDM_OFF"
-MO.OFF_TEXT = "Your Cooldown Manager layout is ready. Turn off the game's own Cooldown Manager now?\n\n"
-    .. "Settings > Cooldown Manager turns it back on."
+MO.OFF_TEXT = "Your Cooldown Manager layout is ready. Turn off the game's own Cooldown Manager now?\n\nSettings > Cooldown Manager turns it back on."
 function MO.CDMOn()
     local v = C_CVar and C_CVar.GetCVar and C_CVar.GetCVar("cooldownViewerEnabled")
     return v ~= nil and v ~= "0"

@@ -13,6 +13,24 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.0.5",
+        intro = "Move texts by hand and pin any text.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Drag on screen",
+                    desc = "Move any icon or bar text by dragging it while the options are open; its X and Y follow. The switch sits right under each text's Y." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Text pins",
+                    desc = "The duration text on icons and on cooldown, timer and enchant bars, the ammo text and the five-second countdown can be pinned to a frame, an action button or a Cooldown Manager icon, like the other texts." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Duration text on a charge spell",
+                    desc = "The recharge countdown starts the moment you cast instead of after the global cooldown." },
+            } },
+        },
+    },
+    {
         version = "3.0.4",
         intro = "Text strata, smoother imports, and fixes from player reports.",
         sections = {
@@ -1088,6 +1106,28 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.0.5",
+        intro = "Move texts by hand, pin any text, and Arc Proc texts.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Drag on screen",
+                    desc = "Move any icon or bar text by dragging it while the options are open; its X and Y follow. The switch sits right under each text's Y." },
+                { title = "Arc Proc text",
+                    desc = "Add New > Text > Arc Proc text shows an Arc Proc's deck, procs or proc chance anywhere on screen." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Text pins",
+                    desc = "The duration text on icons and on cooldown, timer and enchant bars can be pinned to a frame, an action button or a Cooldown Manager icon, like the other texts." },
+                { title = "Arc Proc icons",
+                    desc = "No tooltip while the icon is click-through or its art is hidden; Tracking has a Tooltip on hover switch." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Duration text on a charge spell",
+                    desc = "The recharge countdown starts the moment you cast instead of after the global cooldown." },
+            } },
+        },
+    },
     {
         version = "3.0.4",
         intro = "Text strata, smoother imports, and fixes from player reports.",

@@ -429,6 +429,7 @@ A whole number; Enter applies it.
 A word on the icon in this type's color. Size and position are under All.
 ADD A SKIN
 ADDON
+ARC PROC
 ARC PROC - click one, then Create
 AURAS ON YOUR SPELLS
 AUTO
@@ -602,11 +603,15 @@ Ammo text anchor
 Ammo text color
 Ammo text font
 Ammo text outline
+Ammo text pin target
+Ammo text pinned to
 Ammo text shadow
 Ammo text size
 Ammo text strata
 An Arc Auras icon or bar
 An Arc Auras item: pick it in Anchor to
+An Arc Proc's count
+An Arc Proc's deck, procs or chance, as its icon shows them.
 An action button
 An attack missed you
 An aura
@@ -711,6 +716,7 @@ Arc Proc bar
 Arc Proc bars
 Arc Proc icon
 Arc Proc icons
+Arc Proc text
 Arc Proc: %s
 Arc Procs
 Arc UI
@@ -1235,6 +1241,8 @@ Count text outline
 Count text shadow
 Count text size
 Count text strata
+Countdown pin target
+Countdown pinned to
 Countdown position
 Countdown size
 Countdown strata
@@ -1475,6 +1483,7 @@ Drag an element to move it, its handles to size it. Drag the outline to move eve
 Drag any of them to move them together. Arrows nudge them all.
 Drag it onto a spot, or click to add it.
 Drag it to move it. Right-click to take it off.
+Drag on screen
 Drag the layout anywhere on your screen.
 Drag to make the layouts list wider or narrower.
 Drag up or down to set how much of the page the element list takes.
@@ -2618,6 +2627,7 @@ No talent tree on this character: talent conditions do not apply.
 No target
 No text
 No texture has "%s" in its name.
+No tooltip while the icon's art is hidden (Appearance).
 No type
 No type border
 No type color
@@ -4144,6 +4154,7 @@ The totem or guardian slot to watch. The icon lights while anything is in it. A 
 The tracked cooldown spell.
 The tracked item, or several: the icon shows the first one you carry and can use. Retargeting keeps every setting and position.
 The tracked spell. Retargeting re-keys the driver and keeps every setting and position.
+The tracker's readout when you point at the icon. On also turns the icon's click-through off.
 The unit's name
 The value counts power (45 energy, 2000 mana) instead of a percent of the bar.
 The value runs from empty to full and back: threshold colours, pips and every text follow it.
@@ -4278,6 +4289,7 @@ Toggled-on tint color
 Tokens: {left} {drawn} {size} {procs} {procsLeft} {max} {chance} {viol} {count}.
 Tokens: {left} {drawn} {size} {procs} {procsLeft} {max} {chance} {viol} {count}. Empty: the Arc Proc's own.
 Tooltip IDs
+Tooltip on hover
 Top
 Top left
 Top right
@@ -4640,6 +4652,7 @@ While this icon is not loaded, its count stops until the next reset.
 While this window is open a dim icon marks the spot; drag its name tab to move it.
 While this window is open the outline marks the spot; drag its name tab to move it.
 While this window is open, a dim copy of the first reminder's icon marks where pulses land. On shows only the outline and name tab.
+While this window is open, drag this item's texts where they sit on screen. X and Y follow.
 While this window is open, each group shows its name on its top edge, which you drag it by. Off: a small green handle, name on hover.
 While this window is open, icons and bars carry a small Edit button that opens them here. Pick which kind shows it, or none.
 While this window is open, items that fail their load conditions are drawn anyway, so you can place and style them.
@@ -4928,6 +4941,7 @@ name or ID
 needs Devourer
 needs Restoration
 newer
+no Arc Proc
 no Arc Proc called 
 no Cooldown Manager API
 no aura

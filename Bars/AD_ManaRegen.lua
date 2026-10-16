@@ -385,13 +385,19 @@ function MR.Look(e, v)
     local pos = K.R(rec, "regen", "fsrTextPos") or "right"
     local size = math.floor(tonumber(K.R(rec, "regen", "fsrTextSize")) or 11)
     if K.StyleFont then K.StyleFont(t, e, "fsr", size, "OUTLINE", false) end
-    t:ClearAllPoints()
-    if pos == "left" then
-        t:SetPoint("LEFT", shell.fill, "LEFT", 4, 0)
-    elseif pos == "center" then
-        t:SetPoint("CENTER", shell.fill, "CENTER", 0, 0)
+    local pt = (pos == "left") and "LEFT" or (pos == "center") and "CENTER" or "RIGHT"
+    local px = (pos == "left") and 4 or (pos == "center") and 0 or -4
+    local function Home()
+        t:ClearAllPoints()
+        t:SetPoint(pt, shell.fill, pt, px, 0)
+    end
+    -- it may ride another frame (Core\AD_TextAnchor.lua); the preview keeps it on the bar
+    local TA = NS.TextAnchor
+    if TA and not e.isPreview then
+        TA.Place(t, shell, "fsr", K.R(rec, "regen", "fsrTextPinTo"), K.R(rec, "regen", "fsrTextPinTarget"),
+            pt, pt, px, 0, Home)
     else
-        t:SetPoint("RIGHT", shell.fill, "RIGHT", -4, 0)
+        Home()
     end
     t:SetTextColor(c[1], c[2], c[3], 1)
     -- its own strata (the editor's preview keeps it on the bar)

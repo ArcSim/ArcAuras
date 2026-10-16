@@ -7,6 +7,8 @@ local Tr = NS.AT.Tr
 
 local SO = {}
 Options.Special = SO
+-- a row that cannot act right now stays in place at this alpha
+SO.DIM = 0.42
 
 -- One line per tracker for the Special tab.
 SO.NOTES = {
@@ -426,6 +428,39 @@ function Options.SpecialIconRows(pg, ctx, trackVis, owner)
     Stamp(reset, "reset", "Reset the count")
     AT.RowDesc(pg, "While this icon is not loaded, its count stops until the next reset.", 20, vis)
     Stamp(SO.SafeResetRow(pg, vis), "safeMPlusReset", "Safe Mythic+ reset")
+    -- the hover readout: the icon's own tooltip and click-through as Position >
+    -- Mouse writes them; Factory.MouseTips keeps it off through click-through
+    -- and hidden art, so with the art hidden the row stays, dimmed and inert
+    local function ArtHidden()
+        local r = Rec()
+        return r ~= nil and Store.Resolve(r, "appearance", "forceHideIcon") == true
+    end
+    local tip = AT.RowToggle(pg, "Tooltip on hover",
+        function()
+            local r, F = Rec(), NS.Factory
+            return r ~= nil and F ~= nil and F.MouseTips ~= nil and (F.MouseTips(r)) == true
+        end,
+        function(v)
+            local r = Rec()
+            if not r or ArtHidden() then return end
+            if v then
+                Store.SetOverride(r, "mouse", "showTooltip", "on")
+                Store.SetOverride(r, "mouse", "clickThrough", "off")
+            else
+                Store.SetOverride(r, "mouse", "showTooltip", "off")
+            end
+            AT.LayoutPage(pg)
+        end,
+        vis, function()
+            if ArtHidden() then return Tr("No tooltip while the icon's art is hidden (Appearance).") end
+            return Tr("The tracker's readout when you point at the icon. On also turns the icon's click-through off.")
+        end)
+    Stamp(tip, "tooltip", "Tooltip on hover")
+    local tipSync = tip._sync
+    tip._sync = function()
+        if tipSync then tipSync() end
+        tip:SetAlpha(ArtHidden() and SO.DIM or 1)
+    end
 
     -- Doom Winds: the wolf path or the Cooldown Manager's icon
     local dwVis = function()
@@ -517,13 +552,15 @@ end
 -- A special icon's kind of tracker: a deck (procs drawn from a deck), a
 -- counter (a chance that climbs: Resto DRE, Soulburst) or a timer (Nature's
 -- Guardian). An unknown tracker (no hub) reads as a deck.
-function SO.Shape(rec)
-    if not (rec and rec.kind == "special") then return nil end
-    local SI = NS.SpecialIcon
-    local def = SI and SI.Def and SI.Def(rec)
+function SO.DefShape(def)
     if def and def.isTimer then return "timer" end
     if def and def.cap ~= nil and def.procs == nil then return "counter" end
     return "deck"
+end
+function SO.Shape(rec)
+    if not (rec and rec.kind == "special") then return nil end
+    local SI = NS.SpecialIcon
+    return SO.DefShape(SI and SI.Def and SI.Def(rec))
 end
 function Options.SpecialIsTimer(rec) return SO.Shape(rec) == "timer" end
 

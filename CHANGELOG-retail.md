@@ -1,5 +1,23 @@
 # Arc Auras
 
+## 3.0.5
+
+Move texts by hand, pin any text, and Arc Proc texts.
+
+### New Features
+
+- **Drag on screen** - Move any icon or bar text by dragging it while the options are open; its X and Y follow. The switch sits right under each text's Y.
+- **Arc Proc text** - Add New > Text > Arc Proc text shows an Arc Proc's deck, procs or proc chance anywhere on screen.
+
+### Improvements
+
+- **Text pins** - The duration text on icons and on cooldown, timer and enchant bars can be pinned to a frame, an action button or a Cooldown Manager icon, like the other texts.
+- **Arc Proc icons** - No tooltip while the icon is click-through or its art is hidden; Tracking has a Tooltip on hover switch.
+
+### Bug Fixes
+
+- **Duration text on a charge spell** - The recharge countdown starts the moment you cast instead of after the global cooldown.
+
 ## 3.0.4
 
 Text strata, smoother imports, and fixes from player reports.

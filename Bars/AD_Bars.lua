@@ -804,6 +804,9 @@ local function ApplyTexts(entry)
                 if TA and TA.Strata then
                     TA.Strata(shell, fs, "bar:" .. def.key, R(rec, "text", def.strata), shell.overlay)
                 end
+                if NS.TextDrag and not entry.isPreview then
+                    NS.TextDrag.Note(fs, rec, "bar", "text", def.x, def.y, 1, shell)
+                end
                 fs:Show()
             else
                 fs:SetText("")
@@ -862,11 +865,24 @@ local function ApplyTexts(entry)
                 end
                 local c = R(rec, "text", "durColor") or { 0.95, 0.97, 1, 1 }
                 fs:SetTextColor(c[1], c[2], c[3], c[4] or 1)
-                PlaceText(fs, entry.durCD, R(rec, "text", "durAnchor") or "RIGHT",
-                    R(rec, "text", "durOffsetX"), R(rec, "text", "durOffsetY"))
+                local an = R(rec, "text", "durAnchor") or "RIGHT"
+                local dx, dy = R(rec, "text", "durOffsetX"), R(rec, "text", "durOffsetY")
+                -- pinned, it rides a carrier under the widget, which still hides
+                -- it with itself (the editor's preview keeps it on the bar)
+                local TA = NS.TextAnchor
+                if TA and not entry.isPreview then
+                    local o = OUTER_POINTS[an]
+                    TA.Place(fs, shell, "bar:durcd", R(rec, "text", "durPinTo"), R(rec, "text", "durPinTarget"),
+                        o and o[1] or an, o and o[2] or an, dx or 0, dy or 0,
+                        function() PlaceText(fs, entry.durCD, an, dx, dy) end)
+                else
+                    PlaceText(fs, entry.durCD, an, dx, dy)
+                end
+                if NS.TextDrag and not entry.isPreview then
+                    NS.TextDrag.Note(fs, rec, "bar", "text", "durOffsetX", "durOffsetY", 1, shell)
+                end
                 -- the countdown on its own strata: a child of the widget, which
                 -- keeps driving it (the editor's preview keeps it home)
-                local TA = NS.TextAnchor
                 if TA and TA.Strata then
                     TA.Strata(shell, fs, "bar:durcd", (not entry.isPreview) and R(rec, "text", "durStrata") or nil,
                         entry.durCD)

@@ -1698,6 +1698,21 @@ end
 -- that order (nil = every non-hidden field by label). opts.layoutTier: the rows
 -- edit a layout (Store.LayoutProxy): every inheriting field shows, deps on
 -- non-inheriting fields never hide a row, and the group-member gates are off.
+-- The edited item's texts dragged where they sit on screen while this window
+-- is open (Core\AD_TextDrag.lua): one session switch, shown beside each text's
+-- X / Y, never on a page with no item on screen.
+function Options.TextDragRow(pg, ctx, vis)
+    local TD = NS.TextDrag
+    return AT.RowToggle(pg, "Drag on screen",
+        function() return TD.on == true end,
+        function(v) TD.SetOn(v) end,
+        function()
+            local r = ctx()
+            return vis() and r ~= nil and not (r._adMulti or r._adDefaults or r._adLayoutTier or r._adTypeLook)
+        end,
+        "While this window is open, drag this item's texts where they sit on screen. X and Y follow.")
+end
+
 local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
     local tier = opts and opts.layoutTier == true
     local fam = Schema[family]
@@ -2121,6 +2136,11 @@ local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
                 AT.Tooltip(row, label, def.desc)
                 if row._colCtrl then AT.Tooltip(row._colCtrl, label, def.desc) end
             end
+        end
+        -- a text's Y row: the Drag on screen switch beside it
+        local TD = NS.TextDrag
+        if row and not tier and TD and TD.Pair(family, section, field) then
+            Options.TextDragRow(pg, ctx, visible)
         end
     end
 end
@@ -10324,6 +10344,15 @@ local function BuildIconEditor(parent)
         "durationShadow", "durationShadowColor", "durationShadowX", "durationShadowY", "durationAnchor", "durationX", "durationY",
         "durationStrata",
     })
+    -- the swipe's countdown may ride another frame; an aura's is the game button's
+    Options.BuildYield()
+    if Options.TextPinRows then
+        Options.TextPinRows(pg, SelIcon, function()
+            local r = SelIcon()
+            return durDef.vis() and r ~= nil and Store.Resolve(r, "text", "durationText") ~= false
+                and Schema.Applies(Schema.icon.text.fields.durationPinTo, Schema.icon.text, r.kind)
+        end, "icon", "text", "durationPinTo", "durationPinTarget", win, "Duration text")
+    end
     Sub(durDef, "Format", "text", {
         "durationAbbrev", "durationDecimals", "durationDecimalThreshold", "durationShowBelow", "hideDurWithCharges",
     })
@@ -10384,6 +10413,13 @@ local function BuildIconEditor(parent)
         "ammoText", "ammoFont", "ammoSize", "ammoColor", "ammoOutline", "ammoShadow",
         "ammoAnchor", "ammoX", "ammoY", "ammoStrata",
     }, { kindOnly = "spell" })
+    Options.BuildYield()
+    if Options.TextPinRows then
+        Options.TextPinRows(pg, SelIcon, function()
+            local r = SelIcon()
+            return ammoDef.vis() and r ~= nil and Store.Resolve(r, "text", "ammoText") == true
+        end, "icon", "text", "ammoPinTo", "ammoPinTarget", win, "Ammo text")
+    end
     Sub(ammoDef, "Color by ammo count", "text", AMMO_COLORS, { noLook = true, vis = function()
         local r = SelIcon()
         return ammoDef.vis() and r ~= nil and Schema.AmmoCountShown(r)
@@ -12963,9 +12999,17 @@ local function BuildBarPane()
         local pt = r.driver and tonumber(r.driver.powerType)
         return NotPips(r) and (pt == nil or pt < 0 or pt == 0)
     end
-    BarBlock("Five-Second Rule", "regen", "Appearance", {
+    local fsrVis = BarBlock("Five-Second Rule", "regen", "Appearance", {
         "fsrOn", "fsrShow", "fsrColor", "fsrWidth", "fsrDir", "fsrSound", "fsrText", "fsrTextPos", "fsrTextSize", "fsrTextStrata",
     }, Options.ManaBarWhen, CR, nil, { card = { when = "After a mana spell" } })
+    -- the countdown may ride another frame
+    if Options.TextPinRows and fsrVis then
+        Options.TextPinRows(pg, SelBar, function()
+            local r = SelBar()
+            return fsrVis() and r ~= nil and Store.Resolve(r, "regen", "fsrOn") == true
+                and Store.Resolve(r, "regen", "fsrText") == true
+        end, "bar", "regen", "fsrTextPinTo", "fsrTextPinTarget", win, "Countdown")
+    end
     BarBlock("Tick Spark", "regen", "Appearance", {
         "tickSpark", "tickSparkColor", "tickSparkWidth",
     }, Options.ManaBarWhen, CR, nil, { card = { when = "Every 2 s" } })
@@ -13199,8 +13243,8 @@ local function BuildBarPane()
         "durShow", "durRounding", "durSize", "durOutline", "durShadow", "durColor", "durAnchor",
         "durOffsetX", "durOffsetY", "durStrata",
     })
-    -- A run may ride another frame (TextPinRows). Not an aura bar's duration
-    -- or stack (the game's button draws them) nor a cooldown bar's countdown.
+    -- A run may ride another frame (TextPinRows), a countdown widget's too. Not
+    -- an aura bar's duration or stack (the game's button draws them).
     local function BarPins(blockVis, pin, show, word, allow)
         if not Options.TextPinRows then return end
         Options.TextPinRows(pg, SelBar, function()
@@ -13208,8 +13252,7 @@ local function BuildBarPane()
             return blockVis() and r ~= nil and Store.Resolve(r, "text", show) ~= false and (not allow or allow(r))
         end, "bar", "text", pin .. "PinTo", pin .. "PinTarget", win, word)
     end
-    BarPins(durVis, "dur", "durShow", "Duration text",
-        function(r) return r.barKind ~= "aura" and r.barKind ~= "cooldown" end)
+    BarPins(durVis, "dur", "durShow", "Duration text", function(r) return r.barKind ~= "aura" end)
     BarSub(durVis, "Format", "text", { "durAbbrev", "durDecimalsEnabled", "durDecimalThreshold" })
     Options.BuildYield()
     AT.Section(pg, nil, { visibleFn = durVis })   -- push bar below the subs (BarSub)
@@ -19281,6 +19324,8 @@ local function Build()
     end)
     win:HookScript("OnHide", function()
         PB.Drop()
+        -- the text drag boxes and their switch go with the window
+        if NS.TextDrag then NS.TextDrag.Stop() end
         -- closing the window leaves an open Load Conditions page too
         if Options.LayoutFollow then Options.LayoutFollow.Sync(nil) end
         -- before edit mode ends: its rebuild must show the real bar and icon again

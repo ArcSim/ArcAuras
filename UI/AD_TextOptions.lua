@@ -50,6 +50,9 @@ function TO.SourceItems()
             ok = C_Spell ~= nil and C_Spell.GetSpellCharges ~= nil
         elseif s == "petMood" or s == "ammo" then
             ok = NS.IsForever == true
+        elseif s == "proc" then
+            local SO = Options.Special
+            ok = SO ~= nil and SO.On() and NS.SpecialIcon ~= nil and #TO.TrackerItems(nil) > 0
         end
         if ok then out[#out + 1] = { value = s, text = S.TEXT_SOURCE_LABELS[s] or s } end
     end
@@ -59,14 +62,77 @@ end
 -- A text is a type first (your words, a countdown, a count or some info),
 -- then what drives it. Each type and trigger is one runtime source, so a
 -- saved text reads as its type and trigger from what it already stores.
-TO.KINDS = { "custom", "duration", "stack", "info" }
-TO.KIND_LABELS = { custom = "Custom text", duration = "Duration text", stack = "Stack text", info = "Info text" }
+TO.KINDS = { "custom", "duration", "stack", "info", "proc" }
+TO.KIND_LABELS = { custom = "Custom text", duration = "Duration text", stack = "Stack text", info = "Info text",
+    proc = "Arc Proc text" }
 TO.KIND_NOTES = {
     custom = "Your own words, shown on the state you pick.",
     duration = "Counts down a spell's cooldown, an aura's time left or a custom timer.",
     stack = "Counts a spell's charges, an aura's stacks or custom stacks.",
     info = "Your power, health, a name and more.",
+    proc = "An Arc Proc's deck, procs or chance, as its icon shows them.",
 }
+
+-- An Arc Proc text: a tracker with a count to show (a deck or a counter; a
+-- timer shows its swipe and an aura tracker makes a plain aura icon, neither
+-- has a number), the class's own while it has one.
+function TO.TrackerItems(cur)
+    local SP, SO = NS.Special, Options.Special
+    local out = {}
+    if not (SP and SO) then return out end
+    local listed = false
+    SP.Each(function(def, id)
+        if id == cur or (SO.ForClass(def) and SO.DefShape(def) ~= "timer" and not def.isAura) then
+            out[#out + 1] = { value = id, text = NS.AT.Tr(def.name) }
+            if id == cur then listed = true end
+        end
+    end)
+    if cur and not listed then out[#out + 1] = { value = cur, text = cur } end
+    return out
+end
+
+function TO.FirstTracker()
+    local it = TO.TrackerItems(nil)[1]
+    return it and it.value or nil
+end
+
+-- What the text can show of a tracker: the icon's own Shows picks for its shape.
+function TO.ProcShows(trackerId)
+    local SO, SP = Options.Special, NS.Special
+    local def = SP and trackerId and SP.Get(trackerId)
+    local out = {}
+    if not (SO and SO.SHOWS) then return out end
+    local function Add(list)
+        for _, p in ipairs(list or {}) do out[#out + 1] = { value = p[1], text = p[2] } end
+    end
+    if SO.DefShape(def) == "counter" then
+        Add(SO.SHOWS.count)
+        Add(SO.SHOWS.chance)
+    else
+        Add(SO.SHOWS.pos)
+        Add(SO.SHOWS.procs)
+        if def and (def.chanceSpend == true or def.chanceForecast == true) then Add(SO.SHOWS.chance) end
+        if def and def.viol == true then Add(SO.SHOWS.viol) end
+    end
+    return out
+end
+
+-- a pick the tracker no longer offers stays listed by its tokens
+function TO.ShowsItems(trackerId, cur)
+    local out = TO.ProcShows(trackerId)
+    if cur then
+        for _, it in ipairs(out) do
+            if it.value == cur then return out end
+        end
+        out[#out + 1] = { value = cur, text = cur }
+    end
+    return out
+end
+
+function TO.FirstTemplate(trackerId)
+    local it = TO.ProcShows(trackerId)[1]
+    return it and it.value or nil
+end
 TO.TRIGGERS = {
     custom = { "spell", "aura", "rules", "none" },
     duration = { "spell", "aura", "rules", "item" },
@@ -121,6 +187,7 @@ function TO.KindOf(d)
     if s == "spellCd" or s == "auraTime" then return "duration" end
     if s == "spellCharges" or s == "auraStacks" then return "stack" end
     if s == "rules" or s == "custom" then return ((d.show or "stacks") == "left") and "duration" or "stack" end
+    if s == "proc" then return "proc" end
     return "info"
 end
 
@@ -139,6 +206,10 @@ end
 -- nil for a text on another source: its name is its own
 function TO.AutoName(rec)
     local d = rec.driver or {}
+    if d.source == "proc" then
+        local def = NS.Special and d.tracker and NS.Special.Get(d.tracker)
+        return def and (NS.AT.Tr(def.name) .. " text") or nil
+    end
     local w = TO.NAME_WORDS[d.source]
     if not w then return nil end
     local nm = d.spellID and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(d.spellID) -- raw-id: the typed spell names the element
@@ -195,6 +266,10 @@ end
 function TO.SourceDefaults(d, s)
     if (s == "health" or s == "name") and not d.unit then d.unit = "player" end
     if s == "rules" and type(d.rules) ~= "table" then d.rules = {} end
+    if s == "proc" then
+        d.tracker = d.tracker or TO.FirstTracker()
+        d.template = d.template or TO.FirstTemplate(d.tracker)
+    end
 end
 
 -- the sources this client feeds, keyed
@@ -239,6 +314,8 @@ function TO.KindItems(cur)
             for _, s in ipairs(TO.INFO) do
                 if ok[s] then any = true end
             end
+        elseif k == "proc" then
+            if ok.proc then any = true end
         else
             for _, t in ipairs(TO.TRIGGERS[k]) do
                 if TO.TriggerOK(k, t, ok) then any = true end
@@ -294,6 +371,8 @@ function TO.Retype(d, kind, trig, info)
     if kind == "info" then
         s = info or ((TO.KindOf(d) == "info") and SourceOf(d)) or TO.FirstInfo()
         trig = nil
+    elseif kind == "proc" then
+        s, trig = "proc", nil
     else
         local list = TO.SOURCE_OF[kind] or TO.SOURCE_OF.custom
         if not list[trig] then trig = TO.FirstTrigger(kind) end
@@ -316,6 +395,7 @@ function TO.Retype(d, kind, trig, info)
         d.rules, d.duration, d.maxStacks, d.clearOnEnd, d.showWhile = nil, nil, nil, nil, nil
     end
     if trig ~= oldTrig then d.when = nil end
+    if s ~= "proc" then d.tracker, d.template = nil, nil end
     d.source = s
     TO.SourceDefaults(d, s)
 end
@@ -324,7 +404,9 @@ end
 function TO.SetKind(d, kind)
     if kind == TO.KindOf(d) then return false end
     local trig = TO.TriggerOf(d)
-    if kind ~= "info" and not (trig and TO.TriggerOK(kind, trig)) then trig = TO.FirstTrigger(kind) end
+    if kind ~= "info" and kind ~= "proc" and not (trig and TO.TriggerOK(kind, trig)) then
+        trig = TO.FirstTrigger(kind)
+    end
     TO.Retype(d, kind, trig)
     return true
 end
@@ -492,6 +574,20 @@ local function AddInfo(a)
     return TO.FirstInfo()
 end
 
+local function AddTracker(a)
+    for _, it in ipairs(TO.TrackerItems(nil)) do
+        if it.value == a.textTracker then return it.value end
+    end
+    return TO.FirstTracker()
+end
+
+local function AddTemplate(a, tracker)
+    for _, it in ipairs(TO.ProcShows(tracker)) do
+        if it.value == a.textTemplate then return it.value end
+    end
+    return TO.FirstTemplate(tracker)
+end
+
 local function AddWhen(a, w)
     local items = TO.ShowWhenItems(w)
     for _, it in ipairs(items) do
@@ -507,6 +603,10 @@ function TO.AddDriver(a)
     local kind = AddKind(a)
     if kind == "info" then
         TO.Retype(d, "info", nil, AddInfo(a))
+    elseif kind == "proc" then
+        d.tracker = AddTracker(a)
+        d.template = AddTemplate(a, d.tracker)
+        TO.Retype(d, "proc")
     else
         TO.Retype(d, kind, AddTrigger(a, kind))
     end
@@ -558,9 +658,10 @@ function Options.TextAddRows(pg, owner, addState)
     local function Kind() return AddKind(addState) end
     local function Trig()
         local k = Kind()
-        return (k ~= "info") and AddTrigger(addState, k) or nil
+        return (k ~= "info" and k ~= "proc") and AddTrigger(addState, k) or nil
     end
-    local driven = function() return vis() and Kind() ~= "info" end
+    local driven = function() return vis() and Kind() ~= "info" and Kind() ~= "proc" end
+    local procVis = function() return vis() and Kind() == "proc" end
     local function TrigIs(t) return function() return driven() and Trig() == t end end
     local function InfoIs(...)
         local want = { ... }
@@ -624,6 +725,14 @@ function Options.TextAddRows(pg, owner, addState)
         function(v) addState.textInfo = v end,
         function() return TO.InfoItems(nil) end,
         function() return vis() and Kind() == "info" end, relayout)
+    AT.RowDropdown(pg, owner, "Arc Proc",
+        function() return AddTracker(addState) end,
+        function(v) addState.textTracker = v end,
+        function() return TO.TrackerItems(nil) end, procVis, relayout)
+    AT.RowDropdown(pg, owner, "Shows",
+        function() return AddTemplate(addState, AddTracker(addState)) end,
+        function(v) addState.textTemplate = v end,
+        function() return TO.ProcShows(AddTracker(addState)) end, procVis)
     AT.RowDropdown(pg, owner, "Power shown",
         function() return addState.textPower or -1 end,
         function(v) addState.textPower = tonumber(v) end,
@@ -759,7 +868,7 @@ function Options.TextTrackRows(pg, ctx, trackVis, owner, kit)
     -- what drives it; an info text's section holds the info it reads instead
     AT.Section(pg, "Trigger", { visibleFn = vis })
     local trigSec = pg._curSection
-    local driven = function() return vis() and Kind() ~= "info" end
+    local driven = function() return vis() and Kind() ~= "info" and Kind() ~= "proc" end
     local trigRow = AT.RowDropdown(pg, owner, "Trigger",
         function() return Trig() or "none" end,
         function(v)
@@ -771,8 +880,49 @@ function Options.TextTrackRows(pg, ctx, trackVis, owner, kit)
     local trigSync = trigRow._sync
     trigRow._sync = function()
         if trigSync then trigSync() end
-        if trigSec and trigSec.title and vis() then trigSec.title:SetText((Kind() == "info") and "INFO" or "TRIGGER") end
+        if trigSec and trigSec.title and vis() then
+            local k = Kind()
+            trigSec.title:SetText((k == "info") and "INFO" or (k == "proc") and "ARC PROC" or "TRIGGER")
+        end
     end
+    -- an Arc Proc text: which tracker, and what of it; a new tracker keeps the
+    -- pick only where it still has it
+    local procVis = KindIs("proc")
+    local trackerRow = AT.RowDropdown(pg, owner, "Arc Proc",
+        function()
+            local r = Rec()
+            return r and r.driver.tracker
+        end,
+        function(v)
+            local r = Rec()
+            if not r or v == r.driver.tracker then return end
+            Retyped(function(d)
+                d.tracker = v
+                local keep = false
+                for _, it in ipairs(TO.ProcShows(v)) do
+                    if it.value == d.template then keep = true end
+                end
+                if not keep then d.template = TO.FirstTemplate(v) end
+            end)
+        end,
+        function()
+            local r = Rec()
+            return TO.TrackerItems(r and r.driver.tracker)
+        end, procVis, relayout)
+    trackerRow._adMeta = { family = "bar", section = "textel", field = "textTracker",
+        def = { label = "Arc Proc" }, baseVis = procVis }
+    local procShowsRow = AT.RowDropdown(pg, owner, "Shows",
+        function()
+            local r = Rec()
+            return r and r.driver.template
+        end,
+        function(v) Set("template", v) end,
+        function()
+            local r = Rec()
+            return TO.ShowsItems(r and r.driver.tracker, r and r.driver.template)
+        end, procVis)
+    procShowsRow._adMeta = { family = "bar", section = "textel", field = "textProcShows",
+        def = { label = "Shows" }, baseVis = procVis }
     local infoVis = KindIs("info")
     local infoRow = AT.RowDropdown(pg, owner, "Shows",
         function() return Source(Rec()) end,

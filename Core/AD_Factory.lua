@@ -347,7 +347,7 @@ local function BuildFrame(rec)
             if not editing or IsMouseButtonDown() then return end
             local er = Store.Get(self._adRecId)
             if not er then return end
-            if Store.MouseFor and (Store.MouseFor(er)) == false then return end
+            if (Factory.MouseTips(er)) == false then return end
             Factory.ShowTooltip(self, er)
             return
         end
@@ -1867,7 +1867,9 @@ end
 
 -- Countdown and stack text styling for the holder and the aura button. kS =
 -- the base-36 scale factor from a plain size; anchorTo = the text's anchor.
-local function StyleCountdownText(cfs, rec, kS, anchorTo, fontPath)
+-- pinOwner / slot: the holder whose countdown may ride another frame (Core\AD_TextAnchor.lua);
+-- nil for a copy on the game's aura button, which cannot move in combat.
+local function StyleCountdownText(cfs, rec, kS, anchorTo, fontPath, pinOwner, slot)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
     local outline = R("text", "durationOutline") or "OUTLINE"
     if outline == "NONE" then outline = "" end
@@ -1876,9 +1878,16 @@ local function StyleCountdownText(cfs, rec, kS, anchorTo, fontPath)
     cfs._adTextRGBA = R("text", "durationColor") or { 1, 1, 1, 1 }
     PaintText(cfs)
     local dan = R("text", "durationAnchor") or "CENTER"
-    cfs:ClearAllPoints()
-    cfs:SetPoint(dan, anchorTo, dan,
-        (R("text", "durationX") or 0) * kS, (R("text", "durationY") or 0) * kS)
+    local x, y = (R("text", "durationX") or 0) * kS, (R("text", "durationY") or 0) * kS
+    local TA = pinOwner and NS.TextAnchor
+    if TA then
+        TA.Place(cfs, pinOwner, slot, R("text", "durationPinTo"), R("text", "durationPinTarget"), dan, dan, x, y)
+    else
+        cfs:ClearAllPoints()
+        cfs:SetPoint(dan, anchorTo, dan, x, y)
+    end
+    local TD = NS.TextDrag
+    if TD then TD.Note(cfs, rec, "icon", "text", "durationX", "durationY", kS, pinOwner or anchorTo) end
     local dsc = R("text", "durationShadowColor") or { 0, 0, 0, 1 }
     cfs:SetShadowColor(dsc[1], dsc[2], dsc[3], R("text", "durationShadow") == true and (dsc[4] or 1) or 0)
     cfs:SetShadowOffset(R("text", "durationShadowX") or 1, R("text", "durationShadowY") or -1)
@@ -1985,7 +1994,7 @@ function Pct.Apply(f, rec, kS)
     bnd:SetTextColorCurve(curve, Enum.DurationTextBindingProperty.RemainingPercent)
     bnd:SetEnabled(true)
     f._adPctOn = true
-    StyleCountdownText(fs, rec, kS, f, STANDARD_TEXT_FONT)
+    StyleCountdownText(fs, rec, kS, f, STANDARD_TEXT_FONT, f, "countdownPct")
 end
 
 -- An aura button's bound copy: the engine's own binding (SetDurationText) with
@@ -2041,6 +2050,8 @@ local function StyleStackText(fs, rec, kS, anchorTo, pinOwner)
         fs:ClearAllPoints()
         fs:SetPoint(anch, anchorTo, anch, x, y)
     end
+    local TD = NS.TextDrag
+    if TD then TD.Note(fs, rec, "icon", "text", "stackX", "stackY", kS, pinOwner or anchorTo) end
     local ssc = R("text", "stackShadowColor") or { 0, 0, 0, 1 }
     fs:SetShadowColor(ssc[1], ssc[2], ssc[3], R("text", "stackShadow") == true and (ssc[4] or 1) or 0)
     fs:SetShadowOffset(R("text", "stackShadowX") or 1, R("text", "stackShadowY") or -1)
@@ -2145,6 +2156,8 @@ local function StyleLabel(fs, rec, suf, kS, anchorTo, pinOwner)
         fs:ClearAllPoints()
         fs:SetPoint(an, anchorTo, an, x, y)
     end
+    local TD = NS.TextDrag
+    if TD then TD.Note(fs, rec, "icon", "label", "labelX" .. suf, "labelY" .. suf, kS, pinOwner or anchorTo) end
     fs:SetText(R("label", "labelText" .. suf))
 end
 Factory.StyleLabel = StyleLabel
@@ -2210,7 +2223,11 @@ function Factory.ApplyStyle(f, rec)
         end
         -- its own strata host keeps it (Factory.TextStrata, after its style)
         local sh = f._adTxtStrata and f._adTxtStrata.countdown
-        if cfs:GetParent() ~= home and not (sh and cfs:GetParent() == sh) then cfs:SetParent(home) end
+        -- a pinned one stays on its carrier: its style pass re-places it, and
+        -- TA.Strata after it sets the home it goes back to
+        local TA = NS.TextAnchor
+        local pinned = TA ~= nil and TA.live[cfs] ~= nil
+        if not pinned and cfs:GetParent() ~= home and not (sh and cfs:GetParent() == sh) then cfs:SetParent(home) end
     end
     -- With an aura overlay the button shows the aura's count in that corner,
     -- so the charges move to a low host at +3, between the swipe (+2) and the
@@ -2349,7 +2366,7 @@ function Factory.ApplyStyle(f, rec)
         local cfs = f.cooldown:GetCountdownFontString()
         if cfs then
             local fp = select(1, cfs:GetFont()) or STANDARD_TEXT_FONT
-            StyleCountdownText(cfs, rec, kS, f, fp)
+            StyleCountdownText(cfs, rec, kS, f, fp, f, "countdown")
             -- with an aura overlay the spell's texts stay under its button
             Factory.TextStrata(f, cfs, "countdown", not overlay and R("text", "durationStrata") or nil,
                 overlay and f.cooldown or f._adCdText)
@@ -2379,9 +2396,15 @@ function Factory.ApplyStyle(f, rec)
             math.max(6, math.floor((R("text", "ammoSize") or 14) * kS + 0.5)), aout)
         Factory.AmmoCountColor(f.ammoText, rec, "ammoColor")
         local aanch = R("text", "ammoAnchor") or "BOTTOMLEFT"
-        f.ammoText:ClearAllPoints()
-        f.ammoText:SetPoint(aanch, f, aanch,
-            (R("text", "ammoX") or 0) * kS, (R("text", "ammoY") or 0) * kS)
+        local ax, ay = (R("text", "ammoX") or 0) * kS, (R("text", "ammoY") or 0) * kS
+        local TA = NS.TextAnchor
+        if TA then
+            TA.Place(f.ammoText, f, "ammo", R("text", "ammoPinTo"), R("text", "ammoPinTarget"), aanch, aanch, ax, ay)
+        else
+            f.ammoText:ClearAllPoints()
+            f.ammoText:SetPoint(aanch, f, aanch, ax, ay)
+        end
+        if NS.TextDrag then NS.TextDrag.Note(f.ammoText, rec, "icon", "text", "ammoX", "ammoY", kS, f) end
         f.ammoText:SetShadowColor(0, 0, 0, R("text", "ammoShadow") == true and 1 or 0)
         f.ammoText:SetShadowOffset(1, -1)
         f.ammoText:Show()
@@ -2488,6 +2511,7 @@ function Factory.ApplyStyle(f, rec)
             f.keybindText:ClearAllPoints()
             f.keybindText:SetPoint(kan, f, kan, kx, ky)
         end
+        if NS.TextDrag then NS.TextDrag.Note(f.keybindText, rec, "icon", "keybind", "keybindX", "keybindY", kS, f) end
         f.keybindText:Show()
     else
         f.keybindText:Hide()
@@ -6025,6 +6049,23 @@ function Factory.ShowTooltip(f, rec)
     GameTooltip:Show()
 end
 
+-- An icon's tooltip and click-through. An Arc Proc icon's readout shows only on
+-- an icon the mouse is meant to meet: never through click-through (the
+-- default) nor over hidden art, where an empty spot would catch the hover.
+function Factory.MouseTips(rec)
+    local tips, thru
+    if Store.MouseFor then
+        tips, thru = Store.MouseFor(rec)
+    else
+        tips = Store.GetSetting("showTooltips") ~= false
+        thru = Store.GetSetting("clickThrough") ~= false
+    end
+    if rec.kind == "special" and (thru or Store.Resolve(rec, "appearance", "forceHideIcon") == true) then
+        tips = false
+    end
+    return tips, thru
+end
+
 -- The one mouse-state writer. Edit mode gets the full mouse (dragging needs
 -- clicks); otherwise Store.MouseFor's tiers set hover and click-through.
 -- EnableMouse(true) re-enables both channels, so the split always follows it.
@@ -6048,8 +6089,8 @@ function Factory.ApplyMouse(f, editMode, rec)
         return
     end
     local tips, thru
-    if rec and Store.MouseFor then
-        tips, thru = Store.MouseFor(rec)
+    if rec then
+        tips, thru = Factory.MouseTips(rec)
     else
         tips = Store.GetSetting("showTooltips") ~= false
         thru = Store.GetSetting("clickThrough") ~= false

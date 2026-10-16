@@ -575,19 +575,22 @@ function TX.FeedCooldown(e)
     if wandLock and e.txCdOn and cd:IsShown() then return end
     local dur
     local ch = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
-    if ch and (ch.maxCharges or 0) > 1 and C_Spell.GetSpellChargeDuration then
+    -- the recharge runs from the cast: the GCD on the spell's own cooldown
+    -- (a charge still left) and the wand's lock never hold it back
+    local recharge = ch and (ch.maxCharges or 0) > 1 and C_Spell.GetSpellChargeDuration ~= nil
+    if recharge then
         dur = C_Spell.GetSpellChargeDuration(sid, true)
     else
         dur = C_Spell.GetSpellCooldownDuration(sid, true)
     end
-    if dur and not onGcd and not wandLock and en ~= false then
+    if dur and (recharge or (not onGcd and not wandLock)) and en ~= false then
         cd:SetCooldownFromDurationObject(dur, true)
         e.txCdOn = true
     else
         cd:Clear()
         e.txCdOn = nil
     end
-    if onGcd and not wandLock then TX.RetryAfterGCD(e) end
+    if onGcd and not wandLock and not recharge then TX.RetryAfterGCD(e) end
 end
 
 -- The charge count: a secret goes to the sink as the charge icons write it.
@@ -1037,11 +1040,42 @@ function TX.NudgeAuras(unit)
     end)
 end
 
+-- An Arc Proc's readout: the tracker (driver.tracker) pushes each read through
+-- the hub's sink (Drivers\AD_DriverSpecial.lua SP.Attach) and the text fills its
+-- template as the Arc Proc icon's own texts do (Core\AD_SpecialIcon.lua SI.Expand).
+-- A read holds the tracker's own plain counts. A counter has no deck: its count.
+function TX.ProcTemplate(rec, def)
+    local t = rec.driver.template
+    if type(t) == "string" and t ~= "" then return t end
+    return (def and def.cap ~= nil and def.procs == nil) and "{count}" or "{left}"
+end
+
+function TX.ProcText(e, read)
+    local SI = NS.SpecialIcon
+    local def = SI and SI.Def and SI.Def(e.rec)
+    if not (def and read) then return "" end
+    return SI.Expand(TX.ProcTemplate(e.rec, def), read, e.rec, def)
+end
+
+function TX.PaintProc(e)
+    TX.Write(e, TX.ProcText(e, e.txProcRead), false)
+end
+
+function TX.AttachProc(e)
+    local SP = NS.Special
+    if not SP then return end
+    e.txProcSink = e.txProcSink or { Update = function(_, read)
+        e.txProcRead = read
+        if TX.Source(e.rec) == "proc" then TX.Paint(e) end
+    end }
+    if not SP.Attach(e.rec, e.txProcSink) then e.txProcRead = nil end
+end
+
 TX.PAINT = {
     static = TX.PaintStatic, power = TX.PaintPower, health = TX.PaintHealth, name = TX.PaintName, combo = TX.PaintCombo,
     ammo = TX.PaintAmmo, petMood = TX.PaintMood, range = TX.PaintRange, clock = TX.PaintClock,
     spellCd = TX.FeedCooldown, spellCharges = TX.PaintCharges, rules = TX.PaintCustom,
-    custom = TX.PaintCustom, spellText = TX.PaintSpellText, auraText = TX.PaintAuraText,
+    custom = TX.PaintCustom, spellText = TX.PaintSpellText, auraText = TX.PaintAuraText, proc = TX.PaintProc,
 }
 
 -- While the options are open a text never vanishes: a sample stands in for live values and words.
@@ -1348,6 +1382,10 @@ function TX.DropOthers(e, keep)
         if e.txShadow then e.txShadow:Clear() end
         e.txProc, e.txUsable = nil, nil
     end
+    if keep ~= "proc" and e.txProcSink then
+        if NS.Special then NS.Special.Detach(id) end
+        e.txProcRead = nil
+    end
 end
 
 function TX.Ensure(e)
@@ -1357,6 +1395,8 @@ function TX.Ensure(e)
         TX.WatchRange(e)
     elseif TX.SlotSource(e.rec) then
         TX.EnsureAura(e)
+    elseif s == "proc" then
+        TX.AttachProc(e)
     end
     TX.Sync()
     -- the sink attaches after the watcher is armed: its first paint reaches us
@@ -1477,6 +1517,10 @@ function TX.SampleText(e)
     elseif s == "spellCd" or s == "auraTime" then return TX.Countdown(e, 8), false
     elseif s == "spellCharges" then return 2, true
     elseif s == "auraStacks" then return 3, true
+    elseif s == "proc" then
+        local SI = NS.SpecialIcon
+        local t = SI and SI.SAMPLE and TX.ProcText(e, SI.SAMPLE) or ""
+        return (t ~= "") and t or "3", false
     end
     -- rules or another custom item: stacks, time left or both
     show = show or "stacks"
@@ -1537,6 +1581,10 @@ function TX.Describe(rec)
     elseif s == "rules" then
         local n = type(d.rules) == "table" and #d.rules or 0
         base = base .. ", " .. (n == 1 and Tr("%d rule") or Tr("%d rules")):format(n)
+    elseif s == "proc" then
+        local SI = NS.SpecialIcon
+        local def = SI and SI.Def and SI.Def(rec)
+        base = base .. ": " .. (def and Tr(def.name) or Tr("no Arc Proc"))
     end
     return base
 end

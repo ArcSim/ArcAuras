@@ -1808,6 +1808,8 @@ function Engine.RefreshEditing()
     if Factory.SetEditing then
         for iid, f in pairs(Factory.frames) do Factory.SetEditing(f, iid == id) end
     end
+    -- the text drag boxes follow the item being edited
+    if NS.TextDrag then NS.TextDrag.Refresh() end
 end
 
 local function WireGroupEdit(gf, rec)

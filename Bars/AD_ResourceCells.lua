@@ -124,6 +124,9 @@ function RC.StyleText(entry, cd)
     fs:SetTextColor(col[1], col[2], col[3], col[4] or 1)
     K.PlaceText(fs, cd, K.R(rec, "text", "rcAnchor") or "CENTER",
         K.R(rec, "text", "rcOffsetX"), K.R(rec, "text", "rcOffsetY"))
+    if NS.TextDrag and not entry.isPreview then
+        NS.TextDrag.Note(fs, rec, "bar", "text", "rcOffsetX", "rcOffsetY", 1, cd)
+    end
     -- its own strata on a child of the widget, which keeps driving it
     local TA = NS.TextAnchor
     if TA and TA.Strata then

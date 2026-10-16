@@ -183,6 +183,9 @@ function SB.PlaceDeckText(e, which, fs)
     -- a text may ride another frame (Core\AD_TextAnchor.lua); the editor's
     -- preview keeps it on the bar
     local TA = (not e.isPreview) and NS.TextAnchor or nil
+    if NS.TextDrag and not e.isPreview then
+        NS.TextDrag.Note(fs, e.rec, "bar", "deck", which .. "OffsetX", which .. "OffsetY", 1, e.shell)
+    end
     if not TA then
         K.PlaceText(fs, host, anchor, t.x, t.y)
         return

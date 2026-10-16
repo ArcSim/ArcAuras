@@ -5116,6 +5116,13 @@ function Store.CleanText(d)
     if d.caster ~= "mine" and d.caster ~= "others" then d.caster = nil end
     d.rangeFrom = Whole(d.rangeFrom)
     d.srcId = Whole(d.srcId)
+    -- an Arc Proc's readout: the tracker by its id, the template its counts fill
+    if d.source == "proc" then
+        if type(d.tracker) ~= "string" or d.tracker == "" or #d.tracker > 40 then d.tracker = nil end
+        d.template = (type(d.template) == "string" and d.template ~= "") and Store.CutText(d.template, 120) or nil
+    else
+        d.tracker, d.template = nil, nil
+    end
     if d.source == "rules" or d.rules ~= nil then
         if d.source == "rules" and type(d.rules) ~= "table" then d.rules = {} end
         Store.CleanCustom(d, false)

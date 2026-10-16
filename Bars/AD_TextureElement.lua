@@ -729,10 +729,14 @@ function TP.StyleText(fs, e, key)
     fs:SetTextColor(c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1)
 end
 
-function TP.PlaceTextOn(fs, frame, rec, key)
+-- e: the element, whose editor preview takes no drag box (Core\AD_TextDrag.lua)
+function TP.PlaceTextOn(fs, frame, rec, key, e)
     local pre = (key == "tpStk") and "ptStk" or "ptTime"
     K.PlaceText(fs, frame, R(rec, "pictext", pre .. "Anchor") or (key == "tpStk" and "BOTTOMRIGHT" or "CENTER"),
         R(rec, "pictext", pre .. "X") or 0, R(rec, "pictext", pre .. "Y") or 0)
+    if NS.TextDrag and not (e and e.isPreview) then
+        NS.TextDrag.Note(fs, rec, "bar", "pictext", pre .. "X", pre .. "Y", 1, frame)
+    end
 end
 
 -- the stack count from 1 (0 shows nothing)
@@ -1082,7 +1086,7 @@ function TP.StyleAuraTexts(e, sub)
             end
             -- the font before any binding writes text (law 17)
             TP.StyleText(fs, e, def.key)
-            TP.PlaceTextOn(fs, th, rec, def.key)
+            TP.PlaceTextOn(fs, th, rec, def.key, e)
             fs:SetAlpha(1)
             local bound = def.field .. "Bound"
             if not sub[bound] then
@@ -1592,7 +1596,7 @@ function TP.PaintOwnText(e, run, edit)
                 e.tpSample = sample
             end
             TP.StyleText(sample, e, "tpDur")
-            TP.PlaceTextOn(sample, e.tpTextHost, rec, "tpDur")
+            TP.PlaceTextOn(sample, e.tpTextHost, rec, "tpDur", e)
             sample:SetText("8")
             sample:Show()
         elseif sample then
@@ -1621,7 +1625,7 @@ function TP.PaintOwnText(e, run, edit)
         end
         local c = R(rec, "pictext", "ptTimeColor") or { 1, 1, 1, 1 }
         fs:SetTextColor(c[1] or 1, c[2] or 1, c[3] or 1, c[4] or 1)
-        TP.PlaceTextOn(fs, e.tpTextHost, rec, "tpDur")
+        TP.PlaceTextOn(fs, e.tpTextHost, rec, "tpDur", e)
     end
     if cd.SetCountdownFormatter then
         local F = NS.Factory
@@ -1940,7 +1944,7 @@ function TP.PreviewApply(e)
                 e[def.f] = fs
             end
             TP.StyleText(fs, e, def.key)
-            TP.PlaceTextOn(fs, e.tpTextHost, rec, def.key)
+            TP.PlaceTextOn(fs, e.tpTextHost, rec, def.key, e)
             fs:SetText(def.text)
             fs:Show()
         elseif fs then

@@ -60,13 +60,13 @@ Schema.BAR_KINDS = { "cooldown", "aura", "swing", "resource", "health", "cast", 
 -- A text element's sources (rec.driver.source, Bars\AD_TextElement.lua): each
 -- reads plain in combat or reaches the screen through a text sink only.
 Schema.TEXT_SOURCES = { "static", "power", "health", "name", "combo", "ammo", "petMood", "range", "clock",
-    "spellCd", "spellCharges", "auraTime", "auraStacks", "rules", "custom", "spellText", "auraText" }
+    "spellCd", "spellCharges", "auraTime", "auraStacks", "rules", "custom", "spellText", "auraText", "proc" }
 Schema.TEXT_SOURCE_LABELS = { static = "Words you type", power = "Your power", health = "Health", name = "Name",
     combo = "Combo points", ammo = "Ammo count", petMood = "Pet happiness", range = "Target range band",
     clock = "Time of day", spellCd = "A spell's cooldown", spellCharges = "A spell's charges",
     auraTime = "An aura's time left", auraStacks = "An aura's stacks", rules = "Custom rules",
     custom = "A Custom Icon or Bar's value", spellText = "A spell's custom text",
-    auraText = "An aura's custom text" }
+    auraText = "An aura's custom text", proc = "An Arc Proc's count" }
 -- A text is for a spell or an aura: its value, or custom words shown on one
 -- of its states, the states its icon glows on (rec.driver.when).
 Schema.TEXT_SPELL_SOURCES = { "spellCd", "spellCharges", "spellText" }
@@ -1909,7 +1909,15 @@ Schema.icon = {
         -- not an aura's: the game's button draws it
         durationStrata = { kinds = { spell = true, item = true, trinket = true, timer = true, totem = true, enchant = true,
             special = true }, adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, label = "Duration text strata",
-            showIf = function(r) return Schema.TextStrataShows(r, "text", nil, true) end, dep = { field = "durationText" } },
+            showIf = function(r) return Schema.TextStrataShows(r, "text", "durationPinTo", true) end, dep = { field = "durationText" } },
+        -- the swipe's own countdown rides its carrier under the swipe, so it
+        -- still hides with it; under an aura overlay it stays on the swipe
+        durationPinTo = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS,
+            kinds = { spell = true, item = true, trinket = true, timer = true, totem = true, enchant = true, special = true },
+            label = "Duration text pinned to", dep = { field = "durationText" } },
+        durationPinTarget = { noDefault = true, inherit = false, d = "", t = "text",
+            kinds = { spell = true, item = true, trinket = true, timer = true, totem = true, enchant = true, special = true },
+            label = "Duration text pin target", dep = { field = "durationText" } },
         -- Whether a charge is left comes from the shadow.
         hideDurWithCharges = { d = false, t = "bool", kinds = SP, label = "Hide duration while charges remain",
             dep = { field = "durationText" } },
@@ -2037,7 +2045,11 @@ Schema.icon = {
         ammoX = { foreverOnly = true, adv = "text", d = 0, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text X", dep = { field = "ammoText" } },
         ammoY = { foreverOnly = true, adv = "text", d = 0, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text Y", dep = { field = "ammoText" } },
         ammoStrata = { foreverOnly = true, adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, kinds = SP, label = "Ammo text strata",
-            dep = { field = "ammoText" } },
+            showIf = function(r) return Schema.TextStrataShows(r, "text", "ammoPinTo") end, dep = { field = "ammoText" } },
+        ammoPinTo = { foreverOnly = true, inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS,
+            kinds = SP, label = "Ammo text pinned to", dep = { field = "ammoText" } },
+        ammoPinTarget = { foreverOnly = true, noDefault = true, inherit = false, d = "", t = "text", kinds = SP,
+            label = "Ammo text pin target", dep = { field = "ammoText" } },
         ammoShadow = { foreverOnly = true, adv = "text", d = false, t = "bool", kinds = SP, label = "Ammo text shadow", dep = { field = "ammoText" } },
         -- Threshold colours for the ammo count (Factory.AmmoCountColor). The
         -- count is plain in combat, so Lua compares it; the lowest threshold
@@ -4011,7 +4023,13 @@ Schema.bar = {
         fsrTextSize = { foreverOnly = true, d = 11, t = "int", min = 6, max = 24, label = "Countdown size",
             dep = { { field = "fsrOn" }, { field = "fsrText" } } },
         fsrTextStrata = { foreverOnly = true, d = "inherit", t = "enum", values = Schema.TEXT_STRATA,
-            label = "Countdown strata", dep = { { field = "fsrOn" }, { field = "fsrText" } } },
+            label = "Countdown strata", showIf = function(r) return Schema.TextStrataShows(r, "regen", "fsrTextPinTo") end,
+            dep = { { field = "fsrOn" }, { field = "fsrText" } } },
+        -- pinned, the position picks the target's side it sits on
+        fsrTextPinTo = { foreverOnly = true, inherit = false, d = "own", t = "enum", values = Schema.PIN_TO,
+            labels = Schema.PIN_LABELS, label = "Countdown pinned to", dep = { { field = "fsrOn" }, { field = "fsrText" } } },
+        fsrTextPinTarget = { foreverOnly = true, noDefault = true, inherit = false, d = "", t = "text",
+            label = "Countdown pin target", dep = { { field = "fsrOn" }, { field = "fsrText" } } },
         -- The regen ticks, every 2 s: found from mana events away from your
         -- casts; the next tick's mana comes from GetManaRegen, fed unread.
         tickSpark = { foreverOnly = true, d = false, t = "bool", label = "Tick spark",

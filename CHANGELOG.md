@@ -1,5 +1,21 @@
 # Arc Auras
 
+## 3.0.5
+
+Move texts by hand and pin any text.
+
+### New Features
+
+- **Drag on screen** - Move any icon or bar text by dragging it while the options are open; its X and Y follow. The switch sits right under each text's Y.
+
+### Improvements
+
+- **Text pins** - The duration text on icons and on cooldown, timer and enchant bars, the ammo text and the five-second countdown can be pinned to a frame, an action button or a Cooldown Manager icon, like the other texts.
+
+### Bug Fixes
+
+- **Duration text on a charge spell** - The recharge countdown starts the moment you cast instead of after the global cooldown.
+
 ## 3.0.4
 
 Text strata, smoother imports, and fixes from player reports.

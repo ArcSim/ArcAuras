@@ -108,6 +108,8 @@ function AR.MissMode(rec)
     local DA = NS.DriverAura
     if not (DA and DA.EraserAvailable and DA.EraserAvailable()) then return nil end
     local R = function(s, k) return Store.Resolve(rec, s, k) end
+    -- not learned yet: no missing piece (Store.AuraDormant)
+    if Store.AuraDormant and Store.AuraDormant(rec) then return nil end
     -- an own Missing look that shows it takes its stage whatever holds now:
     -- the row can't be rebuilt in combat when a condition moves
     local OL = NS.OwnLooks
@@ -123,10 +125,11 @@ end
 -- it: its alpha and grey, and the own look in play (Core\AD_OwnLooks.lua) or nil.
 function AR.MissLook(rec)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
-    local a = (R("auraMissing", "showWhileMissing") == false) and 0 or (R("auraMissing", "missingAlpha") or 1)
+    local dormant = Store.AuraDormant ~= nil and Store.AuraDormant(rec)
+    local a = (dormant or R("auraMissing", "showWhileMissing") == false) and 0 or (R("auraMissing", "missingAlpha") or 1)
     local desat = R("auraMissing", "missingDesaturate") ~= false
     local OL = NS.OwnLooks
-    local LM = OL ~= nil and OL.Active(rec, "missing") or nil
+    local LM = (OL ~= nil and not dormant) and OL.Active(rec, "missing") or nil
     if LM then
         if LM.alpha ~= nil then a = LM.alpha end
         if LM.grey ~= nil then desat = LM.grey end

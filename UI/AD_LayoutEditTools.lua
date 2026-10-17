@@ -1489,7 +1489,7 @@ local INSIDE_WORD = {
     reminder = function(k) return (k == 1 and Tr("%d reminder") or Tr("%d reminders")):format(k) end,
 }
 
--- a lock on any of ids (the record, its group or its layout)
+-- a lock on any of ids (the record or its layout)
 function LT.AnyLocked(ids)
     for _, id in ipairs(ids) do
         if Store.Locked(Store.Get(id)) then return true end

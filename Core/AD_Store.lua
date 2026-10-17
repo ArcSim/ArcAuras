@@ -24,7 +24,7 @@
 --   bar:    layoutId, barKind, barMode, driver={...}, pos={x,y}; a wheel
 --           also wheelKey, its key, which no string or copy carries
 --   o = { [section] = { [field] = value } }  sparse overrides
---   c = { specs, classes, chars, talents, factions = set|nil, talentMode,
+--   c = { never = true|nil (Never load), specs, classes, chars, talents, factions = set|nil, talentMode,
 --         plus the conditions module's loadWhen/loadNever/showWhen/fadeWhen =
 --         set|nil, loadWhenAll/showWhenAll, fadeAlpha/fadeTime/fadeDelay } }
 
@@ -276,22 +276,27 @@ function Store.ClearEditHidden()
     Store.Dirty("style")
 end
 
--- A layout's or group's lock (beside its eye): nothing in it moves or reshapes
--- from the screen while the window is open; the panel still edits it. Saved
--- for the account, never part of a share string.
+-- A layout's or group's lock (beside its eye): a layout's holds everything in
+-- it on screen while the window is open; a group's holds the group itself, and
+-- its icons still move. The panel still edits both. Saved for the account,
+-- never part of a share string.
 function Store.LockedSelf(rec)
     local L = DB and DB.settings and DB.settings.locked
     return rec ~= nil and L ~= nil and L[rec.id] == true
 end
 
--- the record, its group or its layout carries a lock
-function Store.Locked(rec)
+-- the record's layout carries a lock
+function Store.LayoutLocked(rec)
     if not rec then return false end
-    if Store.LockedSelf(rec) then return true end
     local g = rec.groupId and Store.Get(rec.groupId)
-    if g and Store.LockedSelf(g) then return true end
     local lid = (g and g.layoutId) or rec.layoutId
     return lid ~= nil and Store.LockedSelf(Store.Get(lid))
+end
+
+-- the record or its layout carries a lock; its group's lock is the group's
+function Store.Locked(rec)
+    if not rec then return false end
+    return Store.LockedSelf(rec) or Store.LayoutLocked(rec)
 end
 
 function Store.SetLocked(rec, on)
@@ -859,6 +864,8 @@ local function CleanWho(rec)
     local ks = tonumber(c.knownSpell)
     c.knownSpell = (ks and ks > 0) and math.floor(ks) or nil
     if c.knownRank ~= true then c.knownRank = nil end
+    -- Never load: kept, never shown, until it is switched off
+    if c.never ~= true then c.never = nil end
 end
 
 -- Normalize enforces the schema: drops dangling member ids, clamps typed fields
@@ -3391,6 +3398,13 @@ function Store.SetKnownSpell(rec, id)
     Store.Dirty("load")
 end
 
+function Store.SetNever(rec, on)
+    on = (on == true) or nil
+    if rec.c.never == on then return end
+    rec.c.never = on
+    Store.Dirty("load")
+end
+
 function Store.SetKnownRank(rec, on)
     on = (on == true) or nil
     if rec.c.knownRank == on then return end
@@ -3398,8 +3412,39 @@ function Store.SetKnownRank(rec, on)
     Store.Dirty("load")
 end
 
+local function IsAuraIcon(rec)
+    return rec ~= nil and rec.type == "icon" and rec.kind == "aura"
+end
+
+-- "Only load once learned" (driver.onlyKnown): false when the spell is not
+-- learned, else true or nil (off, or no answer, which never gates).
+function Store.LearnedGate(rec)
+    local d = rec and rec.driver
+    if not (d and d.onlyKnown == true) then return nil end
+    if rec.kind == "aura" and d.cdmID then
+        -- a Cooldown Manager aura: learned as the Cooldown Manager answers it, since
+        -- the aura's own id is often no spell you learn (a proc's buff)
+        if Store.CdmKnown(d.cdmID) == false then return false end
+        return true
+    end
+    if not d.spellID then return nil end
+    -- an icon with several spells is known while any of them is
+    local ids = Store.HasSpellAlts(d) and Store.SpellChoices(d) or { d.spellID }
+    for _, id in ipairs(ids) do
+        if Store.KnowsSpell(id, d.knownExact == true) ~= false then return true end
+    end
+    return false
+end
+
+-- An aura icon not learned yet: loaded, its missing look hidden, so it shows
+-- only while the game finds its aura (a wrong answer never hides a live buff).
+function Store.AuraDormant(rec)
+    return IsAuraIcon(rec) and Store.LearnedGate(rec) == false
+end
+
 function Store.IsLoaded(rec)
     local c = rec.c
+    if c.never == true then return false end
     if c.classes then
         local tag = ClassTag()
         if not (tag and c.classes[tag]) then return false end
@@ -3453,24 +3498,11 @@ function Store.IsLoaded(rec)
         end
     end
     -- Known spells: the Tracking toggle, then the Known Spell rule (any record).
-    -- An answer that cannot be told never gates.
+    -- An answer that cannot be told never gates. An aura icon is never held
+    -- back by the toggle: it stays loaded and shows while its aura is up
+    -- (Store.AuraDormant hides only its missing look).
     local d = rec.driver
-    if d and d.onlyKnown == true and rec.kind == "aura" and d.cdmID then
-        -- a Cooldown Manager aura: learned as the Cooldown Manager answers it, since
-        -- the aura's own id is often no spell you learn (a proc's buff)
-        if Store.CdmKnown(d.cdmID) == false then return false end
-    elseif d and d.onlyKnown == true and d.spellID then
-        -- an icon with several spells is known while any of them is
-        local none = true
-        local ids = Store.HasSpellAlts(d) and Store.SpellChoices(d) or { d.spellID }
-        for _, id in ipairs(ids) do
-            if Store.KnowsSpell(id, d.knownExact == true) ~= false then
-                none = false
-                break
-            end
-        end
-        if none then return false end
-    end
+    if not IsAuraIcon(rec) and Store.LearnedGate(rec) == false then return false end
     -- A weapon enchant icon's Tracking toggle: only while its hand holds a weapon
     if d and d.onlyArmed == true and rec.kind == "enchant" and NS.DriverEnchant
         and NS.DriverEnchant.WeaponIn(d.hand) == nil then

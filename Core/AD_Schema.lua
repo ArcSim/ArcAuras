@@ -1705,10 +1705,10 @@ Schema.icon = {
     -- animations, and a glow gate moves it onto a button of its own (DriverAura).
     -- A spell icon with "Aura on this icon" on draws this on its own button.
     auraActive = { push = true, inherit = true, kinds = AAX, fields = {
-        -- On a spell, item or trinket icon the button wears the icon's own art by
-        -- default, reading as one icon changing phase, as in the Cooldown
-        -- Manager; Active icon below overrides both.
-        overlayArt = { d = "spell", t = "enum", values = { "spell", "aura" }, kinds = SPX,
+        -- On a spell, item or trinket icon the button wears the aura's own art by
+        -- default: the icon turns into the aura while it is up. "Its own icon"
+        -- keeps the cooldown's picture; Active icon below overrides both.
+        overlayArt = { d = "aura", t = "enum", values = { "spell", "aura" }, kinds = SPX,
             labels = { spell = "Its own icon", aura = "The aura's icon" },
             label = "Icon while the aura is up" },
         -- Greys the cooldown under a spell icon's aura button for good. The
@@ -4000,6 +4000,11 @@ Schema.bar = {
             dep = { field = "predictEnabled" } },
         predictColor = { d = { 1, 1, 1, 1 }, t = "color", label = "Cost color", dep = { field = "predictEnabled" } },
         predictAlpha = { d = 0.5, t = "num", min = 0.1, max = 1, label = "Cost opacity", dep = { field = "predictEnabled" } },
+        -- what a cast will add, learned from your own casts (Bars.GainFor)
+        predictGain = { d = false, t = "bool", label = "Show what a cast will add",
+            desc = "Learned from your own casts: the first cast of a spell teaches it. Shows while you cast." },
+        predictGainColor = { d = { 0.48, 0.85, 0.56, 1 }, t = "color", label = "Gain color", dep = { field = "predictGain" } },
+        predictGainAlpha = { d = 0.5, t = "num", min = 0.1, max = 1, label = "Gain opacity", dep = { field = "predictGain" } },
     } },
     -- Mana bars: the five-second rule, a spark crossing the bar while spirit
     -- regen waits after a spell that costs mana (Bars\AD_ManaRegen.lua). WoW

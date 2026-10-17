@@ -3485,7 +3485,43 @@ Bars.ResourceCostsMoved = ResourceCostsMoved
 -- secret) the spell's cost becomes a texture anchored to the fill edge, which
 -- the engine places from the secret value, running back by cost/max; a clipping
 -- host keeps it inside the bar. Instant casts never start, so they never draw.
+-- The gain preview is its mirror: what the cast will add runs forward from the
+-- same edge, the clip stopping it at full (Bars.GainFor: learned, the game
+-- reports no gain).
 local predictArmed = false
+
+-- One strip at the fill edge, amount/range long: back from it (a cost) or
+-- forward (a gain); hidden for no amount.
+function Bars.PredictStrip(entry, key, amount, forward, range, W, H, color, alpha)
+    local tex = entry[key]
+    if not amount then
+        if tex then tex:Hide() end
+        return
+    end
+    if not tex then
+        tex = entry.predClip:CreateTexture(nil, "ARTWORK")
+        entry[key] = tex
+    end
+    local rec = entry.rec
+    tex:SetColorTexture(color[1], color[2], color[3], alpha)
+    local vertical = (R(rec, "fill", "orientation") or "HORIZONTAL") == "VERTICAL"
+    local rev = R(rec, "fill", "reverseFill") == true
+    local frac = math.min(1, amount / range)
+    local ft = entry.shell.fillTex
+    tex:ClearAllPoints()
+    if vertical then
+        tex:SetSize(W, math.max(1, H * frac))
+        if forward then
+            if rev then tex:SetPoint("TOP", ft, "BOTTOM") else tex:SetPoint("BOTTOM", ft, "TOP") end
+        elseif rev then tex:SetPoint("BOTTOM", ft, "BOTTOM") else tex:SetPoint("TOP", ft, "TOP") end
+    else
+        tex:SetSize(math.max(1, W * frac), H)
+        if forward then
+            if rev then tex:SetPoint("RIGHT", ft, "LEFT") else tex:SetPoint("LEFT", ft, "RIGHT") end
+        elseif rev then tex:SetPoint("LEFT", ft, "LEFT") else tex:SetPoint("RIGHT", ft, "RIGHT") end
+    end
+    tex:Show()
+end
 
 function PredictLayout(entry)
     local shell, rec = entry.shell, entry.rec
@@ -3493,59 +3529,113 @@ function PredictLayout(entry)
     -- a cast's cost, else a queued ability's while that is asked for
     local cost = entry.predCost
     if not cost and R(rec, "predict", "predictQueued") == true then cost = entry.predQCost end
-    local tex = entry.predTex
-    -- a folded fill shows two laps: a cost has no single place on it
+    if R(rec, "predict", "predictEnabled") ~= true then cost = nil end
+    local gain = R(rec, "predict", "predictGain") == true and entry.predGain or nil
+    -- a folded fill shows two laps: a cost or a gain has no single place on it
     local folded = Bars.ResCells and Bars.ResCells.Folded(entry)
-    if not cost or folded or R(rec, "predict", "predictEnabled") ~= true then
-        if tex then tex:Hide() end
-        return
-    end
     local range = entry.lastMax or (entry.powerType and cachedMax[entry.powerType]) or 0
     local fill = shell.fill
     local W, H = fill:GetWidth() or 0, fill:GetHeight() or 0
-    if range <= 0 or W <= 1 or H <= 1 then
-        if tex then tex:Hide() end
-        return
-    end
-    if not tex then
+    if folded or range <= 0 or W <= 1 or H <= 1 then cost, gain = nil, nil end
+    if (cost or gain) and not entry.predClip then
         local clip = CreateFrame("Frame", nil, shell)
         clip:SetAllPoints(fill)
         -- over a colour rule's layers (Bars\AD_ResColors.lua)
         clip:SetFrameLevel(fill:GetFrameLevel() + Bars.LADDER.fillMarks)
         clip:SetClipsChildren(true)
-        tex = clip:CreateTexture(nil, "ARTWORK")
-        entry.predClip, entry.predTex = clip, tex
+        entry.predClip = clip
     end
-    local c = R(rec, "predict", "predictColor") or { 1, 1, 1, 1 }
-    tex:SetColorTexture(c[1], c[2], c[3], R(rec, "predict", "predictAlpha") or 0.5)
-    local vertical = (R(rec, "fill", "orientation") or "HORIZONTAL") == "VERTICAL"
-    local rev = R(rec, "fill", "reverseFill") == true
-    local frac = math.min(1, cost / range)
-    local ft = shell.fillTex
-    tex:ClearAllPoints()
-    if vertical then
-        tex:SetSize(W, math.max(1, H * frac))
-        if rev then tex:SetPoint("BOTTOM", ft, "BOTTOM") else tex:SetPoint("TOP", ft, "TOP") end
-    else
-        tex:SetSize(math.max(1, W * frac), H)
-        if rev then tex:SetPoint("LEFT", ft, "LEFT") else tex:SetPoint("RIGHT", ft, "RIGHT") end
+    Bars.PredictStrip(entry, "predTex", cost, false, range, W, H,
+        R(rec, "predict", "predictColor") or { 1, 1, 1, 1 }, R(rec, "predict", "predictAlpha") or 0.5)
+    Bars.PredictStrip(entry, "gainTex", gain, true, range, W, H,
+        R(rec, "predict", "predictGainColor") or { 0.48, 0.85, 0.56, 1 }, R(rec, "predict", "predictGainAlpha") or 0.5)
+end
+
+-- A spell's gain, learned from your own casts (the game reports none): the
+-- power read as it starts, and the first rise within GAIN_WAIT after it lands
+-- (a later rise, like an Overload landing, is not its own). Only while power
+-- is plain; once learned it draws with secret power too. [power:spell] = gain.
+Bars.GAIN_WAIT = 0.5
+function Bars.Gains()
+    local St = NS.Store
+    local u = St and St.UI and St.UI()
+    if not u then
+        Bars.gainsLocal = Bars.gainsLocal or {}
+        return Bars.gainsLocal
     end
-    tex:Show()
+    u.powerGains = u.powerGains or {}
+    return u.powerGains
+end
+function Bars.GainFor(pt, spellID)
+    if not (pt and spellID) then return nil end
+    local g = Bars.Gains()[pt .. ":" .. spellID]
+    return (type(g) == "number" and g > 0) and g or nil
+end
+-- the player's power, or nil while it is secret
+function Bars.PlainPower(pt)
+    local v = UnitPower("player", pt)
+    if type(v) ~= "number" or (issecretvalue and issecretvalue(v)) then return nil end
+    return v
+end
+-- the cast landed: its powers are watched for their first rise
+function Bars.GainLanded(spellID)
+    local c = Bars.gainCast
+    if not (c and c.castID == spellID) then return end
+    Bars.gainCast = nil
+    c.untilT = GetTime() + Bars.GAIN_WAIT
+    Bars.gainWait = c
+    Bars.GainCheck()
+    -- once more a moment later, should the rise come with no power event
+    if Bars.gainWait == c and C_Timer then C_Timer.After(0.25, Bars.GainCheck) end
+end
+function Bars.GainCheck()
+    local w = Bars.gainWait
+    if not w then return end
+    if GetTime() > w.untilT then
+        Bars.gainWait = nil
+        return
+    end
+    local left = false
+    for pt, base in pairs(w.base) do
+        local now = Bars.PlainPower(pt)
+        if now and now > base then
+            Bars.Gains()[pt .. ":" .. w.castID] = now - base
+            w.base[pt] = nil
+        elseif now then
+            left = true
+        else
+            w.base[pt] = nil
+        end
+    end
+    if not left then Bars.gainWait = nil end
 end
 
 local function PredictStart(spellID)
+    local base
     ForEach("resource", function(e)
-        if R(e.rec, "predict", "predictEnabled") == true then
-            e.predCost = SpellCostFor(spellID, e.powerType) -- raw-id: the cast the game reports
-            PredictLayout(e)
+        local cost = R(e.rec, "predict", "predictEnabled") == true
+        local gain = R(e.rec, "predict", "predictGain") == true
+        if cost then e.predCost = SpellCostFor(spellID, e.powerType) end -- raw-id: the cast the game reports
+        if gain then
+            e.predGain = Bars.GainFor(e.powerType, spellID)
+            -- a spell that costs none of this power is learned as it lands
+            local pt = e.powerType
+            local now = pt and not SpellCostFor(spellID, pt) and Bars.PlainPower(pt) -- raw-id: the cast the game reports
+            if now then
+                base = base or {}
+                base[pt] = now
+            end
         end
+        if cost or gain then PredictLayout(e) end
     end)
+    Bars.gainCast = base and { castID = spellID, base = base } or nil -- raw-id: the cast the game reports
+    Bars.predSpell = spellID
 end
 
 local function PredictClear()
     ForEach("resource", function(e)
-        if e.predCost then
-            e.predCost = nil
+        if e.predCost or e.predGain then
+            e.predCost, e.predGain = nil, nil
             PredictLayout(e)
         end
     end)
@@ -3553,7 +3643,10 @@ end
 
 local function AnyPredict()
     for _, e in pairs(live) do
-        if e.kind == "resource" and R(e.rec, "predict", "predictEnabled") == true then return true end
+        if e.kind == "resource" and (R(e.rec, "predict", "predictEnabled") == true
+            or R(e.rec, "predict", "predictGain") == true) then
+            return true
+        end
     end
     return false
 end
@@ -3587,10 +3680,24 @@ function EnsurePredictEvents()
         if unit == "player" then PredictStart(spellID) end
     end)
     for _, ev in ipairs(PREDICT_END_EVENTS) do
-        SafeOn(ev, "adbarspred", function(_, unit)
-            if unit == "player" then PredictClear() end
+        SafeOn(ev, "adbarspred", function(event, unit, _, spellID)
+            if unit ~= "player" then return end
+            if event == "UNIT_SPELLCAST_SUCCEEDED" then
+                Bars.GainLanded(spellID)
+            elseif Bars.gainCast and Bars.gainCast.castID == spellID then
+                Bars.gainCast = nil
+            end
+            -- another spell's end (a key pressed mid-cast fails, an off-GCD
+            -- spell lands) leaves the cast's previews standing
+            if spellID ~= nil and Bars.predSpell ~= nil and spellID ~= Bars.predSpell then return end
+            Bars.predSpell = nil
+            PredictClear()
         end)
     end
+    -- a landed cast's gain arrives with the power
+    SafeOn("UNIT_POWER_UPDATE", "adbarsgain", function(_, unit)
+        if unit == "player" and Bars.gainWait then Bars.GainCheck() end
+    end)
     if NS.IsForever then
         SafeOn("CURRENT_SPELL_CAST_CHANGED", "adbarspred", PredictQueue)
         PredictQueue()
@@ -3602,6 +3709,7 @@ local function ReleasePredictEvents()
     predictArmed = false
     Events.Off("UNIT_SPELLCAST_START", "adbarspred")
     for _, ev in ipairs(PREDICT_END_EVENTS) do Events.Off(ev, "adbarspred") end
+    Events.Off("UNIT_POWER_UPDATE", "adbarsgain")
     Events.Off("CURRENT_SPELL_CAST_CHANGED", "adbarspred")
 end
 

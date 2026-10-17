@@ -636,7 +636,7 @@ function IA.MapCooldownIcon(eff, kind, ctx)
     end
 
     -- Duration Override (12.1): its aura source lays that aura (by spell id, on you, any caster)
-    -- over the icon while it is up: the icon's own art, the game's default cooldown swipe and
+    -- over the icon while it is up: the aura's own art, the game's default cooldown swipe and
     -- countdown. That is Arc Auras' aura on this icon; the planner puts it on the driver
     -- (ctx.overlayAura). Its totem and fixed-time sources are the overlay from the totem or a set
     -- duration on cast, in the Aura Active look (IA.MapPhaseOverride). An item's or a trinket's use
@@ -648,8 +648,8 @@ function IA.MapCooldownIcon(eff, kind, ctx)
     if doPhase then
         ctx.overlayAura = doPhase
     elseif doAura then
+        -- the icon turns into the aura while it is up (the default picture)
         ctx.overlayAura = { on = true, spellID = doAura, auraType = "buff", unit = "player" }
-        Put(o, "auraActive", "overlayArt", "spell")
         Put(o, "auraActive", "overlayDesatInactive", false)
         Put(o, "auraActive", "activeAlpha", 1)
         Put(o, "auraActive", "activeGlow", false)
@@ -674,7 +674,7 @@ function IA.MapCooldownIcon(eff, kind, ctx)
     elseif phased and ctx.hasAura ~= false and doAura then
         if ctx.hasAura == true then Note(ctx, "a Duration Override aura over the spell's own aura phase") end
     elseif phased and ctx.hasAura ~= false then
-        Put(o, "auraActive", "overlayArt", "spell")
+        -- the aura's own picture while it is up, as the Cooldown Manager shows it
         Put(o, "auraActive", "overlayDesatInactive", aa.desaturateWhenInactive == true)
         Put(o, "auraActive", "activeAlpha", aa.activeAlphaEnabled == true and (tonumber(aa.activeAlpha) or 1) or 1)
         IA.MapGlow(o, { sec = "auraActive", prefix = "activeGlow", aura = true, combat = true },
@@ -1012,7 +1012,6 @@ function IA.MapArcCooldownIcon(eff, kind, ctx)
     if dov.enabled == true and (isSpell or isItem) then
         if dov.mode == "aura" and tonumber(dov.auraSpellID) then
             ctx.overlayAura = { on = true, spellID = tonumber(dov.auraSpellID), auraType = "buff", unit = "player" }
-            Put(o, "auraActive", "overlayArt", "spell")
             Put(o, "auraActive", "overlayDesatInactive", false)
             Put(o, "auraActive", "activeAlpha", 1)
             Put(o, "auraActive", "activeGlow", false)

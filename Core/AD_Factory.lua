@@ -389,6 +389,22 @@ local function BuildFrame(rec)
         hooksecurefunc(f.cooldown, "Clear", function() Pct.Plain(f, 0, 0) end)
     end
 
+    -- The icon's glow lanes hang off this face at the icon's level: an aura
+    -- over the cooldown carries it, glows and all, onto its stage. The glow
+    -- library parks its frames on their parent, so they never move alone.
+    local face = CreateFrame("Frame", nil, f)
+    face:SetAllPoints()
+    face:EnableMouse(false)
+    face:SetFrameLevel(f:GetFrameLevel())
+    -- the library's button glow reads the cooldown under it
+    face.cooldown = f.cooldown
+    f._adGlowFace = face
+    if hooksecurefunc then
+        hooksecurefunc(f, "SetFrameLevel", function(_, l)
+            if type(l) == "number" and not (issecretvalue and issecretvalue(l)) then face:SetFrameLevel(l) end
+        end)
+    end
+
     -- Texts live on a child frame so they draw above the swipe.
     f.textHost = CreateFrame("Frame", nil, f)
     f.textHost:SetAllPoints()
@@ -1610,7 +1626,7 @@ function Factory.RangeShadow(f, rec, out, va)
         return
     end
     if not t then
-        t = f:CreateTexture(nil, "OVERLAY", nil, 1)
+        t = f.icon:GetParent():CreateTexture(nil, "OVERLAY", nil, 1)
         t:SetAtlas(OOR_ATLAS)
         f._adRangeShadow = t
     end
@@ -2198,8 +2214,10 @@ function Factory.ApplyStyle(f, rec)
     local hostLvl = f:GetFrameLevel()
     local plainLvl = not (issecretvalue and issecretvalue(hostLvl)) and type(hostLvl) == "number"
     if plainLvl then
-        f.textHost:SetFrameLevel(hostLvl + Factory.TEXT_LEVEL + Factory.Rise(rec))
+        f.textHost:SetFrameLevel(hostLvl + Factory.TEXT_LEVEL + Factory.TextRise(rec))
         if rec.kind ~= "aura" then f.cooldown:SetFrameLevel(hostLvl + 2) end
+        -- the glows count their levels from the icon's
+        if f._adGlowFace then f._adGlowFace:SetFrameLevel(hostLvl) end
     end
     -- The countdown number moves onto a child of its swipe one under the text
     -- host: the swipe keeps driving it and hides it with itself, and it draws
@@ -2670,6 +2688,80 @@ function Factory.HideMissingLook(f)
     if f._adBorderHost then f._adBorderHost:SetAlpha(0) end
     if f._adMissClip then f._adMissClip:SetAlpha(0) end
     if f._adMissGlow then f._adMissGlow:SetAlpha(0) end
+end
+
+-- A cooldown icon's look onto its aura's stage, each piece keeping its level,
+-- so the aura's button erases it while up; nil brings it home. Its texts stay
+-- on the icon, over both.
+function Factory.StageCooldownLook(f, stage)
+    local p = stage or f
+    local from = f.icon:GetParent()
+    f._adStage = stage
+    local function Move(r)
+        if not r or r:GetParent() == p then return end
+        local lvl = r.GetFrameLevel and r:GetFrameLevel()
+        r:SetParent(p)
+        if type(lvl) == "number" and not (issecretvalue and issecretvalue(lvl)) then r:SetFrameLevel(lvl) end
+    end
+    -- the art with its masks, and the skin's pictures kept on the art's frame
+    Move(f.icon)
+    Move(f.icon._adShapeM)
+    Move(f.icon._adSkinM)
+    if from ~= p then
+        for _, k in ipairs(SKIN_BACK_KEYS) do
+            local t = from[k]
+            if t then
+                Move(t)
+                p[k], from[k] = t, nil
+            end
+        end
+    end
+    Move(f._adShadow)
+    Move(f._adRangeShadow)
+    Move(f._adBorderHost)
+    Move(f._adSkinTop)
+    Move(f.cooldown)
+    Move(f._adWarnGate)
+    -- the glow face, every lane on it; drawn in the stage they blend (GlowBlend)
+    local face = f._adGlowFace
+    if face then
+        Move(face)
+        face._adFlat = stage and true or nil
+        for k, v in pairs(face) do
+            if type(k) == "string" and k:sub(1, 10) == "_adTexGlow" and type(v) == "table" then
+                v._adFlat = face._adFlat
+            end
+        end
+    end
+end
+
+-- The editor preview hides the cooldown's look itself while its stand-in erases it.
+function Factory.HideCooldownLook(f)
+    f.icon:SetAlpha(0)
+    if f._adShadow then f._adShadow:SetAlpha(0) end
+    if f._adBorderHost then f._adBorderHost:SetAlpha(0) end
+    DimSkin(f, 0)
+end
+
+-- A cooldown icon's look that reaches past its art, which the aura's art and
+-- plate alone cannot hide: a glow or the out-of-range shadow.
+local REACH_FIELDS = { "readyGlow", "cooldownGlow", "procGlow", "usableGlow", "warnGlow", "toggleGlow",
+    "assistGlow", "rangeGlow", "rechargeGlow", "idleGlow", "rangeShadow" }
+function Factory.CooldownLookReaches(rec)
+    local S = NS.Schema
+    local sec = S and S.icon and S.icon.states
+    if not (sec and rec) then return true end
+    for _, k in ipairs(REACH_FIELDS) do
+        local def = sec.fields[k]
+        if def and S.Applies(def, sec, rec.kind) and Store.Resolve(rec, "states", k) == true then return true end
+    end
+    return false
+end
+
+-- The texts' rise: Rise, and a staged aura's buttons under them (DriverAura.TextLift).
+function Factory.TextRise(rec)
+    local D = NS.DriverAura
+    return Factory.Rise(rec) + ((D and D.TextLift and D.TextLift(rec)) or 0)
 end
 
 -- The Active look's alpha, with the editing floor the Missing look gets too
@@ -4713,9 +4805,11 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         -- onCooldown here means the aura is missing: a whole-icon dim with its
         -- own text carve-out, as aura icons have no States tab.
         local a, desat = 1, false
-        local LM = OL and onCooldown and OL.Active(rec, "missing") or nil
+        -- not learned yet: nothing while the aura is missing (Store.AuraDormant)
+        local dormant = onCooldown and Store.AuraDormant ~= nil and Store.AuraDormant(rec)
+        local LM = (OL and onCooldown and not dormant) and OL.Active(rec, "missing") or nil
         if onCooldown then
-            a = (R("auraMissing", "showWhileMissing") == false) and 0
+            a = (dormant or R("auraMissing", "showWhileMissing") == false) and 0
                 or (R("auraMissing", "missingAlpha") or 1)
             desat = R("auraMissing", "missingDesaturate") ~= false
             if LM then
@@ -5074,8 +5168,14 @@ local function RestoreFadeSteps(grp)
     end
 end
 
+-- The frame a lane's glows hang off: an icon's glow face, any other frame itself.
+local function GlowTarget(f)
+    return f._adGlowFace or f
+end
+
 local function StopLane(f, key)
-    local tg = f["_adTexGlow" .. key]
+    local r = GlowTarget(f)
+    local tg = r["_adTexGlow" .. key]
     if tg then
         HideGlowParts(tg, nil)
         tg:Hide()
@@ -5084,13 +5184,13 @@ local function StopLane(f, key)
     if not LCG then return end
     -- a sized button or proc glow goes back to the library's shared pool unscaled
     for _, fld in ipairs({ "_ButtonGlow", "_ProcGlow" }) do
-        local g = f[fld .. key]
+        local g = r[fld .. key]
         if g and g.SetScale then g:SetScale(1) end
     end
     -- The button glow's fade: the lane's own length (nil: the library's
     -- 0.4s). An icon its state just hid vanishes at once, so its glow goes
     -- with it whatever the length.
-    local bg = f["_ButtonGlow" .. key]
+    local bg = r["_ButtonGlow" .. key]
     local out = bg and bg.animOut
     local fade = bg and bg._adFade
     local cut = out ~= nil and ((fade ~= nil and fade <= 0) or Factory.GlowHidden(f))
@@ -5105,9 +5205,9 @@ local function StopLane(f, key)
             SetFadeSteps(bg, fade / 2)
         end
     end
-    LCG.PixelGlow_Stop(f, key)
-    LCG.AutoCastGlow_Stop(f, key)
-    LCG.ButtonGlow_Stop(f, key)
+    LCG.PixelGlow_Stop(r, key)
+    LCG.AutoCastGlow_Stop(r, key)
+    LCG.ButtonGlow_Stop(r, key)
     if out then
         -- hiding the glow frame ends its fade and hands it back to the
         -- library's pool (its OnHide)
@@ -5115,15 +5215,16 @@ local function StopLane(f, key)
         -- released without a fade (a hidden icon, mid fade-in): steps back now
         if bg._adFadeSet and not out:IsPlaying() then RestoreFadeSteps(out) end
     end
-    if LCG.ProcGlow_Stop then LCG.ProcGlow_Stop(f, key) end
+    if LCG.ProcGlow_Stop then LCG.ProcGlow_Stop(r, key) end
 end
 
 -- the frame the library parked on the icon for this key, so strata can be
 -- applied after the start (it takes a level but never a strata)
 local GLOW_FIELDS = { "_PixelGlow", "_AutoCastGlow", "_ButtonGlow", "_ProcGlow" }
 local function GlowFrameFor(f, key)
+    local r = GlowTarget(f)
     for _, pre in ipairs(GLOW_FIELDS) do
-        local g = f[pre .. key]
+        local g = r[pre .. key]
         if g then return g end
     end
 end
@@ -5178,14 +5279,15 @@ end
 -- per-lane host at the lane's level and strata; the icon is ours, so groups
 -- just play.
 local function TexLaneStart(f, key, gtype, p)
-    local host = f["_adTexGlow" .. key]
+    local r = GlowTarget(f)
+    local host = r["_adTexGlow" .. key]
     if not host then
-        host = CreateFrame("Frame", nil, f)
+        host = CreateFrame("Frame", nil, r)
         host:EnableMouse(false)
-        -- a layer drawn in a stage (GlowBlend)
-        host._adFlat = f._adFlat
-        f["_adTexGlow" .. key] = host
+        r["_adTexGlow" .. key] = host
     end
+    -- a layer drawn in a stage (GlowBlend); the face rides one while staged
+    host._adFlat = r._adFlat
     local w, h = f:GetSize()
     if type(w) ~= "number" or (issecretvalue and issecretvalue(w)) or w <= 0 then w = 36 end
     if type(h) ~= "number" or (issecretvalue and issecretvalue(h)) or h <= 0 then h = w end
@@ -5278,6 +5380,7 @@ local function StartLane(f, key, gtype, p)
     end
     local LCG = GetLCG()
     if not LCG then return end
+    local r = GlowTarget(f)
     local lvl = p.level or GLOW_LEVEL
     -- the game's own colour: no colour handed in, so the gold art stays untinted
     local color = p.color
@@ -5285,22 +5388,22 @@ local function StartLane(f, key, gtype, p)
     if gtype == "pixel" then
         -- the dash length: 0 = the library's automatic length
         local len = (type(p.length) == "number" and p.length > 0) and p.length or nil
-        LCG.PixelGlow_Start(f, p.color, p.lines, p.speed, len, p.thickness,
+        LCG.PixelGlow_Start(r, p.color, p.lines, p.speed, len, p.thickness,
             p.xo, p.yo, p.border == true, key, lvl)
     elseif gtype == "autocast" then
-        LCG.AutoCastGlow_Start(f, p.color, p.particles, p.speed, p.scale,
+        LCG.AutoCastGlow_Start(r, p.color, p.particles, p.speed, p.scale,
             p.xo, p.yo, key, lvl)
     elseif (gtype == "proc" or gtype == "procloop") and LCG.ProcGlow_Start then
         -- procloop = the proc glow without its opening burst
-        LCG.ProcGlow_Start(f, { color = color, key = key,
+        LCG.ProcGlow_Start(r, { color = color, key = key,
             frameLevel = lvl, xOffset = p.xo, yOffset = p.yo,
             startAnim = gtype == "proc", duration = GlowLoopTime(p.speed, p.speedRef) })
     else
-        LCG.ButtonGlow_Start(f, color, p.speed, lvl, key, p.xo, p.yo)
+        LCG.ButtonGlow_Start(r, color, p.speed, lvl, key, p.xo, p.yo)
         gtype = "button"
     end
     ApplyStrata(f, key, p.strata)
-    local g = f[LCG_FIELD[gtype] .. key]
+    local g = r[LCG_FIELD[gtype] .. key]
     -- its fade for StopLane, set on every start: the frame is pooled (nil:
     -- a caller without the setting keeps the library's own fade)
     if g and gtype == "button" then g._adFade = p.fade end

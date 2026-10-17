@@ -1,5 +1,22 @@
 # Arc Auras
 
+## 3.0.7
+
+Cooldown icons that turn into their aura, a Gain Preview for resource bars, and Never load.
+
+### New Features
+
+- **Cooldown icons turn into their aura** - A spell, item or trinket icon set to show an aura now becomes that aura while it is up: the aura's picture and timer, with nothing of the cooldown underneath. Charges, keybind and your texts stay on top. Set its opacity while the aura is up to 0 to keep the cooldown and show just a glow.
+- **Gain Preview** - A resource bar can show what a cast will add while you cast it, like Maelstrom from Lightning Bolt; it learns each spell from your first cast.
+- **Never load** - Load Conditions starts with a Never load switch: keep an icon, bar, group or layout without loading it anywhere, until you untick it.
+
+### Bug Fixes
+
+- **Buffs on icons that load once learned** - An aura icon set to load once learned now always shows when its buff is up, so set and trinket buffs no longer go missing for a whole fight.
+- **Group lock** - Lock in place on a group now holds only the group itself; you can still rearrange, add and remove its icons by dragging.
+- **Group icon row** - A group with many icons wraps its icon row onto more lines, so the + button never disappears.
+- **Cost Preview** - Pressing another key mid-cast no longer hides the cost.
+
 ## 3.0.6
 
 Totems and guardians: one icon each when several are out, and ones that land late.

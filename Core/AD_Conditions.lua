@@ -1466,6 +1466,12 @@ end
 
 -- Init, called from the layout engine's Init
 
+-- What the Cooldown Manager re-reads its learned answers on (its data provider's
+-- events), and how long after one the answers are read a second time.
+Conditions.KNOWN_EVENTS = { "SPELLS_CHANGED", "PLAYER_EQUIPMENT_CHANGED", "TRAIT_CONFIG_UPDATED",
+    "PLAYER_PVP_TALENT_UPDATE", "COOLDOWN_VIEWER_TABLE_HOTFIXED" }
+Conditions.KNOWN_RECHECK = 1
+
 -- The bare IsEncounterInProgress is a deprecated alias on retail.
 local function EncounterNow()
     local IE = C_InstanceEncounter
@@ -1533,10 +1539,22 @@ function Conditions.Init()
         end)
     end
     -- A spell learned (or unlearned): "Only load once learned" is a "who"
-    -- gate too, so a changed answer is a full load pass.
-    if EventValid("SPELLS_CHANGED") and Store.KnownChanged then
-        Events.On("SPELLS_CHANGED", "adcond_base", function()
+    -- gate too, so a changed answer is a full load pass. The Cooldown Manager
+    -- re-reads what it counts as learned on gear (a set bonus, a trinket),
+    -- talent and data changes as well, a beat after the event: asked again then.
+    if Store.KnownChanged then
+        local again = false
+        local function Recheck()
             if Store.KnownChanged() then Store.Dirty("load") end
-        end)
+            if again or not (C_Timer and C_Timer.After) then return end
+            again = true
+            C_Timer.After(Conditions.KNOWN_RECHECK, function()
+                again = false
+                if Store.KnownChanged() then Store.Dirty("load") end
+            end)
+        end
+        for _, e in ipairs(Conditions.KNOWN_EVENTS) do
+            if EventValid(e) then Events.On(e, "adcond_known", Recheck) end
+        end
     end
 end

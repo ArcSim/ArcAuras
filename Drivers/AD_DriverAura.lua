@@ -60,6 +60,8 @@ end
 -- True when a visible missing look sits under the button; raw settings, so no
 -- preview alpha floor. An own Missing look that shows it counts, whatever holds now.
 function Driver.GhostShown(rec)
+    -- not learned yet: no missing look at all (Store.AuraDormant)
+    if rec ~= nil and Store.AuraDormant and Store.AuraDormant(rec) then return false end
     if rec ~= nil and NS.OwnLooks and NS.OwnLooks.ShowsMissing(rec) then return true end
     return rec ~= nil and Store.Resolve(rec, "auraMissing", "showWhileMissing") ~= false
         and (Store.Resolve(rec, "auraMissing", "missingAlpha") or 1) > 0
@@ -69,7 +71,16 @@ function Driver.EraserAvailable() return FB_OK and IS_121 end
 
 -- True when the icon needs its stage: only such an icon pays for one.
 function Driver.NeedsEraser(rec)
-    if not (FB_OK and IS_121 and rec and rec.kind == "aura") then return false end
+    if not (FB_OK and IS_121 and rec) then return false end
+    if rec.kind ~= "aura" then
+        -- a cooldown icon's aura erases the cooldown's look while its own shows
+        -- (none at Active 0: a glow-only aura keeps the cooldown), where the
+        -- plate alone would not hide it: a look past the art, or a dimmed aura
+        if not Driver.ShapeFor(rec) then return false end
+        local aA = Store.Resolve(rec, "auraActive", "activeAlpha") or 1
+        if aA <= 0 then return false end
+        return aA < 1 or Factory.CooldownLookReaches(rec)
+    end
     if Driver.TimeGateFrac(rec) then return true end
     if not Driver.GhostShown(rec) then return false end
     if Store.Resolve(rec, "appearance", "forceHideIcon") == true then return true end
@@ -130,6 +141,12 @@ Driver.LaneOf = LaneOf
 -- so it covers it whenever both are up; presence is never read.
 local RISE = 11
 Driver.RISE = RISE
+
+-- A cooldown icon's look rides its aura's stage: the aura's buttons sit over
+-- the highest level a cooldown glow can take (30, plus RISE), so their eraser
+-- reaches every glow under them.
+local STAGE_LIFT = 37
+Driver.STAGE_LIFT = STAGE_LIFT
 
 local function TwoUnits(d)
     return type(d) == "table" and d.unit == "player" and d.unit2 == "target"
@@ -660,6 +677,24 @@ end
 -- Exported: the editor preview's stand-in button takes the same ladder.
 Driver.AnchorButton = AnchorButton
 
+-- A button's lift on its holder: a cooldown icon's aura one up, and in its
+-- stage over every cooldown glow too.
+local function SubLift(e, sub)
+    local lift = e.lift or 0
+    if lift > 0 and sub.inStage then lift = lift + STAGE_LIFT end
+    return lift + (sub.rise or 0)
+end
+
+-- How far a holder's texts go up for a staged aura's buttons (Factory.TextRise).
+function Driver.TextLift(rec)
+    local e = rec and entries[rec.id]
+    if not (e and rec.kind ~= "aura" and e.stage and not e.off) then return 0 end
+    for _, sub in ipairs(e.subs) do
+        if sub.inStage then return STAGE_LIFT end
+    end
+    return 0
+end
+
 -- The stage
 -- Containers are born in the stage: the game will not move one while auras are secret.
 
@@ -672,7 +707,7 @@ end
 
 local function EnsureStage(entry, rec)
     if entry.stage then return entry.stage end
-    if not (FB_OK and rec and rec.kind == "aura") then return nil end
+    if not (FB_OK and rec and (rec.kind == "aura" or ShapeFor(rec))) then return nil end
     local st = CreateFrame("Frame", nil, UIParent)
     st:SetSize(1, 1)
     st:SetPoint("TOP", UIParent, "TOP", 0, -80)
@@ -698,17 +733,32 @@ local function AnchorStage(entry)
     return true
 end
 
--- Attached, the missing look rides the stage; detached, it goes home for the editor preview.
+-- Attached, the missing look rides the stage; detached, it goes home for the
+-- editor preview. A cooldown icon's look does the same under its aura.
 local function StageLook(entry, on)
     local f = entry.holder
-    if not (f and entry.stage) then return end
-    if on and not entry.staged and entry.rec and entry.rec.kind == "aura" then
-        Factory.StageMissingLook(f, entry.stage)
+    if not (f and entry.stage and entry.rec) then return end
+    local aura = entry.rec.kind == "aura"
+    local move = aura and Factory.StageMissingLook or Factory.StageCooldownLook
+    -- a cooldown's move runs again: a piece made since (a shadow switched on) follows
+    if on and (not entry.staged or not aura) then
+        move(f, entry.stage)
         entry.staged = true
     elseif not on and entry.staged then
-        Factory.StageMissingLook(f, nil)
+        move(f, nil)
         entry.staged = false
     end
+end
+
+-- The stage keeps its holder's strata and level when they change outside a
+-- restyle (a raise, a drag, a new layer); locked in combat, the next restyle does it.
+function Driver.FollowHolder(f)
+    local e = f and f._adRecId and entries[f._adRecId]
+    if not (e and e.stage and e.holder == f and e.staged) or StageLocked(e.stage) then return end
+    local s, l = f:GetFrameStrata(), f:GetFrameLevel()
+    if issecretvalue and (issecretvalue(s) or issecretvalue(l)) then return end
+    if e.stage:GetFrameStrata() ~= s then e.stage:SetFrameStrata(s) end
+    if e.stage:GetFrameLevel() ~= l then e.stage:SetFrameLevel(l) end
 end
 
 -- On before any button needs it, off only after every button dropped it (DropBuffer).
@@ -817,7 +867,7 @@ local function EnsureSlots(iconId, rec, startParked)
 
     local d = ShapeFor(rec) or {}
     -- Buttons are set at birth: in an instance they are never restyled.
-    local stage = (rec.kind == "aura") and EnsureStage(entry, rec) or nil
+    local stage = EnsureStage(entry, rec)
     if stage then BufferFor(entry, Driver.NeedsEraser(rec)) end
     for _, lane in ipairs(LanesFor(d)) do
         local c = CreateIconContainer(lane.unit, stage)
@@ -842,7 +892,7 @@ local function EnsureSlots(iconId, rec, startParked)
                     local e = entries[iconId]
                     if not e then return end
                     sub.frame = b
-                    if e.holder then AnchorButton(b, e.holder, (e.lift or 0) + (sub.rise or 0)) end
+                    if e.holder then AnchorButton(b, e.holder, SubLift(e, sub)) end
                     -- Style the button as it is created; StyleAuraButton (shared with the group
                     -- driver) draws every option on it.
                     local r = e.rec
@@ -1004,7 +1054,8 @@ local function RestyleEntry(entry)
     local locked = false
     if entry.stage then
         if AnchorStage(entry) then
-            StageLook(entry, true)
+            -- a switched-off overlay leaves the cooldown's look home
+            StageLook(entry, not entry.off)
         else
             entry.stylePending = true
             locked = true
@@ -1024,7 +1075,7 @@ local function RestyleEntry(entry)
         if b then
             if IsAccessible(b) then
                 if not sub.inStage then FollowScale(sub.container, entry.holder) end
-                AnchorButton(b, entry.holder, (entry.lift or 0) + (sub.rise or 0))
+                AnchorButton(b, entry.holder, SubLift(entry, sub))
                 Factory.StyleAuraButton(b, entry.rec, px, opts)
             else
                 entry.stylePending = true
@@ -1059,6 +1110,19 @@ local function HookHolder(f)
         local e = entries[self._adRecId]
         if e and e.stage and e.holder == self and not e.off then SyncEntryAlpha(e) end
     end)
+    hooksecurefunc(f, "SetFrameStrata", Driver.FollowHolder)
+    hooksecurefunc(f, "SetFrameLevel", Driver.FollowHolder)
+end
+
+-- A strata set on a holder's parent reaches the holder without its setter.
+function Driver.FollowUnder(frame)
+    if not frame then return end
+    for _, e in pairs(entries) do
+        local h = e.staged and e.holder
+        local p = h
+        while p and p ~= frame do p = p:GetParent() end
+        if p then Driver.FollowHolder(h) end
+    end
 end
 
 -- Driver API, reached through NS.DriverCooldown's Attach and Detach
@@ -1107,7 +1171,7 @@ local function AttachEntry(rec, f, d)
     local fresh = #entry.subs == 0
     if fresh then EnsureSlots(rec.id, rec, false) end
     -- Our own frames, so this runs in combat too.
-    if entry.stage and rec.kind == "aura" then
+    if entry.stage then
         HookHolder(f)
         if AnchorStage(entry) then
             StageLook(entry, true)
@@ -1153,10 +1217,13 @@ function Driver.AttachOverlay(rec, f)
     end
     local entry = entries[rec.id]
     if entry and #entry.subs > 0 and not entry.off then
+        -- the cooldown's look goes home first, from the holder it rode
+        StageLook(entry, false)
         entry.rec, entry.holder, entry.off = rec, f, true
         SetParked(entry, true)
         for _, sub in ipairs(entry.subs) do sub.container:SetAlpha(0) end
         for _, g in ipairs(entry.glows or {}) do g.container:SetAlpha(0) end
+        if entry.stage then entry.stage:SetAlpha(0) end
     end
 end
 

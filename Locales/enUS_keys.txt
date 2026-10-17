@@ -1470,7 +1470,6 @@ Divider color
 Divine Spirit
 Doesn't load until your character knows the spell above (any rank), and loads by itself the moment you learn it.
 Doesn't load until your character knows this spell (any rank), and loads by itself the moment you learn it.
-Doesn't load while the Cooldown Manager lists this aura as not learned (a talent you don't have).
 Don't ask again
 Done
 Done editing
@@ -1579,15 +1578,15 @@ Either choice
 Elemental Blast
 Elemental Blast (
 Emity's Discord
-Emity's latest version: a Defences row, a row for trinkets and potions, poison reminders for both hands, gradient bars, and long cooldowns shown only while on cooldown.
-Emity's latest version: a Defences row, a row for trinkets, a potion, your weapon enchant and stance, a new DPS rotation row, gradient bars, and long cooldowns shown only while on cooldown.
-Emity's latest version: a Defences row, a row for trinkets, potions and your weapon enchant, more buffs, and long cooldowns shown only while on cooldown.
-Emity's latest version: a Defences row, a row for trinkets, potions, mana gems, your weapon enchant and armor, gradient bars, and long cooldowns shown only while on cooldown.
-Emity's latest version: a Defences row, a row for trinkets, potions, your weapon enchant and aspect, a new rotation row, gradient bars, and long cooldowns shown only while on cooldown.
-Emity's latest version: a Defences row, a row for trinkets, potions, your weapon enchant and aura, Turn Undead, gradient bars, and long cooldowns shown only while on cooldown.
-Emity's latest version: a Defences row, a row for trinkets, potions, your weapon enchant and form, more target debuffs, and long cooldowns shown only while on cooldown.
-Emity's latest version: a Defences row, a row for trinkets, potions, your weapon enchant and form, the racial priest spells, gradient bars, and long cooldowns shown only while on cooldown.
-Emity's latest version: a Defences row, a row for trinkets, potions, your weapon enchant and soul shards, more debuffs, gradient bars, and long cooldowns shown only while on cooldown.
+Emity's latest version: Charge, Hamstring, Piercing Howl, taunts and more on your target, your off-hand enchant, a rage bar that changes color while an ability is queued, and anchors for more player frames.
+Emity's latest version: Dark Inspiration, anchors for more player frames, and stack counts from 1.
+Emity's latest version: Incinerate, Conflagrate and Soul Fire, Demon Skin in Missing Buffs, anchors for more player frames, and stack counts from 1.
+Emity's latest version: Maelstrom Weapon and mana bars for Enhancement, Elemental Mastery, anchors for more player frames, and stack counts from 1.
+Emity's latest version: Reckoning, the new Vindication, Blessing of Freedom, anchors for more player frames, and stack counts from 1.
+Emity's latest version: Scorpid Sting, Scatter Shot and Expose Prey on your target, both hawks, your off-hand enchant, anchors for more player frames, and stack counts from 1.
+Emity's latest version: a Thousand Cuts bar for Subtlety, anchors for more player frames, and stack counts from 1.
+Emity's latest version: an Eclipse bar for Balance, a rage bar that changes color while an ability is queued, anchors for more player frames, and stack counts from 1.
+Emity's latest version: bars for Arcane Blast, Heating Up and Fingers of Frost, Arcane Wrath, anchors for more player frames, and stack counts from 1.
 Empties
 Empty
 Empty Layout
@@ -1821,6 +1820,9 @@ GCD
 GCD & Wand
 GCD swipe color
 GCD tracker mode
+Gain Preview
+Gain color
+Gain opacity
 Game default
 Game default puts your own auras first. Time left puts the aura closest to running out first; auras that never end come last.
 Game's own color
@@ -2285,6 +2287,7 @@ Keep the swipe bright while dimmed
 Keep this texture under Favorites.
 Keep typing: at least 3 letters of the name
 Keeps + and the eye on every sidebar row. Off: they show when the row is under the mouse, so names get more room.
+Keeps it without loading it anywhere, until you untick this.
 Key to drop it
 Key to open it
 Keybind
@@ -2324,6 +2327,7 @@ Layout looks
 Layout scale
 Layouts
 Layouts for %d classes
+Learned from your own casts: the first cast of a spell teaches it. Shows while you cast.
 Leave combat first
 Leave combat to read your Cooldown Manager.
 Leaves out what does not load on this character. Those items stay listed, grayed, under each layout's NOT LOADED.
@@ -2356,6 +2360,7 @@ Lines up with %s
 Lists every item the update changes, adds or drops, with a Keep mine tick on each changed one.
 Lit while an enchant is on the weapon: an imbue, a poison, an oil or a stone.
 Live rows show buffs on you or your pet and debuffs on your target.
+Load
 Load Conditions
 Load When
 Load conditions: %s
@@ -2568,6 +2573,7 @@ Needs the Masque addon.
 Never
 Never Load When
 Never brighter than Ready's opacity.
+Never load
 New
 New Layout
 New skin
@@ -3619,6 +3625,7 @@ Show under this many seconds left
 Show unloaded items while editing
 Show violations text
 Show violations text on cooldown
+Show what a cast will add
 Show when
 Show while
 Show while missing
@@ -4396,6 +4403,7 @@ Unlock
 Untick all
 Untick spells without a cooldown - there is no reliable way to check that here.
 Untick to keep the Arc Auras look.
+Until the Cooldown Manager lists this aura as learned, it shows only while the aura is up.
 Unusable alpha
 Unusable tint
 Unusable tint color

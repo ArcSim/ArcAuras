@@ -908,8 +908,8 @@ local function EnsureGroupFrame(rec)
     return f
 end
 
--- Dragged on screen only while editing, never under a lock (on the record,
--- its group or its layout).
+-- Dragged on screen only while editing, never under a lock (on the record or
+-- its layout; a group's lock leaves its icons free).
 local function CanMove(rec)
     return editMode and not Store.Locked(rec)
 end
@@ -1252,8 +1252,9 @@ local function FindDropGroup(cx, cy, iconId)
     local rec = Store.Get(iconId)
     for gid, gf in pairs(groupFrames) do
         local grec = Store.Get(gid)
-        -- a locked group takes no new icon from the screen
-        if grec and gf:IsShown() and not Store.Locked(grec)
+        -- a locked layout's group takes no icon from the screen; a group's own
+        -- lock holds only its spot
+        if grec and gf:IsShown() and not Store.LayoutLocked(grec)
             and not (rec and not Store.GroupTakes(grec, rec.kind)) then
             local l, r, t, b = gf:GetLeft(), gf:GetRight(), gf:GetTop(), gf:GetBottom()
             local gx, gy = InGroupUnits(gf, cx, cy, iconId)
@@ -1954,9 +1955,15 @@ local function PlaceGroup(group, container, flowMode)
     -- stays empty and the release loop below frees every holder.
     local shown = {}
     if not flowMode then
+        -- an aura not learned yet (Store.AuraDormant) comes last, so a learned
+        -- icon sharing its cell keeps the cell
+        local later = {}
         for _, rec in ipairs(icons) do
-            if ShowsRec(rec) then shown[#shown + 1] = rec end
+            if ShowsRec(rec) then
+                if Store.AuraDormant and Store.AuraDormant(rec) then later[#later + 1] = rec else shown[#shown + 1] = rec end
+            end
         end
+        for _, rec in ipairs(later) do shown[#shown + 1] = rec end
     end
 
     local R = function(field) return Store.Resolve(group, "arrangement", field) end

@@ -1161,14 +1161,14 @@ function Options.RefreshReminderPane(group)
         end
     end
     for _, b in ipairs(kit.stripPool) do b:Hide() end
+    local shown = {}
     for i, r in ipairs(list) do
         local b = RP.pool[i]
         if not b then
             b = kit.IconButton(kit.strip, 32)
             RP.pool[i] = b
         end
-        b:ClearAllPoints()
-        b:SetPoint("LEFT", 8 + (i - 1) * 37, 0)
+        shown[i] = b
         b.tex:SetTexture(NS.Factory.GetTexture(r))
         local icon = r.type == "icon"
         b:SetSelected((icon and ui.grpMode == "ico" and ui.selIconId == r.id)
@@ -1180,8 +1180,7 @@ function Options.RefreshReminderPane(group)
         b:Show()
     end
     for i = #list + 1, #RP.pool do RP.pool[i]:Hide() end
-    kit.strip.add:ClearAllPoints()
-    kit.strip.add:SetPoint("LEFT", 8 + #list * 37, 0)
+    Options.FlowStrip(kit.strip, shown, kit.strip.add)
     local cur = RP.Current(group)
     -- the name is the player's: it fills the line, never goes to the translator
     local remTab = cur and Tr("Reminder: %s"):format(cur.name or "?") or Tr("Reminder: none")
@@ -1199,18 +1198,19 @@ function Options.RefreshReminderPane(group)
     -- an aura reminder edits in the icon editor, under its preview, as in any group
     local iconPage = kit.iconPage
     iconPage:SetShown(ico)
-    local prevH = kit.AttachPreview(kit.pane, -116, ico)
+    -- under the switch, which hangs off the strip however many rows it wraps to
+    local prevH = kit.AttachPreview(kit.pane, -4, ico, kit.switch)
     if ico then
         iconPage:SetParent(kit.pane)
         iconPage:ClearAllPoints()
-        iconPage:SetPoint("TOPLEFT", 0, -116 - (prevH or 0))
+        iconPage:SetPoint("TOPLEFT", kit.switch, "BOTTOMLEFT", 0, -4 - (prevH or 0))
         iconPage:SetPoint("BOTTOMRIGHT", 0, 0)
     end
     kit.groupPage:SetShown(not (rem or ico))
     if rem and not RP.page then RP.Build(kit) end
     if RP.page then
         RP.page:ClearAllPoints()
-        RP.page:SetPoint("TOPLEFT", 0, -116)
+        RP.page:SetPoint("TOPLEFT", kit.switch, "BOTTOMLEFT", 0, -4)
         RP.page:SetPoint("BOTTOMRIGHT", 0, 0)
         RP.page:SetShown(rem)
     end

@@ -13,6 +13,30 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.0.7",
+        intro = "Cooldown icons that turn into their aura, a Gain Preview for resource bars, and Never load.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Cooldown icons turn into their aura",
+                    desc = "A spell, item or trinket icon set to show an aura now becomes that aura while it is up: the aura's picture and timer, with nothing of the cooldown underneath. Charges, keybind and your texts stay on top. Set its opacity while the aura is up to 0 to keep the cooldown and show just a glow." },
+                { title = "Gain Preview",
+                    desc = "A resource bar can show what a cast will add while you cast it; it learns each spell from your first cast." },
+                { title = "Never load",
+                    desc = "Load Conditions starts with a Never load switch: keep an icon, bar, group or layout without loading it anywhere, until you untick it." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Buffs on icons that load once learned",
+                    desc = "An aura icon set to load once learned now always shows when its buff is up, so set and trinket buffs no longer go missing for a whole fight." },
+                { title = "Group lock",
+                    desc = "Lock in place on a group now holds only the group itself; you can still rearrange, add and remove its icons by dragging." },
+                { title = "Group icon row",
+                    desc = "A group with many icons wraps its icon row onto more lines, so the + button never disappears." },
+                { title = "Cost Preview",
+                    desc = "Pressing another key mid-cast no longer hides the cost." },
+            } },
+        },
+    },
+    {
         version = "3.0.6",
         intro = "Two hawks out at once, one icon each, and ready-made Summon Hawk icons.",
         sections = {
@@ -1128,6 +1152,30 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.0.7",
+        intro = "Cooldown icons that turn into their aura, a Gain Preview for resource bars, and Never load.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Cooldown icons turn into their aura",
+                    desc = "A spell, item or trinket icon set to show an aura now becomes that aura while it is up: the aura's picture and timer, with nothing of the cooldown underneath. Charges, keybind and your texts stay on top. Set its opacity while the aura is up to 0 to keep the cooldown and show just a glow." },
+                { title = "Gain Preview",
+                    desc = "A resource bar can show what a cast will add while you cast it, like Maelstrom from Lightning Bolt; it learns each spell from your first cast." },
+                { title = "Never load",
+                    desc = "Load Conditions starts with a Never load switch: keep an icon, bar, group or layout without loading it anywhere, until you untick it." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Buffs on icons that load once learned",
+                    desc = "An aura icon set to load once learned now always shows when its buff is up, so set and trinket buffs no longer go missing for a whole fight." },
+                { title = "Group lock",
+                    desc = "Lock in place on a group now holds only the group itself; you can still rearrange, add and remove its icons by dragging." },
+                { title = "Group icon row",
+                    desc = "A group with many icons wraps its icon row onto more lines, so the + button never disappears." },
+                { title = "Cost Preview",
+                    desc = "Pressing another key mid-cast no longer hides the cost." },
+            } },
+        },
+    },
     {
         version = "3.0.6",
         intro = "Totems and guardians: one icon each when several are out, and ones that land late.",

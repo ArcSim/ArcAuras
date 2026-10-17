@@ -3105,6 +3105,28 @@ local function ConditionRows(pg, ctx, tabVisible)
         if #cls.specs > 0 then anySpecs = true break end
     end
 
+    -- Never load first: kept without loading anywhere; the checks below fold
+    -- away while it is on, as none of them can load it
+    AT.Section(pg, "Load", { visibleFn = tabVisible })
+    AT.RowToggle(pg, "Never load",
+        function()
+            local r = ctx()
+            return r ~= nil and r.c ~= nil and r.c.never == true
+        end,
+        function(v)
+            local r = ctx()
+            if r and r.c then Store.SetNever(r, v) end
+            AT.LayoutPage(pg)
+            RefreshAll()
+        end,
+        tabVisible,
+        "Keeps it without loading it anywhere, until you untick this.")
+    local loadVisible = tabVisible
+    tabVisible = function()
+        local r = ctx()
+        return loadVisible() and not (r ~= nil and r.c ~= nil and r.c.never == true)
+    end
+
     AT.Section(pg, anySpecs and "Class and Spec" or "Classes",
         { collapsible = true, store = uiStore, visibleFn = tabVisible })
     AT.RowDesc(pg, "Every box checked = shows everywhere.", 18, tabVisible)
@@ -4723,9 +4745,9 @@ function Options.PaintEye(b, rec)
     show:Show()
 end
 
--- The lock beside a layout's or group's eye: locked, nothing in it moves or
--- reshapes from the screen while this window is open, and the panel still
--- edits it (Store.Locked). It shows while its row is under the mouse or while
+-- The lock beside a layout's or group's eye: a locked layout holds everything
+-- in it on screen while this window is open, a locked group holds itself and
+-- its icons still move, and the panel still edits both (Store.Locked). It shows while its row is under the mouse or while
 -- it locks itself, so the rail stays clean; Position's "Lock in place" is the
 -- same switch. Drawn like the eye: one tinted texture per state.
 Options.LOCK_TEX = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\AD_Lock"
@@ -8211,7 +8233,8 @@ local function PreviewRestyle(rec, f)
             aid = rec.kind == "spell" and (Store.RecordSpellID(rec.driver, PH.SpellOf(rec, ov)) or aid) or nil
         end
         ab._adIcon:SetTexture((aid and C_Spell.GetSpellTexture(aid)) or Factory.KindTexture(rec))
-        Factory.StyleAuraButton(ab, rec, h, { w = w, h = h, ghost = true })
+        -- where live erases the cooldown's look, PreviewApplyMode hides it: no plate
+        Factory.StyleAuraButton(ab, rec, h, { w = w, h = h, ghost = not NS.DriverAura.NeedsEraser(rec) })
         if ab._adStacks:IsShown() then ab._adStacks:SetText("2") end
     elseif ab then
         ab:Hide()
@@ -8302,6 +8325,8 @@ local function PreviewApplyMode(rec, f)
         Factory.SetProcGlow(f, rec, false)
         Factory.StopGlow(f)
         Factory.SetState(f, rec, true, true)
+        -- where live erases the cooldown's look under the aura, the preview hides it
+        if NS.DriverAura.NeedsEraser(rec) then Factory.HideCooldownLook(f) end
         local ab = Options.PreviewAuraButton(f)
         -- A frozen moment of the aura (60% left), so its swipe colour, direction,
         -- edge and time text show while nothing ticks. Plain numbers on our own
@@ -8796,14 +8821,20 @@ end
 
 -- host the pane at (parent, y), bring it up to date, hide it with the
 -- editor; returns the height the editor page must leave for it
-local function AttachPreview(parent, y, shown)
+-- y counts from the parent's top, or from under rel when given
+local function AttachPreview(parent, y, shown, rel)
     if not prevBand then return 0 end
     local rec = SelIcon()
     shown = shown and rec ~= nil
     prevBand:SetParent(parent)
     prevBand:ClearAllPoints()
-    prevBand:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, y)
-    prevBand:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -4, y)
+    if rel then
+        prevBand:SetPoint("TOPLEFT", rel, "BOTTOMLEFT", 0, y)
+        prevBand:SetPoint("TOPRIGHT", rel, "BOTTOMRIGHT", 0, y)
+    else
+        prevBand:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, y)
+        prevBand:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -4, y)
+    end
     prevBand:SetShown(shown)
     -- Play on screen belongs to the icon on show here
     local S = NS.IconScreen
@@ -9392,7 +9423,7 @@ local function BuildIconEditor(parent)
         function()
             local r = SelIcon()
             if r and r.kind == "aura" then
-                return "Doesn't load while the Cooldown Manager lists this aura as not learned (a talent you don't have)."
+                return "Until the Cooldown Manager lists this aura as learned, it shows only while the aura is up."
             end
             return "Doesn't load until your character knows this spell (any rank), and loads by itself the moment you learn it."
         end)
@@ -10313,7 +10344,7 @@ local function BuildIconEditor(parent)
     }, { fx = "art.active", lineName = false,
         labels = { overlayArt = "Show", activeIconFrom = "Icon from", activeIcon = "ID" }, lit = function(r)
         return (tonumber(Store.Resolve(r, "auraActive", "activeIcon")) or 0) ~= 0
-            or (r.kind ~= "aura" and Store.Resolve(r, "auraActive", "overlayArt") == "aura")
+            or (r.kind ~= "aura" and Store.Resolve(r, "auraActive", "overlayArt") == "spell")
     end })
     Block("Conditions", "By State", "Art while missing", "auraMissing", { "missingIconFrom", "missingIcon" },
         { fx = "art.missing", lineName = false, labels = { missingIconFrom = "Icon from", missingIcon = "ID" },
@@ -10571,18 +10602,47 @@ end
 
 -- Group pane
 
+-- A member strip wraps: as many squares a row as its width holds, the "+" in
+-- the square after the last. What sits under it hangs off its bottom edge, so
+-- a taller strip pushes it down. Before its first layout it has no width, and
+-- its size change lays it again.
+Options.STRIP_CELL, Options.STRIP_STEP, Options.STRIP_PAD = 32, 37, 6
+function Options.FlowStrip(strip, list, add)
+    local cell, step, pad = Options.STRIP_CELL, Options.STRIP_STEP, Options.STRIP_PAD
+    local n = #list + ((add and add:IsShown()) and 1 or 0)
+    local w = strip:GetWidth() or 0
+    local per = math.max(n, 1)
+    if w > 0 then per = math.max(1, math.floor((w - 16 + step - cell) / step)) end
+    local function Put(f, k)
+        f:ClearAllPoints()
+        f:SetPoint("TOPLEFT", 8 + (k % per) * step, -pad - math.floor(k / per) * step)
+    end
+    for i, b in ipairs(list) do Put(b, i - 1) end
+    if add then Put(add, #list) end
+    local rows = math.max(1, math.ceil(n / per))
+    strip:SetHeight(pad * 2 + rows * cell + (rows - 1) * (step - cell))
+    strip._adFlow = { list = list, add = add }
+    return rows
+end
+
+-- the strip's width changed: lay its squares again
+function Options.ReflowStrip(strip)
+    local f = strip._adFlow
+    if f and strip:IsShown() then Options.FlowStrip(strip, f.list, f.add) end
+end
+
 local function RefreshGroupStrip()
     local group = SelGroup()
     if not group then return end
     local icons = Store.IconsOf(group)
+    local shown = {}
     for i, rec in ipairs(icons) do
         local b = stripPool[i]
         if not b then
             b = IconButton(groupStrip, 32)
             stripPool[i] = b
         end
-        b:ClearAllPoints()
-        b:SetPoint("LEFT", 8 + (i - 1) * 37, 0)
+        shown[i] = b
         b.tex:SetTexture(Factory.GetTexture(rec))
         b:SetSelected(ui.selIconId == rec.id and ui.grpMode == "ico")
         b:SetScript("OnClick", function()
@@ -10593,11 +10653,10 @@ local function RefreshGroupStrip()
         b:Show()
     end
     for i = #icons + 1, #stripPool do stripPool[i]:Hide() end
-    groupStrip.add:ClearAllPoints()
-    groupStrip.add:SetPoint("LEFT", 8 + #icons * 37, 0)
     -- a group showing every aura on a unit takes no icons; its strip holds
     -- the debuff type picks instead (UI\AD_UnitAuraOptions.lua)
     groupStrip.add:SetShown(not Store.ShowsAll(group))
+    Options.FlowStrip(groupStrip, shown, groupStrip.add)
     if Options.TypeLookStrip then Options.TypeLookStrip(group, groupStrip) end
 end
 
@@ -10651,8 +10710,8 @@ local function RefreshGroupPane()
     groupEditorPage:SetShown(ui.grpMode == "grp")
     iconEditorPage:SetParent(groupPane)
     iconEditorPage:ClearAllPoints()
-    local prevH = AttachPreview(groupPane, -116, ui.grpMode == "ico")
-    iconEditorPage:SetPoint("TOPLEFT", 0, -116 - prevH)
+    local prevH = AttachPreview(groupPane, -4, ui.grpMode == "ico", switchStrip)
+    iconEditorPage:SetPoint("TOPLEFT", switchStrip, "BOTTOMLEFT", 0, -4 - prevH)
     iconEditorPage:SetPoint("BOTTOMRIGHT", 0, 0)
     iconEditorPage:SetShown(ui.grpMode == "ico")
     if ui.grpMode == "grp" then
@@ -10701,16 +10760,18 @@ local function BuildGroupPane()
         local group = SelGroup()
         if group then Options.OpenAdd(group.layoutId, group.id) end
     end)
+    -- hooked: the backdrop keeps its own size handler
+    groupStrip:HookScript("OnSizeChanged", Options.ReflowStrip)
 
-    -- The Group Settings | Icon switcher, a nested tab strip.
+    -- The Group Settings | Icon switcher, a nested tab strip, under the strip.
     switchStrip = AT.TabRow(groupPane)
-    switchStrip:SetPoint("TOPLEFT", 0, -84)
-    switchStrip:SetPoint("TOPRIGHT", -4, -84)
+    switchStrip:SetPoint("TOPLEFT", groupStrip, "BOTTOMLEFT", 0, -4)
+    switchStrip:SetPoint("TOPRIGHT", groupStrip, "BOTTOMRIGHT", 0, -4)
     switchStrip:SetHeight(28)
 
     groupEditorPage = AT.NewPage(groupPane)
     AT.MakeScrollable(groupEditorPage)
-    groupEditorPage:SetPoint("TOPLEFT", 0, -116)
+    groupEditorPage:SetPoint("TOPLEFT", switchStrip, "BOTTOMLEFT", 0, -4)
     groupEditorPage:SetPoint("BOTTOMRIGHT", 0, 0)
     groupEditorPage:Show()
     local pg = groupEditorPage
@@ -13008,6 +13069,9 @@ local function BuildBarPane()
     local CR = "Cost & Regen"
     BarBlock("Cost Preview", "predict", "Appearance", {
         "predictEnabled", "predictQueued", "predictColor", "predictAlpha",
+    }, NotPips, CR, nil, { card = { when = "While casting" } })
+    BarBlock("Gain Preview", "predict", "Appearance", {
+        "predictGain", "predictGainColor", "predictGainAlpha",
     }, NotPips, CR, nil, { card = { when = "While casting" } })
     -- the regen cards: a bar that tracks mana or follows the display power
     Options.ManaBarWhen = function(r)

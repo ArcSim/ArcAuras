@@ -181,6 +181,8 @@ end
 -- outside a style pass (an icon's layer in a Dynamic reflow, an anchor raising
 -- a frame over its target) calls this to put the texts under it back.
 function TA.Restrata(frame)
+    -- an aura's stage under it keeps its icon's strata too
+    if frame and NS.DriverAura and NS.DriverAura.FollowUnder then NS.DriverAura.FollowUnder(frame) end
     if not frame or next(TA.strataHosts) == nil then return end
     local own = frame._adTxtStrata
     if own then

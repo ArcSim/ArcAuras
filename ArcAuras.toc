@@ -7,7 +7,7 @@
 ## Notes-zhCN: 为你的技能冷却、光环和资源提供图标、图标组和状态条，全部在一个面板中设置。/arcauras 或 /arcui2
 ## Notes-zhTW: 為你的技能冷卻、光環和資源提供圖示、圖示群組和量條，全部在一個面板中設定。/arcauras 或 /arcui2
 ## Author: Arc
-## Version: 3.0.7
+## Version: 3.0.8
 ## IconTexture: Interface\AddOns\ArcAuras\Textures\ArcAuras_Icon_256
 ## SavedVariables: ArcAurasDB
 ## OptionalDeps: ArcUI, Masque
@@ -80,6 +80,7 @@ Bars\AD_ResourcePowers.lua
 Bars\AD_ResourceCells.lua
 Bars\AD_SwingOffhand.lua
 Bars\AD_SwingClosing.lua
+Bars\AD_SwingWindup.lua
 Bars\AD_SwingAbilities.lua
 Bars\AD_SwingColors.lua
 Bars\AD_SwingRange.lua

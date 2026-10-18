@@ -1,5 +1,18 @@
 # Arc Auras
 
+## 3.0.8
+
+An Auto Shot windup for ranged swing bars, and bars that anchor to one icon in a group.
+
+### New Features
+
+- **Auto Shot windup** - A ranged swing bar can show Auto Shot's windup: the last half second fills only while you stand still, the bar waits in red while you move, and a melee swing starts it over. Turn it on in the bar's Tracking tab and pick its colors under Appearance > Swing.
+- **Anchor to one icon in a group** - Pick Frame now offers the icon under your cursor as well as its group: Shift-click takes the icon, and the bar stays on that icon wherever it moves.
+
+### Improvements
+
+- **Pick Frame button** - The little crosshair on each anchor row is now a plain Pick Frame button.
+
 ## 3.0.7
 
 Cooldown icons that turn into their aura, a Gain Preview for resource bars, and Never load.

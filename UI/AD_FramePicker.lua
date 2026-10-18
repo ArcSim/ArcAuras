@@ -1,6 +1,6 @@
 -- AD_FramePicker: Pick Frame for the anchor rows: hover any frame on screen, a game frame or an Arc Auras item, and click it to anchor to it.
 -- Owns pick mode (a click catcher, a readout on the cursor, a box on the frame), the common-frames list and a spell pin's Spell row;
--- each anchor row's crosshair calls FP.PickSlot, Options.AnchorPickRows calls AnchorSpellRows. Pick mode runs out of combat only and offers what Anchor.FrameProblem
+-- each anchor row's Pick Frame button calls FP.PickSlot, Options.AnchorPickRows calls AnchorSpellRows. Pick mode runs out of combat only and offers what Anchor.FrameProblem
 -- passes, the Arc Auras items Anchor.PickFrames maps for the record being edited, and for a bar the action buttons and
 -- Cooldown Manager icons that hold a spell (Core\AD_SpellAnchor.lua PickMap).
 local ADDON, NS = ...
@@ -53,6 +53,8 @@ FP.HINT = "Click to pick   Right-click or Esc: cancel"
 -- an action button: its spell wherever it moves, or this one button
 FP.BUTTON_HINT = "Click: follow the spell   Shift-click: this button   Esc: cancel"
 FP.ICON_HINT = "Click: follow this icon   Right-click or Esc: cancel"
+-- an icon in a group: the group, or that one icon
+FP.MEMBER_HINT = "Click: the group   Shift-click: the icon   Esc: cancel"
 
 -- Typed words to the spell ids a spell pin keeps: numbers as they are, a link
 -- or a spell's name through the spell parser. nil when nothing reads as a spell.
@@ -131,11 +133,14 @@ end
 -- global name that anchoring can use, as name, frame; the first Arc Auras
 -- item in `items` (Anchor.PickFrames) or action button / Cooldown Manager icon
 -- in `spells`, as nil, frame, nil, item; else nil, nil, why the walk stopped.
+-- A grouped icon (item.member) is passed over on the way to its group and
+-- comes back as the 5th and 6th values (the Shift-click), with the group.
 -- A forbidden frame answers nothing but IsForbidden, so that is asked first,
 -- and every other read can be secret.
 function FP.Walk(f, items, spells)
     local A = NS.Anchor
     local depth = 0
+    local alt, altFrame
     while f ~= nil and depth < FP.MAX_DEPTH do
         depth = depth + 1
         if f == UIParent or f == WorldFrame then return nil end
@@ -144,8 +149,10 @@ function FP.Walk(f, items, spells)
             if Secret(fb) or fb then return nil, nil, "protected" end
         end
         local item = items and items[f]
-        if item then
-            if item.value then return nil, f, nil, item end
+        if item and item.member then
+            if item.value and not alt then alt, altFrame = item, f end
+        elseif item then
+            if item.value then return nil, f, nil, item, alt, altFrame end
             return nil, nil, item.why
         end
         local sp = spells and spells[f]
@@ -182,18 +189,19 @@ function FP.Foci()
 end
 
 -- The first pickable frame under the cursor: name, frame (a game frame), nil,
--- frame, nil, item (an Arc Auras item), or nil, nil, why. The catcher is
--- always the top one; being unnamed under UIParent, its walk yields nothing.
--- An aura icon's button is the game's, and a walk stops on it: then the
--- smallest of our own items under the cursor answers instead.
+-- frame, nil, item (an Arc Auras item, plus a grouped icon and its frame as
+-- the Shift-click), or nil, nil, why. The catcher is always the top one; being
+-- unnamed under UIParent, its walk yields nothing. An aura icon's button is the
+-- game's, and a walk stops on it: then the smallest of our own items under the
+-- cursor answers instead, and the smallest grouped icon is its Shift-click.
 function FP.Resolve(foci, items, spells)
     local why
     for _, f in ipairs(foci or {}) do
-        local name, frame, w, item = FP.Walk(f, items, spells)
-        if name or item then return name, frame, nil, item end
+        local name, frame, w, item, alt, altFrame = FP.Walk(f, items, spells)
+        if name or item then return name, frame, nil, item, alt, altFrame end
         why = why or w
     end
-    local best, bestItem, bestArea
+    local best, bestItem, bestArea, mem, memItem, memArea
     for f, it in pairs(items or {}) do
         if it.value and f.IsVisible and f.IsMouseOver then
             local vis, over = f:IsVisible(), f:IsMouseOver()
@@ -201,11 +209,16 @@ function FP.Resolve(foci, items, spells)
                 local w, h = f:GetSize()
                 local area = (not (Secret(w) or Secret(h)) and type(w) == "number" and type(h) == "number")
                     and w * h or math.huge
-                if not bestArea or area < bestArea then best, bestItem, bestArea = f, it, area end
+                if it.member then
+                    if not memArea or area < memArea then mem, memItem, memArea = f, it, area end
+                elseif not bestArea or area < bestArea then
+                    best, bestItem, bestArea = f, it, area
+                end
             end
         end
     end
-    if best then return nil, best, nil, bestItem end
+    if best then return nil, best, nil, bestItem, memItem, mem end
+    if mem then return nil, mem, nil, memItem end
     return nil, nil, why
 end
 
@@ -278,6 +291,12 @@ local function Readout()
     r.name:SetFont(NS.AT.FONT, 12, "")
     r.name:SetPoint("TOPLEFT", 8, -7)
     r.name:SetJustifyH("LEFT")
+    -- a grouped icon's line, under its group's
+    r.alt = r:CreateFontString(nil, "OVERLAY")
+    r.alt:SetFont(NS.AT.FONT, 12, "")
+    r.alt:SetPoint("TOPLEFT", r.name, "BOTTOMLEFT", 0, -4)
+    r.alt:SetJustifyH("LEFT")
+    r.alt:Hide()
     r.hint = r:CreateFontString(nil, "OVERLAY")
     r.hint:SetFont(NS.AT.FONT, 10, "")
     r.hint:SetPoint("TOPLEFT", r.name, "BOTTOMLEFT", 0, -4)
@@ -300,6 +319,13 @@ local function Box()
     AT.Skin(b, { COL.arc[1], COL.arc[2], COL.arc[3], 0.12 }, COL.arc)
     b:Hide()
     FP.box = b
+    -- the other choice under the cursor: an outline only
+    local a = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+    a:SetFrameStrata("TOOLTIP")
+    a:SetFrameLevel(9994)
+    AT.Skin(a, { 0, 0, 0, 0 }, COL.dim)
+    a:Hide()
+    FP.altBox = a
     return b
 end
 
@@ -320,35 +346,62 @@ function FP.PlaceReadout(x, y)
 end
 
 -- Looks under the cursor, then shows the name (or why not) and boxes the frame.
+-- Over a grouped icon both choices show: the one a click takes now (its group,
+-- or the icon while Shift is held) in the accent with the filled box.
 function FP.Refresh()
-    local name, frame, why, item = FP.Resolve(FP.Foci(), FP.items, FP.spells)
-    FP.name, FP.frame, FP.item = name, frame, item
-    local r, b = FP.readout, FP.box
+    local name, frame, why, item, alt, altFrame = FP.Resolve(FP.Foci(), FP.items, FP.spells)
+    FP.name, FP.frame, FP.item, FP.alt, FP.altFrame = name, frame, item, alt, altFrame
+    local shift = alt ~= nil and IsShiftKeyDown ~= nil and IsShiftKeyDown() == true
+    local r, b, a = FP.readout, FP.box, FP.altBox
     if r then
         local COL = NS.AT.COL
+        local on, off = COL.arc, COL.dim
         if name or item then
             r.name:SetText(name or item.text)
-            r.name:SetTextColor(COL.arc[1], COL.arc[2], COL.arc[3])
+            local c = shift and off or on
+            r.name:SetTextColor(c[1], c[2], c[3])
         else
             r.name:SetText(FP.WHY_TEXT[why or "none"] or FP.WHY_TEXT.none)
-            r.name:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+            r.name:SetTextColor(off[1], off[2], off[3])
         end
-        -- a spell pin says what a click and a Shift-click take
+        r.alt:SetShown(alt ~= nil)
+        if alt then
+            r.alt:SetText(alt.text)
+            local c = shift and on or off
+            r.alt:SetTextColor(c[1], c[2], c[3])
+        end
+        r.hint:ClearAllPoints()
+        r.hint:SetPoint("TOPLEFT", alt and r.alt or r.name, "BOTTOMLEFT", 0, -4)
+        -- a spell pin or a grouped icon says what a click and a Shift-click take
         local hint = FP.HINT
-        if item and item.spec then
+        if alt then
+            hint = FP.MEMBER_HINT
+        elseif item and item.spec then
             hint = (item.value == "action" and item.frameName) and FP.BUTTON_HINT
                 or (item.value == "cdm" and FP.ICON_HINT) or FP.HINT
         end
         r.hint:SetText(hint)
-        r:SetWidth(math.ceil(math.max(TextW(r.name), TextW(r.hint))) + 18)
+        local w = math.max(TextW(r.name), TextW(r.hint), alt and TextW(r.alt) or 0)
+        r:SetSize(math.ceil(w) + 18, alt and 56 or 40)
     end
     if b then
         b:ClearAllPoints()
-        if frame then
-            b:SetAllPoints(frame)
+        local main = (shift and altFrame) or frame
+        if main then
+            b:SetAllPoints(main)
             b:Show()
         else
             b:Hide()
+        end
+    end
+    if a then
+        a:ClearAllPoints()
+        local other = altFrame and (shift and frame or altFrame) or nil
+        if other then
+            a:SetAllPoints(other)
+            a:Show()
+        else
+            a:Hide()
         end
     end
 end
@@ -368,7 +421,8 @@ end
 
 -- Left-click takes what is under the cursor (nothing pickable: keep looking);
 -- right-click cancels. Shift on an action button takes that button by its
--- name instead of the spell it holds.
+-- name instead of the spell it holds; on a grouped icon, that icon instead of
+-- its group.
 function FP.Click(button)
     if button == "RightButton" then
         FP.Stop()
@@ -378,7 +432,10 @@ function FP.Click(button)
     FP.Refresh()
     local name, item, onPick = FP.name, FP.item, FP.onPick
     if not (name or item) then return end
-    if item and item.spec and item.frameName and IsShiftKeyDown and IsShiftKeyDown() then
+    local shift = IsShiftKeyDown ~= nil and IsShiftKeyDown() == true
+    if FP.alt and shift then
+        name, item = nil, FP.alt
+    elseif item and item.spec and item.frameName and shift then
         name, item = item.frameName, nil
     end
     FP.Stop()
@@ -445,6 +502,7 @@ function FP.Stop()
     if not FP.active then return end
     FP.active = false
     FP.onPick, FP.name, FP.frame, FP.item, FP.items, FP.spells = nil, nil, nil, nil, nil, nil
+    FP.alt, FP.altFrame = nil, nil
     if NS.Events then NS.Events.Off("PLAYER_REGEN_DISABLED", "adpick") end
     local c = FP.catcher
     if c then
@@ -456,9 +514,13 @@ function FP.Stop()
         FP.box:ClearAllPoints()
         FP.box:Hide()
     end
+    if FP.altBox then
+        FP.altBox:ClearAllPoints()
+        FP.altBox:Hide()
+    end
 end
 
--- Pick mode for one anchor slot (the crosshair on its row). A game frame
+-- Pick mode for one anchor slot (the Pick Frame button on its row). A game frame
 -- makes the slot a Named frame with that name; an Arc Auras item puts that
 -- item in it. Only the first slot pins to an action button or a Cooldown
 -- Manager icon by spell; a later one takes a button by its frame name. done
@@ -522,6 +584,6 @@ function Options.AnchorSpellRows(pg, ctx, vis)
             local r = ctx()
             return spellVis() and r ~= nil and Store.Resolve(r, "anchor", "anchorTargetKind") == "cdm"
         end,
-        "The icon's cooldown ID, its exact entry in the Cooldown Manager: the crosshair on an icon fills it. Empty uses the spell above.",
+        "The icon's cooldown ID, its exact entry in the Cooldown Manager: Pick Frame on an icon fills it. Empty uses the spell above.",
         "e.g. 12821")
 end

@@ -6789,6 +6789,8 @@ Options.ANCHOR_SLOT_STATES = {
 Options.ANCHOR_SLOT_BUSY = { text = "Not in combat", col = COL.faint }
 Options.ANCHOR_LIST_NOTE = "It sits on the first one that is on screen, top to bottom."
 local SLOT_DD_W, SLOT_NAME_W, SLOT_BTN, SLOT_CHIP_W = 200, 140, 20, 76
+-- the narrowest a Named frame's box gets on a narrow window
+local SLOT_NAME_MIN = 90
 
 -- a square raised button for a glyph; a disabled one dims and takes no hover
 local function SlotButton(row, tip, body)
@@ -6803,20 +6805,17 @@ local function SlotEnable(b, on)
     b:SetEnabled(on)
     b:SetAlpha(on and 1 or 0.35)
 end
--- the crosshair: four ticks round a dot
-local function Crosshair(b)
-    local c = COL.dim
-    for _, d in ipairs({ { 0, 5, 2, 4 }, { 0, -5, 2, 4 }, { 5, 0, 4, 2 }, { -5, 0, 4, 2 }, { 0, 0, 2, 2 } }) do
-        local t = b:CreateTexture(nil, "OVERLAY")
-        t:SetTexture(WHITE)
-        t:SetVertexColor(c[1], c[2], c[3], 1)
-        t:SetSize(d[3], d[4])
-        t:SetPoint("CENTER", d[1], d[2])
-    end
+-- Pick Frame in words, as wide as they read in the client's language: a
+-- glyph on its own did not say what it does
+local function PickButton(row, tip, body)
+    local b = AT.MakeSmallButton(row, "Pick Frame", 72)
+    b:SetHeight(SLOT_BTN)
+    AT.Tooltip(b, tip, body)
+    return b
 end
 
--- the pinned frames' rows draw with the same glyph buttons (UI\AD_PinOptions.lua)
-Options.SlotButton, Options.SlotEnable, Options.Crosshair = SlotButton, SlotEnable, Crosshair
+-- the pinned frames' rows draw with the same buttons (UI\AD_PinOptions.lua)
+Options.SlotButton, Options.SlotEnable, Options.PickButton = SlotButton, SlotEnable, PickButton
 
 local function SlotRow(pg, family, sec, ctx, vis, s)
     local function An() return NS.Anchor end
@@ -6895,9 +6894,8 @@ local function SlotRow(pg, family, sec, ctx, vis, s)
     end)
     AT.Tooltip(box, "Frame name", "The global name of a frame, e.g. ElvUF_Player. A frame that does not exist counts as not there.")
 
-    local pick = SlotButton(row, "Pick Frame",
-        "Hover a frame on screen, a game frame or one of your Arc Auras items, and click it. Right-click or Esc cancels.")
-    Crosshair(pick)
+    local pick = PickButton(row, "Pick Frame",
+        "Hover a game frame or one of your Arc Auras items and click it. On an icon in a group, Shift-click takes the icon.")
     pick:SetScript("OnClick", function()
         AT.CloseDropdown()
         local r, FP = ctx(), NS.FramePicker
@@ -6969,6 +6967,19 @@ local function SlotRow(pg, family, sec, ctx, vis, s)
             chip:SetWidth(math.max(SLOT_CHIP_W, math.ceil(tw) + 8))
         end
         local list = A.BackupsOK(r)
+        -- On a narrow window the name box gives up room first, so the button
+        -- and the word never run into the row's own buttons. Read from the
+        -- last layout; with nothing to read yet it stays whole.
+        local bw = SLOT_NAME_W
+        if isFrame then
+            local stop, from = list and up:GetLeft() or row:GetRight(), dd:GetRight()
+            if type(stop) == "number" and type(from) == "number" then
+                local room = stop - from - 12 - pick:GetWidth() - (word and (6 + chip:GetWidth()) or 0)
+                    - (list and 6 or 12)
+                bw = math.max(SLOT_NAME_MIN, math.min(SLOT_NAME_W, math.floor(room)))
+            end
+        end
+        box:SetWidth(bw)
         up:SetShown(list)
         down:SetShown(list)
         del:SetShown(list)
@@ -11273,6 +11284,9 @@ local barPrev = { H = 116, STAGE_H = 78, MIN = 78, TALL = 220, scale = 1,
     panX = 0, panY = 0, ZOOMS = { 0.5, 0.75, 1, 1.5, 2, 3, 4 } }
 
 function barPrev.Build(parent)
+    -- the band builds in one piece: a pause inside would leave a repaint
+    -- without its chips or zoom buttons
+    Options.BuildYield()
     local band = CreateFrame("Frame", nil, parent)
     band:SetHeight(barPrev.H)
     band:Hide()
@@ -11323,7 +11337,8 @@ function barPrev.Build(parent)
     stage:SetScript("OnMouseUp", EndPan)
     stage:SetScript("OnHide", EndPan)
     barPrev.chips = {}
-    for i = 1, 2 do
+    -- a third for a ranged swing bar's windup held
+    for i = 1, 3 do
         local b = AT.MakeSmallButton(band, "", 90)
         b:SetScript("OnClick", function(self)
             AT.CloseDropdown()
@@ -12122,6 +12137,22 @@ local function BuildBarPane()
                 and ((r.driver and r.driver.swingType) or 0) == 0
         end,
         "Adds your off-hand's swing to this main-hand bar. Pick its look on the Appearance tab.")
+    Options.BuildYield()
+    AT.RowToggle(pg, "Show the Auto Shot windup",
+        function()
+            local r = SelBar()
+            return r ~= nil and Store.Resolve(r, "fill", "swingWindup") == true
+        end,
+        function(v)
+            local r = SelBar()
+            if r then Store.SetOverride(r, "fill", "swingWindup", v and true or false) end
+        end,
+        function()
+            local r = SelBar()
+            return trackVis() and r ~= nil and r.barKind == "swing"
+                and ((r.driver and r.driver.swingType) or 0) == 2
+        end,
+        "The last 0.5 s of the bar is Auto Shot's windup: it fills only while you stand still. Colors on the Appearance tab.")
     Options.BuildYield()
     AT.RowDesc(pg, "Swing timers need WoW Forever: this bar stays hidden here.", 20,
         function()
@@ -13131,6 +13162,12 @@ local function BuildBarPane()
     -- ticks before the swing lands sit on Ticks with the custom ticks. The
     -- field's kinds gate it.
     BarBlock("Swing", "fill", "Appearance", { "swingClosing" }, nil, SW)
+    Options.BuildYield()
+    -- a ranged bar's windup colours, while its switch on Tracking is on
+    BarBlock("Windup", "fill", "Appearance", { "swingWindupColor", "swingWaitColor" }, function(r)
+        return r.barKind == "swing" and ((r.driver and r.driver.swingType) or 0) == 2
+            and Store.Resolve(r, "fill", "swingWindup") == true
+    end, SW)
     BarBlock("Spark", "fill", "Appearance", {
         "edgeSpark", "edgeSparkColor", "edgeSparkWidth",
     }, function(r) return r.barKind == "swing" end, SW, true)

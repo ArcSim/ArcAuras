@@ -3204,6 +3204,17 @@ Schema.bar = {
         -- off-hand track splits the fill its own way, so the two never show together.
         swingClosing = { d = false, t = "bool", kinds = { swing = true },
             dep = { field = "swingOffhand", value = false }, label = "Fill closes in from both ends" },
+        -- Ranged swing bars: the last half second is Auto Shot's windup, which
+        -- fills only while the player stands still (Bars\AD_SwingWindup.lua).
+        -- Hidden: Tracking draws its switch beside Swing type.
+        swingWindup = { d = false, t = "bool", inherit = false, hidden = true, kinds = { swing = true },
+            label = "Show the Auto Shot windup" },
+        swingWindupColor = { d = { 0.95, 0.79, 0.3, 1 }, t = "color", alpha = true, kinds = { swing = true },
+            dep = { field = "swingWindup" }, label = "Windup color",
+            desc = "The windup as it fills, and a faint outline of its spot while you reload." },
+        swingWaitColor = { d = { 0.91, 0.34, 0.35, 1 }, t = "color", alpha = true, kinds = { swing = true },
+            dep = { field = "swingWindup" }, label = "Waiting color",
+            desc = "The bar when the reload is done but you are moving: the shot waits for you to stop." },
         -- The panel draws the tick rows under the custom ticks (Appearance >
         -- Ticks), so their words say swing and never repeat a custom tick row's.
         swingTicks = { d = false, t = "bool", kinds = { swing = true }, label = "Tick before the swing lands" },

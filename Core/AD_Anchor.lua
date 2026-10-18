@@ -302,6 +302,11 @@ function Anchor.CreatesCycle(startId, targetRec)
                 local nxt = Store.Get(id)
                 if nxt then stack[#stack + 1] = nxt end
             end
+            -- a grouped icon goes where its group puts it
+            if cursor.type == "icon" and cursor.groupId ~= nil then
+                local g = Store.Get(cursor.groupId)
+                if g then stack[#stack + 1] = g end
+            end
         end
     end
     return false
@@ -839,7 +844,6 @@ end
 local KIND_LABEL = { layout = "Layout", group = "Group", bar = "Bar", icon = "Icon" }
 local PREFIX_WORD = KIND_LABEL
 
--- A grouped icon is never a target: its group's cell places it.
 -- A bar kind with no place on screen (a wheel opens at the cursor) is no target.
 function Anchor.Placeless(rec)
     local B = NS.Bars
@@ -847,16 +851,24 @@ function Anchor.Placeless(rec)
     return type(K) == "table" and K.noHolder == true
 end
 
+-- A grouped icon is picked on screen (Pick Frame), so the list holds only the
+-- ones rec already uses, each with its group's name: a list of every icon in
+-- every group would bury the rest.
 function Anchor.TargetChoices(rec, kind)
     local out = {}
     if not (rec and Store.EachRecord) then return out end
+    local mine = {}
+    for _, tid in ipairs(CandidateIds(rec)) do mine[tid] = true end
     Store.EachRecord(function(id, other)
+        local grouped = kind == "icon" and other.groupId ~= nil
         if id ~= rec.id and other.type == kind
-            and not (kind == "icon" and other.groupId ~= nil)
+            and (not grouped or mine[id])
             and not Anchor.Placeless(other)
             and not Anchor.CreatesCycle(rec.id, other) then
-            out[#out + 1] = { value = id,
-                text = other.name or ((KIND_LABEL[kind] or "Record") .. " " .. id) }
+            local text = other.name or ((KIND_LABEL[kind] or "Record") .. " " .. id)
+            local g = grouped and Store.Get(other.groupId)
+            if g and g.name then text = text .. " (" .. g.name .. ")" end
+            out[#out + 1] = { value = id, text = text }
         end
     end)
     table.sort(out, function(a, b) return (a.text or "") < (b.text or "") end)
@@ -1106,7 +1118,8 @@ end
 -- as frame -> { value, text } in PickList's words, for every target rec may
 -- pick. rec's own frame and a target that would close a loop map to { why }
 -- instead, so the picker stops there rather than walking on to the layout
--- behind. A grouped icon is left out: its walk goes on to its group.
+-- behind. A grouped icon is marked member: its walk goes on to its group,
+-- which stays the click, and offers the icon as the Shift-click.
 function Anchor.PickFrames(rec)
     local map = {}
     if not (rec and Store.EachRecord) then return map end
@@ -1114,17 +1127,20 @@ function Anchor.PickFrames(rec)
         local get = providers[kind]
         if get and Anchor.Allows(rec, kind) then
             Store.EachRecord(function(id, other)
-                if other.type ~= kind or (kind == "icon" and other.groupId ~= nil) then return end
+                if other.type ~= kind then return end
                 local f = get(id)
                 if not f then return end
+                local it
                 if id == rec.id then
-                    map[f] = { why = "self" }
+                    it = { why = "self" }
                 elseif Anchor.CreatesCycle(rec.id, other) then
-                    map[f] = { why = "loop" }
+                    it = { why = "loop" }
                 else
-                    map[f] = { value = kind .. ":" .. id,
+                    it = { value = kind .. ":" .. id,
                         text = PREFIX[kind] .. ":  " .. (other.name or ((KIND_LABEL[kind] or "Record") .. " " .. id)) }
                 end
+                it.member = (kind == "icon" and other.groupId ~= nil) or nil
+                map[f] = it
             end)
         end
     end

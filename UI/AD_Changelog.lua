@@ -13,6 +13,22 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.0.8",
+        intro = "An Auto Shot windup for ranged swing bars, and bars that anchor to one icon in a group.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Auto Shot windup",
+                    desc = "A ranged swing bar can show Auto Shot's windup: the last half second fills only while you stand still, the bar waits in red while you move, and a melee swing starts it over. Turn it on in the bar's Tracking tab and pick its colors under Appearance > Swing." },
+                { title = "Anchor to one icon in a group",
+                    desc = "Pick Frame now offers the icon under your cursor as well as its group: Shift-click takes the icon, and the bar stays on that icon wherever it moves." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Pick Frame button",
+                    desc = "The little crosshair on each anchor row is now a plain Pick Frame button." },
+            } },
+        },
+    },
+    {
         version = "3.0.7",
         intro = "Cooldown icons that turn into their aura, a Gain Preview for resource bars, and Never load.",
         sections = {
@@ -1152,6 +1168,20 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.0.8",
+        intro = "Bars that anchor to one icon in a group.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Anchor to one icon in a group",
+                    desc = "Pick Frame now offers the icon under your cursor as well as its group: Shift-click takes the icon, and the bar stays on that icon wherever it moves." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Pick Frame button",
+                    desc = "The little crosshair on each anchor row is now a plain Pick Frame button." },
+            } },
+        },
+    },
     {
         version = "3.0.7",
         intro = "Cooldown icons that turn into their aura, a Gain Preview for resource bars, and Never load.",

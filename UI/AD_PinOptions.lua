@@ -100,9 +100,8 @@ local function NameRow(pg, ctx, vis, i, rows)
     AT.Tooltip(box, "Frame name", "The global name of a game frame, e.g. PlayerFrame or ElvUF_Player.")
     row._colLabel, row._colCtrl = lbl, box
 
-    local pick = Options.SlotButton(row, "Pick Frame",
+    local pick = Options.PickButton(row, "Pick Frame",
         "Hover a game frame on screen and click it. Right-click or Esc cancels.")
-    Options.Crosshair(pick)
     pick:SetPoint("LEFT", box, "RIGHT", 6, 0)
 
     local chip = CreateFrame("Frame", nil, row, "BackdropTemplate")

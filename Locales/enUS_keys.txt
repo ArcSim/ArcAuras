@@ -1090,6 +1090,7 @@ Click-through
 Click-through icons
 Click: follow the spell   Shift-click: this button   Esc: cancel
 Click: follow this icon   Right-click or Esc: cancel
+Click: the group   Shift-click: the icon   Esc: cancel
 Clickable (target on click)
 Clicking the icon drops the totem it shows, in combat too. Set out of combat; while this window is open the icon stays draggable.
 Clicks pass through icons to the game. Tooltips still show if the toggle above is on. Icons take the mouse while this window is open.
@@ -2053,8 +2054,8 @@ Horizontal
 Horizontal packs each row sideways; Vertical packs each column up or down.
 Hot chance color
 Hot from (%)
-Hover a frame on screen, a game frame or one of your Arc Auras items, and click it. Right-click or Esc cancels.
 Hover a game frame on screen and click it. Right-click or Esc cancels.
+Hover a game frame or one of your Arc Auras items and click it. On an icon in a group, Shift-click takes the icon.
 Hover a game frame, an action button, a Cooldown Manager icon or an Arc Auras icon and left-click it. Right-click or Esc cancels.
 Hovering an icon shows its spell, item or totem tooltip.
 How big the preview is against the bar's real size. Click to fit the whole bar in view again.
@@ -3611,6 +3612,7 @@ Show pulse icon
 Show sidebar
 Show spell cost while casting
 Show tenths
+Show the Auto Shot windup
 Show the bar bigger. When it no longer fits, drag the preview to look around.
 Show the bar smaller. The mouse wheel over the preview zooms too.
 Show the off-hand on this bar
@@ -4009,6 +4011,7 @@ The bar in the middle of a cast, standing still.
 The bar is full at this many stacks. Empty: the maximum the game reports, shown in the field. Type a number only if it is wrong.
 The bar part way through its timer.
 The bar shows half the power; past the middle it fills again in the second half color.
+The bar when the reload is done but you are moving: the shot waits for you to stop.
 The bar with no timer running.
 The bar's look.
 The bar's own look
@@ -4061,7 +4064,7 @@ The health preview: 65% health with incoming heals and shields, in your colours 
 The icon
 The icon and bar previews sit on this color.
 The icon as the game's Cooldown Manager draws it: its rounded corners, its border and shadow, and its swipe.
-The icon's cooldown ID, its exact entry in the Cooldown Manager: the crosshair on an icon fills it. Empty uses the spell above.
+The icon's cooldown ID, its exact entry in the Cooldown Manager: Pick Frame on an icon fills it. Empty uses the spell above.
 The icon's exact entry in the Cooldown Manager; Pick Frame on an icon fills it. Empty uses the spell above.
 The icon's file ID, the base icon when an override swapped the art, and the icon the button shows when that differs.
 The import did not run.
@@ -4073,6 +4076,7 @@ The items that used the old values take the new ones.
 The items you have keep their look; only new ones start with these. Leaving the page does the same.
 The kinds that take this page's rows, each where it has the row. Nothing happens until you press Copy.
 The label's own color
+The last 0.5 s of the bar is Auto Shot's windup: it fills only while you stand still. Colors on the Appearance tab.
 The layout's center point
 The layout's distance from the spot it's pinned to, in whole units.
 The line to speak.
@@ -4108,6 +4112,7 @@ The power this row holds on. All powers: whatever power the bar shows.
 The pulse stays at full, with no fade, until you cast the spell or use the item, or its trigger's Clear when ends it.
 The ready look with no animation. Drag any text on the icon to place it.
 The ready look, with the Ready text when it is on.
+The reload is done but you are moving: the shot waits for you to stop.
 The resize lands when you let go of the slider.
 The resource texts change color at their own power values, apart from the bar's colors.
 The resource texts wear the fill's color, the bar's own or a row's. A row's own text color wins.
@@ -4173,6 +4178,7 @@ The wheel
 The wheel is full: empty a spot first.
 The whole cooldown
 The whole picture
+The windup as it fills, and a faint outline of its spot while you reload.
 Their own class and spec checks
 Their own class checks
 Then
@@ -4504,6 +4510,8 @@ WHAT'S IN IT
 WHERE IT GOES
 WORN BY
 Wait for its slot
+Waiting color
+Waiting on you
 Waits for this exact rank (the spell ID above), not just any rank of the spell.
 Wand GCD
 Wand swipe color
@@ -4685,6 +4693,8 @@ Width
 Width (0 = auto)
 Windfury Totem
 Windfury Weapon
+Windup
+Windup color
 Wing Clip for melee, then Auto Shot with the 10 and 20 yard checks.
 Wing Clip for melee, then Auto Shot with the 20 yard check.
 Wins over the rows below it.

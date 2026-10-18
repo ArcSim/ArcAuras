@@ -187,7 +187,9 @@ local ForEach
 Bars.LADDER = { aura = 1, auraTop = 18, border = 19, glow = 20, missBtn = 21, marks = 22, overlay = 23,
     -- a resource bar: its colour rules' layers from here up (two rungs each,
     -- Bars\AD_ResColors.lua), and the cost preview and regen marks over them
-    rule = 10, fillMarks = 18 }
+    rule = 10, fillMarks = 18,
+    -- a ranged swing bar's windup overlay, just over its fill
+    windup = 2 }
 
 -- The texture the picker window is trying on one bar: read before the
 -- record, so the bar shows it without a write (Bars.PreviewTexture).
@@ -1219,6 +1221,9 @@ local function ApplyStyle(entry)
     -- a swing bar's closing halves and ticks (Bars\AD_SwingClosing.lua), after
     -- the off-hand pass, which may have split the fill
     if entry.kind == "swing" and Bars.SwingClose then Bars.SwingClose.Styled(entry) end
+    -- a ranged swing bar's Auto Shot windup (Bars\AD_SwingWindup.lua), after
+    -- the closing pass: its mirror half gets a zone too
+    if entry.kind == "swing" and Bars.SwingWindup then Bars.SwingWindup.Styled(entry) end
     -- the spark on a swing or timer bar's moving edge (Bars\AD_BarSpark.lua),
     -- after the closing pass: its mirror half gets one too
     if (entry.kind == "swing" or entry.kind == "timer") and Bars.Spark then Bars.Spark.Styled(entry) end
@@ -6154,6 +6159,7 @@ function Bars.Release(barId)
     if KX and KX.Release then KX.Release(e) end
     if e.kind == "swing" and Bars.SwingOH then Bars.SwingOH.Release(e) end
     if e.kind == "swing" and Bars.SwingClose then Bars.SwingClose.Release(e) end
+    if e.kind == "swing" and Bars.SwingWindup then Bars.SwingWindup.Release(e) end
     if (e.kind == "swing" or e.kind == "timer") and Bars.Spark then Bars.Spark.Release(e) end
     if e.kind == "swing" and Bars.SwingRange then Bars.SwingRange.Release(e) end
     if e.kind == "health" and Bars.ClickUnit then Bars.ClickUnit.Release(e) end
@@ -6227,10 +6233,15 @@ function Bars.PreviewModes(rec)
               tip = "The aura counts down, drops off, and comes back: threshold colours and the duration text." },
         }
     elseif k == "swing" then
-        return {
+        local modes = {
             { key = "static", text = "Idle", tip = "The bar between swings." },
             { key = "loop", text = "Swing loop", tip = "Swing after swing at your weapon's speed." },
         }
+        if Bars.SwingWindup and Bars.SwingWindup.On(rec) then
+            modes[3] = { key = "wait", text = "Waiting on you",
+                tip = "The reload is done but you are moving: the shot waits for you to stop." }
+        end
+        return modes
     elseif k == "timer" and stack then
         return {
             { key = "static", text = "Stacks", tip = "The bar at 3 stacks, or at its Max stacks when that is lower." },
@@ -6686,6 +6697,8 @@ function PV.Apply(e, fresh)
         if not loop then
             e.shell.fill:SetScript("OnUpdate", nil)
             if kind == "swing" then SwingIdle(e) else TimerStop(e) end
+            -- a ranged bar's windup held while moving (Bars\AD_SwingWindup.lua)
+            if kind == "swing" and PV.mode == "wait" and Bars.SwingWindup then Bars.SwingWindup.PreviewWait(e) end
         elseif fresh or not (e.running or e.pvRestartAt) then
             PV.RunTimed(e)
         end
@@ -6824,9 +6837,10 @@ function PV.Build(rec, holder, screen)
     return e
 end
 
--- "static" or "loop": the loop clock starts over
+-- "static", "loop" or "wait" (a ranged swing bar's windup held): the loop
+-- clock starts over
 function Bars.PreviewSetMode(mode)
-    PV.mode = (mode == "static") and "static" or "loop"
+    PV.mode = (mode == "static" or mode == "wait") and mode or "loop"
     PV.t, PV.acc = 0, 0
     for _, e in pairs({ pane = PV.e, screen = PV.se }) do
         e.pvCount, e.pvCdOn, e.pvRestartAt = nil, nil, nil
@@ -7036,6 +7050,8 @@ Bars.Kit = {
     ResourceRefresh = ResourceRefresh, LayoutPips = LayoutPips,
     ResolveBarTexture = ResolveBarTexture, WHITE = WHITE,
     SwingHandExists = SwingHandExists, ApplySheen = ApplySheen, MakeShadow = MakeShadow,
+    -- the swing bars' idle look (the windup ends a held or cancelled shot with it)
+    SwingIdle = SwingIdle,
     -- the timer bars' plain GetTime fill, idle and bands (the custom engine
     -- drives them), and the stack helpers its stack mode paints with
     RunTimedFill = RunTimedFill, TimerStop = TimerStop, BuildPlainBands = BuildPlainBands,

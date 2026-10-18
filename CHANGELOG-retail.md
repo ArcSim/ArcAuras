@@ -1,5 +1,17 @@
 # Arc Auras
 
+## 3.0.8
+
+Bars that anchor to one icon in a group.
+
+### New Features
+
+- **Anchor to one icon in a group** - Pick Frame now offers the icon under your cursor as well as its group: Shift-click takes the icon, and the bar stays on that icon wherever it moves.
+
+### Improvements
+
+- **Pick Frame button** - The little crosshair on each anchor row is now a plain Pick Frame button.
+
 ## 3.0.7
 
 Cooldown icons that turn into their aura, a Gain Preview for resource bars, and Never load.

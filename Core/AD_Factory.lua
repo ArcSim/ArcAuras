@@ -3,6 +3,8 @@
 -- included. Drivers never style anything; they report state (Factory.SetState)
 -- or feed the swipe (frame.cooldown). ApplyStyle is the only style writer.
 local ADDON, NS = ...
+local hooksecurefunc = NS.Perf and NS.Perf.Hooks("Factory") or hooksecurefunc   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("Factory") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Store = NS.Store
 
 local Factory = {}
@@ -309,6 +311,11 @@ Factory.PaintArt = PaintArt
 
 -- GetTexture's answer for a spell icon, from the cached settings.
 function Factory.RefreshArt(f, rec)
+    -- a totem's time or a set duration wears its Active art until it ends (Factory.SetPhase)
+    if f._adPhaseTex then
+        PaintArt(f, f._adPhaseTex)
+        return
+    end
     if f._adArtGen ~= artGen or f._adArtRec ~= rec then
         f._adArtGen, f._adArtRec = artGen, rec
         f._adArtOv = Store.Resolve(rec, "appearance", "customIcon")
@@ -782,6 +789,7 @@ function Factory.Release(id)
         Factory.StopRangeGlow(f)
         Factory.StopRechargeGlow(f)
         f._adStateSig = nil   -- the lanes just stopped: the next feed repaints
+        Factory.SetPhase(f, nil, false)
         if NS.DriverWarn then NS.DriverWarn.Drop(f) end
         if NS.DriverToggle then NS.DriverToggle.Drop(f) end
         if NS.DriverAssist then NS.DriverAssist.Drop(f) end
@@ -847,10 +855,14 @@ local function ApplySwipeAlpha(f)
         return own * a
     end
     local sc = f._adSwipeColor
-    -- a GCD or wand spin draws in its own colour
-    if f._adPureGCD then sc = (f._adPureWand and f._adWandSwipeColor or f._adGcdSwipeColor) or sc end
-    if sc then f.cooldown:SetSwipeColor(sc[1], sc[2], sc[3], A(sc[4] or 0.8)) end
     local ec = f._adEdgeColor
+    -- a GCD or wand spin draws in its own colour, a totem or a set duration in the Active one
+    if f._adPhaseUp then
+        sc, ec = f._adPhaseSwipeColor or sc, f._adPhaseEdgeColor or ec
+    elseif f._adPureGCD then
+        sc = (f._adPureWand and f._adWandSwipeColor or f._adGcdSwipeColor) or sc
+    end
+    if sc then f.cooldown:SetSwipeColor(sc[1], sc[2], sc[3], A(sc[4] or 0.8)) end
     if ec and f.cooldown.SetEdgeColor then
         f.cooldown:SetEdgeColor(ec[1], ec[2], ec[3], A(ec[4] or 1))
     end
@@ -1787,7 +1799,24 @@ end
 local function ApplyCdPresentation(f, rec)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
     local ds, de, db
-    if f._adPureGCD then
+    local rev, es = R("swipe", "reverse") == true, R("swipe", "edgeScale") or 1.8
+    if f._adPhaseUp then
+        -- a totem's time or a set duration on this cooldown (Drivers\AD_DriverPhase.lua)
+        -- draws in the Active look's swipe: an aura icon's, or a spell's aura phase's
+        local hide = R("appearance", "forceHideIcon") == true
+        ds = R("auraSwipe", "swipeShow") ~= false and not hide
+        de = R("auraSwipe", "swipeEdge") == true and not hide
+        db = R("auraSwipe", "swipeBling") == true and not hide
+        if rec.kind == "aura" then
+            rev = R("auraSwipe", "swipeReverse") ~= false
+            f._adPhaseSwipeColor = R("auraSwipe", "swipeColor") or { 0, 0, 0, 0.8 }
+        else
+            rev = R("auraSwipe", "overlaySwipeReverse") == true
+            f._adPhaseSwipeColor = R("auraSwipe", "overlaySwipeColor") or { 1, 0.95, 0.57, 0.7 }
+        end
+        f._adPhaseEdgeColor = R("auraSwipe", "edgeColor") or { 1, 1, 1, 1 }
+        es = R("auraSwipe", "edgeScale") or 1.8
+    elseif f._adPureGCD then
         local look = R("swipe", f._adPureWand and "wandSwipe" or "gcdSwipe")
         ds = look == "swipe" or look == "both"
         de = look == "edge" or look == "both"
@@ -1806,6 +1835,9 @@ local function ApplyCdPresentation(f, rec)
     f.cooldown:SetDrawSwipe(ds)
     f.cooldown:SetDrawEdge(de)
     f.cooldown:SetDrawBling(db)
+    f.cooldown:SetReverse(rev)
+    -- 1.8 = the Cooldown Manager's edge length; the template's is 1.0.
+    if f.cooldown.SetEdgeScale then f.cooldown:SetEdgeScale(es) end
     -- the swipe colour follows the presentation
     ApplySwipeAlpha(f)
 end
@@ -2204,9 +2236,10 @@ function Factory.ApplyStyle(f, rec)
     -- button, which covers it while the aura is up and draws its own. Above
     -- the button it would show at the missing alpha over the live icon. Any
     -- other icon's border sits at +1, under the swipe (+2); a spell icon's
-    -- aura overlay (the button at +5) covers both.
-    local overlay = NS.DriverAura ~= nil and NS.DriverAura.OverlayOn ~= nil
-        and NS.DriverAura.OverlayOn(rec) == true
+    -- aura overlay (the button at +5) covers both. A totem or a set duration
+    -- runs on the icon's own cooldown: no button over it.
+    local overlay = NS.DriverAura ~= nil and NS.DriverAura.ButtonOver ~= nil
+        and NS.DriverAura.ButtonOver(rec) == true
     Factory.ApplyBorder(f, rec, rec.kind == "aura" and Factory.AURA_LADDER.border or 1, forceHide)
     -- Texts are the top of an icon: the text host sits over every glow at its
     -- default level and any anchored engine button's stack. Set each pass
@@ -2315,18 +2348,14 @@ function Factory.ApplyStyle(f, rec)
 
     local hasSwipe = NS.Schema.Applies(nil, NS.Schema.icon.swipe, rec.kind)
     if hasSwipe then
+        -- its draw switches, direction and edge length (a totem's Active look its own)
         ApplyCdPresentation(f, rec)
-        f.cooldown:SetReverse(R("swipe", "reverse") == true)
         ShapeSwipe(f.cooldown, mask, plan)
         -- Cached for the state dim; ApplySwipeAlpha writes them scaled.
         local sc = R("swipe", "swipeColor") or { 0, 0, 0, 0.8 }
         f._adSwipeColor = sc
         f._adGcdSwipeColor = R("swipe", "gcdSwipeColor") or { 0, 0, 0, 0.5 }
         f._adWandSwipeColor = R("swipe", "wandSwipeColor") or { 0, 0, 0, 0.5 }
-        if f.cooldown.SetEdgeScale then
-            -- 1.8 = the Cooldown Manager's edge length; the template's is 1.0.
-            f.cooldown:SetEdgeScale(R("swipe", "edgeScale") or 1.8)
-        end
         if f.cooldown.SetEdgeColor then
             f._adEdgeColor = R("swipe", "edgeColor") or { 1, 1, 1, 1 }
         end
@@ -4764,6 +4793,142 @@ function Factory.LookGlow(f, field, on)
     return v
 end
 
+-- After every state paint of a non-aura icon: the dynamic-group edge, the
+-- state's glows, the border's grey.
+local function StateTail(f, rec, onCooldown)
+    -- Dynamic groups re-place from here, so every icon kind moves them. Fired
+    -- when a drop-out input flips (busy, state alpha 0, hidden while missing),
+    -- for recorded icons only: the preview's fake cooldown must not wake them.
+    if f._adRecId then
+        local sig = (f._adOnCooldown and 1 or 0)
+            + (((f._adStateAlpha or 1) <= 0) and 2 or 0)
+            + (Factory.StockHidden(f, rec) and 4 or 0)
+            + (f._adPassive and 8 or 0)
+        if f._adDynSig ~= sig then
+            local was = f._adDynSig
+            f._adDynSig = sig
+            NS.Events.Fire("AD_DYNEDGE", f._adRecId, was, sig)
+        end
+    end
+    Factory.UpdateGlow(f, rec, not onCooldown)
+    Factory.UpdateUsableGlow(f, rec)
+    Factory.UpdateCooldownGlow(f, rec)
+    Factory.UpdateRangeGlow(f, rec)
+    Factory.UpdateRechargeGlow(f, rec)
+    Factory.UpdateIdleGlow(f, rec)
+    if f._adProcLit ~= nil then Factory.SetProcGlow(f, rec, f._adProcLit) end
+    -- the border follows the art's final grey (our own texture: a plain read)
+    Factory.BorderGrey(f, rec, f.icon.IsDesaturated ~= nil and f.icon:IsDesaturated() == true)
+end
+
+-- The Active look's glow on the icon itself while its totem's time or a set
+-- duration runs, on the rung its overlay had; Missing and Always ones stay
+-- with the holder.
+local function PhaseGlows(f, rec, on)
+    local host = f._adPhaseGlow
+    local want = on and Store.Resolve(rec, "appearance", "forceHideIcon") ~= true
+        and Store.Resolve(rec, "auraActive", "activeGlow") == true and not Factory.HolderGlowOn(rec, 1)
+    if not want and not host then return end
+    if not host then
+        host = CreateFrame("Frame", nil, f)
+        host:SetAllPoints(f)
+        host:EnableMouse(false)
+        f._adPhaseGlow = host
+    end
+    local lvl = f:GetFrameLevel()
+    if type(lvl) ~= "number" or (issecretvalue and issecretvalue(lvl)) then lvl = nil end
+    host._adLevel = lvl and (lvl + Factory.AURA_LADDER.button + 1)
+    local w, h = f:GetSize()
+    if type(w) ~= "number" or (issecretvalue and issecretvalue(w)) then w = 36 end
+    if type(h) ~= "number" or (issecretvalue and issecretvalue(h)) then h = w end
+    Factory.SetAuraButtonGlow(host, rec, want, w, h, Factory.AuraActiveAlpha(rec), 1)
+end
+
+-- A totem's time or a set duration runs on the icon's own cooldown
+-- (Drivers\AD_DriverPhase.lua) and wears the Active look, as an aura over
+-- the icon does: its opacity, grey, tint, art, swipe and glow.
+local function PaintPhase(f, rec)
+    local R = function(section, field) return Store.Resolve(rec, section, field) end
+    local aura = rec.kind == "aura"
+    local keep
+    if aura then
+        keep = R("auraActive", "activePreserveText") ~= false
+        f._adLabelsBright = R("auraActive", "activeLabelsBright") == true
+        f._adSwipeBright = R("auraActive", "activePreserveSwipe") == true
+    else
+        keep = R("states", "preserveDurationText") ~= false
+        f._adLabelsBright = R("states", "labelsFullOpacity") == true
+        f._adSwipeBright = R("states", "preserveSwipe") == true
+    end
+    SetTimed(f, nil)
+    ApplyCdPresentation(f, rec)
+    local aA = R("auraActive", "activeAlpha") or 1
+    if aA < 0 then aA = 0 elseif aA > 1 then aA = 1 end
+    ApplyStateAlpha(f, aA, keep)
+    -- an aura icon's missing texts and glows stand down while its totem shows
+    if f._adMissClip then f._adMissClip:SetAlpha(0) end
+    if f._adMissGlow then f._adMissGlow:SetAlpha(0) end
+    -- the Active icon, else an aura icon's live art, else the spell it follows
+    -- when set to the aura's icon (the driver's pick), else its own
+    local tex = OverrideFor(rec, "auraActive", "activeIcon")
+    if not tex then
+        if aura then
+            tex = Factory.AuraLiveTexture(rec)
+        elseif R("auraActive", "overlayArt") ~= "spell" then
+            tex = f._adPhaseArt
+        end
+    end
+    f._adPhaseTex = tex
+    if tex then PaintArt(f, tex) end
+    local desat = R("auraActive", "activeDesaturate") == true
+    f.icon:SetDesaturated(desat)
+    local va = f._adShownAlpha or f._adStateAlpha or 1
+    if R("auraActive", "activeTintEnabled") == true then
+        local c = R("auraActive", "activeTintColor") or { 1, 1, 1, 1 }
+        f.icon:SetVertexColor(c[1], c[2], c[3], va)
+    else
+        f.icon:SetVertexColor(1, 1, 1, va)
+    end
+    Factory.RangeShadow(f, rec, false, va)
+    Factory.BorderGrey(f, rec, desat)
+    if rec.kind == "item" or rec.kind == "trinket" then Factory.ApplyFrameAlpha(f, rec) end
+    PhaseGlows(f, rec, true)
+end
+
+-- The phase driver's switch: on, the icon's own cooldown runs the totem's
+-- time or a set duration (the driver writes it; the cooldown driver stands
+-- off it) in the Active look; off, the state's look comes back and the
+-- driver re-feeds the real cooldown. art: the spell it follows, for a spell
+-- icon set to the aura's icon. rec nil: just let go (a released frame).
+function Factory.SetPhase(f, rec, on, art)
+    on = on and true or nil
+    if not f then return end
+    f._adPhaseArt = on and art or nil
+    if f._adPhaseUp == on then
+        if on and rec then Factory.SetState(f, rec, f._adOnCooldown, f._adDesatState) end
+        return
+    end
+    f._adPhaseUp = on
+    f._adStateSig = nil
+    if not on then
+        f._adPhaseTex = nil
+        if rec then PhaseGlows(f, rec, false)
+        elseif f._adPhaseGlow then Factory.SetAuraButtonGlow(f._adPhaseGlow, nil, false) end
+    end
+    if not rec then return end
+    if not on then
+        -- its own art back (an aura icon's state paint sets its own)
+        if rec.kind == "spell" then
+            Factory.RefreshArt(f, rec)
+        elseif rec.kind ~= "aura" then
+            PaintArt(f, Factory.GetTexture(rec))
+        end
+    end
+    ApplyCdPresentation(f, rec)
+    Factory.ApplyDurationVis(f, rec)
+    Factory.SetState(f, rec, f._adOnCooldown, f._adDesatState)
+end
+
 -- State writer: drivers report, this paints. onCooldown picks the alpha bucket
 -- (missing, on an aura icon); desatState (nil = onCooldown) drives desaturation
 -- alone, so a recharging charge spell dims but stays colored until depleted.
@@ -4800,6 +4965,11 @@ function Factory.SetState(f, rec, onCooldown, desatState)
                 end
             end
         end
+    end
+    if f._adPhaseUp then
+        PaintPhase(f, rec)
+        if rec.kind ~= "aura" then StateTail(f, rec, onCooldown) end
+        return
     end
     if rec.kind == "aura" then
         -- onCooldown here means the aura is missing: a whole-icon dim with its
@@ -5075,28 +5245,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
             f.icon:SetVertexColor(oc[1], oc[2], oc[3], f._adShownAlpha or f._adStateAlpha or 1)
         end
     end
-    -- Dynamic groups re-place from here, so every icon kind moves them. Fired
-    -- when a drop-out input flips (busy, state alpha 0, hidden while missing),
-    -- for recorded icons only: the preview's fake cooldown must not wake them.
-    if f._adRecId then
-        local sig = (f._adOnCooldown and 1 or 0)
-            + (((f._adStateAlpha or 1) <= 0) and 2 or 0)
-            + (Factory.StockHidden(f, rec) and 4 or 0)
-            + (f._adPassive and 8 or 0)
-        if f._adDynSig ~= sig then
-            f._adDynSig = sig
-            NS.Events.Fire("AD_DYNEDGE")
-        end
-    end
-    Factory.UpdateGlow(f, rec, not onCooldown)
-    Factory.UpdateUsableGlow(f, rec)
-    Factory.UpdateCooldownGlow(f, rec)
-    Factory.UpdateRangeGlow(f, rec)
-    Factory.UpdateRechargeGlow(f, rec)
-    Factory.UpdateIdleGlow(f, rec)
-    if f._adProcLit ~= nil then Factory.SetProcGlow(f, rec, f._adProcLit) end
-    -- the border follows the art's final grey (our own texture: a plain read)
-    Factory.BorderGrey(f, rec, f.icon.IsDesaturated ~= nil and f.icon:IsDesaturated() == true)
+    StateTail(f, rec, onCooldown)
 end
 
 -- usability code from the driver: "range" | "nomana" | "unusable" | nil
@@ -5980,7 +6129,8 @@ end
 function Factory.ApplyDurationVis(f, rec)
     local R = function(section, field) return Store.Resolve(rec, section, field) end
     local hide = R("text", "durationText") == false
-    if not hide and f._adChargesAvail
+    -- a totem's time or a set duration shows its number with charges left too
+    if not hide and f._adChargesAvail and not f._adPhaseUp
         and R("text", "hideDurWithCharges") == true then
         hide = true
     end

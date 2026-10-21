@@ -2,6 +2,7 @@
 -- Owns that track; the bars runtime calls in through Bars.SwingOH when it styles, refreshes, releases or previews a swing bar.
 -- PLAYER_SWING's duration is plain, so the track is GetTime math like the main fill and holds in combat.
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("SwingOffhand") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Bars = NS.Bars
 local K = Bars and Bars.Kit
 if not (K and K.SwingHandExists) then return end
@@ -272,7 +273,7 @@ function OH.SyncEvents()
         Events.On("WEAPON_SLOT_CHANGED", "adswingoh", Presence)
         Events.On("UNIT_ATTACK_SPEED", "adswingoh", function(_, unit)
             if unit == "player" then Presence() end
-        end)
+        end, { "player" })
     else
         Events.Off("PLAYER_SWING", "adswingoh")
         Events.Off("WEAPON_SLOT_CHANGED", "adswingoh")

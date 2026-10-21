@@ -10,6 +10,8 @@
 -- pin holds any more goes back to where it was.
 
 local ADDON, NS = ...
+local hooksecurefunc = NS.Perf and NS.Perf.Hooks("Pins") or hooksecurefunc   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("Pins") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Store = NS.Store
 local Events = NS.Events
 

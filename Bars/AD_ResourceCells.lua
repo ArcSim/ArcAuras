@@ -6,6 +6,8 @@
 -- Power values only reach SetValue and the client's own countdown; what is
 -- compared here (maxima, the charged list) is plain or skipped.
 local ADDON, NS = ...
+local hooksecurefunc = NS.Perf and NS.Perf.Hooks("ResourceCells") or hooksecurefunc   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("ResourceCells") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Bars = NS.Bars
 if not Bars then return end
 local K = Bars.Kit

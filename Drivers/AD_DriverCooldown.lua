@@ -3,6 +3,8 @@
 -- IsShown(), never from cooldown numbers, which are secret in combat.
 
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("DriverCooldown") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("DriverCooldown") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Store = NS.Store
 local Events = NS.Events
 local Factory = NS.Factory
@@ -654,14 +656,21 @@ local function PostGCDDelay()
     return delay
 end
 
+-- Every icon that hid one GCD shares one timer and one read of its end; a
+-- feed from it that finds the next GCD queues itself for that one.
+local postGCD, postGCDRun, postGCDQueued = {}, {}, false
 local function SchedulePostGCDRepush(a)
-    if a.postGCDQueued then return end
-    a.postGCDQueued = true
-    local delay = PostGCDDelay()
-    C_Timer.After(delay, function()
-        a.postGCDQueued = nil
-        local live = attached[a.rec.id]
-        if live then Feed(live) end
+    postGCD[a.rec.id] = true
+    if postGCDQueued then return end
+    postGCDQueued = true
+    C_Timer.After(PostGCDDelay(), function()
+        postGCDQueued = false
+        postGCD, postGCDRun = postGCDRun, postGCD
+        for id in pairs(postGCDRun) do
+            local live = attached[id]
+            if live then Feed(live) end
+        end
+        wipe(postGCDRun)
     end)
 end
 
@@ -735,6 +744,8 @@ Feed = function(a)
     -- How this GCD spin draws; the wand's lock has its own look.
     local look = Store.Resolve(a.rec, "swipe", wandGCD and "wandSwipe" or "gcdSwipe")
     local noGCD = (look or "hidden") == "hidden"
+    -- whether a GCD start must feed this icon (SPELL_UPDATE_COOLDOWN below)
+    if not wandGCD then a.drawsGCD = not noGCD end
 
     -- Visible swipe. The shadows ignore the GCD, so a duration that lands while
     -- both are clear is the GCD (or a GCD-length blip): pureGCD draws it as an
@@ -743,6 +754,8 @@ Feed = function(a)
     local pureGCD = false
     if hold then
         -- the running cooldown keeps the swipe it was given
+    elseif a.frame._adPhaseUp then
+        -- its totem or a set duration runs on it; their end re-feeds (Drivers\AD_DriverPhase.lua)
     elseif a.isCharge then
         if c and not m then
             local dur = C_Spell.GetSpellChargeDuration(sid, true)
@@ -785,6 +798,55 @@ end
 
 local function FeedAll()
     for _, a in pairs(attached) do Feed(a) end
+end
+
+-- Which icons a SPELL_UPDATE_COOLDOWN moves, the Cooldown Manager's rule
+-- (NeedsCooldownUpdate): no spell named, or a secret one, moves every icon; a
+-- named spell or its base moves the icons on it; a GCD start also moves the
+-- icons that draw the GCD. Everything else keeps its running shadows, whose
+-- own end pushes the state. A frame's events are fed once. Forever keeps the
+-- full feed: its ranks share a cooldown under other IDs.
+local cdAll, cdGCD, cdSpells = false, false, {}
+local GCD_CAT = Constants and Constants.SpellCooldownConsts
+    and Constants.SpellCooldownConsts.GLOBAL_RECOVERY_CATEGORY
+
+local function CdNamed(a)
+    if a.effSid and cdSpells[a.effSid] then return true end
+    local d = a.rec.driver
+    if type(d) ~= "table" then return false end
+    if d.spellID and cdSpells[d.spellID] then return true end
+    if Store.HasSpellAlts(d) then
+        for _, id in ipairs(Store.SpellChoices(d)) do
+            if cdSpells[id] then return true end
+        end
+    end
+    return false
+end
+
+local function FeedCdMoved()
+    local all, gcd = cdAll, cdGCD
+    cdAll, cdGCD = false, false
+    if all then
+        FeedAll()
+    else
+        for _, a in pairs(attached) do
+            -- an icon not fed yet has no known look: fed
+            if CdNamed(a) or (gcd and a.drawsGCD ~= false) then Feed(a) end
+        end
+    end
+    wipe(cdSpells)
+end
+
+local function NoteCdEvent(spellID, baseSpellID, startCat)
+    if NS.IsForever == true or spellID == nil or (issecretvalue and (issecretvalue(spellID)
+        or issecretvalue(baseSpellID) or issecretvalue(startCat))) then
+        cdAll = true
+    else
+        cdSpells[spellID] = true
+        if baseSpellID then cdSpells[baseSpellID] = true end
+        if GCD_CAT == nil or startCat == GCD_CAT then cdGCD = true end
+    end
+    Events.Coalesce("adcd_cdmoved", FeedCdMoved)
 end
 
 local function FeedCharges()
@@ -1084,6 +1146,49 @@ local function FinishItemState(a, onCd)
     Factory.SetState(a.frame, rec, onCd, onCd)
 end
 
+-- The cooldown an item icon reads, the same read as FeedItem's.
+local function ReadItemCd(a)
+    local rec = a.rec
+    local d = rec.driver or {}
+    if rec.kind == "trinket" then return GetInventoryItemCooldown("player", d.slotID or 13) end
+    if rec.kind ~= "item" then return nil end
+    local iid = d.itemID
+    if type(d.itemIDs) == "table" or d.category ~= nil then iid = Driver.liveItems[rec.id] or d.itemID end
+    if iid and C_Container and C_Container.GetItemCooldown then return C_Container.GetItemCooldown(iid) end
+end
+
+-- What a feed read, an item-GCD blip kept as no cooldown. A secret read keeps
+-- nothing, so the next bag cooldown event feeds again.
+local function NoteItemCd(a, start, duration, enable)
+    if issecretvalue and (issecretvalue(start) or issecretvalue(duration) or issecretvalue(enable)) then
+        a.cdKnown = false
+        return
+    end
+    start, duration = tonumber(start) or 0, tonumber(duration) or 0
+    if duration <= 1.5 then start, duration = 0, 0 end
+    a.cdKnown, a.cdStart, a.cdDur, a.cdEnable = true, start, duration, enable
+end
+
+local function ItemCdMoved(a)
+    if not a.cdKnown then return true end
+    -- A category icon follows the item that last started the category: a new
+    -- one (the first potion of the session included) moves it. Secret when
+    -- cooldowns are restricted: then the shared cooldown below still moves.
+    local d = a.rec.driver
+    if a.rec.kind == "item" and type(d) == "table" and d.category and C_Spell and C_Spell.GetLastCategoryCooldownSource then
+        local _, src = C_Spell.GetLastCategoryCooldownSource(d.category)
+        if not (issecretvalue and issecretvalue(src)) and type(src) == "number" and src > 0
+            and src ~= (Driver.liveItems[a.rec.id] or d.itemID) then
+            return true
+        end
+    end
+    local start, duration, enable = ReadItemCd(a)
+    if issecretvalue and (issecretvalue(start) or issecretvalue(duration) or issecretvalue(enable)) then return true end
+    start, duration = tonumber(start) or 0, tonumber(duration) or 0
+    if duration <= 1.5 then start, duration = 0, 0 end
+    return start ~= a.cdStart or duration ~= a.cdDur or enable ~= a.cdEnable
+end
+
 local function FeedItem(a)
     local rec = a.rec
     local d = rec.driver or {}
@@ -1107,6 +1212,7 @@ local function FeedItem(a)
     elseif C_Container and C_Container.GetItemCooldown and iid then
         start, duration, enable = C_Container.GetItemCooldown(iid)
     end
+    NoteItemCd(a, start, duration, enable)
     -- Count first, whatever the cooldown secrecy: SetText takes it raw (a
     -- secret-safe sink); the empty flag changes only on a plain count. With
     -- several items, none you can use reads as out of stock.
@@ -1131,6 +1237,14 @@ local function FeedItem(a)
         a.frame._adItemEmpty = (iid == nil) or nil
         a.frame._adPassive = (iid ~= nil and Store.Resolve(rec, "trinket", "onlyOnUse") == true
             and Driver.IsPassiveItem(iid)) or nil
+        -- the art follows the item worn: after a loading screen the slot can
+        -- read empty at the restyle and fill a feed later (no equipment event)
+        if not (issecretvalue and issecretvalue(iid)) and a.frame._adLiveItem ~= iid then
+            a.frame._adLiveItem = iid
+            local tex = Factory.GetTexture(rec)
+            a.frame.icon:SetTexture(tex)
+            a.frame._adArt = not (issecretvalue and issecretvalue(tex)) and tex or nil
+        end
     end
     -- Ammo: the equipped stack. GetInventoryItemCount has no secrecy annotation
     -- and Blizzard's item buttons compare it; it still goes to SetText raw.
@@ -1144,6 +1258,12 @@ local function FeedItem(a)
     end
     -- the state paint below carries it (after the empty flag, which wins)
     if rec.kind == "item" then a.frame._adUsability = Driver.ItemUsabilityCode(a) end
+    -- its totem or a set duration runs on the cooldown: the last state holds
+    -- until their end re-feeds (Drivers\AD_DriverPhase.lua)
+    if a.frame._adPhaseUp then
+        FinishItemState(a, a.lastOn == true)
+        return
+    end
     -- Secret item cooldowns (spell ones are secret on Forever) go through a
     -- duration object, which accepts secrets; the state is read back off the
     -- widget and OnCooldownDone re-feeds at expiry. No arithmetic on a secret.
@@ -1232,13 +1352,48 @@ local function FeedItemUsabilitySoon()
     end)
 end
 
--- the cast is an item icon's use spell
+-- The usability pass runs many times a second in combat, and the game's item
+-- answer is a slow read that moves on few edges (each read at once above):
+-- from the pass, items are read at most every ITEM_USAB_GAP, the last request
+-- always served.
+Driver.ITEM_USAB_GAP = 1
+local itemPassAt, itemPassGen, itemPassArmed = -math.huge, 0, false
+-- a read stands any waiting one down
+local function ItemPassRead()
+    itemPassAt, itemPassArmed, itemPassGen = GetTime(), false, itemPassGen + 1
+    FeedItemUsability()
+end
+local function ItemUsabilityFromPass()
+    if next(attachedItems) == nil then return end
+    local wait = itemPassAt + Driver.ITEM_USAB_GAP - GetTime()
+    if wait <= 0 then
+        ItemPassRead()
+        return
+    end
+    if itemPassArmed then return end
+    itemPassArmed = true
+    local gen = itemPassGen
+    C_Timer.After(wait, function()
+        if gen == itemPassGen then ItemPassRead() end
+    end)
+end
+
+-- the cast is an item icon's use spell; an item's use spell never changes, so
+-- it is read once (an item still loading answers nothing and is read again)
+local useSpellOf = {}   -- [itemID] = its use spell
 function Driver.IsItemUseSpell(spellID)
     if not (spellID and C_Item and C_Item.GetItemSpell) then return false end
     for _, a in pairs(attachedItems) do
         local iid = a.rec.kind == "item" and Driver.LiveItem(a.rec)
         if iid then
-            local _, sid = C_Item.GetItemSpell(iid)
+            local sid = useSpellOf[iid]
+            if sid == nil then
+                local _, s = C_Item.GetItemSpell(iid)
+                if type(s) == "number" and not (issecretvalue and issecretvalue(s)) then
+                    useSpellOf[iid] = s
+                    sid = s
+                end
+            end
             if sid == spellID then return true end
         end
     end
@@ -1319,7 +1474,7 @@ local function FeedUsabilityAll()
         a.usabGate = gate
     end
     inPass = false
-    FeedItemUsability()
+    ItemUsabilityFromPass()
 end
 
 -- A range answer moved: repaint only the icons on that spell.
@@ -1389,6 +1544,20 @@ local function FeedAllItems()
     for _, a in pairs(attachedItems) do FeedItem(a) end
 end
 
+-- The bag cooldown event comes with every global cooldown: an item icon is fed
+-- only when its own cooldown moved (an item used, a cooldown run out), and
+-- then the Can't use it states are read. Counts ride BAG_UPDATE_DELAYED.
+local function FeedMovedItems()
+    local moved = false
+    for _, a in pairs(attachedItems) do
+        if ItemCdMoved(a) then
+            moved = true
+            FeedItem(a)
+        end
+    end
+    if moved then FeedItemUsabilitySoon() end
+end
+
 -- Ammo count on spell icons (arrows on Auto Shot). Factory.ApplyStyle owns
 -- the look and Show/Hide; this sets only the number.
 local function ApplyAmmoText(a)
@@ -1408,10 +1577,12 @@ local function FeedAmmoAll()
 end
 
 local USAB_GAP = 0.25   -- out of combat, seconds between usability passes at most
+Driver.USAB_COMBAT_GAP = 0.1   -- in combat
 -- A talent that replaces a spell moves what Store.TrackedSpellID answers;
 -- SPELLS_CHANGED should follow, these catch a client that sends only them.
 Driver.TALENT_EVENTS = { "TRAIT_CONFIG_UPDATED", "PLAYER_TALENT_UPDATE" }
-Driver.ITEM_USAB_EVENTS = { "PLAYER_REGEN_ENABLED", "ZONE_CHANGED_NEW_AREA", "ENCOUNTER_START", "ENCOUNTER_END" }
+Driver.ITEM_USAB_EVENTS = { "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED", "ZONE_CHANGED_NEW_AREA", "ENCOUNTER_START",
+    "ENCOUNTER_END" }
 local function EventValid(e)
     return (not (C_EventUtils and C_EventUtils.IsEventValid)) or C_EventUtils.IsEventValid(e) == true
 end
@@ -1419,13 +1590,13 @@ local registered = false
 local function EnsureEvents()
     if registered then return end
     registered = true
-    Events.On("SPELL_UPDATE_COOLDOWN", "adcd", function(_, spellID, baseSpellID)
+    Events.On("SPELL_UPDATE_COOLDOWN", "adcd", function(_, spellID, baseSpellID, _, startCat)
         -- a wand shot's own update carries only its lock
         if Driver.IsWandShot(spellID) or Driver.IsWandShot(baseSpellID) then
             Events.Coalesce("adcd_feedwand", FeedWandLooks)
             return
         end
-        Events.Coalesce("adcd_feedall", FeedAll)
+        NoteCdEvent(spellID, baseSpellID, startCat)
     end)
     Events.On("SPELL_UPDATE_CHARGES", "adcd", function()
         Events.Coalesce("adcd_feedcharges", FeedCharges)
@@ -1450,10 +1621,9 @@ local function EnsureEvents()
                 Feed(a)
             end
         end
-    end)
+    end, { "player" })
     Events.On("BAG_UPDATE_COOLDOWN", "adcd", function()
-        Events.Coalesce("adcd_feeditems", FeedAllItems)
-        Events.Coalesce("adcd_itemusab", FeedItemUsabilitySoon)
+        Events.Coalesce("adcd_moveditems", FeedMovedItems)
     end)
     -- a cooldown held through combat starts as it ends
     Events.On("PLAYER_REGEN_ENABLED", "adcd_held", function()
@@ -1467,12 +1637,13 @@ local function EnsureEvents()
     Events.On("UNIT_INVENTORY_CHANGED", "adcd_ammo", function(_, unit)
         if unit and unit ~= "player" then return end
         Events.Coalesce("adcd_feedammo", FeedAmmoAll)
-    end)
-    -- SPELL_UPDATE_USABLE comes ten times a second while power moves: out of
-    -- combat the pass runs at most every USAB_GAP; a new target and combat's
-    -- start run it the next frame.
+    end, { "player" })
+    -- SPELL_UPDATE_USABLE comes ten times a second while power moves: the pass
+    -- runs at most every USAB_GAP out of combat and USAB_COMBAT_GAP in it (a
+    -- tint is only a look, and the last request always runs); a new target and
+    -- combat's start run it the next frame.
     Events.On("SPELL_UPDATE_USABLE", "adcd", function()
-        Events.CoalesceCapped("adcd_usab", FeedUsabilityAll, USAB_GAP)
+        Events.CoalesceCapped("adcd_usab", FeedUsabilityAll, USAB_GAP, false, Driver.USAB_COMBAT_GAP)
     end)
     Events.On("PLAYER_TARGET_CHANGED", "adcd_usab", function()
         Events.CoalesceCapped("adcd_usab", FeedUsabilityAll, USAB_GAP, true)
@@ -1505,8 +1676,8 @@ local function EnsureEvents()
         Driver.itemDataWanted = false
         Events.Coalesce("adcd_feeditems", FeedAllItems)
     end)
-    -- an item's usability moves with combat's end, the zone and a boss fight
-    -- (combat's start and the rest ride the usability pass)
+    -- an item's usability moves with combat, the zone and a boss fight
+    -- (the usability pass catches the rest, at most every ITEM_USAB_GAP)
     for _, e in ipairs(Driver.ITEM_USAB_EVENTS) do
         if EventValid(e) then
             Events.On(e, "adcd_itemusab", function() Events.Coalesce("adcd_itemusab", FeedItemUsabilitySoon) end)

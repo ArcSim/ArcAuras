@@ -4,6 +4,7 @@
 -- range once and keeps the runs that exist; later searches walk only those.
 
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("SpellNames") or C_Timer   -- /arcperf times what they run
 
 local Names = {}
 NS.SpellNames = Names

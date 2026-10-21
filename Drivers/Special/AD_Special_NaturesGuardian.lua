@@ -2,6 +2,7 @@
 -- Registers "ng" on the Special hub; Read() carries the running cooldown's expiry and duration for a display to push into its own Cooldown with plain numbers.
 -- The game never publishes this cooldown: the trigger is the only thing taken from it, and the clock is GetTime(), so nothing here is secret anywhere.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("Special_NaturesGuardian") or C_Timer   -- /arcperf times what they run
 if NS.IsForever == true then return end
 local SP = NS.Special
 if not SP then return end

@@ -10,6 +10,8 @@
 -- timers fed with duration objects. A power or health picture takes the
 -- percent, and its value gate is a razor bar the engine fills.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("TextureElement") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("TextureElement") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Bars = NS.Bars
 local K = Bars and Bars.Kit
 if not (Bars and K and Bars.RegisterKind) then return end
@@ -814,11 +816,13 @@ end
 function TP.PushAuraFilters(e)
     local sub = e.tpAura
     if not (sub and sub.container.SetAuraSlotCandidateFilters) then return end
-    local ids = TP.AuraFilters(e)
+    local ids, parked = TP.AuraFilters(e)
     local fsig = NS.DriverAura.FilterSig(ids)
     if sub.filterSig == fsig then return end
     sub.filterSig = fsig
     sub.container:SetAuraSlotCandidateFilters(sub.key, { includeSpellIDs = ids })
+    -- parked (a friendly target), it stops listening too (Drivers\AD_DriverAura.lua SlotOn)
+    NS.DriverAura.SlotOn(sub.container, sub.key, not parked, sub.harmful, ids, sub.unit)
 end
 
 -- every region on a slot that runs a loop
@@ -1747,6 +1751,15 @@ function TP.Needs()
     return n
 end
 
+-- The units each unit event is read for: no other unit's event reaches Lua.
+local TP_PLAYER = { "player" }
+TP.UNITS = {
+    UNIT_POWER_FREQUENT = TP_PLAYER, UNIT_POWER_UPDATE = TP_PLAYER, UNIT_MAXPOWER = TP_PLAYER,
+    UNIT_DISPLAYPOWER = TP_PLAYER, UNIT_PET = TP_PLAYER, UNIT_INVENTORY_CHANGED = TP_PLAYER,
+    UNIT_SPELLCAST_SUCCEEDED = TP_PLAYER, UNIT_HAPPINESS = { "pet" },
+    UNIT_HEALTH = NS.Schema and NS.Schema.HEALTH_UNITS, UNIT_MAXHEALTH = NS.Schema and NS.Schema.HEALTH_UNITS,
+}
+
 -- Arms and disarms against what the live pictures need; run after every
 -- ensure and release.
 function TP.Sync()
@@ -1754,7 +1767,7 @@ function TP.Sync()
     for ev, fn in pairs(TP.HANDLERS) do
         if n[ev] and not TP.armed[ev] then
             TP.armed[ev] = true
-            K.SafeOn(ev, TP.KEY, fn)
+            K.SafeOn(ev, TP.KEY, fn, TP.UNITS[ev])
         elseif not n[ev] and TP.armed[ev] then
             TP.armed[ev] = nil
             NS.Events.Off(ev, TP.KEY)

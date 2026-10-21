@@ -7,6 +7,8 @@
 -- shield, a soulstone) shows while no one in the group carries it.
 -- Called through Driver.Attach / Detach / Refeed in AD_DriverCooldown.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("DriverGroupBuff") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("DriverGroupBuff") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Store = NS.Store
 local Events = NS.Events
 local Factory = NS.Factory
@@ -20,8 +22,11 @@ local function Tr(s)
     return AT and AT.Tr and AT.Tr(s) or s
 end
 
-GB.EVENTS = { "UNIT_AURA", "GROUP_ROSTER_UPDATE", "UNIT_CONNECTION", "UNIT_HEALTH",
+GB.EVENTS = { "GROUP_ROSTER_UPDATE", "UNIT_CONNECTION",
     "PLAYER_ENTERING_WORLD", "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED" }
+-- What moves the count: heard only out of combat, where it is read (buffs are
+-- secret in combat and the game draws the layers itself).
+GB.COUNT_EVENTS = { "UNIT_AURA", "UNIT_HEALTH" }
 -- A raid layer holds this many members, each owning every PER-th stripe of
 -- its icon, so one member's lack shows the whole icon, faint.
 GB.PER = 5
@@ -39,6 +44,11 @@ GB.inCombat = InCombatLockdown() and true or false
 local UNIT_OK = { player = true }
 for i = 1, 4 do UNIT_OK["party" .. i] = true end
 for i = 1, 40 do UNIT_OK["raid" .. i] = true end
+
+-- the same members as unit lists: a nameplate's auras or health never reach Lua
+local GROUP_UNITS = {}
+for u in pairs(UNIT_OK) do GROUP_UNITS[#GROUP_UNITS + 1] = u end
+table.sort(GROUP_UNITS)
 
 local function Plain(v) return not (issecretvalue and issecretvalue(v)) end
 
@@ -356,6 +366,8 @@ local function AimSet(set, rec, parked)
             if c then
                 if newFilter and c.SetAuraSlotFilterString then c:SetAuraSlotFilterString(slot.key, filter) end
                 if newIDs then c:SetAuraSlotCandidateFilters(slot.key, { includeSpellIDs = ids }) end
+                -- parked, it stops listening too (Drivers\AD_DriverAura.lua SlotOn)
+                DA.SlotOn(c, slot.key, not parked)
             end
         end
     end
@@ -596,11 +608,13 @@ end
 function GB.OnEvent(ev, unit)
     if ev == "PLAYER_REGEN_DISABLED" then
         GB.inCombat = true
+        GB.ListenCounts(false)
         for _, a in pairs(GB.attached) do GB.Paint(a) end
         return
     end
     if ev == "PLAYER_REGEN_ENABLED" then
         GB.inCombat = false
+        GB.ListenCounts(true)
         for _, a in pairs(GB.attached) do
             if a.setsPending then GB.EnsureSets(a) end
         end
@@ -638,14 +652,31 @@ function GB.OnEvent(ev, unit)
 end
 
 -- Forever throws on registering an event it lacks, so each is probed.
+local function Valid(ev)
+    return not (C_EventUtils and C_EventUtils.IsEventValid) or C_EventUtils.IsEventValid(ev)
+end
+
+function GB.ListenCounts(on)
+    for _, ev in ipairs(GB.COUNT_EVENTS) do
+        if on and Valid(ev) then
+            Events.On(ev, "adgroupbuff", GB.OnEvent, GROUP_UNITS)
+        else
+            Events.Off(ev, "adgroupbuff")
+        end
+    end
+end
+
 function GB.EnsureEvents()
     if GB.live then return end
     GB.live = true
+    -- the combat edges were not heard while nothing was armed
+    GB.inCombat = InCombatLockdown() and true or false
     for _, ev in ipairs(GB.EVENTS) do
-        if not (C_EventUtils and C_EventUtils.IsEventValid) or C_EventUtils.IsEventValid(ev) then
-            Events.On(ev, "adgroupbuff", GB.OnEvent)
+        if Valid(ev) then
+            Events.On(ev, "adgroupbuff", GB.OnEvent, ev:find("^UNIT_") and GROUP_UNITS or nil)
         end
     end
+    GB.ListenCounts(not GB.inCombat)
     -- a group, layout or condition fade reaches the layers
     Events.OnMessage("AD_VISIBILITY", "adgroupbuff", function()
         for _, a in pairs(GB.attached) do GB.SyncLayers(a) end
@@ -688,6 +719,7 @@ function GB.Detach(id)
     if next(GB.attached) or not GB.live then return end
     GB.live = false
     for _, ev in ipairs(GB.EVENTS) do Events.Off(ev, "adgroupbuff") end
+    GB.ListenCounts(false)
 end
 
 function GB.Refeed(id)

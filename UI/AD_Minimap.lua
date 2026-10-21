@@ -16,12 +16,44 @@ local function Angle()
     return NS.IsForever and 220 or 195
 end
 
+-- The quarters a minimap addon's shape keeps round (GetMinimapShape), in the
+-- order right-bottom, left-bottom, right-top, left-top; on a square quarter
+-- the button runs along the edge instead of a circle.
+local ROUND_QUARTERS = {
+    ROUND = { true, true, true, true },
+    SQUARE = { false, false, false, false },
+    ["CORNER-TOPLEFT"] = { false, false, false, true },
+    ["CORNER-TOPRIGHT"] = { false, false, true, false },
+    ["CORNER-BOTTOMLEFT"] = { false, true, false, false },
+    ["CORNER-BOTTOMRIGHT"] = { true, false, false, false },
+    ["SIDE-LEFT"] = { false, true, false, true },
+    ["SIDE-RIGHT"] = { true, false, true, false },
+    ["SIDE-TOP"] = { false, false, true, true },
+    ["SIDE-BOTTOM"] = { true, true, false, false },
+    ["TRICORNER-TOPLEFT"] = { false, true, true, true },
+    ["TRICORNER-TOPRIGHT"] = { true, false, true, true },
+    ["TRICORNER-BOTTOMLEFT"] = { true, true, false, true },
+    ["TRICORNER-BOTTOMRIGHT"] = { true, true, true, false },
+}
+
 local function Reposition(angle)
     local rad = math.rad(angle)
-    local r = (Minimap_:GetWidth() or 140) / 2 + 5
+    local c, s = math.cos(rad), math.sin(rad)
+    local w = (Minimap_:GetWidth() or 140) / 2 + 5
+    local h = (Minimap_:GetHeight() or (w * 2 - 10)) / 2 + 5
+    local shape = GetMinimapShape and GetMinimapShape()
+    local quarters = ROUND_QUARTERS[type(shape) == "string" and shape or "ROUND"] or ROUND_QUARTERS.ROUND
+    local q = (c < 0 and 2 or 1) + (s > 0 and 2 or 0)
+    local x, y
+    if quarters[q] then
+        x, y = c * w, s * h
+    else
+        -- where the ray from the centre meets the square's edge
+        local t = math.min(c ~= 0 and w / math.abs(c) or math.huge, s ~= 0 and h / math.abs(s) or math.huge)
+        x, y = c * t, s * t
+    end
     btn:ClearAllPoints()
-    btn:SetPoint("CENTER", Minimap_, "CENTER",
-        math.cos(rad) * r, math.sin(rad) * r)
+    btn:SetPoint("CENTER", Minimap_, "CENTER", x, y)
 end
 
 local function Build()

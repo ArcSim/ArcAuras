@@ -273,7 +273,7 @@ Schema.CUSTOM_TRIGGER_GROUPS = {
         list = { "combat_start", "combat_end", "target_changed", "target_died", "totem_placed", "totem_gone", "ended", "chain" } },
     { key = "cond", label = "Conditions", list = { "cond_on", "cond_off" } },
 }
--- Your attacks on the target (UNIT_COMBAT on "target"); listed only once the
+-- Your attacks on the target (UNIT_COMBAT on "target"); listed while the
 -- engine's CUSTOM_TARGET_FEEDBACK switch is on.
 Schema.CUSTOM_TARGET_TRIGGERS = { "target_dodge", "target_parry", "target_block", "target_miss",
     "target_hit", "target_crit" }
@@ -573,7 +573,7 @@ Schema.TEXT_STRATA = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }
 function Schema.TextStrataShows(rec, sec, pinKey, under)
     local Store, TA, D = NS.Store, NS.TextAnchor, NS.DriverAura
     if not (rec and Store) then return true end
-    if under and D and D.OverlayOn and D.OverlayOn(rec) == true then return false end
+    if under and D and D.ButtonOver and D.ButtonOver(rec) == true then return false end
     if pinKey and TA and TA.Pinned(Store.Resolve(rec, sec, pinKey)) then return false end
     return true
 end
@@ -3206,8 +3206,9 @@ Schema.bar = {
             dep = { field = "swingOffhand", value = false }, label = "Fill closes in from both ends" },
         -- Ranged swing bars: the last half second is Auto Shot's windup, which
         -- fills only while the player stands still (Bars\AD_SwingWindup.lua).
-        -- Hidden: Tracking draws its switch beside Swing type.
-        swingWindup = { d = false, t = "bool", inherit = false, hidden = true, kinds = { swing = true },
+        -- Hidden: Tracking draws its switch beside Swing type. On by default:
+        -- a ranged bar without it shows a shot that is not coming yet.
+        swingWindup = { d = true, t = "bool", inherit = false, hidden = true, kinds = { swing = true },
             label = "Show the Auto Shot windup" },
         swingWindupColor = { d = { 0.95, 0.79, 0.3, 1 }, t = "color", alpha = true, kinds = { swing = true },
             dep = { field = "swingWindup" }, label = "Windup color",

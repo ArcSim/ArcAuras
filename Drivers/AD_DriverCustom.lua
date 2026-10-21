@@ -2,6 +2,8 @@
 -- The cooldown driver attaches icons here (Attach / Detach / Refeed); the bars runtime registers CU.BarKind for timer bars; the display goes through Factory.SetState, the icon's Cooldown and the bars kit's GetTime fill. A Sound item (Bars\AD_SoundItem.lua) attaches with nothing to draw: its rules only cue sounds and speech.
 -- Every trigger stays plain in combat on WoW Forever: UNIT_COMBAT on you and your pet, COMBAT_TEXT_UPDATE's type, your own casts, shadow-Cooldown edges (NS.Reminders' watches), proc overlays, combat, target and totem events. A secret amount or spell ID means unknown and fires nothing.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("DriverCustom") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("DriverCustom") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Store = NS.Store
 local Events = NS.Events
 local Schema = NS.Schema
@@ -9,10 +11,10 @@ local Schema = NS.Schema
 local CU = {}
 NS.DriverCustom = CU
 
--- UNIT_COMBAT on "target" (your attacks dodged, parried, blocked, landing) is
--- not registered by the game's own frames on Forever, so it stays off until a
--- fight with /adcustom diag proves it fires.
-CU.CUSTOM_TARGET_FEEDBACK = false
+-- UNIT_COMBAT on "target" (your attacks dodged, parried, blocked, landing):
+-- no game frame of Forever's registers it, but a fight with /adcustom diag
+-- showed it firing plainly in combat. False takes the target triggers back out.
+CU.CUSTOM_TARGET_FEEDBACK = true
 -- Saved stacks older than this are dropped at login: a count from yesterday's
 -- session is stale. A timer or a stack still running is picked up at any age.
 CU.RUNTIME_MAX_AGE = 3600
@@ -421,11 +423,12 @@ function CU.Matches(r, ctx, st)
     -- your own casts but the listed spells (any rank of them); none listed: every cast
     if r.when == "cast_except" then
         if not (ctx and ctx.unit == "player" and type(ctx.spellID) == "number") then return false end
-        return not (CU.RuleHears(r, ctx.spellID) or (ctx.baseID ~= nil and CU.RuleHears(r, ctx.baseID)))
+        -- the event's base is asked only when it is another spell
+        return not (CU.RuleHears(r, ctx.spellID) or (ctx.baseID ~= nil and ctx.baseID ~= ctx.spellID and CU.RuleHears(r, ctx.baseID))) -- raw-id: the event's own two IDs
     end
     if CU.SPELL_TRIGGERS[r.when] then
         if not (ctx and (CU.RuleHears(r, ctx.spellID)
-            or (ctx.baseID ~= nil and CU.RuleHears(r, ctx.baseID)))) then return false end
+            or (ctx.baseID ~= nil and ctx.baseID ~= ctx.spellID and CU.RuleHears(r, ctx.baseID)))) then return false end -- raw-id: the event's own two IDs
         if r.when == "cast" and ctx.unit == "pet" and not r.pet then return false end
         -- a usable rule hears one edge: the plain usable one with "Fire even
         -- while on cooldown", the castable one (usable and ready) without
@@ -1398,6 +1401,18 @@ SlashCmdList.ADCUSTOM = function(msg)
         local f2 = CreateFrame("Frame")
         f2:SetScript("OnEvent", f:GetScript("OnEvent"))
         f2:RegisterUnitEvent("UNIT_COMBAT", "target")
+        -- every mob's plate, its number folded away: does a mob that is not
+        -- your target report its dodge too
+        local f3 = CreateFrame("Frame")
+        f3:SetScript("OnEvent", function(_, _, a, b, c)
+            local u = Plain(a)
+            if type(u) ~= "string" or u:sub(1, 9) ~= "nameplate" then return end
+            local k = "nameplate " .. tostring(Plain(b) or "?")
+            if Plain(c) ~= nil and Plain(c) ~= "" then k = k .. "/" .. tostring(Plain(c)) end
+            counts[k] = (counts[k] or 0) + 1
+        end)
+        f3:RegisterEvent("UNIT_COMBAT")
+        f.plates, f.target = f3, f2
         if Valid("COMBAT_TEXT_UPDATE") then f:RegisterEvent("COMBAT_TEXT_UPDATE") end
         CU.diag = f
         local fct = GetCVar and GetCVar("enableFloatingCombatText")
@@ -1406,6 +1421,7 @@ SlashCmdList.ADCUSTOM = function(msg)
         C_Timer.After(60, function()
             f:UnregisterAllEvents()
             f2:UnregisterAllEvents()
+            f3:UnregisterAllEvents()
             CU.diag = nil
             local keys = {}
             for k in pairs(counts) do keys[#keys + 1] = k end
@@ -1419,14 +1435,16 @@ SlashCmdList.ADCUSTOM = function(msg)
             print("|cff3fc9f2Arc Auras custom diag:|r COMBAT_TEXT_UPDATE by type")
             for _, k in ipairs(keys) do print(("  %s: %d"):format(k, textCounts[k])) end
             if #keys == 0 then print("  none") end
-            local tgt = 0
+            local tgt, plate = 0, 0
             for k, n in pairs(counts) do
                 if k:sub(1, 6) == "target" then tgt = tgt + n end
+                if k:sub(1, 9) == "nameplate" then plate = plate + n end
             end
             local ct = 0
             for _, n in pairs(textCounts) do ct = ct + n end
-            print(("|cff3fc9f2Arc Auras custom diag:|r target UNIT_COMBAT %s (%d), combat text %s (%d)"):format(
-                tgt > 0 and "FIRES" or "silent", tgt, ct > 0 and "fires" or "silent", ct))
+            print(("|cff3fc9f2Arc Auras custom diag:|r target UNIT_COMBAT %s (%d), nameplates %s (%d), combat text %s (%d)"):format(
+                tgt > 0 and "FIRES" or "silent", tgt, plate > 0 and "FIRE" or "silent", plate,
+                ct > 0 and "fires" or "silent", ct))
         end)
         return
     end

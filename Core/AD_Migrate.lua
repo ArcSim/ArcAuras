@@ -1,6 +1,7 @@
 -- Arc UI Forever became Arc Auras. Its setup stays in ArcUIv2DB, kept loaded by
 -- the ArcUI stand-in (or the old addon itself), and moves in on the first start.
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("Migrate") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 
 local Migrate = {}
 NS.Migrate = Migrate

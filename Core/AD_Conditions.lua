@@ -4,6 +4,8 @@
 -- While the options panel is open, everything shows active and fully visible.
 
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("Conditions") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("Conditions") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Store = NS.Store
 local Events = NS.Events
 
@@ -1037,8 +1039,12 @@ local UNIT_ARG = {
     UNIT_SPELLCAST_EMPOWER_START = "player", UNIT_SPELLCAST_EMPOWER_STOP = "player",
     UNIT_PET = "player", UNIT_INVENTORY_CHANGED = "player", UNIT_DISPLAYPOWER = "player",
     UNIT_HAPPINESS = "pet", UNIT_HEALTH = "pet", UNIT_TARGET = "pet", PLAYER_SPECIALIZATION_CHANGED = "player",
+    UNIT_THREAT_SITUATION_UPDATE = "player",   -- the aggro rows read your own threat
     UNIT_FACTION = "either",   -- the PvP flag (player) or hostility (target)
 }
+
+-- the same as unit lists: the game delivers only those units' events
+local UNITS_OF = { player = { "player" }, pet = { "pet" }, either = { "player", "target" } }
 
 local function OnEvent(event, unit)
     -- a secret token is never one of ours
@@ -1082,7 +1088,10 @@ local function Arm()
     end
     for e in pairs(want) do
         if not armed[e] and EventValid(e) then
-            Events.On(e, "adcond", OnEvent)
+            -- unit events only (a UNIT_ name): PLAYER_SPECIALIZATION_CHANGED
+            -- keeps its plain registration
+            local units = e:find("^UNIT_") and UNITS_OF[UNIT_ARG[e]] or nil
+            Events.On(e, "adcond", OnEvent, units)
             armed[e] = true
         end
     end

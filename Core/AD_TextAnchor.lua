@@ -4,6 +4,7 @@
 -- this file carries the text there on a frame drawn above the target, and home
 -- whenever the target is not on screen. Nothing is written to the game's frames.
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("TextAnchor") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 
 local TA = {}
 NS.TextAnchor = TA

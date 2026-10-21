@@ -6,6 +6,7 @@
 -- through a step curve, inside one that pet existence gates.
 
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("DriverWarn") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Store = NS.Store
 local Events = NS.Events
 
@@ -223,6 +224,10 @@ function DW.OnEvent(event, unit)
     Events.Coalesce(DW.KEY, DW.ApplyAll)
 end
 
+-- The unit each unit event is about: no other unit's event reaches Lua.
+DW.UNITS = { UNIT_HEALTH = { "pet" }, UNIT_MAXHEALTH = { "pet" }, UNIT_HAPPINESS = { "pet" },
+    UNIT_PET = { "player" }, UNIT_INVENTORY_CHANGED = { "player" } }
+
 -- Events.On registers directly, and Forever throws on an event it lacks.
 function DW.Valid(e)
     return not (C_EventUtils and C_EventUtils.IsEventValid and not C_EventUtils.IsEventValid(e))
@@ -239,7 +244,7 @@ function DW.Arm()
     end
     for e in pairs(want) do
         if not DW.armed[e] and DW.Valid(e) then
-            Events.On(e, DW.KEY, DW.OnEvent)
+            Events.On(e, DW.KEY, DW.OnEvent, DW.UNITS[e])
             DW.armed[e] = true
         end
     end

@@ -4,6 +4,7 @@
 -- A kind opts in with one entry in Schema.BAR_GLOW_KINDS (what it tracks of its own, its marks' rung).
 -- Aura presence is never read: the game shows a lane's button exactly while its aura is up.
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("BarGlow") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Bars = NS.Bars
 local Store = NS.Store
 local Events = NS.Events
@@ -397,6 +398,8 @@ function G.Refilter(lane, parked)
         lane.filterSig = sig
         c:SetAuraSlotCandidateFilters(lane.key, { includeSpellIDs = ids })
     end
+    -- parked, it stops listening too (Drivers\AD_DriverAura.lua SlotOn)
+    DA.SlotOn(c, lane.key, not parked, lane.harmful, ids, lane.unit)
 end
 
 -- The init window, the one write that always lands: the button follows the

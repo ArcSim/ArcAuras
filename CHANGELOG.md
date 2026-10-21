@@ -1,5 +1,26 @@
 # Arc Auras
 
+## 3.0.9
+
+Your attacks as triggers, totem and duration timers on the icon, and general performance optimization.
+
+### New Features
+
+- **Your attacks as triggers** - Custom Icons, Custom Bars and the Sound item can now react to your attacks on your target: dodged, parried, blocked, missed, a hit or a crit, listed under Your target.
+
+### Improvements
+
+- **Auto Shot windup on by default** - Ranged swing bars now show Auto Shot's windup unless you turn it off in the bar's Tracking tab.
+- **Performance** - General performance optimization.
+
+### Bug Fixes
+
+- **Totem and duration timers on icons** - A spell icon showing its totem or a set duration now runs that time on the icon itself, with no spell cooldown showing through it.
+- **Totem time after combat** - A totem's time stays on its icon when combat ends while the totem is still up.
+- **Trinket pictures** - Trinket icons no longer show a question mark after a loading screen or a hearthstone.
+- **Minimap button** - The minimap button follows the edge of a square minimap.
+- **Aura opacity on spell icons** - A spell icon showing an aura no longer applies its opacity twice.
+
 ## 3.0.8
 
 An Auto Shot windup for ranged swing bars, and bars that anchor to one icon in a group.

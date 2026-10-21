@@ -7,6 +7,7 @@
 -- Called from AD_DriverCooldown's Attach / Detach and DT.BarChanged.
 
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("TotemButton") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Events = NS.Events
 
 local TB = {}

@@ -144,16 +144,16 @@ local function Shown(f)
     return a > 0.01
 end
 
--- Our icon's totem (Drivers\AD_DriverPhase.lua) when its button shows: the phase,
+-- Our icon's totem (Drivers\AD_DriverPhase.lua) while it shows: the phase,
 -- its end and the slot it follows go into s. Blizzard checks a totem first.
 function MC.TotemNow(rec, s)
     local PH = NS.DriverPhase
     if not (PH and PH.Source and PH.Source(rec) == "totem") then return false end
-    local b = PH.buttons and PH.buttons[rec.id]
-    if not (b and Bool(b:IsShown())) then return false end
+    local cd = PH.Showing and PH.Showing(rec.id)
+    if not cd then return false end
     local e = PH.entries and PH.entries[rec.id]
     local DT = NS.DriverTotem
-    s.phase, s.ends = "totem", EndOf(b._adSwipe)
+    s.phase, s.ends = "totem", EndOf(cd)
     s.slot = (e and e.pseudo and DT and DT.SlotFor and DT.SlotFor(e.pseudo)) or nil
     return true
 end

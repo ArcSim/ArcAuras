@@ -2,6 +2,7 @@
 -- Registers "elemtempest" on the Special hub; its own player cast events draw; a record's driver.chanceForecast (auto, instant, blast) picks the cost the chance assumes.
 -- Ascendance casts spend Maelstrom but grant a free Tempest, so they never draw. Player cast events stay plain in combat.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("Special_ElemTempest") or C_Timer   -- /arcperf times what they run
 if NS.IsForever == true then return end
 local SP = NS.Special
 if not SP then return end

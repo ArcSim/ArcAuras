@@ -2,6 +2,8 @@
 -- The engine hands it every Reminder group to place (Engine.RegisterGroupKind); reminders are their own records (Store.NewReminder), aura reminders are aura icons it only places (RM.PlaceAuras).
 -- Every trigger reads a value that stays plain in combat: a cooldown shadow's IsShown, your own cast's spell ID, a proc overlay's spell ID, a weapon enchant's time left and charges (NS.DriverEnchant), C_Spell.IsSpellUsable.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("DriverReminders") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("DriverReminders") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Store = NS.Store
 local Events = NS.Events
 
@@ -1434,7 +1436,7 @@ function RM.ArmEnchant(on)
             Events.On(e, "adrem_ench", function(ev, unit)
                 if ev == "UNIT_INVENTORY_CHANGED" and unit ~= "player" then return end
                 Events.Coalesce("adrem_ench", RM.EnchantAll)
-            end)
+            end, e == "UNIT_INVENTORY_CHANGED" and { "player" } or nil)
         end
     end
 end

@@ -13,6 +13,34 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.0.9",
+        intro = "Your attacks as triggers, totem and duration timers on the icon, and general performance optimization.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Your attacks as triggers",
+                    desc = "Custom Icons, Custom Bars and the Sound item can now react to your attacks on your target: dodged, parried, blocked, missed, a hit or a crit, listed under Your target." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Auto Shot windup on by default",
+                    desc = "Ranged swing bars now show Auto Shot's windup unless you turn it off in the bar's Tracking tab." },
+                { title = "Performance",
+                    desc = "General performance optimization." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Totem and duration timers on icons",
+                    desc = "A spell icon showing its totem or a set duration now runs that time on the icon itself, with no spell cooldown showing through it." },
+                { title = "Totem time after combat",
+                    desc = "A totem's time stays on its icon when combat ends while the totem is still up." },
+                { title = "Trinket pictures",
+                    desc = "Trinket icons no longer show a question mark after a loading screen or a hearthstone." },
+                { title = "Minimap button",
+                    desc = "The minimap button follows the edge of a square minimap." },
+                { title = "Aura opacity on spell icons",
+                    desc = "A spell icon showing an aura no longer applies its opacity twice." },
+            } },
+        },
+    },
+    {
         version = "3.0.8",
         intro = "An Auto Shot windup for ranged swing bars, and bars that anchor to one icon in a group.",
         sections = {
@@ -1168,6 +1196,32 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.0.9",
+        intro = "Your attacks as triggers, totem and duration timers on the icon, and general performance optimization.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Your attacks as triggers",
+                    desc = "Custom Icons, Custom Bars and the Sound item can now react to your attacks on your target: dodged, parried, blocked, missed, a hit or a crit, listed under Your target." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Performance",
+                    desc = "General performance optimization." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Totem and duration timers on icons",
+                    desc = "A spell icon showing its totem or a set duration now runs that time on the icon itself, with no spell cooldown showing through it." },
+                { title = "Totem time after combat",
+                    desc = "A totem's time stays on its icon when combat ends while the totem is still up." },
+                { title = "Trinket pictures",
+                    desc = "Trinket icons no longer show a question mark after a loading screen or a hearthstone." },
+                { title = "Minimap button",
+                    desc = "The minimap button follows the edge of a square minimap." },
+                { title = "Aura opacity on spell icons",
+                    desc = "A spell icon showing an aura no longer applies its opacity twice." },
+            } },
+        },
+    },
     {
         version = "3.0.8",
         intro = "Bars that anchor to one icon in a group.",

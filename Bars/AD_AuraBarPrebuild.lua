@@ -1,6 +1,7 @@
 -- AD_AuraBarPrebuild: aura bars built inside the login window, so a reload
 -- while auras are secret (combat, a restricted instance) keeps them.
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("AuraBarPrebuild") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Bars = NS.Bars
 local Store = NS.Store
 

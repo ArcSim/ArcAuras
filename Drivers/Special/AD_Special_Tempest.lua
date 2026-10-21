@@ -2,6 +2,7 @@
 -- Registers "tempest" on the Special hub; the shared MSW engine's consumes draw; one listener serves every consume's window, registered only while a window is open.
 -- The 5 ms window is a same-frame test, since GetTime() is the frame's start: it is the only thing that separates a deck proc from an Awakening Storms gain. Never widen it.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("Special_Tempest") or C_Timer   -- /arcperf times what they run
 if NS.IsForever == true then return end
 local SP = NS.Special
 if not SP then return end

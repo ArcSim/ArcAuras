@@ -5,6 +5,8 @@
 -- from a duration object, so nothing polls.
 
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("EnchantBar") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("EnchantBar") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Bars = NS.Bars
 local K = Bars and Bars.Kit
 if not (Bars and K and Bars.RegisterKind) then return end
@@ -102,7 +104,7 @@ function EB.Arm()
         K.SafeOn(ev, EB.KEY, function(_, unit)
             if ev == "UNIT_INVENTORY_CHANGED" and unit ~= "player" then return end
             NS.Events.Coalesce("adbarsench_all", EB.RefreshAll)
-        end)
+        end, ev == "UNIT_INVENTORY_CHANGED" and { "player" } or nil)
     end
 end
 

@@ -879,9 +879,17 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
     local groups = opts.groups or S.CUSTOM_TRIGGER_GROUPS
     local function GroupItems()
         local out = {}
-        for _, g in ipairs(groups) do out[#out + 1] = { value = g.key, text = g.label } end
         local E = CU()
-        if E and E.CUSTOM_TARGET_FEEDBACK then out[#out + 1] = { value = "target", text = "Your target" } end
+        local target = E and E.CUSTOM_TARGET_FEEDBACK
+        for _, g in ipairs(groups) do
+            out[#out + 1] = { value = g.key, text = g.label }
+            -- your attacks on the target sit with your own and your pet's
+            if target and g.key == "pet" then
+                out[#out + 1] = { value = "target", text = "Your target" }
+                target = false
+            end
+        end
+        if target then out[#out + 1] = { value = "target", text = "Your target" } end
         return out
     end
     local function GroupList(key)

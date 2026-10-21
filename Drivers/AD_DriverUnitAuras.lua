@@ -3,6 +3,8 @@
 -- A full look per type adds a second container on the unit, one aura group per dispel type, shown in the first one's place.
 -- The game reads the auras and draws the buttons, so it works in combat; nothing here reads an aura or a rect, and a unit answer is never compared unguarded.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("DriverUnitAuras") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("DriverUnitAuras") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Store = NS.Store
 local Events = NS.Events
 

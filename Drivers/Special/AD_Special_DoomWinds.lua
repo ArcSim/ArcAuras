@@ -2,6 +2,8 @@
 -- Registers "dw" on the Special hub; the shared MSW engine's consumes draw; a record's driver.forceCDM picks the CDM path while a wolf talent is taken. Every branch, window and order is ProcTracker's deck file.
 -- frame.auraInstanceID is secret even in the open world, so the CDM path keys off which callback fires plus a plain nil-check; it reads Blizzard fields only and hooks frames.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("Special_DoomWinds") or C_Timer   -- /arcperf times what they run
+local hooksecurefunc = NS.Perf and NS.Perf.Hooks("Special_DoomWinds") or hooksecurefunc
 if NS.IsForever == true then return end
 local SP = NS.Special
 if not SP then return end

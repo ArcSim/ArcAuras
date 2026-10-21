@@ -9,6 +9,8 @@
 -- SetFormattedText, C_StringUtil's joins, a Cooldown's own countdown, an aura
 -- button's text bindings); nothing here reads, compares or converts one.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("TextElement") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("TextElement") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Bars = NS.Bars
 local K = Bars and Bars.Kit
 if not (Bars and K and Bars.RegisterKind) then return end
@@ -1311,6 +1313,16 @@ function TX.TickClock()
     end)
 end
 
+-- The units each unit event is read for: no other unit's event reaches Lua.
+local TX_PLAYER = { "player" }
+TX.UNITS = {
+    UNIT_POWER_FREQUENT = TX_PLAYER, UNIT_POWER_UPDATE = TX_PLAYER, UNIT_MAXPOWER = TX_PLAYER,
+    UNIT_DISPLAYPOWER = TX_PLAYER, UNIT_PET = TX_PLAYER, UNIT_INVENTORY_CHANGED = TX_PLAYER,
+    UNIT_SPELLCAST_SUCCEEDED = TX_PLAYER, UNIT_HAPPINESS = { "pet" },
+    UNIT_HEALTH = NS.Schema and NS.Schema.HEALTH_UNITS, UNIT_MAXHEALTH = NS.Schema and NS.Schema.HEALTH_UNITS,
+    UNIT_NAME_UPDATE = NS.Schema and NS.Schema.HEALTH_UNITS,
+}
+
 -- Arms and disarms against what the live elements need; run after every
 -- ensure and release.
 function TX.Sync()
@@ -1319,7 +1331,7 @@ function TX.Sync()
     for ev, fn in pairs(TX.HANDLERS) do
         if n[ev] and not TX.armed[ev] then
             TX.armed[ev] = true
-            K.SafeOn(ev, TX.KEY, fn)
+            K.SafeOn(ev, TX.KEY, fn, TX.UNITS[ev])
         elseif not n[ev] and TX.armed[ev] then
             TX.armed[ev] = nil
             NS.Events.Off(ev, TX.KEY)

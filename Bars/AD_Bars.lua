@@ -4,12 +4,16 @@
 -- pips bar also sizes it). Near the 200-local limit: new helpers go on Bars.
 
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("Bars") or C_Timer   -- /arcperf times what they run
 local Store = NS.Store
 local Events = NS.Events
 local AT = NS.AT
 
 local Bars = {}
 NS.Bars = Bars
+-- frames on the game's aura buttons go through /arcperf's stand-in, which marks
+-- them for its sweep (Core\AD_Perf.lua); a field, as the file is at the 200-local ceiling
+Bars.CreateFrame = NS.Perf and NS.Perf.Frames("Bars") or function(...) return CreateFrame(...) end
 
 -- Kind registry: a bar kind in its own file (Bars\AD_Castbar.lua) registers a
 -- handler and uses the helpers in Bars.Kit. The seam calls it at fixed points,
@@ -2259,11 +2263,13 @@ end
 
 -- Events.On calls RegisterEvent directly, and Forever throws on an event name
 -- it does not have, so every power event goes through the probe.
-local function SafeOn(event, key, fn)
+local function SafeOn(event, key, fn, units)
     if C_EventUtils and C_EventUtils.IsEventValid
         and not C_EventUtils.IsEventValid(event) then return end
-    Events.On(event, key, fn)
+    Events.On(event, key, fn, units)
 end
+-- the player alone: no other unit's event reaches Lua (Events.On's units)
+local PLAYER = { "player" }
 
 -- defined with the resource runtime below (ticks and the refresh read them)
 local ResourceCostFractions, ResourceCostList, PredictLayout, EnsurePredictEvents
@@ -3683,7 +3689,7 @@ function EnsurePredictEvents()
     predictArmed = true
     SafeOn("UNIT_SPELLCAST_START", "adbarspred", function(_, unit, _, spellID)
         if unit == "player" then PredictStart(spellID) end
-    end)
+    end, PLAYER)
     for _, ev in ipairs(PREDICT_END_EVENTS) do
         SafeOn(ev, "adbarspred", function(event, unit, _, spellID)
             if unit ~= "player" then return end
@@ -3697,12 +3703,12 @@ function EnsurePredictEvents()
             if spellID ~= nil and Bars.predSpell ~= nil and spellID ~= Bars.predSpell then return end
             Bars.predSpell = nil
             PredictClear()
-        end)
+        end, PLAYER)
     end
     -- a landed cast's gain arrives with the power
     SafeOn("UNIT_POWER_UPDATE", "adbarsgain", function(_, unit)
         if unit == "player" and Bars.gainWait then Bars.GainCheck() end
-    end)
+    end, PLAYER)
     if NS.IsForever then
         SafeOn("CURRENT_SPELL_CAST_CHANGED", "adbarspred", PredictQueue)
         PredictQueue()
@@ -4533,32 +4539,34 @@ HB.SWAP_EVENTS = { "PLAYER_TARGET_CHANGED", "PLAYER_FOCUS_CHANGED", "UNIT_PET",
     "GROUP_ROSTER_UPDATE" }
 
 -- Armed while any health bar exists, released with the last one. Unit events
--- filter on the payload before any work, and Forever throws on an unknown
--- event name, so every one goes through the probe.
+-- come only for the units a health bar can follow (Schema.HEALTH_UNITS): a
+-- nameplate's or a raid member's health never reaches Lua. Forever throws on
+-- an unknown event name, so every one goes through the probe.
 function HB.Arm()
     if HB.armed then return end
     HB.armed = true
+    local units = NS.Schema.HEALTH_UNITS
     for _, ev in ipairs(HB.VALUE_EVENTS) do
-        SafeOn(ev, HB.KEY, function(_, unit) HB.ForUnit(unit, HB.Values) end)
+        SafeOn(ev, HB.KEY, function(_, unit) HB.ForUnit(unit, HB.Values) end, units)
     end
     for _, ev in ipairs(HB.PREDICT_EVENTS) do
         SafeOn(ev, HB.KEY, function(_, unit)
             HB.ForUnit(unit, function(e) HB.Predict(e, e.hpUnit, e.hpPreview) end)
-        end)
+        end, units)
     end
     for _, ev in ipairs(HB.LOOK_EVENTS) do
         SafeOn(ev, HB.KEY, function(_, unit)
             HB.ForUnit(unit, function(e) HB.PaintBase(e, e.hpUnit, e.hpPreview) end)
-        end)
+        end, units)
     end
     SafeOn("UNIT_NAME_UPDATE", HB.KEY, function(_, unit)
         HB.ForUnit(unit, function(e) HB.Name(e, e.hpUnit, e.hpPreview) end)
-    end)
+    end, units)
     SafeOn("PLAYER_TARGET_CHANGED", HB.KEY, function() HB.ForUnit("target", HB.Swap) end)
     SafeOn("PLAYER_FOCUS_CHANGED", HB.KEY, function() HB.ForUnit("focus", HB.Swap) end)
     SafeOn("UNIT_PET", HB.KEY, function(_, unit)
         if unit == "player" then HB.ForUnit("pet", HB.Swap) end
-    end)
+    end, PLAYER)
     SafeOn("GROUP_ROSTER_UPDATE", HB.KEY, function()
         for i = 1, 4 do HB.ForUnit("party" .. i, HB.Swap) end
     end)
@@ -4652,7 +4660,7 @@ local function EnsureSwingEvents()
         ForEach("swing", function(e)
             if not e.running then SwingIdle(e) end
         end)
-    end)
+    end, PLAYER)
 end
 
 local function ReleaseSwingEvents()
@@ -4875,7 +4883,7 @@ local function ArmAuraTargetWatch()
     if valid("UNIT_PET") then
         Events.On("UNIT_PET", "adbarsaura", function(_, u)
             if u == nil or u == "player" then SyncParks("pet") end
-        end)
+        end, PLAYER)
     end
     if valid("GROUP_ROSTER_UPDATE") then
         Events.On("GROUP_ROSTER_UPDATE", "adbarsaura", function()
@@ -4887,8 +4895,10 @@ local function ArmAuraTargetWatch()
         local function turned(_, u)
             if u == "target" or u == "focus" then SyncParks(u) end
         end
-        if valid("UNIT_FACTION") then Events.On("UNIT_FACTION", "adbarsaura", turned) end
-        if valid("UNIT_FLAGS") then Events.On("UNIT_FLAGS", "adbarsaura", turned) end
+        -- every unit's flags change all fight long; only these two park a lane
+        local sides = { "target", "focus" }
+        if valid("UNIT_FACTION") then Events.On("UNIT_FACTION", "adbarsaura", turned, sides) end
+        if valid("UNIT_FLAGS") then Events.On("UNIT_FLAGS", "adbarsaura", turned, sides) end
     end
     -- secrecy can lift a beat after the event: an unknown answer gets two
     -- more looks, then waits for the next swap
@@ -5083,6 +5093,7 @@ local function AuraPlan(entry)
     -- base button (built at init, so it joins the signature); an edit session
     -- keeps the shell's copies so an absent aura can still be placed.
     entry.chromeOwned = R(rec, "behavior", "hideWhenInactive") == true and not IsEditMode()
+    Events.Coalesce("adbars_auraunits", function() Bars.SyncAuraUnits() end)
     entry.auraSig = (AuraShape(d))
         .. "|" .. AuraFilter(d) .. "|" .. table.concat(parts, "|") .. (shade and "|sh" or "")
         .. (entry.chromeOwned and "|own" or "")
@@ -5236,7 +5247,7 @@ local function AuraOwnChromeBuild(entry, b, s)
     local ovl = sh.overlay:GetFrameLevel()
     local rung = sh.fill:GetFrameLevel() + Bars.LADDER.border
     -- background: the button's own level, under its bar (one level up)
-    oc.bgHost = CreateFrame("Frame", nil, b)
+    oc.bgHost = Bars.CreateFrame("Frame", nil, b)
     oc.bgHost:SetAllPoints(sh)
     oc.bgHost:SetFrameLevel(lvl)
     oc.bg = oc.bgHost:CreateTexture(nil, "BACKGROUND")
@@ -5244,7 +5255,7 @@ local function AuraOwnChromeBuild(entry, b, s)
     -- border strips + the border-style backdrop, on the border rung (under
     -- the glows); the strips take the shell's own corner anchors
     -- (BuildShell's), their thickness follows in the sync
-    oc.borderHost = CreateFrame("Frame", nil, b)
+    oc.borderHost = Bars.CreateFrame("Frame", nil, b)
     oc.borderHost:SetAllPoints(sh)
     oc.borderHost:SetFrameLevel(rung)
     oc.edges = {}
@@ -5259,18 +5270,18 @@ local function AuraOwnChromeBuild(entry, b, s)
     oc.edges.left:SetPoint("BOTTOMLEFT", sh, "BOTTOMLEFT")
     oc.edges.right:SetPoint("TOPRIGHT", sh, "TOPRIGHT")
     oc.edges.right:SetPoint("BOTTOMRIGHT", sh, "BOTTOMRIGHT")
-    oc.borderF = CreateFrame("Frame", nil, b, BackdropTemplateMixin and "BackdropTemplate" or nil)
+    oc.borderF = Bars.CreateFrame("Frame", nil, b, BackdropTemplateMixin and "BackdropTemplate" or nil)
     oc.borderF:SetAllPoints(sh)
     oc.borderF:SetFrameLevel(rung)
     oc.borderF:EnableMouse(false)
     oc.borderF:Hide()
     -- ticks: one copy per laid mark, anchored over it
-    oc.tickHost = CreateFrame("Frame", nil, b)
+    oc.tickHost = Bars.CreateFrame("Frame", nil, b)
     oc.tickHost:SetAllPoints(sh.overlay)
     oc.tickHost:SetFrameLevel(ovl)
     oc.ticks = {}
     -- the name, above the engine's own text host
-    oc.textHost = CreateFrame("Frame", nil, b)
+    oc.textHost = Bars.CreateFrame("Frame", nil, b)
     oc.textHost:SetAllPoints(sh.overlay)
     oc.textHost:SetFrameLevel(ovl + 2)
     oc.name = oc.textHost:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
@@ -5278,7 +5289,7 @@ local function AuraOwnChromeBuild(entry, b, s)
     -- the icon, when the shell has one (ApplyStyle ran before the slot)
     local f = entry.iconF
     if f then
-        oc.iconHost = CreateFrame("Frame", nil, b)
+        oc.iconHost = Bars.CreateFrame("Frame", nil, b)
         oc.iconHost:SetAllPoints(f)
         oc.iconHost:SetFrameLevel(ovl)
         oc.icon = oc.iconHost:CreateTexture(nil, "ARTWORK")
@@ -5518,7 +5529,7 @@ local function AuraBarEnsure(entry)
     local shell = entry.shell
     -- parented to the shell: the holder's alpha (opacity, hide when
     -- inactive, conditions) reaches the engine-drawn fill through it
-    local c = CreateFrame("AuraContainer", nil, shell, "CustomAuraContainerTemplate")
+    local c = Bars.CreateFrame("AuraContainer", nil, shell, "CustomAuraContainerTemplate")
     if not c or type(c.AddAuraSlot) ~= "function" then return false end
     c:SetSize(1, 1)
     c:SetPoint("TOPLEFT", shell, "TOPLEFT", 0, 0)
@@ -5609,7 +5620,7 @@ local function AuraBarEnsure(entry)
         end
         local s = { i = i, button = b }
 
-        local bar = CreateFrame("StatusBar", nil, b)
+        local bar = Bars.CreateFrame("StatusBar", nil, b)
         bar:SetFrameLevel(base + 2 + 2 * i)
         s.bar = bar
         if kind == "track" then
@@ -5684,7 +5695,7 @@ local function AuraBarEnsure(entry)
         -- attach, and a FontString without a font throws "Font not set" in
         -- the initializer, aborting AddAuraSlot before the slot registers.
         if i == 0 and (wantDur or wantStk) then
-            local th = CreateFrame("Frame", nil, b)
+            local th = Bars.CreateFrame("Frame", nil, b)
             th:SetAllPoints(sh.overlay)
             th:SetFrameLevel(sh.overlay:GetFrameLevel() + 1)
             if wantDur then
@@ -5754,6 +5765,50 @@ function ForEach(kind, fn)
     end
 end
 
+-- the units an aura lane can watch (Drivers\AD_DriverAura.lua), and you for
+-- the cost marks: a nameplate's or a raid member's auras never reach Lua
+local function AuraUnitList()
+    local list, seen = { "player", "target" }, { player = true, target = true }
+    local units = NS.DriverAura and NS.DriverAura.AURA_UNITS
+    for u in pairs(units or {}) do
+        if not seen[u] then
+            seen[u] = true
+            list[#list + 1] = u
+        end
+    end
+    return list
+end
+
+-- An aura bar shows and hides with the engine's button: Hide when inactive
+-- hands that button the bar's chrome, and a bar without it never hides. Only a
+-- bar built inside an edit session keeps its own chrome and needs presence,
+-- so the lanes' units are heard only while such a bar lives; the player
+-- always, for the cost marks.
+local function NeedsPresence(e)
+    return not e.chromeOwned and not IsEditMode() and R(e.rec, "behavior", "hideWhenInactive") == true
+end
+Bars.NeedsPresence = NeedsPresence
+
+local function OnUnitAura(_, unit)
+    -- your auras can move a spell's cost: the cost marks follow, read plain
+    -- next frame (the aura itself is never read)
+    if unit == "player" then Events.Coalesce("adbars_costs", ResourceCostsMoved) end
+    ForEach("aura", function(e)
+        local sub = e.auraSub
+        if sub and sub.unit == unit and NeedsPresence(e) then AuraPresenceSync(e) end
+    end)
+end
+
+local auraUnitsWide = nil
+function Bars.SyncAuraUnits()
+    if not sharedArmed then return end
+    local wide = false
+    ForEach("aura", function(e) if NeedsPresence(e) then wide = true end end)
+    if wide == auraUnitsWide then return end
+    auraUnitsWide = wide
+    Events.On("UNIT_AURA", "adbars", OnUnitAura, wide and AuraUnitList() or PLAYER)
+end
+
 local function EnsureSharedEvents()
     if sharedArmed then return end
     sharedArmed = true
@@ -5820,20 +5875,11 @@ local function EnsureSharedEvents()
         ForEach("cooldown", function(e)
             if SpellIDFor(e.rec) == spellID then CooldownRefresh(e) end
         end)
-    end)
-    -- aura-bar presence rides UNIT_AURA (vectors are non-secret to receive;
-    -- only the nil-check is read), for every unit a lane can watch
-    Events.On("UNIT_AURA", "adbars", function(_, unit)
-        -- your auras can move a spell's cost: the cost marks follow, read
-        -- plain next frame (the aura itself is never read)
-        if unit == "player" then Events.Coalesce("adbars_costs", ResourceCostsMoved) end
-        local units = NS.DriverAura and NS.DriverAura.AURA_UNITS
-        if not (units and units[unit]) and unit ~= "player" and unit ~= "target" then return end
-        ForEach("aura", function(e)
-            local sub = e.auraSub
-            if sub and sub.unit == unit then AuraPresenceSync(e) end
-        end)
-    end)
+    end, PLAYER)
+    -- the player for the cost marks; the aura lanes' units only while a bar
+    -- needs presence (Bars.SyncAuraUnits)
+    auraUnitsWide = nil
+    Bars.SyncAuraUnits()
     -- Power events: each type rides exactly one of the two value events, so
     -- mana skips the fast-regen rate and energy misses no tick. The payload
     -- token filters before any work.
@@ -5853,7 +5899,7 @@ local function EnsureSharedEvents()
                 end)
             end
         end)
-    end)
+    end, PLAYER)
     SafeOn("UNIT_POWER_UPDATE", "adbars", function(_, unit, token)
         if unit ~= "player" then return end
         ForEach("resource", function(e)
@@ -5862,7 +5908,7 @@ local function EnsureSharedEvents()
             if token and info and info.token ~= token then return end
             ResourceRefresh(e)
         end)
-    end)
+    end, PLAYER)
     Events.On("UNIT_MAXPOWER", "adbars", function(_, unit)
         if unit ~= "player" then return end
         ForEach("stack", StackRefresh)
@@ -5870,12 +5916,12 @@ local function EnsureSharedEvents()
             e.lastMax = nil           -- force the range re-read
             ResourceRefresh(e)
         end)
-    end)
+    end, PLAYER)
     -- the displayed power changed (druid form, vehicle): re-resolve the type
     SafeOn("UNIT_DISPLAYPOWER", "adbars", function(_, unit)
         if unit ~= "player" then return end
         ForEach("resource", Bars.FormChanged)
-    end)
+    end, PLAYER)
     -- a shapeshift lands a moment before the new power's max is readable, so
     -- the form event gets one settle delay
     SafeOn("UPDATE_SHAPESHIFT_FORM", "adbars", function()
@@ -5908,13 +5954,14 @@ local function EnsureSharedEvents()
                 Events.Coalesce("adbars_cp_" .. tostring(e.rec.id), Reread)
                 C_Timer.After(Bars.COMBO_LATE, Reread)
             end)
-        end)
+        end, PLAYER)
     end
 end
 
 local function ReleaseSharedEvents()
     if not sharedArmed or next(live) then return end
     sharedArmed = false
+    auraUnitsWide = nil
     for _, ev in ipairs({
         "SPELL_UPDATE_COOLDOWN", "SPELL_UPDATE_CHARGES", "SPELLS_CHANGED",
         "PLAYER_ENTERING_WORLD", "UNIT_SPELLCAST_SUCCEEDED", "UNIT_AURA",
@@ -6151,6 +6198,7 @@ function Bars.Release(barId)
         for _, p in ipairs(e.pips) do p.f:Hide() end
     end
     live[barId] = nil          -- out of `live` first: the aura release scans it
+    Events.Coalesce("adbars_auraunits", function() Bars.SyncAuraUnits() end)
     AuraBarRelease(e)
     HB.Disarm()                -- the last health bar takes its events with it
     if e.kind == "resource" and Bars.ResPowers then Bars.ResPowers.Release(e) end

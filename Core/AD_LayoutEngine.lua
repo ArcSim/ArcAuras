@@ -4,6 +4,9 @@
 -- Rebuilds are coalesced to one pass per frame.
 
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("LayoutEngine") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("LayoutEngine") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
+local hooksecurefunc = NS.Perf and NS.Perf.Hooks("LayoutEngine") or hooksecurefunc
 local Store = NS.Store
 local Events = NS.Events
 local Factory = NS.Factory
@@ -454,6 +457,7 @@ end
 
 local fcfsOrders = {}   -- [groupId] = { recId, ... } arrival order, runtime only
 local dynCtx = {}       -- [groupId] = what the last full rebuild measured
+local dynOf = {}        -- [iconId] = the dynamic group that placed it last
 
 local function GridShape(rows, cols)
     if rows <= 1 then return "horizontal" end
@@ -2047,6 +2051,7 @@ local function PlaceGroup(group, container, flowMode)
             Factory.ApplyMouse(f, false, rec)
             Factory.SetEditMode(f, rec, false)
             members[#members + 1] = { rec = rec, f = f, key = key }
+            dynOf[rec.id] = group.id
         end
         table.sort(members, function(a, b) return a.key < b.key end)
         local ctx = { members = members, cols = cols, needRows = needRows,
@@ -2811,6 +2816,20 @@ end
 
 function Engine.IsEditMode() return editMode end
 
+-- The events that re-read toggle art. Retail's action buttons repaint their
+-- icon only on a form change, a slot change and SPELL_UPDATE_ICON
+-- (Blizzard_ActionBar ActionButton.lua), never on the player's auras or
+-- ACTIONBAR_UPDATE_STATE, which come many times a second in combat; Forever's
+-- toggle art (aspects, stances) flips on those two as well.
+function Engine.WireArtEvents(pass)
+    Events.On("UPDATE_SHAPESHIFT_FORM", "adeng_art", pass)
+    if NS.IsForever ~= true then return end
+    Events.On("ACTIONBAR_UPDATE_STATE", "adeng_art", pass)
+    Events.On("UNIT_AURA", "adeng_art", function(_, unit)
+        if unit == "player" then pass() end
+    end, { "player" })
+end
+
 function Engine.Init()
     Events.OnMessage("AD_DIRTY", "engine", function() Engine.QueueRebuild() end)
     -- A combat edge restyles nothing: combat conditions run their own pass,
@@ -2847,7 +2866,9 @@ function Engine.Init()
     end
     -- Content events: spell art and overrides change on SPELLS_CHANGED, item
     -- and trinket art on PLAYER_EQUIPMENT_CHANGED (restyling only those kinds).
-    Events.On("SPELLS_CHANGED", "adeng", function() Engine.QueueRebuild() end)
+    -- SPELLS_CHANGED restyles the spell icons below: it comes on every druid
+    -- form change, and a full rebuild there dropped frames. A spell really
+    -- learned or lost is the learned recheck's full pass (Core\AD_Conditions.lua).
     -- Toggle art (aspects, stances, auras) flips with no promised
     -- SPELL_UPDATE_ICON, so re-read only the art on every event the action bar
     -- repaints from, once a frame; Factory.RefreshArt paints only a change.
@@ -2861,11 +2882,7 @@ function Engine.Init()
             end
         end)
     end
-    Events.On("ACTIONBAR_UPDATE_STATE", "adeng_art", ArtPass)
-    Events.On("UPDATE_SHAPESHIFT_FORM", "adeng_art", ArtPass)
-    Events.On("UNIT_AURA", "adeng_art", function(_, unit)
-        if unit == "player" then ArtPass() end
-    end)
+    Engine.WireArtEvents(ArtPass)
     -- Toggle art is read off the action button (Factory.LiveSpellArt), so the
     -- two events that change it on Forever join in, where the client has them.
     for _, e in ipairs({ "UPDATE_STEALTH", "ACTIONBAR_SLOT_CHANGED" }) do
@@ -2873,27 +2890,31 @@ function Engine.Init()
             Events.On(e, "adeng_art", ArtPass)
         end
     end
-    -- Override-form art (Ascendance, proc forms): restyle spell icons.
-    Events.On("SPELL_UPDATE_ICON", "adeng", function()
-        Events.Coalesce("ad_icon_restyle", function()
-            for iconId, f in pairs(Factory.frames) do
-                local rec = Store.Get(iconId)
-                if rec and rec.kind == "spell" and f:IsShown() then
-                    Factory.ApplyStyle(f, rec)
-                end
-            end
-        end)
-    end)
+    -- Override-form art (Ascendance, proc forms) and a changed spellbook: the
+    -- art pass, once a frame. Art is the one part of a restyle that reads the
+    -- spellbook; the rest of a spell icon follows its driver's re-feed
+    -- (SPELLS_CHANGED: Drivers\AD_DriverCooldown.lua Relearn), so a full
+    -- restyle there (a raid fight: 732, up to 8 ms each) changed nothing.
+    Events.On("SPELL_UPDATE_ICON", "adeng", ArtPass)
+    Events.On("SPELLS_CHANGED", "adeng", ArtPass)
     -- Condition edges get the conditions module's alpha-only pass, no rebuild.
     if NS.Conditions then NS.Conditions.Init() end
     -- A state edge (Factory.SetState flipped an icon's drop-out state)
-    -- re-places only the live dynamic groups, from the last rebuild's geometry,
-    -- once a frame. Edit sessions ignore edges: the panel shows the static grid.
-    Events.OnMessage("AD_DYNEDGE", "engine", function()
-        Events.Coalesce("ad_dynedge", function()
-            if editMode then return end
-            local resized = false
-            for gid, ctx in pairs(dynCtx) do
+    -- re-places only that icon's group, and only when it is a live dynamic
+    -- group; an edge naming no icon (a condition flip) re-places every one.
+    -- From the last rebuild's geometry, once a frame. Edit sessions ignore
+    -- edges: the panel shows the static grid.
+    local dynDirty, dynAll = {}, false
+    local function RunDynEdges()
+        local all = dynAll
+        dynAll = false
+        if editMode then
+            wipe(dynDirty)
+            return
+        end
+        local resized = false
+        for gid, ctx in pairs(dynCtx) do
+            if all or dynDirty[gid] then
                 local g, gf = Store.Get(gid), groupFrames[gid]
                 -- Check the group and its layout container: an unloaded layout
                 -- hides only the container, and its released icons must stay
@@ -2906,9 +2927,27 @@ function Engine.Init()
                     dynCtx[gid] = nil
                 end
             end
-            -- Re-anchor what is pinned to a resized box (Match width bars).
-            if resized and NS.Anchor then NS.Anchor.ApplyAll() end
-        end)
+        end
+        wipe(dynDirty)
+        -- Re-anchor what is pinned to a resized box (Match width bars).
+        if resized and NS.Anchor then NS.Anchor.ApplyAll() end
+    end
+    Events.OnMessage("AD_DYNEDGE", "engine", function(_, iconId, was, sig)
+        if iconId == nil then
+            dynAll = true
+        else
+            -- an icon outside a live dynamic group moves nothing
+            local gid = dynOf[iconId]
+            if not (gid and dynCtx[gid]) then return end
+            -- Nothing else drops out (collapse none): only stock and a passive
+            -- trinket move a member (the sig's 4 and 8), not busy or opacity.
+            if was and sig and math.floor(was / 4) == math.floor(sig / 4) then
+                local g = Store.Get(gid)
+                if (g and Store.Resolve(g, "arrangement", "dynamicCollapse") or "none") == "none" then return end
+            end
+            dynDirty[gid] = true
+        end
+        Events.Coalesce("ad_dynedge", RunDynEdges)
     end)
     Events.On("PLAYER_EQUIPMENT_CHANGED", "adeng", function()
         -- an enchant icon that loads only with a weapon in its hand

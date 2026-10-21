@@ -3,6 +3,8 @@
 -- Everything here is read (a button's slot, the slot's spell, a pooled Cooldown Manager frame's
 -- cooldownID); nothing is written to the game's frames, so pins work in combat and taint nothing.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("SpellAnchor") or C_Timer   -- /arcperf times what they run
+local hooksecurefunc = NS.Perf and NS.Perf.Hooks("SpellAnchor") or hooksecurefunc
 
 local SA = {}
 NS.SpellAnchor = SA

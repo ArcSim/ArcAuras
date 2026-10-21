@@ -6,6 +6,8 @@
 -- is drawn from its press, UNIT_SPELLCAST_SENT, for the spell's cast time.
 
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("Castbar") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("Castbar") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Bars = NS.Bars
 local K = Bars and Bars.Kit
 if not (Bars and K and Bars.RegisterKind) then return end

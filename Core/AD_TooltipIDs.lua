@@ -4,6 +4,8 @@
 -- picked) a piece of gear's item level.
 -- Taint: post-calls only, and the hovered frame is only ever read.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("TooltipIDs") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("TooltipIDs") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 
 NS.TooltipIDs = {}
 local T = NS.TooltipIDs

@@ -16,6 +16,8 @@
 -- A member that shows its totem first cannot keep a spot in the game's packed
 -- rows: its totem shows in a row of ours over the group (AR.PlaceTotems).
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("DriverAuraRows") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("DriverAuraRows") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Store, Events = NS.Store, NS.Events
 local AR = {
     -- [groupId] = { pieces = { [recId] = piece }, copies = { [recId] = piece },
@@ -280,6 +282,8 @@ function AR.SendSet(p, ids, fstr, exempt, n, order)
     if s.order ~= order and c.SetAuraGroupSortMethod then c:SetAuraGroupSortMethod(AR.KEY, AR.Sort(order)) end
     if s.sig ~= sig then c:SetAuraGroupCandidateFilters(AR.KEY, { includeSpellIDs = ids }) end
     if not parked then c:SetAuraGroupMaxFrameCount(AR.KEY, cap) end
+    -- parked, the piece stops listening too (Drivers\AD_DriverAura.lua SlotOn)
+    if c.SetAuraGroupEnabled then c:SetAuraGroupEnabled(AR.KEY, not parked) end
     s.sig, s.filter, s.cap, s.order = sig, fstr, cap, order
     return false
 end
@@ -1369,7 +1373,7 @@ Events.On("PLAYER_REGEN_DISABLED", "adar_glow", function() AR.OnCombatEdge(true)
 Events.On("PLAYER_REGEN_ENABLED", "adar_glow", function() AR.OnCombatEdge(false) end)
 Events.On("PLAYER_ENTERING_WORLD", "adar", AR.Settle)
 Events.On("PLAYER_TARGET_CHANGED", "adar", function() AR.Recap(true) end)
-Events.On("UNIT_PET", "adar", AR.OnPet)
+Events.On("UNIT_PET", "adar", AR.OnPet, { "player" })
 Events.OnMessage("AD_DIRTY", "adar", function() Events.Coalesce("adar_sweep", AR.Sweep) end)
 -- after every visibility pass: the pieces follow their group frame's alpha
 Events.OnMessage("AD_VISIBILITY", "adar", function()

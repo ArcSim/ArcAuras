@@ -2,6 +2,8 @@
 -- Owns the markers, their rulers, window curves and shadows; the bars runtime calls in through Bars.SwingAbil when it styles or releases a swing bar.
 -- A spell's cooldown start and duration are secret in combat on Forever, so the remaining time only ever reaches SetValue and EvaluateRemainingDuration.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("SwingAbilities") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("SwingAbilities") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Bars = NS.Bars
 local K = Bars and Bars.Kit
 if not (K and K.SwingClock and K.MakeShadow) then return end

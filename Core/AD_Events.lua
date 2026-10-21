@@ -23,7 +23,74 @@ frame:SetScript("OnEvent", function(_, event, ...)
     end
 end)
 
-function Events.On(event, key, fn)
+-- Unit events for named units only: RegisterUnitEvent on a frame per event and
+-- unit, so the game drops every other unit's event (a nameplate's or a raid
+-- member's auras, power, casts) before any Lua runs. A key is either plain or
+-- unit-filtered; Events.Off drops both.
+local unitSubs = {}    -- [event] = { [unit] = { [key] = fn } }
+local unitFrames = {}  -- [event] = { [unit] = frame }
+
+local function UnitDispatch(self, event, ...)
+    local byUnit = unitSubs[event]
+    local list = byUnit and byUnit[self._adUnit]
+    if not list then return end
+    local P = NS.Perf
+    if P and P.on then
+        for key, fn in pairs(list) do P.Top(P.Key("event", event, key), fn, event, ...) end
+        return
+    end
+    for _, fn in pairs(list) do
+        fn(event, ...)
+    end
+end
+
+local function UnitOff(event, key)
+    local byUnit = unitSubs[event]
+    if not byUnit then return end
+    for unit, list in pairs(byUnit) do
+        if list[key] then
+            list[key] = nil
+            if next(list) == nil then
+                byUnit[unit] = nil
+                unitFrames[event][unit]:UnregisterEvent(event)
+            end
+        end
+    end
+end
+
+local function UnitOn(event, key, fn, units)
+    local byUnit = unitSubs[event]
+    if not byUnit then
+        byUnit = {}
+        unitSubs[event] = byUnit
+        unitFrames[event] = {}
+    end
+    for _, unit in ipairs(units) do
+        local list = byUnit[unit]
+        if not list then
+            list = {}
+            byUnit[unit] = list
+            local f = unitFrames[event][unit]
+            if not f then
+                f = CreateFrame("Frame")
+                f._adUnit = unit
+                f:SetScript("OnEvent", UnitDispatch)
+                unitFrames[event][unit] = f
+            end
+            f:RegisterUnitEvent(event, unit)
+        end
+        list[key] = fn
+    end
+end
+
+-- units: an optional list of unit tokens; the handler then hears only those
+function Events.On(event, key, fn, units)
+    if units then
+        Events.Off(event, key)
+        UnitOn(event, key, fn, units)
+        return
+    end
+    UnitOff(event, key)
     if not subs[event] then
         subs[event] = {}
         counts[event] = 0
@@ -38,6 +105,7 @@ function Events.On(event, key, fn)
 end
 
 function Events.Off(event, key)
+    UnitOff(event, key)
     local list = subs[event]
     if not (list and list[key]) then return end
     list[key] = nil
@@ -100,10 +168,11 @@ end
 -- Coalescing with a cap, for event storms (SPELL_UPDATE_USABLE comes ten
 -- times a second while power moves). The first request runs the next frame.
 -- Out of combat a later one waits until gap seconds after the last run; in
--- combat, or when urgent, it runs the next frame. The last request always runs.
+-- combat it waits combatGap when given, else it runs the next frame, as an
+-- urgent one always does. The last request always runs.
 local capped = {}    -- [key] = { at = last run, gen, armed, fn, run }
 
-function Events.CoalesceCapped(key, fn, gap, urgent)
+function Events.CoalesceCapped(key, fn, gap, urgent, combatGap)
     local c = capped[key]
     if not c then
         c = { at = -math.huge, gen = 0 }
@@ -114,8 +183,10 @@ function Events.CoalesceCapped(key, fn, gap, urgent)
         capped[key] = c
     end
     c.fn = fn
+    local inCombat = InCombatLockdown()
+    if inCombat and combatGap then gap = combatGap end
     local wait = c.at + gap - GetTime()
-    if urgent or wait <= 0 or InCombatLockdown() then
+    if urgent or wait <= 0 or (inCombat and not combatGap) then
         -- an armed timer stands down
         c.gen, c.armed = c.gen + 1, false
         Events.Coalesce(key, c.run)

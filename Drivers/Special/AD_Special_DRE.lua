@@ -2,6 +2,7 @@
 -- Registers "dre" on the Special hub; the shared MSW engine's consumes draw; no draw while the Ascendance flag is up, since the proc cannot land then.
 -- One listener serves every consume's 5 ms window, registered only while a window is open.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("Special_DRE") or C_Timer   -- /arcperf times what they run
 if NS.IsForever == true then return end
 local SP = NS.Special
 if not SP then return end

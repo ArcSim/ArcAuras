@@ -6,6 +6,8 @@
 -- needs them lives. Power values can be secret: each goes straight into a
 -- sink; only plain maxima and times compare.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("ResourcePowers") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("ResourcePowers") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Bars = NS.Bars
 if not Bars then return end
 local K = Bars.Kit
@@ -746,10 +748,10 @@ function RP.Sync()
         armed.stagger = true
         K.SafeOn("UNIT_HEALTH", KEY, function(_, unit)
             if unit == "player" then Refresh(RP.STAGGER, false) end
-        end)
+        end, { "player" })
         K.SafeOn("UNIT_MAXHEALTH", KEY, function(_, unit)
             if unit == "player" then Refresh(RP.STAGGER, true) end
-        end)
+        end, { "player" })
     elseif not need.stagger and armed.stagger then
         armed.stagger = false
         NS.Events.Off("UNIT_HEALTH", KEY)
@@ -758,7 +760,7 @@ function RP.Sync()
     local aura = need.stagger or need.auras
     if aura and not armed.aura then
         armed.aura = true
-        K.SafeOn("UNIT_AURA", KEY, AuraEvent)
+        K.SafeOn("UNIT_AURA", KEY, AuraEvent, { "player" })
     elseif not aura and armed.aura then
         armed.aura = false
         NS.Events.Off("UNIT_AURA", KEY)

@@ -2,6 +2,7 @@
 -- Owns the attach to NS.Special, the templates on the stack text and labels, their state colours, the spent state and a timer's swipe; the cooldown driver hands it frames, the Factory asks it for art, tooltips and a repaint after a restyle.
 -- Everything it paints is a plain number the tracker's Read() hands over; nothing here reads the game.
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("SpecialIcon") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 if NS.IsForever == true then return end
 
 local SI = {}

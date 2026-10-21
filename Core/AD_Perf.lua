@@ -31,7 +31,7 @@ Perf.after = {}
 Perf.cur = Perf.stats
 
 -- WoW's Lua has no table.pack or table.unpack; select("#") keeps a trailing
--- nil return, so a wrapped call hands back exactly what it got.
+-- nil return, so the open probe's marked calls hand back exactly what they got.
 local unpack = unpack or table.unpack
 local function pack(...) return { n = select("#", ...), ... } end
 local clock = debugprofilestop
@@ -60,14 +60,9 @@ end
 -- One timed call. Nested timed calls subtract from the caller's self time, so
 -- a module function's own work is told apart from what it calls. The
 -- bookkeeping around it leaves the caller's own time too and is reported as
--- the profiler's cost.
-function Perf.Call(key, fn, ...)
-    local enter = clock()
-    local d = Perf.depth + 1
-    Perf.depth = d
-    Perf.child[d] = 0
-    local t0 = clock()
-    local r = pack(fn(...))
+-- the profiler's cost. The returns pass through as a vararg: a table per call
+-- would be garbage, and collecting it lands on the addon's time unseen.
+local function Done(d, key, enter, t0, ...)
     local total = clock() - t0
     local own = total - Perf.child[d]
     Perf.depth = d - 1
@@ -78,7 +73,15 @@ function Perf.Call(key, fn, ...)
     if d > 1 then Perf.child[d - 1] = Perf.child[d - 1] + full end
     local m = Meta(Perf.cur)
     m.over = m.over + full - total
-    return unpack(r, 1, r.n)
+    return ...
+end
+
+function Perf.Call(key, fn, ...)
+    local enter = clock()
+    local d = Perf.depth + 1
+    Perf.depth = d
+    Perf.child[d] = 0
+    return Done(d, key, enter, clock(), fn(...))
 end
 
 -- A handler at the top of a stack: a call that errored out never unwound, so
@@ -110,6 +113,108 @@ local function Wrapper(key, fn)
         if Perf.on then return Perf.Call(key, fn, ...) end
         return fn(...)
     end
+end
+
+-- Timers and hooks run outside the dispatcher and the module tables. Each
+-- runtime file reaches them through these stand-ins
+-- (local C_Timer = NS.Perf.Timers("Bars")): off, a timer is the game's own
+-- and a hook costs one extra call; recording, each is timed under the line
+-- that set it, or its file and the hooked method.
+local ADDON_PAT = ADDON:gsub("%p", "%%%0")
+
+-- The first line of ours on the stack that is not this file, as "file:line".
+local function Caller()
+    local s = debugstack and debugstack(2, 6, 0)
+    -- secret across a secure frame: no string work on it
+    if type(s) ~= "string" or (issecretvalue and issecretvalue(s)) then return nil end
+    for file, line in s:gmatch("[/\\]" .. ADDON_PAT .. "[/\\]([^\"%]:\n]-%.lua)[\"%]]*:(%d+)") do
+        file = file:gsub("\\", "/")
+        if file ~= "Core/AD_Perf.lua" then return file .. ":" .. line end
+    end
+    return nil
+end
+
+function Perf.Timers(file)
+    local T = {}
+    function T.After(secs, fn)
+        if Perf.on then
+            local t0 = clock()
+            fn = Wrapper("timer " .. (Caller() or file), fn)
+            local m = Meta(Perf.cur)
+            m.over = m.over + clock() - t0
+        end
+        return C_Timer.After(secs, fn)
+    end
+    -- a ticker outlives any one recording: timed whenever one runs
+    function T.NewTicker(secs, fn, n)
+        return C_Timer.NewTicker(secs, Wrapper("ticker " .. (Caller() or file), fn), n)
+    end
+    return T
+end
+
+function Perf.Hooks(file)
+    return function(a, b, c)
+        if c == nil and type(b) == "function" then
+            return hooksecurefunc(a, Wrapper("hook " .. file .. " " .. tostring(a), b))
+        end
+        return hooksecurefunc(a, b, Wrapper("hook " .. file .. " " .. tostring(b), c))
+    end
+end
+
+-- Frames built on the game's aura buttons take the button's lock once the
+-- engine has it (in combat and instances): from then on every call into one
+-- throws, though IsForbidden still says false. Built through this stand-in,
+-- such a frame is marked `_adHanded` from its parent's line while the parent
+-- is still open (a frame can only be built on an open one), and the sweep
+-- reads the mark (a plain field) before it calls anything.
+local function UnderEngine(p)
+    while p and p ~= UIParent do
+        if p._adHanded then return true end
+        if p.GetObjectType and p:GetObjectType() == "AuraContainer" then return true end
+        p = p.GetParent and p:GetParent()
+    end
+    return false
+end
+Perf.UnderEngine = UnderEngine
+
+function Perf.CreateFrame(kind, name, parent, ...)
+    local fr = CreateFrame(kind, name, parent, ...)
+    if kind == "AuraContainer" or (parent and UnderEngine(parent)) then fr._adHanded = true end
+    return fr
+end
+
+-- Every frame a file makes, counted for the session (frames are never freed,
+-- so a count that keeps climbing between reports is a leak); the game's aura
+-- containers and the frames built on them apart.
+Perf.madeBy, Perf.made, Perf.madeHanded, Perf.containers = {}, 0, 0, 0
+function Perf.Frames(file)
+    return function(kind, name, parent, ...)
+        local fr = Perf.CreateFrame(kind, name, parent, ...)
+        Perf.made = Perf.made + 1
+        Perf.madeBy[file] = (Perf.madeBy[file] or 0) + 1
+        if kind == "AuraContainer" then Perf.containers = Perf.containers + 1 end
+        if fr._adHanded then Perf.madeHanded = Perf.madeHanded + 1 end
+        return fr
+    end
+end
+
+-- The session's frames as one line: the total, the files that made the most.
+function Perf.FramesLine()
+    if Perf.made == 0 then return nil end
+    local list = {}
+    for file, n in pairs(Perf.madeBy) do list[#list + 1] = { file, n } end
+    table.sort(list, function(a, b) return a[2] > b[2] end)
+    local top = {}
+    for i = 1, math.min(6, #list) do top[#top + 1] = ("%s %d"):format(list[i][1], list[i][2]) end
+    local line = ("Frames we made this session: %d (%s); %d on the game's aura buttons, %d aura containers."):format(
+        Perf.made, table.concat(top, ", "), Perf.madeHanded, Perf.containers)
+    -- target and focus slots switched off while their side shows them nothing
+    local DA = NS.DriverAura
+    if DA and DA.SideCensus then
+        local n, off = DA.SideCensus()
+        line = line .. (" %d target or focus aura slots, %d of them off for the unit's side."):format(n, off)
+    end
+    return line
 end
 
 -- Tables that are not ours to touch: every global table (a Blizzard mixin or
@@ -181,19 +286,25 @@ function Perf.Unwrap()
 end
 
 function Perf.Reset()
+    Perf.hudPeak = nil
     wipe(Perf.stats)
     wipe(Perf.after)
     wipe(Perf.meta)
     Perf.cur = Perf.stats
     Perf.since = GetTime()
     Perf.endedAt = nil
+    Perf.measureLines = nil
 end
 
 function Perf.On(skip)
-    if Perf.on then return end
+    -- an M+ run being measured is never reset by another mode
+    if Perf.on or Perf.runArmed or Perf.runMeasuring then return end
     Perf.Reset()
     Perf.WrapModules(skip)
+    if not Perf.swept then Perf.SweepAll() end
     Perf.on = true
+    -- the game's count for this frame holds the setup above, not the addon's work
+    Perf.skipSample = true
     Perf.Sampling(true)
 end
 
@@ -202,6 +313,7 @@ function Perf.Off()
     Perf.on = false
     Perf.Sampling(false)
     Perf.Unwrap()
+    Perf.Unswap()
 end
 
 -- The game's own numbers for an addon: recent average, session average and the
@@ -247,10 +359,36 @@ local function Sample()
     local t0 = clock()
     local m = Meta(Perf.cur)
     local P, M = Profiler()
-    if P and M.LastTime then
+    if Perf.skipSample then
+        Perf.skipSample = false
+    elseif P and M.LastTime then
         local last = P.GetAddOnMetric(ADDON, M.LastTime)
-        if type(last) == "number" then m.game, m.ticks = m.game + last, m.ticks + 1 end
+        if type(last) == "number" then
+            m.game, m.ticks = m.game + last, m.ticks + 1
+            m.secMs = (m.secMs or 0) + last
+        end
+        -- once a second: the addon list's own figure (its highest, its average)
+        -- and the second's log, the game's count and that figure, kept as it goes
+        local now = GetTime()
+        if not m.pctAt or now - m.pctAt >= 1 then
+            local first = m.pctAt == nil
+            m.pctAt = now
+            local pct = Perf.AddonPct(ADDON, M.RecentAverageTime)
+            if pct then
+                m.pctN, m.pctSum = (m.pctN or 0) + 1, (m.pctSum or 0) + pct
+                if not m.pctMax or pct > m.pctMax then m.pctMax, m.pctMaxAt = pct, now - (Perf.since or now) end
+            end
+            if not first then
+                m.secLog = m.secLog or {}
+                local n = #m.secLog
+                m.secLog[n + 1] = math.floor((m.secMs or 0) * 10 + 0.5) / 10
+                m.secLog[n + 2] = pct and (math.floor(pct * 100 + 0.5) / 100) or -1
+                m.secLog[n + 3] = (InCombatLockdown and InCombatLockdown()) and 1 or 0
+            end
+            m.secMs = 0
+        end
     end
+    if Perf.on then Perf.SweepStep() end
     m.over = m.over + clock() - t0
 end
 
@@ -312,6 +450,40 @@ local function RowLines(out, t, secs, top)
     return total
 end
 
+-- The addon list's figure for this addon as it moved through a recording
+-- (Sample reads it once a second); nil before a whole second.
+function Perf.ListLine(m)
+    if not (m and m.pctN and m.pctN > 0) then return nil end
+    return ("The addon list's figure for %s through it: highest %s (%.0f s in), average %s."):format(ADDON,
+        Perf.PctText(m.pctMax), m.pctMaxAt or 0, Perf.PctText(m.pctSum / m.pctN))
+end
+
+-- The second-by-second log (Sample): "<second>s <ms of ours> <addon list %>",
+-- " c" on a second spent in combat, for the saved report; nil before a whole second.
+function Perf.SecondsText(m)
+    local log = m and m.secLog
+    if not (log and #log > 0) then return nil end
+    local out = {}
+    for i = 1, #log, 3 do
+        local pct = log[i + 1]
+        out[#out + 1] = ("%ds %.1f %s%s"):format((i + 2) / 3, log[i], pct >= 0 and ("%.2f"):format(pct) or "-",
+            log[i + 2] == 1 and " c" or "")
+    end
+    return table.concat(out, ", ")
+end
+
+-- The log's seconds in and out of combat: what each costs a second.
+function Perf.CombatLine(m)
+    local log = m and m.secLog
+    if not (log and #log > 0) then return nil end
+    local inMs, inN, outMs, outN = 0, 0, 0, 0
+    for i = 1, #log, 3 do
+        if log[i + 2] == 1 then inMs, inN = inMs + log[i], inN + 1 else outMs, outN = outMs + log[i], outN + 1 end
+    end
+    return ("In combat %.1f ms a second over %d s; out of combat %.1f ms a second over %d s."):format(
+        inN > 0 and inMs / inN or 0, inN, outN > 0 and outMs / outN or 0, outN)
+end
+
 -- The game's count beside ours for one recording table: what the wrappers
 -- cannot see is the rest.
 local function CoverageLines(out, t, secs)
@@ -322,9 +494,39 @@ local function CoverageLines(out, t, secs)
     local rest = math.max(m.game - traced - m.over, 0)
     out[#out + 1] = ("The game counted %.2f ms (%.3f ms per second): traced %.2f ms, the profiler's own work %.2f ms, not traced %.2f ms (%s)."):format(
         m.game, m.game / secs, traced, m.over, rest, Perf.PctText(m.game > 0 and rest / m.game * 100 or 0))
+    out[#out + 1] = Perf.ListLine(m)
     if rest > traced and rest > 1 then
-        out[#out + 1] = "Not traced: timers, per-frame scripts, frames with their own events, glow animations. /arcperf deep lists them by file."
+        out[#out + 1] = "Not traced: our hooks on the game's frame scripts, the event dispatch, garbage collection. /arcperf deep lists frames by file."
     end
+end
+
+-- What kind of entry point the traced time came in by.
+Perf.KINDS = {
+    { "event", "event handlers" }, { "message", "event handlers" }, { "next frame", "event handlers" },
+    { "script", "frame scripts" }, { "hook", "hooks" }, { "timer", "timers" }, { "ticker", "timers" },
+}
+local KIND_ORDER = { "event handlers", "functions", "frame scripts", "hooks", "timers" }
+
+local function KindLines(out, t, secs)
+    local sum, calls = {}, 0
+    for key, s in pairs(t) do
+        calls = calls + s.n
+        local kind = "functions"
+        for _, k in ipairs(Perf.KINDS) do
+            if key:sub(1, #k[1] + 1) == k[1] .. " " then
+                kind = k[2]
+                break
+            end
+        end
+        sum[kind] = (sum[kind] or 0) + s.self
+    end
+    local parts = {}
+    for _, kind in ipairs(KIND_ORDER) do
+        if sum[kind] then parts[#parts + 1] = ("%s %.2f ms"):format(kind, sum[kind]) end
+    end
+    if #parts > 0 then out[#out + 1] = "Traced by kind: " .. table.concat(parts, ", ") .. "." end
+    -- each timed call pays bookkeeping, part of it outside what is measured
+    out[#out + 1] = ("Timed calls: %d, %.0f per second."):format(calls, calls / secs)
 end
 
 -- Deep view: the game's script profiler (the scriptProfile setting) times every
@@ -333,10 +535,118 @@ end
 -- The path inside this addon's folder, or nil for anyone else's frame (a
 -- folder whose name only starts with ours included).
 local function Site(loc)
-    if type(loc) ~= "string" then return nil end
-    local _, e = loc:find("[/\\]" .. ADDON:gsub("%p", "%%%0") .. "[/\\]")
+    if type(loc) ~= "string" or (issecretvalue and issecretvalue(loc)) then return nil end
+    local _, e = loc:find("[/\\]" .. ADDON_PAT .. "[/\\]")
     if not e then return nil end
-    return loc:sub(e + 1)
+    return (loc:sub(e + 1):gsub("\\", "/"))
+end
+
+-- Frame scripts: our frames' per-frame and event scripts. While recording each
+-- is swapped for a timed one, frame by frame, ours told by where the frame was
+-- made. Only these two: setting a script drops any hook on it, and nothing
+-- hooks them on our frames. The dispatcher times its own handlers and the
+-- profiler's frames are its own work, so theirs stay as they are.
+Perf.SCRIPTS = { "OnUpdate", "OnEvent" }
+Perf.SCRIPT_SKIP = { ["Core/AD_Events.lua"] = true, ["Core/AD_Perf.lua"] = true }
+-- frames looked at per frame while recording: new frames and scripts set
+-- since are picked up as the walk goes round
+Perf.SWEEP_STEP = 50
+Perf.siteOf = {}    -- [frame] = "file:line" where it was made, or false
+Perf.swapped = {}   -- [frame] = { [script] = { fn = its own, w = timed } }
+Perf.ours, Perf.timedScripts = 0, 0
+local isTimed = {}  -- [timed script] = true
+local timedFor = {} -- [key] = { [fn] = timed script }
+
+local function TimedScript(key, fn)
+    local byFn = timedFor[key]
+    if not byFn then
+        byFn = {}
+        timedFor[key] = byFn
+    end
+    local w = byFn[fn]
+    if not w then
+        w = Wrapper(key, fn)
+        byFn[fn] = w
+        isTimed[w] = true
+    end
+    return w
+end
+
+local function SweepFrame(f)
+    -- a frame on the game's aura buttons (Perf.CreateFrame) is never called into
+    if f._adHanded then return end
+    -- asked on every visit: the game's own buttons turn forbidden once the
+    -- secure aura container takes them
+    if f.IsForbidden and f:IsForbidden() then return end
+    local site = Perf.siteOf[f]
+    if site == nil then
+        site = false
+        if f.GetSourceLocation then
+            local s = Site(f:GetSourceLocation())
+            if s and not Perf.SCRIPT_SKIP[s:match("^(.-):%d+$") or s] then
+                site = s
+                Perf.ours = Perf.ours + 1
+            end
+        end
+        Perf.siteOf[f] = site
+    end
+    if not site or (f.IsProtected and f:IsProtected()) then return end
+    for _, script in ipairs(Perf.SCRIPTS) do
+        local fn = f:HasScript(script) and f:GetScript(script)
+        if fn and not isTimed[fn] then
+            local w = TimedScript("script " .. site .. " " .. script, fn)
+            f:SetScript(script, w)
+            local byScript = Perf.swapped[f]
+            if not byScript then
+                byScript = {}
+                Perf.swapped[f] = byScript
+            end
+            if not byScript[script] then Perf.timedScripts = Perf.timedScripts + 1 end
+            byScript[script] = { fn = fn, w = w }
+        end
+    end
+end
+
+-- Every frame at once: Start and Record next fight do it out of combat, so the
+-- long frame lands before the pull.
+function Perf.SweepAll()
+    if not EnumerateFrames then return end
+    local f = EnumerateFrames()
+    while f do
+        SweepFrame(f)
+        f = EnumerateFrames(f)
+    end
+    Perf.cursor, Perf.swept = nil, true
+end
+
+-- A slice of the walk, every frame while recording.
+function Perf.SweepStep()
+    if not EnumerateFrames then return end
+    local f = Perf.cursor
+    for _ = 1, Perf.SWEEP_STEP do
+        f = EnumerateFrames(f)
+        if not f then break end
+        SweepFrame(f)
+    end
+    Perf.cursor = f
+end
+
+-- Each script goes back, unless something set another one since. A frame that
+-- turned forbidden or protected keeps its timed one, which costs nothing off.
+function Perf.Unswap()
+    for f, byScript in pairs(Perf.swapped) do
+        if not (f:IsForbidden() or f:IsProtected()) then
+            for script, r in pairs(byScript) do
+                if f:GetScript(script) == r.w then f:SetScript(script, r.fn) end
+            end
+        end
+    end
+    wipe(Perf.swapped)
+    wipe(Perf.siteOf)
+    Perf.cursor, Perf.swept = nil, false
+    -- the report after Off still says how many were timed
+    Perf.lastOurs, Perf.lastTimed = Perf.ours, Perf.timedScripts
+    Perf.ours, Perf.timedScripts = 0, 0
 end
 
 local function DeepRows(t, top, out, fmt)
@@ -474,9 +784,14 @@ function Perf.Lines()
     else
         GameLines(out)
     end
-    if not next(Perf.stats) and not next(Perf.after) then
+    for _, line in ipairs(Perf.measureLines or {}) do out[#out + 1] = line end
+    if Perf.measureLines then
+        -- nothing else to show
+    elseif not next(Perf.stats) and not next(Perf.after) then
         out[#out + 1] = Perf.on and "Recording, nothing seen yet."
             or "Nothing recorded. Press Record next fight, or Start."
+        out[#out + 1] = Perf.ListLine(Perf.meta[Perf.stats])
+        out[#out + 1] = Perf.FramesLine()
     else
         local stop = Perf.endedAt or GetTime()
         local secs = math.max(stop - Perf.since, 0.001)
@@ -486,7 +801,17 @@ function Perf.Lines()
         out[#out + 1] = ("%s (%.1f s): %.2f ms of own work, %.3f ms per second, %d modules traced. Top by own time:"):format(
             Perf.endedAt and "In the fight" or "Recorded", secs, fight, fight / secs, Perf.moduleCount or 0)
         RowLines(out, Perf.stats, secs, Perf.TOP)
+        KindLines(out, Perf.stats, secs)
         CoverageLines(out, Perf.stats, secs)
+        local ours, timed = Perf.ours, Perf.timedScripts
+        if not Perf.swept then ours, timed = Perf.lastOurs, Perf.lastTimed end
+        if ours and ours > 0 then
+            out[#out + 1] = ("Frame scripts: %d timed on our frames (%d frames of ours found by where they were made)."):format(
+                timed or 0, ours)
+        elseif ours then
+            out[#out + 1] = "Frame scripts: the game did not say which frames are ours, so they are not timed; /arcperf deep covers them."
+        end
+        out[#out + 1] = Perf.FramesLine()
         if next(Perf.after) then
             local tail = math.max(GetTime() - (Perf.endedAt or GetTime()), 0.001)
             local own = 0
@@ -494,6 +819,7 @@ function Perf.Lines()
             out[#out + 1] = ""
             out[#out + 1] = ("The %.1f s after combat: %.2f ms of own work. Top:"):format(tail, own)
             RowLines(out, Perf.after, tail, Perf.TOP_AFTER)
+            KindLines(out, Perf.after, tail)
             CoverageLines(out, Perf.after, tail)
         end
     end
@@ -509,24 +835,128 @@ function Perf.Status()
         s = "Armed: open the options panel now."
     elseif Perf.openRec then
         s = "Recording the options open."
+    elseif Perf.runMeasuring then
+        s = ("Measuring this M+ run (%d s)."):format(math.floor(GetTime() - (Perf.since or GetTime())))
+    elseif Perf.runArmed then
+        s = "Armed: the next M+ key is measured, from its start to its end."
+    elseif Perf.measuring then
+        s = "Measuring this fight."
+    elseif Perf.measureArmed then
+        s = "Armed: the next fight is measured."
     elseif Perf.fightArmed and not Perf.on then
         s = "Armed: the next fight is recorded."
     elseif Perf.on then
         s = "Recording."
     end
     if Perf.deep then s = s .. " Deep view on." end
+    if Perf.savedAt and not Perf.on then s = s .. " Saved; /reload writes it to disk." end
     return s
+end
+
+-- The addon list's figure for this addon on screen while profiling: one
+-- line, read once a second, its highest since profiling started beside it,
+-- dragged anywhere (ArcAurasDB.perfHud keeps the spot). Up while a recording,
+-- a measure or an M+ run is armed or running, or pinned by /arcperf hud;
+-- hidden, it reads nothing.
+Perf.HUD_SECS = 1
+
+function Perf.HudWanted()
+    return Perf.hudPinned or Perf.on or Perf.measuring or Perf.measureArmed or Perf.fightArmed
+        or Perf.runMeasuring or Perf.runArmed or false
+end
+
+function Perf.HudText()
+    local P, M = Profiler()
+    if not P then return "|cff3fc9f2Arc|r Auras: the game's profiler is off" end
+    local pct = Perf.AddonPct(ADDON, M.RecentAverageTime)
+    if pct and (not Perf.hudPeak or pct > Perf.hudPeak) then Perf.hudPeak = pct end
+    return ("|cff3fc9f2Arc|r Auras  %s   |cffb3c7e0highest %s|r"):format(Perf.PctText(pct), Perf.PctText(Perf.hudPeak))
+end
+
+local function HudPlace(f)
+    local at = type(ArcAurasDB) == "table" and ArcAurasDB.perfHud
+    f:ClearAllPoints()
+    if type(at) == "table" and type(at.x) == "number" and type(at.y) == "number" then
+        f:SetPoint(at.p or "CENTER", UIParent, at.p or "CENTER", at.x, at.y)
+    else
+        f:SetPoint("TOP", UIParent, "TOP", 0, -140)
+    end
+end
+
+function Perf.HudBuild()
+    if Perf.hud then return Perf.hud end
+    local AT = NS.AT
+    local f = CreateFrame("Frame", "ArcAurasPerfHud", UIParent)
+    f:SetSize(200, 24)
+    f:SetFrameStrata("HIGH")
+    f:SetClampedToScreen(true)
+    f:SetMovable(true)
+    f:EnableMouse(true)
+    f:RegisterForDrag("LeftButton")
+    if AT and AT.Skin then AT.Skin(f, AT.COL.bg, AT.COL.line2) end
+    local fs = f:CreateFontString(nil, "OVERLAY")
+    fs:SetFont(STANDARD_TEXT_FONT, 12, "")
+    fs:SetPoint("CENTER")
+    f.text = fs
+    f:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    f:SetScript("OnDragStop", function(self)
+        self:StopMovingOrSizing()
+        local x, y = self:GetCenter()
+        local ux, uy = UIParent:GetCenter()
+        if x and ux and type(ArcAurasDB) == "table" then
+            ArcAurasDB.perfHud = { p = "CENTER", x = math.floor(x - ux + 0.5), y = math.floor(y - uy + 0.5) }
+        end
+        HudPlace(self)
+    end)
+    if AT and AT.Tooltip then
+        AT.Tooltip(f, "Arc Auras CPU", "The addon list's figure for Arc Auras, once a second. Drag to move it.")
+    end
+    HudPlace(f)
+    f:Hide()
+    Perf.hud = f
+    return f
+end
+
+function Perf.HudPaint()
+    local f = Perf.hud
+    if not (f and f:IsShown()) then return end
+    f.text:SetText(Perf.HudText())
+    local w = f.text:GetStringWidth()
+    if type(w) == "number" and w > 0 then f:SetWidth(math.max(160, math.ceil(w) + 20)) end
+end
+
+-- Shows or hides it with the profiling state; one ticker only while it shows.
+function Perf.HudSync()
+    local want = Perf.HudWanted()
+    if want then
+        local f = Perf.HudBuild()
+        if not f:IsShown() then
+            f:Show()
+            Perf.HudPaint()
+        end
+        if not Perf.hudTicker and C_Timer and C_Timer.NewTicker then
+            Perf.hudTicker = C_Timer.NewTicker(Perf.HUD_SECS, Perf.HudPaint)
+        end
+    else
+        if Perf.hud then Perf.hud:Hide() end
+        if Perf.hudTicker then
+            Perf.hudTicker:Cancel()
+            Perf.hudTicker = nil
+        end
+    end
 end
 
 -- A recording counts the window's refresh as the profiler's own work.
 function Perf.Refresh()
     local t0 = clock()
+    Perf.HudSync()
     Perf.text = table.concat(Perf.Lines(), "\n")
     local w = Perf.win
     if w and w:IsShown() then
         w.edit:SetText(Perf.text)
         w.status:SetText(Perf.Status())
         w.toggle.fs:SetText(Perf.on and "Stop" or "Start")
+        if w.run then w.run.fs:SetText(Perf.runArmed and "Stop M+ run" or "Record M+ run") end
         if w.scroll.UpdateScroll then w.scroll:UpdateScroll() end
     end
     if Perf.on then
@@ -551,7 +981,7 @@ function Perf.Build()
     local AT = NS.AT
     if Perf.win or not (AT and AT.CreateWindow) then return Perf.win end
     local w = AT.CreateWindow("ArcAurasPerf", {
-        w = 680, h = 420, minW = 480, minH = 300, maxW = 1400, maxH = 1100,
+        w = 760, h = 420, minW = 640, minH = 300, maxW = 1400, maxH = 1100,
         title = "|cff3fc9f2Arc|r Auras performance",
         onResize = function() Perf.Refresh() end,
     })
@@ -581,13 +1011,25 @@ function Perf.Build()
     Btn("Select all", 90, 14, function() edit:SetFocus() edit:HighlightText() end)
     Btn("Record next fight", 140, 110, function() Perf.ArmFight() Perf.Refresh() end)
     w.toggle = Btn("Start", 70, 256, function()
-        if Perf.on then Perf.Off() else Perf.On() end
+        if Perf.on then
+            Perf.Off()
+            Perf.Refresh()
+            Perf.Save("recording")
+            Perf.Refresh()
+            return
+        end
+        Perf.On()
         Perf.Refresh()
     end)
     Btn("Reset", 70, 332, function() Perf.Reset() Perf.Refresh() end)
+    w.run = Btn("Record M+ run", 112, 408, function()
+        if Perf.runArmed then Perf.CancelRun() else Perf.ArmRun() end
+        Perf.Refresh()
+    end)
+    AT.Tooltip(w.run, "Record M+ run", "Measures a whole key, nothing traced: now if one runs, else from the next key's start to its end.")
     local status = w:CreateFontString(nil, "OVERLAY")
     status:SetFont(STANDARD_TEXT_FONT, 12, "")
-    status:SetPoint("BOTTOMLEFT", 414, 18)
+    status:SetPoint("BOTTOMLEFT", 526, 18)
     status:SetTextColor(AT.COL.dim[1], AT.COL.dim[2], AT.COL.dim[3])
     w.status = status
     w:HookScript("OnShow", function() Perf.Tick(true) Perf.Refresh() end)
@@ -616,11 +1058,19 @@ end
 -- Record next fight: the fight alone, then the window opens on its report.
 function Perf.ArmFight()
     local E = NS.Events
+    if Perf.runArmed or Perf.runMeasuring then return end
+    if Perf.measureArmed then Perf.CancelMeasure() end
     Perf.fightArmed = true
+    -- our frames' scripts are found now, out of combat, not at the pull
+    if not Perf.swept then Perf.SweepAll() end
     E.On("PLAYER_REGEN_DISABLED", "adperf", function()
         if not Perf.fightArmed then return end
-        Perf.Off()
-        Perf.On()
+        if Perf.on then Perf.Reset() else Perf.On() end
+        -- with the game's script profiler on, the deep view covers the fight too
+        if not Perf.deep and GetCVarBool and GetCVarBool("scriptProfile") then
+            Perf.Deep()
+            Perf.fightDeep = true
+        end
     end)
     E.On("PLAYER_REGEN_ENABLED", "adperf", function()
         if not (Perf.fightArmed and Perf.on) then return end
@@ -638,8 +1088,183 @@ end
 function Perf.EndFight()
     if not Perf.on then return end
     Perf.Report()
+    if Perf.fightDeep and Perf.deep then
+        Perf.fightDeep = false
+        Perf.Deep()
+    end
     Perf.Off()
     Perf.Refresh()
+    Perf.Save("fight")
+    Perf.Refresh()
+end
+
+-- /arcperf measure: the next fight with nothing traced, only the game's own
+-- count for this addon frame by frame, so the number is what a player pays (a
+-- recording's wrappers raise it). The sampler's own reads are taken out.
+function Perf.CancelMeasure()
+    local E = NS.Events
+    Perf.measureArmed, Perf.measuring = false, false
+    E.Off("PLAYER_REGEN_DISABLED", "adperf_measure")
+    E.Off("PLAYER_REGEN_ENABLED", "adperf_measure")
+    if not (Perf.on or Perf.runMeasuring) then Perf.Sampling(false) end
+end
+
+function Perf.ArmMeasure()
+    local E = NS.Events
+    if Perf.on or Perf.runArmed or Perf.runMeasuring then return end
+    if Perf.fightArmed then
+        Perf.fightArmed = false
+        E.Off("PLAYER_REGEN_DISABLED", "adperf")
+        E.Off("PLAYER_REGEN_ENABLED", "adperf")
+    end
+    Perf.measureArmed = true
+    E.On("PLAYER_REGEN_DISABLED", "adperf_measure", function()
+        if not Perf.measureArmed or Perf.on then return end
+        Perf.measureArmed = false
+        Perf.Reset()
+        Perf.measuring = true
+        -- the frame the pull came in holds the arming, not the fight
+        Perf.skipSample = true
+        Perf.Sampling(true)
+    end)
+    E.On("PLAYER_REGEN_ENABLED", "adperf_measure", function()
+        if not Perf.measuring then return end
+        Perf.CancelMeasure()
+        Perf.MeasureLines("fight")
+        Perf.Report()
+        Perf.Save("measure")
+        Perf.Refresh()
+    end)
+end
+
+-- What a measure found: its ms, per second and per frame (the sampler's own
+-- reads taken out), the addon list's figure through it, the split in and out
+-- of combat, and the session's frames. what: "fight", "M+ run (completed)"...
+function Perf.MeasureLines(what)
+    Perf.endedAt = GetTime()
+    local m = Perf.meta[Perf.stats] or { game = 0, ticks = 0, over = 0 }
+    local secs = math.max(Perf.endedAt - Perf.since, 0.001)
+    local own = math.max(m.game - m.over, 0)
+    Perf.measureLines = { "", ("Measured %s (%.1f s, nothing traced): %.2f ms, %.3f ms per second, %.3f ms per frame over %d frames (own sampling %.2f ms out)."):format(
+        what, secs, own, own / secs, own / math.max(m.ticks, 1), m.ticks, m.over) }
+    local L = Perf.measureLines
+    L[#L + 1] = Perf.ListLine(m)
+    L[#L + 1] = Perf.CombatLine(m)
+    L[#L + 1] = Perf.FramesLine()
+end
+
+-- /arcperf mplus, the Record M+ run button: a whole key measured with nothing
+-- traced, from its start (at once when a key already runs, its countdown
+-- included) to its end: done, reset, or a loading screen out of it. A reload
+-- in the middle saves what it has (the logout save) and carries on after it
+-- (ArcAurasDB.perfRun) while the key still runs.
+Perf.RUN_EVENTS = { "CHALLENGE_MODE_START", "CHALLENGE_MODE_COMPLETED", "CHALLENGE_MODE_RESET", "PLAYER_ENTERING_WORLD" }
+
+function Perf.KeyRuns()
+    local CM = C_ChallengeMode
+    local on = CM and CM.IsChallengeModeActive and CM.IsChallengeModeActive()
+    if issecretvalue and issecretvalue(on) then return false end
+    return on == true
+end
+
+local function RunFlag(on)
+    if type(ArcAurasDB) == "table" then ArcAurasDB.perfRun = on or nil end
+end
+
+local function RunStart()
+    Perf.Reset()
+    Perf.runMeasuring = true
+    Perf.skipSample = true
+    Perf.Sampling(true)
+    RunFlag(true)
+    Perf.Refresh()
+end
+
+function Perf.CancelRun()
+    local E = NS.Events
+    Perf.runArmed, Perf.runMeasuring = false, false
+    for _, e in ipairs(Perf.RUN_EVENTS) do E.Off(e, "adperf_run") end
+    RunFlag(nil)
+    if not (Perf.on or Perf.measuring) then Perf.Sampling(false) end
+end
+
+function Perf.EndRun(why)
+    if not Perf.runMeasuring then return end
+    Perf.CancelRun()
+    Perf.MeasureLines("M+ run (" .. why .. ")")
+    Perf.Report()
+    Perf.Save("M+ run")
+    Perf.Refresh()
+end
+
+-- After a reload: a run that was measuring carries on while its key runs.
+function Perf.ResumeRun()
+    if type(ArcAurasDB) ~= "table" or not ArcAurasDB.perfRun then return end
+    if Perf.KeyRuns() then Perf.ArmRun() else ArcAurasDB.perfRun = nil end
+end
+
+function Perf.ArmRun()
+    local E = NS.Events
+    if Perf.on or Perf.runArmed then return end
+    if Perf.fightArmed then
+        Perf.fightArmed = false
+        E.Off("PLAYER_REGEN_DISABLED", "adperf")
+        E.Off("PLAYER_REGEN_ENABLED", "adperf")
+    end
+    if Perf.measureArmed or Perf.measuring then Perf.CancelMeasure() end
+    Perf.runArmed = true
+    E.On("CHALLENGE_MODE_START", "adperf_run", function()
+        if Perf.runArmed and not Perf.runMeasuring then RunStart() end
+    end)
+    E.On("CHALLENGE_MODE_COMPLETED", "adperf_run", function() Perf.EndRun("completed") end)
+    E.On("CHALLENGE_MODE_RESET", "adperf_run", function() Perf.EndRun("reset") end)
+    E.On("PLAYER_ENTERING_WORLD", "adperf_run", function()
+        if Perf.runMeasuring and not Perf.KeyRuns() then Perf.EndRun("left the dungeon") end
+    end)
+    if Perf.KeyRuns() then RunStart() end
+end
+
+-- Every finished report also goes into the saved variables, newest first, so
+-- it outlives the session and can be read outside the game. The newest few
+-- also keep every row, not just the report's top ones:
+-- "own ms <tab> total ms <tab> calls <tab> peak ms <tab> key".
+Perf.KEEP = 10
+Perf.KEEP_ROWS = 3
+local function RowsText(t)
+    local out = {}
+    for _, r in ipairs(Perf.Rows(t)) do
+        out[#out + 1] = ("%.3f\t%.3f\t%d\t%.3f\t%s"):format(r.s.self, r.s.ms, r.s.n, r.s.peak, r.key)
+    end
+    return out
+end
+function Perf.Save(kind)
+    local db = ArcAurasDB
+    if type(db) ~= "table" or not Perf.text then return end
+    if type(db.perfLog) ~= "table" then db.perfLog = {} end
+    local lines = {}
+    for line in (Perf.text .. "\n"):gmatch("(.-)\n") do lines[#lines + 1] = line end
+    local name = UnitName and UnitName("player")
+    local realm = GetRealmName and GetRealmName()
+    local version, build = nil, nil
+    if GetBuildInfo then version, build = GetBuildInfo() end
+    table.insert(db.perfLog, 1, {
+        kind = kind,
+        at = time and time() or nil,
+        when = date and date("%Y-%m-%d %H:%M:%S") or nil,
+        who = tostring(name) .. "-" .. tostring(realm),
+        client = (NS.IsForever and "Forever " or "retail ") .. tostring(version) .. "." .. tostring(build),
+        lines = lines,
+        rows = next(Perf.stats) and RowsText(Perf.stats) or nil,
+        rowsAfter = next(Perf.after) and RowsText(Perf.after) or nil,
+        -- every second of it: the game's count for us (ms) and the addon list's figure (%)
+        seconds = Perf.SecondsText(Perf.meta[Perf.stats]),
+    })
+    for i = #db.perfLog, Perf.KEEP + 1, -1 do db.perfLog[i] = nil end
+    -- the full rows are big: only the newest few keep them
+    for i = Perf.KEEP_ROWS + 1, #db.perfLog do
+        db.perfLog[i].rows, db.perfLog[i].rowsAfter, db.perfLog[i].seconds = nil, nil, nil
+    end
+    Perf.savedAt = GetTime()
 end
 
 -- The open probe (/arcperf open): from the moment the options window starts
@@ -787,6 +1412,8 @@ function Perf.OpenStop()
     Perf.Report()
     Perf.Off()
     Perf.Refresh()
+    Perf.Save("options open")
+    Perf.Refresh()
 end
 
 local function F1(v) return v and ("%.1f"):format(v) or "-" end
@@ -922,16 +1549,51 @@ SlashCmdList.ARCPERF = function(msg)
         Perf.AskOpen()
         return
     end
+    local ended
     if cmd == "on" then
         Perf.On()
     elseif cmd == "off" then
+        ended = Perf.on and "recording"
         Perf.Off()
     elseif cmd == "reset" then
         Perf.Reset()
     elseif cmd == "fight" then
         Perf.ArmFight()
+    elseif cmd == "measure" then
+        Perf.ArmMeasure()
+    elseif cmd == "hud" then
+        Perf.hudPinned = not Perf.hudPinned
+        Perf.HudSync()
+        return
+    elseif cmd == "mplus" then
+        if Perf.runArmed then Perf.CancelRun() else Perf.ArmRun() end
     elseif cmd == "deep" then
+        ended = Perf.deep and "deep view"
         Perf.Deep()
     end
     Perf.Report()
+    if ended then
+        Perf.Save(ended)
+        Perf.Refresh()
+    end
+end
+
+-- A recording cut short by a logout or a reload is kept as far as it got.
+if NS.Events and NS.Events.On then
+    NS.Events.On("PLAYER_LOGOUT", "adperf_save", function()
+        if not (Perf.on or Perf.deep or Perf.measuring or Perf.runMeasuring) then return end
+        if Perf.deep then Perf.deepLines = Perf.DeepLines() end
+        if Perf.runMeasuring then
+            Perf.MeasureLines("M+ run, part (a reload; it carries on after it)")
+        elseif Perf.measuring then
+            Perf.MeasureLines("fight, cut short")
+        end
+        Perf.text = table.concat(Perf.Lines(), "\n")
+        Perf.Save("cut short by logout")
+    end)
+    -- a run that was measuring when the game reloaded carries on while its key runs
+    NS.Events.On("PLAYER_ENTERING_WORLD", "adperf_runresume", function()
+        NS.Events.Off("PLAYER_ENTERING_WORLD", "adperf_runresume")
+        Perf.ResumeRun()
+    end)
 end

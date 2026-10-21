@@ -4,6 +4,7 @@
 -- Casting is protected: contents, spots and the key change out of combat only, while the press,
 -- the point and the release run in the game's secure snippets and work in combat.
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("Wheel") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 
 local WH = {}
 NS.Wheels = WH

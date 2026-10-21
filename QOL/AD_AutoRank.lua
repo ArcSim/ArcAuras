@@ -3,6 +3,8 @@
 -- ranks stay, since they are usually deliberate (a low-mana heal, a rank 1
 -- slow); AutoRank.UpgradeAll() is the explicit catch-up.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("AutoRank") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("AutoRank") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 
 NS.AutoRank = {}
 local AutoRank = NS.AutoRank

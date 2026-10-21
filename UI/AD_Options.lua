@@ -8229,20 +8229,16 @@ local function PreviewRestyle(rec, f)
             { w = w, h = h, ghost = NS.DriverAura.GhostShown(rec) and not NS.DriverAura.NeedsEraser(rec),
               previewGlows = true })
         if ab._adStacks:IsShown() then ab._adStacks:SetText("2") end
-    elseif Options.PreviewMode(rec) == "ovup"
+    elseif (Options.PreviewMode(rec) == "ovup" and not (NS.DriverPhase and NS.DriverPhase.Source(rec)))
         or (rec.kind == "timer" and Options.PreviewMode(rec) == "tploop" and prevPhase == "aura") then
         -- a spell icon's aura overlay: the same stand-in, one level up the
         -- ladder like the live overlay, "the engine wrote" the aura's own
-        -- art (its first ID); the cooldown plane under it is the holder
+        -- art (its first ID); the cooldown plane under it is the holder. A
+        -- totem or a set duration has none: it runs on the icon (PreviewApplyMode).
         ab = Options.PreviewAuraButton(f)
         NS.DriverAura.AnchorButton(ab, f, 1)
         local ov = rec.driver and rec.driver.overlay
         local aid = ov and Store.TrackedAuraIDs(ov)[1]
-        -- a totem or a set duration wears the spell it follows (an item or trinket its own art)
-        local PH = NS.DriverPhase
-        if ov and PH and PH.Source(rec) then
-            aid = rec.kind == "spell" and (Store.RecordSpellID(rec.driver, PH.SpellOf(rec, ov)) or aid) or nil
-        end
         ab._adIcon:SetTexture((aid and C_Spell.GetSpellTexture(aid)) or Factory.KindTexture(rec))
         -- where live erases the cooldown's look, PreviewApplyMode hides it: no plate
         Factory.StyleAuraButton(ab, rec, h, { w = w, h = h, ghost = not NS.DriverAura.NeedsEraser(rec) })
@@ -8255,6 +8251,24 @@ end
 local function PreviewApplyMode(rec, f)
     f = f or prevIcon
     local mode = Options.PreviewMode(rec)
+    -- a totem or a set duration's Aura up: its time on the icon's own cooldown
+    -- in the Active look, as live (a frozen moment, 60% left); no other mode keeps it
+    local PH = NS.DriverPhase
+    if mode == "ovup" and PH and PH.Source(rec) then
+        f._adGlowLaneOnly = "none"
+        f._adIdleReady = nil
+        Factory.SetProcGlow(f, rec, false)
+        Factory.StopGlow(f)
+        if f._adAuraBtn then f._adAuraBtn:Hide() end
+        local cd = f.cooldown
+        if cd.Resume then cd:Resume() end
+        cd:SetCooldown(GetTime() - PREV_CD * 0.4, PREV_CD)
+        if cd.Pause then cd:Pause() end
+        Factory.SetPhase(f, rec, true, PH.Art({ rec = rec }))
+        if f == prevIcon then PreviewSyncHandles() end
+        return
+    end
+    if f._adPhaseUp then Factory.SetPhase(f, rec, false) end
     -- only a charge spell's preview recharges; another kind never inherits it
     if rec.kind ~= "spell" and f._adRecharging then
         Factory.SetGCDPresentation(f, rec, false, false, false)

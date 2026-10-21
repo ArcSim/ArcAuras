@@ -2,6 +2,9 @@
 -- Owns the rules' state and a colour hook on the main fill; the bars runtime calls in through Bars.SwingColor when it styles or releases a swing bar.
 -- IsCurrentSpell and PLAYER_SWING's duration are plain on Forever; a secret answer keeps the last state and never reaches a compare.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("SwingColors") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("SwingColors") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
+local hooksecurefunc = NS.Perf and NS.Perf.Hooks("SwingColors") or hooksecurefunc
 local Bars = NS.Bars
 local K = Bars and Bars.Kit
 if not (K and K.BarColorOf and K.SwingClock) then return end

@@ -2,6 +2,7 @@
 -- Registers "stormunleashed" on the Special hub; the shared MSW engine's consumes draw; Ascendance is not suppressed, since the deck rolls on every spend.
 -- The buff 1262830 is never watched: its cooldown update fires on gain, loss and expiry alike, and counting it finished a 250-card deck at 6 of 5.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("Special_StormUnleashed") or C_Timer   -- /arcperf times what they run
 if NS.IsForever == true then return end
 local SP = NS.Special
 if not SP then return end

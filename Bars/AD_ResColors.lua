@@ -11,6 +11,7 @@
 -- On a bar whose power is Automatic a row can be for one power (row.power): while another power
 -- shows it does not run at all.
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("ResColors") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Bars = NS.Bars
 if not Bars then return end
 local K = Bars.Kit
@@ -705,6 +706,8 @@ function CR.Refilter(lane, parked)
         lane.filterSig = sig
         c:SetAuraSlotCandidateFilters(lane.key, { includeSpellIDs = ids })
     end
+    -- parked, it stops listening too (Drivers\AD_DriverAura.lua SlotOn)
+    DA.SlotOn(c, lane.key, not parked, lane.harmful, ids, lane.unit)
 end
 
 function CR.LevelButton(lane, b)

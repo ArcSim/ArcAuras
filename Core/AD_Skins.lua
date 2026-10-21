@@ -8,6 +8,7 @@
 -- The Cooldown Manager look (appearance / arrangement cdmLook) is a plan of
 -- our own the same painter draws, with no Masque at all.
 local ADDON, NS = ...
+local hooksecurefunc = NS.Perf and NS.Perf.Hooks("Skins") or hooksecurefunc   -- /arcperf times what they run
 local Store = NS.Store
 local Events = NS.Events
 

@@ -2,6 +2,9 @@
 -- Owns the windup zone (its outline and overlay) and the hold while moving; the bars runtime calls in through Bars.SwingWindup when it styles or releases a swing bar.
 -- PLAYER_SWING's duration, the moving events and the auto-repeat events are plain on Forever, so the windup is GetTime math with no secret reads.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("SwingWindup") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("SwingWindup") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
+local hooksecurefunc = NS.Perf and NS.Perf.Hooks("SwingWindup") or hooksecurefunc
 local Bars = NS.Bars
 local K = Bars and Bars.Kit
 if not (K and K.RunTimedFill and K.SwingIdle and Bars.StripPx) then return end

@@ -2,6 +2,7 @@
 -- Owns the read, Blizzard's list merge redone over plain tables, and the aura rule; no frames (one event watch for the aura picker), no writes.
 -- Only C calls touch the game here: a secret or missing answer marks the read incomplete, never empty.
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("CDMMirror") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 
 local M = {}
 NS.CDMMirror = M

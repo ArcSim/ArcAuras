@@ -6,6 +6,7 @@
 -- totem feed).
 -- Called from AD_DriverCooldown's totem feed, Driver.Attach and Driver.Detach.
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("TotemRange") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Store = NS.Store
 local Events = NS.Events
 local Factory = NS.Factory
@@ -263,6 +264,8 @@ local function AimLayer(layer, ids)
     end
     layer.sig, layer.aimPending = sig, nil
     layer.container:SetAuraSlotCandidateFilters(layer.key, { includeSpellIDs = map })
+    -- parked, it stops listening too (Drivers\AD_DriverAura.lua SlotOn)
+    NS.DriverAura.SlotOn(layer.container, layer.key, ids ~= nil)
 end
 
 -- Stands a layer on the holder, at its strata, `at` rungs over it.

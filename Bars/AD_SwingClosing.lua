@@ -2,6 +2,8 @@
 -- Owns the mirror half and the ticks; the bars runtime calls in through Bars.SwingClose when it styles or releases a swing bar.
 -- PLAYER_SWING's duration is plain, so the ticks are placed from it with no secret math.
 local ADDON, NS = ...
+local hooksecurefunc = NS.Perf and NS.Perf.Hooks("SwingClosing") or hooksecurefunc   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("SwingClosing") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Bars = NS.Bars
 local K = Bars and Bars.Kit
 if not (K and K.ApplySheen) then return end

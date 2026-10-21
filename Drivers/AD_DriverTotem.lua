@@ -6,6 +6,9 @@
 -- our own GetTime stamp, never a totem number.
 
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("DriverTotem") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("DriverTotem") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
+local hooksecurefunc = NS.Perf and NS.Perf.Hooks("DriverTotem") or hooksecurefunc
 local Store = NS.Store
 local Events = NS.Events
 
@@ -22,6 +25,9 @@ DT.PAIR_WINDOW = 0.5
 -- guardian's slot names the guardian, not the spell).
 DT.PLAIN_MAX = 5
 DT.WAIT_MAX = 5
+-- A slot's plain start within this many seconds of when its update came is
+-- the same totem: every new one lighting the slot moves litAt again.
+DT.SAME_LIT = 1
 -- the longer waits a player may pick (driver.slotWait), in seconds
 DT.WAITS = { 1, 1.5, 2, 3, 4, 5 }
 DT.QUEUE_MAX = 8
@@ -285,14 +291,17 @@ function DT.ReadAll()
         else
             local name, sid = DT.ReadSlot(slot)
             if name then
-                if s.name ~= name then s.castId, s.pos = nil, nil end
+                local _, _, start = GetTotemInfo(slot)
+                local plain = not (issecretvalue and issecretvalue(start)) and type(start) == "number"
+                -- the same totem (lit when the slot says) keeps the cast that put it
+                -- down: named by that cast while secret, its own name can differ
+                -- (a summon's: Feral Spirit's slot says Spirit Wolf)
+                local same = plain and s.litAt ~= nil and math.abs(start - s.litAt) < DT.SAME_LIT
+                if s.name ~= name and not same then s.castId, s.pos = nil, nil end
                 s.name, s.id = name, sid
                 DT.Known()[name] = true
                 DT.pending[slot] = nil
-                local _, _, start = GetTotemInfo(slot)
-                if not (issecretvalue and issecretvalue(start)) and type(start) == "number" then
-                    s.litAt = start
-                end
+                if plain then s.litAt = start end
             end
             s.litAt = s.litAt or GetTime()
         end
@@ -585,7 +594,7 @@ function DT.Attach(rec)
     Events.On("PLAYER_TOTEM_UPDATE", "adtotem", function(_, slot) DT.OnSlotUpdate(slot) end)
     Events.On("UNIT_SPELLCAST_SUCCEEDED", "adtotem", function(_, unit, _, spellID)
         if unit == "player" then DT.OnCast(spellID) end
-    end)
+    end, { "player" })
     Events.On("PLAYER_REGEN_ENABLED", "adtotem", DT.ReadAll)
     Events.On("PLAYER_ENTERING_WORLD", "adtotem", DT.ReadAll)
     DT.ReadAll()

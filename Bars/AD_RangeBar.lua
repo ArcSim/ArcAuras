@@ -2,6 +2,7 @@
 -- a row of labelled cells with that band's cell lit; with no band, a neutral look. Plugged into the bars runtime through
 -- Bars.RegisterKind and Bars.Kit; NS.DriverRange answers which band holds, from range events and a short item pulse.
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("RangeBar") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Bars = NS.Bars
 local K = Bars and Bars.Kit
 if not (Bars and K and Bars.RegisterKind) then return end

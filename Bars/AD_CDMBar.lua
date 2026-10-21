@@ -2,6 +2,8 @@
 -- The game fills its own bar item with SetMinMaxValues and SetValue; hooks on those widgets repeat each call onto ours, in combat too, with nothing polled.
 -- The repeated numbers may be secret: they only reach secret-safe setters, and the one test is on the literal 0 the game sends when its timer stops.
 local ADDON, NS = ...
+local hooksecurefunc = NS.Perf and NS.Perf.Hooks("CDMBar") or hooksecurefunc   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("CDMBar") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 if NS.IsForever == true then return end
 local Bars = NS.Bars
 local K = Bars and Bars.Kit

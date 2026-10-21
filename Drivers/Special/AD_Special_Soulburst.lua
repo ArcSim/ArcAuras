@@ -2,6 +2,7 @@
 -- Registers "soulburst" on the Special hub; a Reap, Cull or Eradicate cast counts once it is judged to have consumed 4 or more Soul Fragments; the proc is the spell overlay glow of 473662 alone.
 -- The fragment count is unreadable in combat, so the gate is the Void Metamorphosis builder's increase read 1 s after the cast; a restricted read leaves the harvest unknown, which counts.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("Special_Soulburst") or C_Timer   -- /arcperf times what they run
 if NS.IsForever == true then return end
 local SP = NS.Special
 if not SP then return end

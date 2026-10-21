@@ -2,6 +2,7 @@
 -- The totem driver (Drivers\AD_DriverTotem.lua) names the slot it sits in by your own cast, plain in combat;
 -- the slot's duration object feeds the fill and the countdown C-side, so nothing is read or polled.
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("TotemBar") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Bars = NS.Bars
 local K = Bars and Bars.Kit
 if not (Bars and K and Bars.RegisterKind) then return end

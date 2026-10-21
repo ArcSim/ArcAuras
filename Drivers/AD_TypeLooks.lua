@@ -3,6 +3,7 @@
 -- The game reads each aura's type and picks the art and colour itself, so it works in combat: nothing here reads an aura.
 -- A full look per type is the runtime's: one engine aura group per type, each type's buttons styled from its own look (TL.Full, TL.Order).
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("TypeLooks") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Store = NS.Store
 
 local TL = {}

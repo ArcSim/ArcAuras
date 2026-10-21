@@ -5,6 +5,7 @@
 -- sliders follow. Every placement site notes its text here (TD.Note); nothing
 -- here moves a text itself.
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("TextDrag") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 
 local TD = {}
 NS.TextDrag = TD

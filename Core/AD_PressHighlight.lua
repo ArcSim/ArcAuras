@@ -3,6 +3,9 @@
 -- Hooks are post-hooks, so the hooked calls stay untainted. A slot that reads
 -- secret in combat is answered from a cache filled while it read plain.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("PressHighlight") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("PressHighlight") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
+local hooksecurefunc = NS.Perf and NS.Perf.Hooks("PressHighlight") or hooksecurefunc
 local Store = NS.Store
 
 local PH = {}

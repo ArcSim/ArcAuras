@@ -7,6 +7,7 @@
 -- object, so nothing polls.
 
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("DriverEnchant") or C_Timer   -- /arcperf times what they run
 local Store = NS.Store
 local Events = NS.Events
 local Factory = NS.Factory
@@ -279,7 +280,7 @@ function DE.EnsureEvents()
             Events.On(ev, "adenchant", function(_, unit)
                 if ev == "UNIT_INVENTORY_CHANGED" and unit ~= "player" then return end
                 Events.Coalesce("adenchant_feed", DE.FeedAll)
-            end)
+            end, ev == "UNIT_INVENTORY_CHANGED" and { "player" } or nil)
         end
     end
 end

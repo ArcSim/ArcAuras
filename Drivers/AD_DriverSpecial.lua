@@ -2,6 +2,8 @@
 -- Tracker files register at load (SP.Register); a record attaches through SP.Attach with a sink that receives every Read() on change; nothing here draws.
 -- Every value a tracker compares stays plain in combat: your own casts, SPELL_UPDATE_COOLDOWN spell IDs, by-spell-ID aura presence and hook firings; a secret payload is dropped before any compare.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("DriverSpecial") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("DriverSpecial") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 if NS.IsForever == true then return end
 
 local SP = {}

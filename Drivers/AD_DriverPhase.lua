@@ -1,11 +1,15 @@
 -- A spell icon's overlay from its totem or a set duration on cast (Tracking >
--- "On this icon"): our own button over the cooldown, in the look the aura
--- phase wears, shown while the totem is down or the time runs. The casts are
--- the player's own, plain in combat; a totem's time goes to the swipe as the
--- game hands it over, never read. The aura source stays the engine's
--- (Drivers\AD_DriverAura.lua).
+-- "On this icon"): the time goes into the icon's own cooldown, in the look the
+-- aura phase wears (Factory.SetPhase), while the totem is down or the time
+-- runs; at its end the cooldown driver re-feeds the spell's own. The casts are
+-- the player's own, plain in combat; a totem's time goes to the cooldown as
+-- the game hands it over, never read. The aura source stays the engine's
+-- (Drivers\AD_DriverAura.lua). A Dynamic aura group's totem row has no icon of
+-- its own, so its slots carry a button of ours instead.
 
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("DriverPhase") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("DriverPhase") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Store = NS.Store
 local Events = NS.Events
 local Factory = NS.Factory
@@ -16,7 +20,7 @@ NS.DriverPhase = PH
 PH.KEY = "adphase"
 PH.entries = {}   -- [iconId] = { rec, holder, src, pseudo }
 PH.timers = {}    -- [iconId] = { at, dur, token }: a running set duration, kept across a re-attach
-PH.buttons = {}   -- [iconId] = the icon's button, kept across a re-attach
+PH.buttons = {}   -- [iconId] = a totem row slot's button, kept across a re-attach
 PH.armed = false
 
 -- the overlay table and its source when it is not the aura's, else nil
@@ -89,9 +93,30 @@ function PH.InList(list, spellID)
     return false
 end
 
--- The button: built and styled like the editor's stand-in, the live recipe
--- with the two engine setters as no-ops. It rides the icon, so the icon's
--- fades and hides reach it; the state dims touch only the icon's own pieces.
+-- The icon's own cooldown takes the time; a totem row's slot has none.
+local function OwnFrame(e)
+    return e.holder ~= nil and e.holder.cooldown ~= nil and e.holder.icon ~= nil
+end
+
+-- The art while it runs, for a spell icon set to the aura's icon: the spell
+-- picked to follow (its own spell keeps the icon's art); an item or trinket
+-- keeps its own.
+function PH.Art(e)
+    local _, ov = PH.Source(e.rec)
+    if not ov then return nil end
+    if e.rec.kind == "spell" then
+        local list = type(ov.spells) == "table" and ov.spells or nil
+        local sid = Num(list and list[1])
+        if not sid or sid == PH.OwnSpell(e.rec) then return nil end
+        local id = Store.RecordSpellID(e.rec.driver, sid)
+        return id and C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(id) or nil
+    end
+    return nil
+end
+
+-- A totem row slot's button: built and styled like the editor's stand-in,
+-- the live recipe with the two engine setters as no-ops. It rides the slot,
+-- so the group's fades and hides reach it.
 function PH.Button(e)
     local id = e.rec.id
     local b = PH.buttons[id]
@@ -136,11 +161,61 @@ function PH.Style(e)
     Factory.StyleAuraButton(b, e.rec, h, { w = w, h = h, ghost = true })
 end
 
-function PH.Hide(e)
+-- An aura on the same icon steps aside while its totem shows (Drivers\AD_DriverAura.lua).
+local function SyncAura(e)
+    local DA = NS.DriverAura
+    if DA and DA.SyncAlpha and e.rec then DA.SyncAlpha(e.rec.id) end
+end
+
+-- The icon's own cooldown handed back: the state's look, then the cooldown
+-- driver's re-feed of the real one (none for an icon being released).
+function PH.Release(f, rec, released)
+    f.cooldown:Clear()
+    Factory.SetPhase(f, rec, false)
+    local DC = NS.DriverCooldown
+    if rec and not released and DC and DC.Refeed then DC.Refeed(rec.id) end
+end
+
+function PH.Hide(e, released)
     local b = e.rec and PH.buttons[e.rec.id]
-    if not b then return end
-    b._adSwipe:Clear()
-    b:Hide()
+    if b then
+        b._adSwipe:Clear()
+        b:Hide()
+    end
+    local f = e.holder
+    if f and f._adPhaseUp and f.cooldown then
+        PH.Release(f, e.rec, released)
+        SyncAura(e)
+    end
+end
+
+-- The time on show: a totem's duration object, else a set duration from `at`
+-- for `len`, on the icon's own cooldown in the Active look, or on the slot's button.
+local function ShowTime(e, dur, at, len)
+    if OwnFrame(e) then
+        local f = e.holder
+        -- first, so the cooldown driver stands off the frame
+        Factory.SetPhase(f, e.rec, true, PH.Art(e))
+        local cd = f.cooldown
+        if cd.Resume then cd:Resume() end
+        if dur then cd:SetCooldownFromDurationObject(dur, true) else cd:SetCooldown(at, len) end
+        SyncAura(e)
+        return
+    end
+    local b = PH.Button(e)
+    PH.Style(e)
+    if dur then b._adSwipe:SetCooldownFromDurationObject(dur, true) else b._adSwipe:SetCooldown(at, len) end
+    b:Show()
+end
+
+-- The cooldown showing an icon's totem or set duration now (its own, or its
+-- slot's button's), else nil.
+function PH.Showing(id)
+    local e = PH.entries[id]
+    if e and OwnFrame(e) and e.holder._adPhaseUp then return e.holder.cooldown end
+    local b = PH.buttons[id]
+    if b and b:IsShown() then return b._adSwipe end
+    return nil
 end
 
 -- Set duration
@@ -164,10 +239,7 @@ function PH.ShowTimer(id)
         PH.Stop(id)
         return
     end
-    local b = PH.Button(e)
-    PH.Style(e)
-    b._adSwipe:SetCooldown(t.at, t.dur)
-    b:Show()
+    ShowTime(e, nil, t.at, t.dur)
     local token = {}
     t.token = token
     C_Timer.After(left, function()
@@ -248,18 +320,26 @@ function PH.UntrackTotem(e)
     e.pseudo = nil
 end
 
+-- While its totem is up the time stays: the slot it came from is its own
+-- until that slot empties or lights anew, so a lookup that fails meanwhile
+-- (the slot re-read and named apart) never ends it.
 function PH.FeedTotem(e)
     local DT = NS.DriverTotem
     local slot = e.pseudo and DT and DT.SlotFor(e.pseudo)
+    local s = DT and slot and DT.slot[slot]
+    if slot then
+        e.slot, e.litAt = slot, s and s.litAt
+    elseif DT and e.slot then
+        s = DT.slot[e.slot]
+        if s and s.litAt and e.litAt and math.abs(s.litAt - e.litAt) < DT.SAME_LIT then slot = e.slot end
+    end
     local dur = slot and GetTotemDuration and GetTotemDuration(slot)
     if not dur then
+        e.slot, e.litAt = nil, nil
         PH.Hide(e)
         return
     end
-    local b = PH.Button(e)
-    PH.Style(e)
-    b._adSwipe:SetCooldownFromDurationObject(dur, true)
-    b:Show()
+    ShowTime(e, dur)
 end
 
 -- Every totem icon on a slot change (Drivers\AD_DriverTotem.lua DT.Changed).
@@ -290,7 +370,7 @@ function PH.Arm()
         if PH.Valid("UNIT_SPELLCAST_SUCCEEDED") then
             Events.On("UNIT_SPELLCAST_SUCCEEDED", PH.KEY, function(_, unit, _, spellID)
                 if unit == "player" then PH.OnCast(spellID) end
-            end)
+            end, { "player" })
         end
         if PH.Valid("PLAYER_DEAD") then Events.On("PLAYER_DEAD", PH.KEY, PH.OnDeath) end
     else
@@ -305,7 +385,11 @@ function PH.Attach(rec, f)
     local src = PH.Source(rec)
     local e = PH.entries[id]
     if not src then
-        if e then PH.Detach(id) end
+        -- switched off on a live icon: its own cooldown comes back at once
+        if e then
+            PH.Hide(e)
+            PH.Detach(id)
+        end
         PH.timers[id] = nil
         return
     end
@@ -313,6 +397,8 @@ function PH.Attach(rec, f)
         e = {}
         PH.entries[id] = e
     end
+    -- a frame this icon left hands its cooldown back, a slot its button
+    if e.holder and e.holder ~= f then PH.Hide(e) end
     e.rec, e.holder = rec, f
     if e.src ~= src then
         if e.src == "totem" then PH.UntrackTotem(e) end
@@ -331,11 +417,11 @@ function PH.Attach(rec, f)
     end
 end
 
--- A released icon: its button hides; a running duration is kept for the next attach.
+-- A released icon: its cooldown or button lets go; a running duration is kept for the next attach.
 function PH.Detach(id)
     local e = PH.entries[id]
     if not e then return end
-    PH.Hide(e)
+    PH.Hide(e, true)
     if e.src == "totem" then PH.UntrackTotem(e) end
     PH.entries[id] = nil
     PH.Arm()

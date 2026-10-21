@@ -2,6 +2,7 @@
 -- Owns one button per health bar with Clickable on; the bars runtime calls in through Bars.ClickUnit when it styles or releases a health bar, and the Tracking tab reads Note.
 -- A protected call (attributes, points, size, show and hide, the state driver) runs out of combat only and waits for PLAYER_REGEN_ENABLED otherwise; in combat the state driver alone shows or hides the button.
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("ClickUnit") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Bars = NS.Bars
 local K = Bars and Bars.Kit
 if not (K and K.R and K.live and K.IsEditMode) then return end

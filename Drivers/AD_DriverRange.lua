@@ -3,6 +3,8 @@
 -- Spell checks ride SPELL_RANGE_CHECK_UPDATE; item and interact checks have no event, so a 0.2 s pulse reads
 -- them only while a consumer needs one and the target is attackable and alive. A secret answer keeps the last state.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("DriverRange") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("DriverRange") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Events = NS.Events
 
 local DR = {}

@@ -8,6 +8,7 @@
 -- The game reports all three with plain events and values, in combat too.
 
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("DriverToggle") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Store = NS.Store
 local Events = NS.Events
 
@@ -353,7 +354,7 @@ end
 function DT.Listen(list, on, fn)
     for _, e in ipairs(list) do
         if on then
-            if DT.Valid(e) then Events.On(e, DT.KEY, fn) end
+            if DT.Valid(e) then Events.On(e, DT.KEY, fn, e == "UNIT_PET" and { "player" } or nil) end
         else
             Events.Off(e, DT.KEY)
         end

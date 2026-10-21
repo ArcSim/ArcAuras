@@ -2,6 +2,8 @@
 -- Owns the rule's clock, the tick grid and each bar's sparks, countdown, incoming mana and sound; the bars runtime calls in through Bars.ManaRegen when it styles or releases a resource bar.
 -- Mana reads secret, so nothing reads it: a spend is your own costly cast confirmed by a mana event beside it, a tick is a mana event on the 2 s grid away from your casts, and the next tick's mana is GetManaRegen fed unread into a bar.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("ManaRegen") or C_Timer   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("ManaRegen") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Bars = NS.Bars
 local K = Bars and Bars.Kit
 if not (K and K.WHITE and K.R and Bars.StripPx) then return end

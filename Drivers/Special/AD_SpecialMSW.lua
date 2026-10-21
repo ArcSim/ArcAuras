@@ -2,6 +2,7 @@
 -- Subscribers call MSW.Subscribe / Unsubscribe and MSW.InitFromLive after subscribing; the hub owns MSW.Reset. Events register only while someone subscribes.
 -- The UNIT_AURA payload is never read: its vectors are secret in restricted content. Presence comes from C_UnitAuras.GetPlayerAuraBySpellID, whose fields are guarded before use.
 local ADDON, NS = ...
+local C_Timer = NS.Perf and NS.Perf.Timers("SpecialMSW") or C_Timer   -- /arcperf times what they run
 if NS.IsForever == true then return end
 local SP = NS.Special
 if not SP then return end

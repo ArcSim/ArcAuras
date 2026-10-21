@@ -6,6 +6,7 @@
 -- anchorMatchHeight(Adjust). A family's anchorTargetKind values are what it may pick.
 
 local ADDON, NS = ...
+local CreateFrame = NS.Perf and NS.Perf.Frames("Anchor") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Store = NS.Store
 
 local Anchor = {}

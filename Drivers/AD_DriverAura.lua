@@ -5,6 +5,8 @@
 -- Active option (a gated glow rides a glow-only button, see Glow gates).
 -- Presence can be secret, so it is never read.
 local ADDON, NS = ...
+local hooksecurefunc = NS.Perf and NS.Perf.Hooks("DriverAura") or hooksecurefunc   -- /arcperf times what they run
+local CreateFrame = NS.Perf and NS.Perf.Frames("DriverAura") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
 local Store = NS.Store
 local Events = NS.Events
 local Factory = NS.Factory
@@ -466,6 +468,12 @@ function Driver.OverlayOn(rec)
     return type(ov) == "table" and ov.on == true
 end
 
+-- an icon the aura's button covers while the aura is up; a totem or a set
+-- duration runs on the icon's own cooldown instead (Drivers\AD_DriverPhase.lua)
+function Driver.ButtonOver(rec)
+    return Driver.OverlayOn(rec) and ShapeFor(rec) ~= nil
+end
+
 -- How far the holder's texts and glows sit up to stay over a several-unit icon's top button.
 function Driver.Rise(rec)
     if not IS_121 then return 0 end
@@ -498,10 +506,10 @@ end
 -- A container refreshes only on UNIT_AURA for its unit, so a target, focus,
 -- pet or roster change needs a nudge. Events are probed: unknown names throw.
 
-local function OnIfValid(event, key, fn)
+local function OnIfValid(event, key, fn, units)
     if C_EventUtils and C_EventUtils.IsEventValid
         and not C_EventUtils.IsEventValid(event) then return end
-    Events.On(event, key, fn)
+    Events.On(event, key, fn, units)
 end
 
 local swapArmed = false
@@ -528,15 +536,128 @@ local function ArmTargetSwapRefresh()
         local function Turned(_, unit)
             if unit == "target" or unit == "focus" then Refresh(unit) end
         end
-        OnIfValid("UNIT_FACTION", "adaura_swap", Turned)
-        OnIfValid("UNIT_FLAGS", "adaura_swap", Turned)
+        -- every unit's flags change all fight long; only these two refresh a lane
+        local sides = { "target", "focus" }
+        OnIfValid("UNIT_FACTION", "adaura_swap", Turned, sides)
+        OnIfValid("UNIT_FLAGS", "adaura_swap", Turned, sides)
     end
     OnIfValid("UNIT_PET", "adaura_swap", function(_, unit)
         if unit == nil or unit == "player" then Refresh("pet") end
-    end)
+    end, { "player" })
     OnIfValid("GROUP_ROSTER_UPDATE", "adaura_swap", function()
         for i = 1, 4 do Refresh("party" .. i) end
     end)
+end
+
+-- Side parks
+-- The game's spell-ID check (Blizzard_AuraContainerUtil
+-- CanApplyIdentityCandidateFilters) never passes a buff on a unit neither
+-- yours nor one you can assist, nor a debuff on one you can assist; a
+-- never-secret id is exempt. A target or focus slot in that spot shows nothing
+-- yet still works through every aura change on the unit, so it is switched off
+-- while the side holds and back on, with the game's full pass, when it turns.
+-- Only the container's own slot switch is used: its events cannot be touched
+-- (icon-kinds skill, THE MUTE IS IMPOSSIBLE). 12.1.0 shows such auras
+-- unfiltered, so it never side-parks.
+
+local SIDE_UNITS = { target = true, focus = true }
+local SIDE_UNKNOWN = -1
+local sideOf = {}                                       -- [unit] = side last seen
+local sideSlots = setmetatable({}, { __mode = "k" })   -- [container] = { [key] = { unit, want, harmful, ids, on } }
+
+-- The two reads that check makes on a unit.
+local function SideOf(unit)
+    local own = UnitIsPlayerControlledOrGroupMember and UnitIsPlayerControlledOrGroupMember(unit)
+    local assist = UnitCanAssist("player", unit, true, true)
+    if issecretvalue and (issecretvalue(own) or issecretvalue(assist)) then return SIDE_UNKNOWN end
+    return (own and 2 or 0) + (assist and 1 or 0)
+end
+
+local function SideBlind(side, harmful, ids)
+    if side == SIDE_UNKNOWN then return false end
+    local own, assist = side >= 2, side % 2 == 1
+    if harmful then
+        if not assist then return false end
+    elseif own or assist then
+        return false
+    end
+    local CS, SL = C_Secrets, Enum and Enum.SecrecyLevel
+    if CS and CS.GetSpellAuraSecrecy and SL then
+        for id in pairs(ids) do
+            if type(id) == "number" and id > 0 and CS.GetSpellAuraSecrecy(id) == SL.NeverSecret then return false end
+        end
+    end
+    return true
+end
+
+-- On a flag or faction change, and when the token names another unit.
+function Driver.SideCheck(unit)
+    local side = SideOf(unit)
+    if side ~= SIDE_UNKNOWN and side == sideOf[unit] then return end
+    sideOf[unit] = side
+    for c, slots in pairs(sideSlots) do
+        for key, r in pairs(slots) do
+            if r.unit == unit then
+                local on = r.want and not SideBlind(side, r.harmful, r.ids)
+                if on ~= r.on then
+                    r.on = on
+                    c:SetAuraSlotEnabled(key, on)
+                end
+            end
+        end
+    end
+end
+
+local sideArmed = false
+local function ArmSides()
+    if sideArmed then return end
+    sideArmed = true
+    local function Turned(_, unit)
+        if unit == "player" then
+            -- the player's own side moves every unit's
+            for u in pairs(SIDE_UNITS) do Driver.SideCheck(u) end
+        elseif SIDE_UNITS[unit] then
+            Driver.SideCheck(unit)
+        end
+    end
+    local units = { "player", "target", "focus" }
+    OnIfValid("UNIT_FLAGS", "adaura_side", Turned, units)
+    OnIfValid("UNIT_FACTION", "adaura_side", Turned, units)
+    OnIfValid("PLAYER_TARGET_CHANGED", "adaura_side", function() Driver.SideCheck("target") end)
+    OnIfValid("PLAYER_FOCUS_CHANGED", "adaura_side", function() Driver.SideCheck("focus") end)
+end
+
+-- The slot's switch with its side folded in. Returns the switch to set.
+local function SideSlot(c, key, unit, want, harmful, ids)
+    if not SIDE_UNITS[unit] or NS.AuraEngine1210 then return want end
+    ArmSides()
+    local slots = sideSlots[c]
+    if not slots then
+        slots = {}
+        sideSlots[c] = slots
+    end
+    local r = slots[key]
+    if not r then
+        r = {}
+        slots[key] = r
+    end
+    local side = SideOf(unit)
+    if sideOf[unit] == nil then sideOf[unit] = side end
+    r.unit, r.want, r.harmful, r.ids = unit, want, harmful == true, ids
+    r.on = want and not SideBlind(side, r.harmful, ids)
+    return r.on
+end
+
+-- For /arcperf: target and focus slots tracked, and how many sit off for the side.
+function Driver.SideCensus()
+    local n, off = 0, 0
+    for _, slots in pairs(sideSlots) do
+        for _, r in pairs(slots) do
+            n = n + 1
+            if r.want and not r.on then off = off + 1 end
+        end
+    end
+    return n, off
 end
 
 local function CreateIconContainer(unit, parent)
@@ -714,6 +835,13 @@ local function EnsureStage(entry, rec)
     st:SetFlattensRenderLayers(true)
     -- empty until an attach puts the missing look on it
     st:SetAlpha(0)
+    -- What the stage holds hangs off this inner frame, which carries the
+    -- icon's alpha: a frame buffer draws its children already faded by its own
+    -- alpha and then pastes the picture at that alpha again, so the stage
+    -- itself only shows (1) or hides (0).
+    local dim = CreateFrame("Frame", nil, st)
+    dim:SetAllPoints(st)
+    st._adDim = dim
     entry.stage = st
     return st
 end
@@ -742,7 +870,7 @@ local function StageLook(entry, on)
     local move = aura and Factory.StageMissingLook or Factory.StageCooldownLook
     -- a cooldown's move runs again: a piece made since (a shadow switched on) follows
     if on and (not entry.staged or not aura) then
-        move(f, entry.stage)
+        move(f, entry.stage._adDim)
         entry.staged = true
     elseif not on and entry.staged then
         move(f, nil)
@@ -793,6 +921,20 @@ end
 -- any context. Re-slotting a used container fails. While auras are secret,
 -- creation after the load window is blocked, so it waits for a settle edge.
 
+-- A parked slot is switched off too: the game's container listens to its
+-- unit's aura events while any of its slots is on, and a parked one (the
+-- never-matching id) still worked through every change on that unit. Data
+-- only, as the filters are. A slot's one button stays its own while off.
+-- unit, harmful, ids: the slot's own, given so a target or focus slot side-parks
+local function SlotOn(c, key, on, harmful, ids, unit)
+    if c and c.SetAuraSlotEnabled then
+        local want = on == true
+        if unit and ids then want = SideSlot(c, key, unit, want, harmful, ids) end
+        c:SetAuraSlotEnabled(key, want)
+    end
+end
+Driver.SlotOn = SlotOn
+
 -- The glow lanes, made the same way, one per glow that wants one and has none
 -- yet (a lane is kept once made: a glow switched off parks it). Their buttons
 -- are never wired: the game draws nothing on them, and the glow is all we add.
@@ -841,6 +983,7 @@ local function EnsureGlowSlots(iconId, entry, startParked)
                     end,
                     candidateFilters = { includeSpellIDs = ids },
                 })
+                SlotOn(c, key, not (startParked or not gids), lane.harmful, ids, lane.unit)
             end
         end
     end
@@ -870,7 +1013,7 @@ local function EnsureSlots(iconId, rec, startParked)
     local stage = EnsureStage(entry, rec)
     if stage then BufferFor(entry, Driver.NeedsEraser(rec)) end
     for _, lane in ipairs(LanesFor(d)) do
-        local c = CreateIconContainer(lane.unit, stage)
+        local c = CreateIconContainer(lane.unit, stage and stage._adDim)
         if c then
             -- in a stage it rides the stage's scale; on UIParent it takes its own
             if not stage then FollowScale(c, entry.holder) end
@@ -905,6 +1048,7 @@ local function EnsureSlots(iconId, rec, startParked)
                 end,
                 candidateFilters = { includeSpellIDs = ids },
             })
+            SlotOn(c, key, not startParked, lane.harmful, ids, lane.unit)
         end
     end
     return #entry.subs > 0
@@ -929,6 +1073,7 @@ local function ApplySlotFilters(entry, parked)
             sub.filterSig = sig
             c:SetAuraSlotCandidateFilters(sub.key, { includeSpellIDs = ids })
         end
+        SlotOn(c, sub.key, not parked, sub.harmful, ids, sub.unit)
     end
     -- glow lanes: each glow's ids while it wants its lane, else parked
     for _, g in ipairs(entry.glows or {}) do
@@ -943,6 +1088,7 @@ local function ApplySlotFilters(entry, parked)
             g.filterSig = sig
             c:SetAuraSlotCandidateFilters(g.key, { includeSpellIDs = ids })
         end
+        SlotOn(c, g.key, gids ~= nil, g.harmful, ids, g.unit)
     end
     entry.parked = parked and true or false
 end
@@ -994,11 +1140,14 @@ local function SyncEntryAlpha(entry)
     local a = ea
     local scr = NS.IconScreen
     if scr and entry.rec and scr.On(entry.rec.id) then a = 0 end
+    -- its totem shows first, on the icon itself (Drivers\AD_DriverPhase.lua): the aura steps aside
+    if holder._adPhaseUp then a = 0 end
     if entry.stage then
         -- not a holder child: a hidden holder hides its missing look here
         local vis = holder:IsVisible()
         if issecretvalue and issecretvalue(vis) then vis = true end
-        entry.stage:SetAlpha((vis and entry.staged) and ea or 0)
+        entry.stage:SetAlpha((vis and entry.staged) and 1 or 0)
+        entry.stage._adDim:SetAlpha(ea)
     end
     for _, sub in ipairs(entry.subs) do
         if LaneBlind(sub.unit, sub.harmful, entry.rec) then

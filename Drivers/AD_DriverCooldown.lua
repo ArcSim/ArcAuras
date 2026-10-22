@@ -1189,6 +1189,34 @@ local function ItemCdMoved(a)
     return start ~= a.cdStart or duration ~= a.cdDur or enable ~= a.cdEnable
 end
 
+-- seconds after each loading screen for the two extra item passes
+Driver.ART_PASSES = { 1, 3 }
+
+-- The art follows the item an icon shows. After a loading screen the slot or
+-- the item's data can come a feed after the restyle, with no equipment event,
+-- so a stand-in picture (the question mark, an empty ammo slot's art while
+-- the slot holds ammo) is read again on each feed until the item's own comes.
+function Driver.FollowArt(a, iid)
+    local f = a.frame
+    if f._adLiveItem == iid and not f._adArtWait then return end
+    f._adLiveItem = iid
+    local tex = Factory.GetTexture(a.rec)
+    if issecretvalue and issecretvalue(tex) then
+        f.icon:SetTexture(tex)
+        f._adArt, f._adArtWait = nil, nil
+        return
+    end
+    if tex ~= f._adArt then
+        f.icon:SetTexture(tex)
+        f._adArt = tex
+    end
+    local standIn = tex == Factory.QUESTION_MARK
+        or (a.rec.kind == "ammo" and Factory.AmmoEmptyTexture and tex == Factory.AmmoEmptyTexture())
+    f._adArtWait = (iid ~= nil and standIn) or nil
+    -- its data arriving later fires GET_ITEM_INFO_RECEIVED: a feed then
+    if f._adArtWait then Driver.itemDataWanted = true end
+end
+
 local function FeedItem(a)
     local rec = a.rec
     local d = rec.driver or {}
@@ -1199,13 +1227,8 @@ local function FeedItem(a)
         local pick = Driver.PickItem(d)
         if pick then Driver.liveItems[rec.id] = pick end
         iid = Driver.liveItems[rec.id] or d.itemID
-        if a.frame._adLiveItem ~= iid then
-            a.frame._adLiveItem = iid
-            local tex = Factory.GetTexture(rec)
-            a.frame.icon:SetTexture(tex)
-            a.frame._adArt = not (issecretvalue and issecretvalue(tex)) and tex or nil
-        end
     end
+    if rec.kind == "item" then Driver.FollowArt(a, iid) end
     local start, duration, enable
     if rec.kind == "trinket" then
         start, duration, enable = GetInventoryItemCooldown("player", d.slotID or 13)
@@ -1237,14 +1260,8 @@ local function FeedItem(a)
         a.frame._adItemEmpty = (iid == nil) or nil
         a.frame._adPassive = (iid ~= nil and Store.Resolve(rec, "trinket", "onlyOnUse") == true
             and Driver.IsPassiveItem(iid)) or nil
-        -- the art follows the item worn: after a loading screen the slot can
-        -- read empty at the restyle and fill a feed later (no equipment event)
-        if not (issecretvalue and issecretvalue(iid)) and a.frame._adLiveItem ~= iid then
-            a.frame._adLiveItem = iid
-            local tex = Factory.GetTexture(rec)
-            a.frame.icon:SetTexture(tex)
-            a.frame._adArt = not (issecretvalue and issecretvalue(tex)) and tex or nil
-        end
+        -- the art follows the item worn (Driver.FollowArt)
+        if not (issecretvalue and issecretvalue(iid)) then Driver.FollowArt(a, iid) end
     end
     -- Ammo: the equipped stack. GetInventoryItemCount has no secrecy annotation
     -- and Blizzard's item buttons compare it; it still goes to SetText raw.
@@ -1254,7 +1271,10 @@ local function FeedItem(a)
             a.frame.stackText:SetText(cnt or "")
             Factory.AmmoCountColor(a.frame.stackText, rec, "stackColor")
         end
-        a.frame._adItemEmpty = (GetInventoryItemID("player", AMMO_SLOT) == nil) or nil
+        local aid = GetInventoryItemID("player", AMMO_SLOT)
+        a.frame._adItemEmpty = (aid == nil) or nil
+        -- the art follows the ammo worn (Driver.FollowArt)
+        if not (issecretvalue and issecretvalue(aid)) then Driver.FollowArt(a, aid) end
     end
     -- the state paint below carries it (after the empty flag, which wins)
     if rec.kind == "item" then a.frame._adUsability = Driver.ItemUsabilityCode(a) end
@@ -1690,6 +1710,11 @@ local function EnsureEvents()
         kbDirty = true
         Events.Coalesce("adcd_feedall", FeedAll)
         Events.Coalesce("adcd_feedammo", FeedAmmoAll)
+        -- item, trinket and ammo slots can fill seconds later with no event:
+        -- two more item passes (a pass is a few reads per item icon)
+        for _, t in ipairs(Driver.ART_PASSES) do
+            C_Timer.After(t, function() Events.Coalesce("adcd_feeditems", FeedAllItems) end)
+        end
     end)
     local function Relearn()
         -- Charges can change with talents or spec. A charge spell has

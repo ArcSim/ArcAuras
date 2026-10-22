@@ -1265,6 +1265,10 @@ local function ApplyVisibility(entry)
     -- sessions.
     if NS.Conditions then alpha = alpha * NS.Conditions.AlphaFor(rec) end
     entry.holder:SetAlpha(alpha)
+    if entry.kind == "aura" and entry.traceAlpha ~= alpha and not (issecretvalue and issecretvalue(alpha)) then
+        entry.traceAlpha = alpha
+        Bars.Trace(entry, "alpha " .. alpha .. (entry.stateHidden and " (hidden)" or ""))
+    end
     -- the bar glows' lanes hang off UIParent and take this alpha (Bars\AD_BarGlow.lua)
     if Bars.Glow then Bars.Glow.Visible(entry) end
     -- so do a resource bar's colour rule layers (Bars\AD_ResColors.lua)
@@ -4925,12 +4929,111 @@ local function ReleaseAuraTargetWatch()
     Events.Off("PLAYER_REGEN_ENABLED", "adbarsaura")
 end
 
+-- The engine fill's own alpha, the container's: 0 on a 12.1.0 lane the engine
+-- cannot filter (AuraBlindSync); PRIME_ALPHA while it is primed (Bars.PrimeAura).
+function Bars.AuraFillAlpha(e)
+    local sub, DA = e.auraSub, NS.DriverAura
+    if not sub then return end
+    local blind = NS.AuraEngine1210 and DA and DA.LaneBlind and DA.LaneBlind(sub.unit, sub.harmful, e.rec)
+    sub.container:SetAlpha(blind and 0 or sub.priming and Bars.PRIME_ALPHA or 1)
+end
+
 -- 12.1.0: a target or focus lane the engine cannot filter by spell shows the
 -- first aura it finds, so the bar's engine fill hides there instead.
 function Bars.AuraBlindSync(e)
     local sub, DA = e.auraSub, NS.DriverAura
     if not (sub and NS.AuraEngine1210 and DA and DA.LaneBlind) then return end
-    sub.container:SetAlpha(DA.LaneBlind(sub.unit, sub.harmful, e.rec) and 0 or 1)
+    Bars.AuraFillAlpha(e)
+end
+
+-- Priming. A fresh bar shows a full fill for a moment the first time its aura
+-- appears (the first stack after a reload), drawn inside the game's buttons
+-- where no code of ours runs. So a new composition is drawn once unseen: with
+-- its aura gone (or unknown), its slots take any buff on you for PRIME_SHOW
+-- with the fill at PRIME_ALPHA, then their own filter string and filters come
+-- back, and the fill shows PRIME_SETTLE later. Not 0: the game skips drawing
+-- what is fully clear, so the bar texture would load at the first real stack
+-- and the plain colour layers would show a lighter fill before it. A live
+-- aura is never hidden: a composition whose aura is up has drawn already. You
+-- only, outside edit sessions. Only the container's own calls (filters, its
+-- alpha).
+Bars.PRIME_DELAY, Bars.PRIME_SHOW, Bars.PRIME_SETTLE, Bars.PRIME_ALPHA = 2, 0.3, 0.1, 0.01
+function Bars.PrimeAura(e)
+    local sub = e and e.auraSub
+    if not (sub and sub.needsPrime) or sub.priming or IsEditMode() then return end
+    if sub.unit ~= "player" then
+        sub.needsPrime = nil
+        return
+    end
+    if AuraPresent(e) == true then
+        sub.needsPrime = nil
+        Bars.Trace(e, "prime=skip-aura-up")
+        return
+    end
+    sub.needsPrime, sub.priming = nil, true
+    Bars.AuraFillAlpha(e)
+    local c = sub.container
+    for _, k in ipairs(sub.keys) do
+        if c.SetAuraSlotFilterString then c:SetAuraSlotFilterString(k, "HELPFUL") end
+        c:SetAuraSlotCandidateFilters(k, {})
+    end
+    Bars.Trace(e, "prime=any-buff")
+    Bars.PrimeTexture(e, true)
+    C_Timer.After(Bars.PRIME_SHOW, function()
+        if e.auraSub ~= sub then return end
+        local fs, cf = AuraFilter(e.rec.driver or {}), AuraSlotFilters(e, sub.parked)
+        for _, k in ipairs(sub.keys) do
+            if c.SetAuraSlotFilterString then c:SetAuraSlotFilterString(k, fs) end
+            c:SetAuraSlotCandidateFilters(k, cf)
+        end
+        Bars.Trace(e, "prime=own-filters")
+        C_Timer.After(Bars.PRIME_SETTLE, function()
+            sub.priming = nil
+            if e.auraSub == sub then Bars.AuraFillAlpha(e) end
+            Bars.PrimeTexture(e, false)
+            Bars.Trace(e, "prime=done")
+        end)
+    end)
+end
+
+-- The bar texture drawn once on a region of our shell as well, at PRIME_ALPHA:
+-- the slots' fills can sit at 0 through the prime (a buff with no stacks), and
+-- a texture never drawn loads at its first real show.
+function Bars.PrimeTexture(e, on)
+    local sh = e and e.shell
+    if not sh then return end
+    local t = e.primeTex
+    if not on then
+        if t then t:Hide() end
+        return
+    end
+    if not t then
+        t = sh:CreateTexture(nil, "BACKGROUND", nil, -8)
+        t:SetAllPoints(sh)
+        e.primeTex = t
+    end
+    t:SetTexture(ResolveBarTexture(R(e.rec, "fill", "texture")))
+    t:SetAlpha(Bars.PRIME_ALPHA)
+    t:Show()
+end
+
+function Bars.PrimeSoon(e)
+    C_Timer.After(Bars.PRIME_DELAY, function() Bars.PrimeAura(e) end)
+end
+
+-- /adbars diag: what an aura bar did since it was made, newest last, with the
+-- game's clock, to follow a moment such as the first stack after a reload.
+-- A few table writes on rare edges; printed only by the command.
+Bars.TRACE_MAX = 40
+function Bars.Trace(e, what)
+    if not e then return end
+    local t = e.auraTrace
+    if not t then
+        t = {}
+        e.auraTrace = t
+    end
+    if #t >= Bars.TRACE_MAX then table.remove(t, 1) end
+    t[#t + 1] = ("%.3f %s"):format(GetTime(), what)
 end
 
 -- The composition: driven widgets live on the engine's buttons.
@@ -5499,6 +5602,7 @@ local function AuraBarEnsure(entry)
             local idSig = Bars.AuraIDSig(d)
             if sub.idSig ~= idSig then
                 sub.idSig, sub.spellID = idSig, d.spellID
+                Bars.Trace(entry, "new ids")
                 if not sub.parked then
                     local f = AuraSlotFilters(entry, false)
                     for _, k in ipairs(sub.keys) do
@@ -5538,6 +5642,7 @@ local function AuraBarEnsure(entry)
     c:Show()
 
     entry.auraGen = (entry.auraGen or 0) + 1
+    Bars.Trace(entry, "build composition " .. entry.auraGen)
     local barId = rec.id
     local keyBase = "adbar" .. barId .. "_g" .. entry.auraGen
     -- A harmful lane on a unit that can be friendly (target, focus) parks while
@@ -5588,24 +5693,16 @@ local function AuraBarEnsure(entry)
         local e2 = Live()
         if not e2 then return end
         e2.auraWired = (e2.auraWired or 0) + 1   -- /adbars diag: the engine reached us
+        Bars.Trace(e2, "wire slot " .. i)
         local sh = e2.shell
         local L = (i > 0) and plan[i] or nil
         local kind = L and L.kind or "base"
         b:EnableMouse(false)
         b:SetAlpha(1)
-        -- A fresh StatusBar draws one stale frame (its whole fill) the first
-        -- time it shows. The engine plays this hold each time the aura
-        -- appears (secure, in combat too, nothing to write after this
-        -- window), so the layer comes in clear a few frames later.
-        local ag = b.AddAuraShownAnimation and b.CreateAnimationGroup and b:CreateAnimationGroup()
-        local hold = ag and ag.CreateAnimation and ag:CreateAnimation("Alpha")
-        if hold then
-            hold:SetFromAlpha(0)
-            hold:SetToAlpha(0)
-            hold:SetDuration(0.05)
-            b:AddAuraShownAnimation(ag)
-            e2.auraHolds = (e2.auraHolds or 0) + 1
-        end
+        -- No shown animation: the game's full rebuild on every combat start,
+        -- end and stun counts as the aura appearing and replays one (a hold
+        -- blinked the bar each time), and our code never runs in its plays.
+        -- The first draw is primed instead (Bars.PrimeAura).
         -- The button's level first: SetFrameLevel on a parent shifts its
         -- children by the delta.
         local base = sh.fill:GetFrameLevel()
@@ -5641,6 +5738,7 @@ local function AuraBarEnsure(entry)
         if t.SetSnapToPixelGrid then t:SetSnapToPixelGrid(false) end
         if t.SetTexelSnappingBias then t:SetTexelSnappingBias(0) end
         s.tex = t
+
         if kind == "track" or kind == "step" then
             local m = bar:CreateMaskTexture()
             -- CLAMPTOBLACKADDITIVE masks out everything outside the rect.
@@ -5744,11 +5842,14 @@ local function AuraBarEnsure(entry)
     -- engine for a full pass now
     if type(c.UpdateAllAuras) == "function" then c:UpdateAllAuras() end
     if wantUnit ~= "player" then ArmAuraTargetWatch() end
+    sub.needsPrime = true
+    Bars.PrimeSoon(entry)
     return true
 end
 
 local function AuraBarRelease(entry)
     if entry.auraSub then
+        Bars.Trace(entry, "release composition")
         AuraSetParked(entry, true)
         entry.auraSub.container:Hide()
         entry.auraSub = nil
@@ -5864,6 +5965,10 @@ local function EnsureSharedEvents()
     Events.On("PLAYER_ENTERING_WORLD", "adbars", function()
         Events.Coalesce("adbars_all", function()
             ForEach(nil, function(e) Bars.Refresh(e.rec.id) end)
+        end)
+        -- a new aura bar's first draw, unseen (Bars.PrimeAura)
+        ForEach("aura", function(e)
+            if e.auraSub and e.auraSub.needsPrime then Bars.PrimeSoon(e) end
         end)
     end)
     -- the player's own casts are non-secret even in combat: the cooldown
@@ -7055,6 +7160,10 @@ SlashCmdList.ADBARS = function(msg)
                 tostring(sub and sub.parked or false),
                 tostring(sub and sub.container:IsShown() or false),
                 AuraPresentText(e), tostring(e.auraSplit or false)))
+            print(("    smooth=%s hideInactive=%s chromeOwned=%s compositions=%s now=%.3f"):format(
+                tostring(R(e.rec, "fill", "smoothing") ~= false), tostring(R(e.rec, "behavior", "hideWhenInactive") == true),
+                tostring(e.chromeOwned or false), tostring(e.auraGen or 0), GetTime()))
+            for _, l in ipairs(e.auraTrace or {}) do print("    " .. l) end
         elseif e.kind == "resource" then
             -- secret=: whether this client hands the value secret right now;
             -- the probe reads, never compares

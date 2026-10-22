@@ -132,6 +132,9 @@ local function LiveSpellArt(sid)
 end
 Factory.LiveSpellArt = LiveSpellArt
 
+-- the art an item, trinket or ammo icon wears while its item's own is not readable
+Factory.QUESTION_MARK = QUESTION_MARK
+
 local ammoEmptyTex
 function Factory.AmmoEmptyTexture()
     if ammoEmptyTex == nil then

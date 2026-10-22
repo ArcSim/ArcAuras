@@ -1,5 +1,14 @@
 # Arc Auras
 
+## 3.1.0
+
+Steadier aura stack bars, and item pictures that come in after a login.
+
+### Bug Fixes
+
+- **Aura stack bars in and out of combat** - A stack bar no longer blinks empty for a moment when you enter or leave combat or get stunned.
+- **Ammo and item pictures after login** - Ammo, trinket and item icons show their item's picture after a login or loading screen, without opening the options panel.
+
 ## 3.0.9
 
 Your attacks as triggers, totem and duration timers on the icon, and general performance optimization.

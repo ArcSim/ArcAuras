@@ -13,6 +13,18 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.1.0",
+        intro = "Steadier aura stack bars, and item pictures that come in after a login.",
+        sections = {
+            { header = "Bug Fixes", items = {
+                { title = "Aura stack bars in and out of combat",
+                    desc = "A stack bar no longer blinks empty for a moment when you enter or leave combat or get stunned." },
+                { title = "Ammo and item pictures after login",
+                    desc = "Ammo, trinket and item icons show their item's picture after a login or loading screen, without opening the options panel." },
+            } },
+        },
+    },
+    {
         version = "3.0.9",
         intro = "Your attacks as triggers, totem and duration timers on the icon, and general performance optimization.",
         sections = {
@@ -1196,6 +1208,18 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.1.0",
+        intro = "Steadier aura stack bars, and item pictures that come in after a login.",
+        sections = {
+            { header = "Bug Fixes", items = {
+                { title = "Aura stack bars in and out of combat",
+                    desc = "A stack bar no longer blinks empty for a moment when you enter or leave combat or get stunned." },
+                { title = "Ammo and item pictures after login",
+                    desc = "Ammo, trinket and item icons show their item's picture after a login or loading screen, without opening the options panel." },
+            } },
+        },
+    },
     {
         version = "3.0.9",
         intro = "Your attacks as triggers, totem and duration timers on the icon, and general performance optimization.",

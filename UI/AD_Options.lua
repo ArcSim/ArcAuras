@@ -102,24 +102,25 @@ function Options.EditingId()
 end
 
 -- Tabs by what you want to happen: what it tracks, the look that never
--- changes, how it looks and what it does in each state (Conditions: the state
--- table, then each state's glows, sounds and art), then its texts and where
--- it sits. A tab with nothing for the icon drops out (IconTabsFor).
+-- changes, what sets its look and what each does (Effects: a list of its
+-- states and fade rules, the picked one's look, glows, sounds and art), then
+-- its texts and where it sits. A tab with nothing for the icon drops out
+-- (IconTabsFor).
 local KIND_TABS = {
-    spell   = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
-    aura    = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
-    trinket = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
-    item    = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    spell   = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
+    aura    = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
+    trinket = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
+    item    = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
     -- a Custom Icon: its rules on Triggers (UI\AD_CustomOptions.lua)
-    timer   = { "Tracking", "Triggers", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
-    totem   = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
-    ammo    = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
-    enchant = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
-    special = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    timer   = { "Tracking", "Triggers", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
+    totem   = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
+    ammo    = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
+    enchant = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
+    special = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
     -- a Group Buff: its count and its two states, no glows or sounds
-    groupbuff = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    groupbuff = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
     -- a Stance icon: in the stance or not, no swipe, count or sounds
-    stance = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    stance = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
 }
 
 -- An aura-group icon, and whether its group packs it (Close gaps on). Packed
@@ -7988,32 +7989,35 @@ local PREV_DRAGS = {
     { fs = "countdown",   name = "Duration text", sec = "text",    a = "durationAnchor", x = "durationX", y = "durationY" },
 }
 
--- One glow at a time. On Conditions with a state's glows open: the first of
--- them switched on, else its first. Otherwise the first lane the icon has on,
--- in a fixed order.
+-- One glow at a time. On Effects with a state picked: the first of its glows
+-- switched on, else its first. Otherwise the first lane the icon has on, in a
+-- fixed order.
 Options.GLOW_LANE_OF = { ["states.readyGlow"] = "ready", ["states.procGlow"] = "proc",
     ["states.usableGlow"] = "usable", ["states.cooldownGlow"] = "cooldown", ["states.rangeGlow"] = "range",
     ["states.rechargeGlow"] = "recharge", ["states.warnGlow"] = "warn", ["states.toggleGlow"] = "toggle",
     ["states.assistGlow"] = "assist", ["states.idleGlow"] = "idle" }
 local function PreviewGlowLane(rec)
     local ET = Options.EditorTabs
-    if ET and ui.icoTab == "Conditions" then
-        local _, kind, keys = ET.Open(rec)
-        if kind == "glow" then
-            local first
-            for _, key in ipairs(keys or {}) do
-                local lane = Options.GLOW_LANE_OF[key]
-                if lane then
-                    first = first or lane
-                    if ET.FxLit(rec, key) then return lane end
+    local EF = Options.EffectsTab
+    local pst = ET and EF and ui.icoTab == "Effects" and EF.PickedState(rec)
+    if pst then
+        for _, fx in ipairs(EF.FxFor(rec, pst)) do
+            if fx.kind == "glow" then
+                local first
+                for _, key in ipairs(fx.keys) do
+                    local lane = Options.GLOW_LANE_OF[key]
+                    if lane then
+                        first = first or lane
+                        if ET.FxLit(rec, key) then return lane end
+                    end
                 end
+                if first then return first end
             end
-            if first then return first end
-        end
-        -- the Queued row's checkmark rides the toggle lane
-        if kind == "art" then
-            for _, key in ipairs(keys or {}) do
-                if key == "states.queueCheck" then return "toggle" end
+            -- the Queued row's checkmark rides the toggle lane
+            if fx.kind == "art" then
+                for _, key in ipairs(fx.keys) do
+                    if key == "states.queueCheck" then return "toggle" end
+                end
             end
         end
     end
@@ -8130,6 +8134,39 @@ function Options.PreviewReset(f)
         ab._adSwipe:Clear()
         ab._adLoopUntil = nil
     end
+end
+
+-- A state picked on the Effects tab plays in the preview (board B): its mode
+-- chip where the kind has one; a state with none leaves the preview as it is.
+-- (On Options: the main chunk sits at Lua's 200-local ceiling.)
+Options.PICK_PREVIEW = {
+    aura = { active = "aup", missing = "amiss" },
+    stance = { active = "sin", inactive = "sout" },
+    timer = { active = "tact", inactive = "tina" },
+    phased = { active = "trun", idle = "tready", overlay = "ovup" },
+    cd = { ready = "off", usable = "off", active = "off", cooldown = "loop", missing = "loop", recharge = "recharge",
+        proc = "proc", overlay = "ovup" },
+}
+function Options.PreviewForPick(rec, key)
+    if not (rec and key) then return nil end
+    local P = Options.PICK_PREVIEW
+    local set = P[rec.kind]
+    if rec.kind == "timer" and Options.CustomPhased(rec) then
+        if key == "inactive" then return rec.driver.cdOn == true and "tcd" or "tina" end
+        set = P.phased
+    end
+    return (set or P.cd)[key]
+end
+-- true when the pick changed the mode (the panel is refreshed then)
+function Options.PlayPreview(rec, key)
+    local m = Options.PreviewForPick(rec, key)
+    if not m or m == ui.prevMode then return false end
+    ui.prevMode = m
+    prevPhase, prevT, prevStyleT = "ready", 0, 0
+    Options.PreviewReset(prevIcon)
+    Options.PreviewReset(Options.PreviewCopy(rec))
+    if RefreshAll then RefreshAll() end
+    return true
 end
 
 local function PreviewFS(d)
@@ -8975,6 +9012,10 @@ local function BuildIconEditor(parent)
             if t == ui.icoTab then listed = true end
         end
         if not listed then ui.icoTab = tabs[1] end
+        -- the open tab opens into the page under it: the Effects tab's darker ground
+        local EF = Options.EffectsTab
+        local ground = EF ~= nil and EF.SyncGround ~= nil and EF.SyncGround()
+        tabRow._strip._openFill = ground and COL.bg or COL.panel
         local h = tabRow._strip:Set(tabs, ui.icoTab, function(name)
             ui.icoTab = name
             AT.LayoutPage(pg)
@@ -9038,6 +9079,16 @@ local function BuildIconEditor(parent)
             if def.parts and BlockApplies(rec, def) then return false end
         end
         return true
+    end
+    -- the Effects tab has no sub-tabs: over several icons it stays while a
+    -- state is every icon's, or a block besides the list applies to all
+    Options.effectsTabHas = function(rec)
+        local EF = Options.EffectsTab
+        if EF and #EF.States(rec) > 0 then return true end
+        for _, def in ipairs(SEC_LISTS["Effects"] or {}) do
+            if not (def.effList or def.fxOnly) and BlockApplies(rec, def) then return true end
+        end
+        return false
     end
     -- a block's sub-tab shows: no sub-tab, fewer than two, or the picked one
     local function SubOpen(tabName, sub)
@@ -9878,15 +9929,17 @@ local function BuildIconEditor(parent)
             if not tabVis() then return false end
             local r = SelIcon()
             if not (r and BlockApplies(r, def)) then return false end
+            if o.gate and not o.gate(r) then return false end
             return SubOpen(tabName, sub)
         end
-        -- An effect block of the Conditions tab: o.fx, its key in the states'
+        -- An effect block of the Effects tab: o.fx, its key in the states'
         -- effect lists; o.fxKind, rows every state's effect shares (the sound
-        -- channel). Nothing is drawn here: the editor under a table row draws
-        -- it (UI\AD_EditorTabs.lua), from these: a card's switch (o.card), its
-        -- words (o.labels), its line's name (o.lineName, false for none), its
-        -- own lit test (o.lit), its note (o.note) and onOn.
+        -- channel). Nothing is drawn here: the Effects tab draws it under its
+        -- state (UI\AD_EffectsTab.lua), from these: a card's switch (o.card),
+        -- its words (o.labels), its line's name (o.lineName, false for none),
+        -- its own lit test (o.lit), its note (o.note) and onOn.
         if ET and (o.fx or o.fxKind) then
+            def.fxOnly = true
             def.isCard = o.card ~= nil
             def.labels, def.lit, def.onOn, def.note = o.labels, o.lit, o.onOn, o.note
             def.lineName = o.lineName
@@ -9965,7 +10018,7 @@ local function BuildIconEditor(parent)
     end
     -- The push bar at the end of a sub-tab (or of a stacked tab): the rows of
     -- every block it shows, one part per pushable section.
-    local function SubPush(tabName, sub)
+    local function SubPush(tabName, sub, gate)
         local tabVis = IconTabVisible(tabName)
         local function Parts()
             local r = SelIcon()
@@ -9999,6 +10052,8 @@ local function BuildIconEditor(parent)
         end
         local vis = function()
             if not (tabVis() and SubOpen(tabName, sub)) then return false end
+            local r = SelIcon()
+            if gate and not (r and gate(r)) then return false end
             return #Parts() > 0
         end
         AT.Section(pg, nil, { visibleFn = vis })
@@ -10126,46 +10181,71 @@ local function BuildIconEditor(parent)
     Options.LookBlock("icon", "Appearance", "Aura swipe", "auraSwipe", { "swipeColor", "swipeReverse" }, "Swipe")
     SubPush("Appearance", "Swipe")
 
-    -- Conditions > By State: every state the kind has in one table (opacity,
-    -- grey out, tint, its effects), the switches it needs, then the rules for
-    -- when states overlap. UI\AD_EditorTabs.lua draws the table and the editor
-    -- under a row; the effect blocks below are filed under the states' keys.
-    local stateTab = IconTabVisible("Conditions")
-    local stateDef = { tab = "Conditions", title = "How it looks in each state", sub = "By State",
-        fields = {}, parts = {},
+    -- Effects: the list of what sets the icon's look (its states, the aura on
+    -- it, the fade rules) down the left, the open one's effects to its right
+    -- (UI\AD_EffectsTab.lua), then the fade rules' rows while they are open
+    -- and the push bar. The effect blocks below are filed under the states' keys.
+    local EF = Options.EffectsTab
+    local CT = "Effects"
+    local stateTab = IconTabVisible(CT)
+    local stateDef = { tab = CT, title = "How it looks in each state", fields = {}, parts = {},
         applies = function(r) return ET ~= nil and ET.StatesFor(r) ~= nil end,
-        partsFn = function(r) return ET.StateParts(r) end }
-    SEC_LISTS["Conditions"] = SEC_LISTS["Conditions"] or {}
-    table.insert(SEC_LISTS["Conditions"], stateDef)
+        partsFn = function(r) return ET.StateParts(r) end, effList = true }
+    SEC_LISTS[CT] = SEC_LISTS[CT] or {}
+    table.insert(SEC_LISTS[CT], stateDef)
     stateDef.vis = function()
         if not stateTab() then return false end
         local r = SelIcon()
-        if not (r and BlockApplies(r, stateDef)) then return false end
-        return SubOpen("Conditions", "By State")
+        return r ~= nil and BlockApplies(r, stateDef)
     end
+    -- a state picked (the overlap rules, the push bar)
+    local function StatePicked(r) return EF ~= nil and EF.Shows(r, "state") end
     Options.BuildYield()
-    AT.Section(pg, stateDef.title, { visibleFn = stateDef.vis })
-    if ET then
-        ET.StateTable(pg, SelIcon, stateDef.vis, win)
-        ET.StateLooks("Conditions")
+    AT.Section(pg, nil, { visibleFn = stateDef.vis })
+    if ET and EF then
+        EF.Build(pg, SelIcon, stateDef.vis, win, tabRow)
+        ET.StateLooks(CT)
     end
-    More(stateDef, "auraMissing", { "showWhileMissing" }, { noLook = true })
+    -- Show while missing and an item's Show: the first lines of their state's
+    -- LOOK on the Effects tab (UI\AD_EffectsTab.lua), pushed with the table
+    if EF then
+        EF.LookRow("missing", "auraMissing", { "showWhileMissing" }, function(r)
+            if Store.Resolve(r, "auraMissing", "showWhileMissing") == false then return "Hidden", true end
+        end)
+    end
+    AddPart(stateDef, "auraMissing", { "showWhileMissing" })
     -- When Active starts is the clock on its opacity (ET.TimePop): no rows
     -- under the table, only the push parts.
     AddPart(stateDef, "auraActive", { "activeTimeOnly", "activeTimeUnit", "activeTimePct", "activeTimeSec",
         "activeTimeLen", "activeTimeBefore" })
-    -- they join the aura's Active state in the looks (as Show while missing
-    -- joins Missing): the layout's per-state page and the Defaults page
+    -- The count states (UI\AD_EffectsTab.lua EF.COUNTS): an aura's stacks and
+    -- a charge spell's charges, triggers of their own on the list; their
+    -- fields join the push and, each a block, the looks and the Defaults page.
+    AddPart(stateDef, "auraActive", { "stacksRule", "stacksA", "stacksB", "stacksAlpha", "stacksDesaturate",
+        "stacksTintEnabled", "stacksTintColor" })
+    AddPart(stateDef, "states", { "chargesRule", "chargesA", "chargesB", "chargesAlpha", "chargesDesaturate",
+        "chargesTintEnabled", "chargesTintColor" })
+    -- When Active starts joins the aura's Active state in the looks (as Show
+    -- while missing joins Missing): the layout's per-state page and the Defaults page
     Options.BuildYield()
-    Options.LookBlock("icon", "Conditions", "Active", "auraActive", { "activeTimeOnly", "activeTimeUnit",
+    Options.LookBlock("icon", CT, "Active", "auraActive", { "activeTimeOnly", "activeTimeUnit",
         "activeTimePct", "activeTimeSec", "activeTimeLen", "activeTimeBefore" }, "By State",
         { state = true, kindOnly = "aura" })
-    More(stateDef, "outOfStock", { "hideWhenMissing" }, { noLook = true })
+    Options.LookBlock("icon", CT, "Stacks at a count", "auraActive", { "stacksRule", "stacksA", "stacksB", "stacksAlpha",
+        "stacksDesaturate", "stacksTintEnabled", "stacksTintColor" }, "By State", { kindOnly = "aura" })
+    -- Charges at a count stays off the Defaults page: a spell's By State page
+    -- is at its height (900), and a page of its own would add a sub-tab row to it
+    if EF then
+        EF.LookRow("out", "outOfStock", { "hideWhenMissing" }, function(r)
+            if Store.Resolve(r, "outOfStock", "hideWhenMissing") == true then return "Hidden", true end
+        end)
+    end
+    AddPart(stateDef, "outOfStock", { "hideWhenMissing" })
     Options.BuildYield()
-    Options.LookBlock("icon", "Conditions", "Missing", "auraMissing", { "showWhileMissing" }, "By State",
+    Options.LookBlock("icon", CT, "Missing", "auraMissing", { "showWhileMissing" }, "By State",
         { kindOnly = "aura" })
     Options.BuildYield()
-    Options.LookBlock("icon", "Conditions", "Out of stock", "outOfStock", { "hideWhenMissing" }, "By State")
+    Options.LookBlock("icon", CT, "Out of stock", "outOfStock", { "hideWhenMissing" }, "By State")
     -- An effect block shows for a record when its kind has it and, with a
     -- switch, the switch's row would show; with none, a setting of it can
     -- show (the missing art waits on Show while missing).
@@ -10195,7 +10275,7 @@ local function BuildIconEditor(parent)
             o.labels = words
             o.card = { when = when, word = switch }
             o.fx = section .. "." .. prefix .. (suffix or "")
-            return Block("Conditions", "By State", title, section, fields, o)
+            return Block(CT, nil, title, section, fields, o)
         end
         -- a special icon's glows in its states' words: a deck's procs, or
         -- Nature's Guardian's timer (it keeps When ready). An applies stands
@@ -10243,6 +10323,12 @@ local function BuildIconEditor(parent)
                 local D = NS.DriverCooldown
                 return D ~= nil and D.IsCharge ~= nil and D.IsCharge(r)
             end })
+        -- the count states (UI\AD_EffectsTab.lua EF.COUNTS): their glows, shown
+        -- only while the count meets the rule (the fields' showIf offers them)
+        Card("At a stack count", "auraActive", "stacksGlow", nil, "Glow at that count",
+            "the aura is at that many stacks", { kindOnly = { aura = true }, noLook = true })
+        Card("At a charge count", "states", "chargesGlow", nil, "Glow at that count",
+            "the spell has that many charges", { kindOnly = { spell = true }, noLook = true })
         -- a charge spell's cooldown is every charge spent: No charges
         Card("While on cooldown", "states", "cooldownGlow", nil, "Glow while on cooldown", W.cooldown,
             { kindOnly = { spell = true, item = true, trinket = true }, applies = function(r)
@@ -10285,11 +10371,11 @@ local function BuildIconEditor(parent)
         -- Maul, Raptor Strike): the same glow, worded for it
         Card("While queued", "states", "toggleGlow", nil, "Glow while queued", "it waits for your next swing",
             { noLook = true, applies = Schema.QueueShows })
-        Block("Conditions", "By State", "Checkmark while queued", "states", { "queueCheck" }, {
+        Block(CT, nil, "Checkmark while queued", "states", { "queueCheck" }, {
             fx = "states.queueCheck", card = {}, lineName = "Checkmark",
             applies = Schema.QueueShows,
             lit = function(r) return Store.Resolve(r, "states", "queueCheck") == true end })
-        Block("Conditions", "By State", "Short of rage or mana", "states", { "queueShort", "queueShortColor" }, {
+        Block(CT, nil, "Short of rage or mana", "states", { "queueShort", "queueShortColor" }, {
             fx = "states.queueShort", card = {}, labels = { queueShortColor = "Tint" }, applies = Schema.QueueShows,
             lit = function(r) return Store.Resolve(r, "states", "queueShort") == true end })
         -- The aura's glows ride its engine button, so they work in combat and
@@ -10323,6 +10409,10 @@ local function BuildIconEditor(parent)
         local function CdOn(r) return ET.CustomCd(r) end
         local function CdOff(r) return r.kind == "timer" and not ET.CustomCd(r) end
         local function AuraUp(r) return r.kind == "aura" or (r.kind == "timer" and NS.DriverAura.OverlayOn(r) == true) end
+        local function AuraSoundNote(r)
+            return r.kind == "aura" and "The game plays aura sounds itself, so they work in combat, for anyone's copy of the aura."
+                or nil
+        end
         for _, s in ipairs({
             { "When ready", "readySound", CD_SOUNDS },
             { "When the cooldown starts", "cooldownSound", CD_SOUNDS, NotCharge },
@@ -10346,8 +10436,8 @@ local function BuildIconEditor(parent)
             -- an aura's moment is the game's to play: a sound, never words
             local say = (not s[5]) and (s[2]:gsub("Sound$", "Speech")) or nil
             -- lit once it plays something: switched on with a sound or words
-            Block("Conditions", "By State", s[1], "alerts", say and { en, snd, say } or { en, snd }, {
-                kindOnly = s[3], applies = s[4], noLook = true,
+            Block(CT, nil, s[1], "alerts", say and { en, snd, say } or { en, snd }, {
+                kindOnly = s[3], applies = s[4], noLook = true, note = s[5] and AuraSoundNote or nil,
                 labels = { [snd] = "Sound", [say or snd] = say and "Say" or "Sound" }, card = {}, fx = "alerts." .. en,
                 lit = function(r)
                     if Store.Resolve(r, "alerts", en) ~= true then return false end
@@ -10356,58 +10446,68 @@ local function BuildIconEditor(parent)
                 end })
         end
     end
-    Block("Conditions", "By State", "Sound channel", "alerts", { "soundChannel" }, { fxKind = "sound",
-        lineName = false, note = function(r)
-            return r.kind == "aura" and "The game plays aura sounds itself, so they work in combat, for anyone's copy of the aura."
-                or nil
-        end })
+    -- the channel row waits for a picked sound (Schema SoundFileShows): speech
+    -- plays on no channel
+    Block(CT, nil, "Sound channel", "alerts", { "soundChannel" }, { fxKind = "sound",
+        lineName = false })
 
     -- Art: the picture while the aura is up (a spell icon's aura phase too)
     -- or missing, lit while it is not the default.
-    Block("Conditions", "By State", "Art while active", "auraActive", {
+    Block(CT, nil, "Art while active", "auraActive", {
         "overlayArt", "activeIconFrom", "activeIcon",
     }, { fx = "art.active", lineName = false,
         labels = { overlayArt = "Show", activeIconFrom = "Icon from", activeIcon = "ID" }, lit = function(r)
         return (tonumber(Store.Resolve(r, "auraActive", "activeIcon")) or 0) ~= 0
             or (r.kind ~= "aura" and Store.Resolve(r, "auraActive", "overlayArt") == "spell")
     end })
-    Block("Conditions", "By State", "Art while missing", "auraMissing", { "missingIconFrom", "missingIcon" },
+    Block(CT, nil, "Art while missing", "auraMissing", { "missingIconFrom", "missingIcon" },
         { fx = "art.missing", lineName = false, labels = { missingIconFrom = "Icon from", missingIcon = "ID" },
             lit = function(r)
             return (tonumber(Store.Resolve(r, "auraMissing", "missingIcon")) or 0) ~= 0
         end })
 
-    -- the rules that decide which look wins, two to a line (an aura icon has
-    -- its own pair). Wait for no charges is Recharging's look pick now.
-    -- the usability rules fold under the left half, the text ones under the right
-    Block("Conditions", "By State", "When states overlap", "states", { "procOverride", "procOverrideWhen", "usableOverride",
-        "usabilityOnCooldown", "usabilityReadyOnly", "usabilityAlphaReplaces", "readyGreyUsable" },
-        { kindOnly = NOT_AURA, side = "L", labels = { procOverride = "A proc shows it at full opacity",
-            usableOverride = "Usable shows it at full opacity" } })
-    Block("Conditions", "By State", " ", "states",
-        { "preserveDurationText", "preserveSwipe", "preserveTextWhen", "labelsFullOpacity", "ignoreHardICD" },
-        { kindOnly = NOT_AURA, side = "R", noLook = true, searchTitle = "When states overlap" })
+    -- The rules for when states overlap sit on the cards they change (a
+    -- proc's and Usable's look, Keep bright, the usability fold): no rows
+    -- here, only what the push bar and the layout's looks take.
+    local function PushOnly(section, fields, kindOnly)
+        table.insert(SEC_LISTS[CT], { tab = CT, section = section, fields = fields, kindOnly = kindOnly, effList = true,
+            parts = { { section = section, fields = fields } } })
+    end
+    PushOnly("states", { "procOverride", "procOverrideWhen", "usableOverride", "usabilityOnCooldown",
+        "usabilityReadyOnly", "usabilityAlphaReplaces", "readyGreyUsable" }, NOT_AURA)
+    PushOnly("states", { "preserveDurationText", "preserveSwipe", "preserveTextWhen", "labelsFullOpacity",
+        "ignoreHardICD" }, NOT_AURA)
+    PushOnly("auraMissing", { "missingPreserveText" }, "aura")
+    PushOnly("auraActive", { "activePreserveText", "activePreserveSwipe", "activeLabelsBright" }, "aura")
     Options.BuildYield()
-    Options.LookBlock("icon", "Conditions", "When states overlap", "states",
+    Options.LookBlock("icon", CT, "When states overlap", "states", { "procOverride", "procOverrideWhen", "usableOverride",
+        "usabilityOnCooldown", "usabilityReadyOnly", "usabilityAlphaReplaces", "readyGreyUsable" }, nil,
+        { kindOnly = NOT_AURA, labels = { procOverride = "A proc shows it at full opacity",
+            usableOverride = "Usable shows it at full opacity" } })
+    Options.LookBlock("icon", CT, "When states overlap", "states",
         { "preserveDurationText", "preserveSwipe", "preserveTextWhen", "labelsFullOpacity", "ignoreHardICD" },
         "By State", { kindOnly = NOT_AURA })
-    Block("Conditions", "By State", "When states overlap", "auraMissing", { "missingPreserveText" },
-        { kindOnly = "aura", side = "L" })
-    Block("Conditions", "By State", " ", "auraActive", { "activePreserveText", "activePreserveSwipe", "activeLabelsBright" },
-        { kindOnly = "aura", side = "R", noLook = true, searchTitle = "When states overlap" })
     Options.BuildYield()
-    Options.LookBlock("icon", "Conditions", "When states overlap", "auraActive", { "activePreserveText", "activePreserveSwipe", "activeLabelsBright" },
+    Options.LookBlock("icon", CT, "When states overlap", "auraMissing", { "missingPreserveText" }, nil,
+        { kindOnly = "aura" })
+    Options.LookBlock("icon", CT, "When states overlap", "auraActive", { "activePreserveText", "activePreserveSwipe", "activeLabelsBright" },
         "By State", { kindOnly = "aura" })
-    SubPush("Conditions", "By State")
 
-    -- Conditions > Fade When: the fade rules. A member its aura group packs
-    -- (Close gaps on) fades with the group, so it has none.
+    -- Effects, the fade rules picked (WHILE): the rows Fade When had. A member
+    -- its aura group packs (Close gaps on) fades with the group, so it has none.
     Options.BuildYield()
-    VisibilityRows(pg, SelIcon, Pane("Conditions", "Fade When",
-        function(r)
-            local _, packed = InAuraGroup(r)
-            return not packed
-        end))
+    local function FadeApplies(r)
+        local _, packed = InAuraGroup(r)
+        return not packed
+    end
+    local fadeVis = Pane(CT, nil, FadeApplies)
+    if EF then EF.FadeApplies = FadeApplies end
+    VisibilityRows(pg, SelIcon, function()
+        local r = SelIcon()
+        return fadeVis() and r ~= nil and EF ~= nil and EF.Shows(r, "while")
+    end)
+    -- the push bar last (+ Add a trigger sits at the foot of the list)
+    SubPush(CT, nil, StatePicked)
 
     -- Text > Duration
     local durDef = Block("Text", "Duration", "Duration text", "text", {
@@ -12981,6 +13081,13 @@ local function BuildBarPane()
     DEF_OF[fillVis].extra = { "texture" }
     Options.BuildYield()
     Options.LookBlock("bar", "Appearance", "Fill", "fill", { "texture" }, FC)
+    -- A castbar's empowered stages in their own colours; the count's buttons
+    -- sit under the colour rows they reveal.
+    BarBlock("Empowered stages", "fill", "Appearance", {
+        "castStageColors", "castStageColor1", "castStageColor2", "castStageColor3", "castStageColor4",
+        "castStageColor5", "castStageColor6", "castStageColor7", "castStageColor8", "castStageCount",
+    }, NotPips, FC)
+    Options.BuildYield()
     -- A resource bar (bar style): every colour of the fill in one Color block,
     -- ending in what its States table does on the power in play, then the
     -- Texture block.
@@ -13237,7 +13344,8 @@ local function BuildBarPane()
     })
     -- Color each tick: the custom list's colours, one row per number typed
     BarSub(tickVis, "Marks", "ticks", {
-        "tickChannelOnly", "tickColor", "tickColorEach", "tickColor2", "tickColor3", "tickColor4",
+        "tickChannelOnly", "castStageMarks", "castStageMarkColors",
+        "tickColor", "tickColorEach", "tickColor2", "tickColor3", "tickColor4",
         "tickColor5", "tickColor6", "tickThickness", "tickThicknessAnchor", "tickHeight", "tickHeightAnchor",
     })
     -- a deck bar marks its procs (UI\AD_SpecialOptions.lua)
@@ -13693,9 +13801,11 @@ function Options.BuildMultiPane()
     if MS then MS.Fill(pane, h, win, { icon = iconEditorPage, bar = barEditorPage }) end
 end
 
--- A layout just made from the New Layout page: unfold it and open it.
-function Options.OpenLayout(rec)
+-- A layout just made from the New Layout page: unfold it and open it (on
+-- tab, when one is named).
+function Options.OpenLayout(rec, tab)
     ExpandedSet()[rec.id] = true
+    if tab then ui.layoutTab = tab end
     Options.Select("layout", rec.id)
 end
 
@@ -18814,6 +18924,9 @@ function Options.Search.Reveal(e)
     -- a row holding several settings opens the one the hit names (the
     -- Conditions table's editor under a state row)
     if e.row._adRevealFor then e.row._adRevealFor(e.label) end
+    -- the Effects tab draws the picked trigger's rows: pick the one holding it
+    local EF = Options.EffectsTab
+    if e.fam == "icon" and e.tab == "Effects" and EF then EF.Reveal(SelIcon(), e.row, e.sec) end
     AT.LayoutPage(pg)
     local target = e.row
     -- a row in a switched-off card shows dimmed: its switch flashes instead

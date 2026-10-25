@@ -1543,6 +1543,12 @@ if Eng and Eng.Rebuild then
     hooksecurefunc(Eng, "Rebuild", function()
         if LOS.open then LOS.Redraw() end
     end)
+    -- a change to one icon, group or bar redraws only that piece
+    if Eng.RebuildSome then
+        hooksecurefunc(Eng, "RebuildSome", function()
+            if LOS.open then LOS.Redraw() end
+        end)
+    end
 end
 
 -- the window unfolded by its own button ends the mode

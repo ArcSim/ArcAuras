@@ -373,6 +373,10 @@ local function KeepIconTab(px, t)
         local empty = Options.iconTabEmpty
         return not (empty and empty(px, t))
     end
+    if t == "Effects" then
+        local has = Options.effectsTabHas
+        return has == nil or has(px) == true
+    end
     local src = Options.SEARCH_SRC and Options.SEARCH_SRC.icon
     return not (src and src.subs and #src.subs(t, px) == 0)
 end

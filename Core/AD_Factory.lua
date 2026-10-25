@@ -1322,6 +1322,56 @@ function Factory.SkinGlowShape(rec)
     return nil
 end
 
+-- A point's share of a box from its centre ("TOPLEFT" -> -0.5, 0.5).
+local function PointShare(pt)
+    pt = pt or "CENTER"
+    local fx = pt:find("LEFT", 1, true) and -0.5 or (pt:find("RIGHT", 1, true) and 0.5 or 0)
+    local fy = pt:find("TOP", 1, true) and 0.5 or (pt:find("BOTTOM", 1, true) and -0.5 or 0)
+    return fx, fy
+end
+
+-- The skin's outer box on a w x h button: its picture, border, gloss and
+-- backdrop as SkinPlace draws them (whole pixels on anchor's grid), held round
+-- the button's centre, where the glows sit. A shaped skin's glows lay round
+-- this box: a round skin's border reaches past the button. A shadow is a soft
+-- fall, not the edge; an atlas at its own size has no box to read.
+function Factory.SkinReach(plan, w, h, anchor)
+    w, h = w or 36, h or 36
+    local k = (plan.scale or 1) / 36
+    local function Box(e, to)
+        if e.SetAllPoints then return to[1], to[2], to[3], to[4] end
+        if e.Atlas and e.UseAtlasSize then return nil end
+        local bw = SkinSnap(anchor, (e.Width or 36) * w * k, 1)
+        local bh = SkinSnap(anchor, (e.Height or 36) * h * k, 1)
+        local rx, ry = PointShare(e.RelPoint)
+        local px, py = PointShare(e.Point)
+        local cx = to[1] + rx * to[3] + SkinSnap(anchor, e.OffsetX or 0, 0) - px * bw
+        local cy = to[2] + ry * to[4] + SkinSnap(anchor, e.OffsetY or 0, 0) - py * bh
+        return cx, cy, bw, bh
+    end
+    local btn = { 0, 0, w, h }
+    local art = { Box(plan.icon or {}, btn) }
+    if not art[1] then art = btn end
+    local hx, hy = math.abs(art[1]) + art[3] / 2, math.abs(art[2]) + art[4] / 2
+    for _, key in ipairs({ "normal", "gloss", "backdrop" }) do
+        local e = plan[key]
+        local cx, cy, bw, bh
+        if e then cx, cy, bw, bh = Box(e, e.Anchor == "Icon" and art or btn) end
+        if cx then
+            hx = math.max(hx, math.abs(cx) + bw / 2)
+            hy = math.max(hy, math.abs(cy) + bh / 2)
+        end
+    end
+    return 2 * hx, 2 * hy
+end
+
+-- The box a glow lays round on a w x h button: a shaped skin's outer box when
+-- the drawn style follows the skin's shape, else the button's own.
+local function GlowBase(plan, shape, w, h, anchor)
+    if plan and shape then return Factory.SkinReach(plan, w, h, anchor) end
+    return w, h
+end
+
 -- The swipe's picture: a Masque skin's (plan), a shape's silhouette (key),
 -- else back to the flat white one Lua-made cooldowns need; a round picture
 -- runs a round edge (drawn only on SHAPE_EDGE shapes, where the draw flags
@@ -2251,7 +2301,10 @@ function Factory.ApplyStyle(f, rec)
     local plainLvl = not (issecretvalue and issecretvalue(hostLvl)) and type(hostLvl) == "number"
     if plainLvl then
         f.textHost:SetFrameLevel(hostLvl + Factory.TEXT_LEVEL + Factory.TextRise(rec))
-        if rec.kind ~= "aura" then f.cooldown:SetFrameLevel(hostLvl + 2) end
+        if rec.kind ~= "aura" then
+            -- a charges state's copy look takes the rungs under the swipe (Factory.ApplyChargeGate)
+            f.cooldown:SetFrameLevel(hostLvl + (Factory.ChargeCopyOn(rec) and Factory.CHARGE_LOW.swipe or 2))
+        end
         -- the glows count their levels from the icon's
         if f._adGlowFace then f._adGlowFace:SetFrameLevel(hostLvl) end
     end
@@ -2698,19 +2751,33 @@ end
 -- Moves the missing look onto the stage, each piece keeping its level; nil brings it home.
 function Factory.StageMissingLook(f, stage)
     local p = stage or f
+    local from = f.icon:GetParent()
     f._adStage = stage
-    f.icon:SetParent(p)
-    if f._adShadow then f._adShadow:SetParent(p) end
-    for _, k in ipairs({ "_adBorderHost", "_adMissClip", "_adMissGlow" }) do
-        local fr = f[k]
-        if fr then
-            local lvl = fr:GetFrameLevel()
-            fr:SetParent(p)
-            if type(lvl) == "number" and not (issecretvalue and issecretvalue(lvl)) then
-                fr:SetFrameLevel(lvl)
+    local function Move(r)
+        if not r or r:GetParent() == p then return end
+        local lvl = r.GetFrameLevel and r:GetFrameLevel()
+        r:SetParent(p)
+        if type(lvl) == "number" and not (issecretvalue and issecretvalue(lvl)) then r:SetFrameLevel(lvl) end
+    end
+    -- the art with its masks, and the skin's pictures kept on the art's frame
+    -- (a look styled before its first attach made them on the holder)
+    Move(f.icon)
+    Move(f.icon._adShapeM)
+    Move(f.icon._adSkinM)
+    if from ~= p then
+        for _, k in ipairs(SKIN_BACK_KEYS) do
+            local t = from[k]
+            if t then
+                Move(t)
+                p[k], from[k] = t, nil
             end
         end
     end
+    Move(f._adShadow)
+    Move(f._adBorderHost)
+    Move(f._adSkinTop)
+    Move(f._adMissClip)
+    Move(f._adMissGlow)
 end
 
 -- The editor preview hides the missing look itself while its stand-in shows the aura up.
@@ -2718,14 +2785,15 @@ function Factory.HideMissingLook(f)
     f.icon:SetAlpha(0)
     if f._adShadow then f._adShadow:SetAlpha(0) end
     if f._adBorderHost then f._adBorderHost:SetAlpha(0) end
+    DimSkin(f, 0)
     if f._adMissClip then f._adMissClip:SetAlpha(0) end
     if f._adMissGlow then f._adMissGlow:SetAlpha(0) end
 end
 
 -- A cooldown icon's look onto its aura's stage, each piece keeping its level,
 -- so the aura's button erases it while up; nil brings it home. Its texts stay
--- on the icon, over both.
-function Factory.StageCooldownLook(f, stage)
+-- on the icon, over both, unless whole: a charges state cuts them with the rest.
+function Factory.StageCooldownLook(f, stage, whole)
     local p = stage or f
     local from = f.icon:GetParent()
     f._adStage = stage
@@ -2765,6 +2833,12 @@ function Factory.StageCooldownLook(f, stage)
             end
         end
     end
+    -- the texts and the set-duration glow: with the rest, or home
+    p = (stage and whole) and stage or f
+    Move(f.textHost)
+    Move(f._adLabelHost)
+    Move(f._adPhaseGlow)
+    if f._adPhaseGlow then f._adPhaseGlow._adFlat = (stage and whole) and true or nil end
 end
 
 -- The editor preview hides the cooldown's look itself while its stand-in erases it.
@@ -2979,6 +3053,359 @@ local function ApplyShowGate(b, frac, w, h, reach)
     return true
 end
 
+-- A count's gate: a hidden bar fed the count (0 .. max + 1, a step per count)
+-- and, on its fill edge, pieces that cut the whole look away. Nothing is read.
+local function CountPiece(parent)
+    local t = parent:CreateTexture(nil, "OVERLAY", nil, 7)
+    t:SetColorTexture(0, 0, 0, 0)
+    t:SetBlendMode("DISABLE")
+    return t
+end
+Factory.CountPiece = CountPiece
+
+-- The one geometry both gates use. g = { kind, a, b, max, inside }; w, h = the
+-- look; reach = how far its texts and glows go. One step per count, each as
+-- wide as the look and its reach; the fill's right edge sits at barX + count *
+-- step from the look's left. inside: one piece (low) covers the look while the
+-- count meets the rule; else low covers it under the rule and high over it.
+-- Every piece clears the look by 2 at the counts it leaves alone.
+function Factory.CountGeom(g, w, h, reach)
+    local m = math.max(w, h, reach or 0)
+    local span = w + 2 * m
+    local step = span + 4
+    local top = g.max
+    local lo = (g.kind == "most") and 0 or g.a
+    -- the rule's high end; At least runs to the full bar (a count over the top reads as top + 1)
+    local hi = (g.kind == "least") and (top + 1) or ((g.kind == "most") and g.a or g.b)
+    local G = { m = m, gh = h + 2 * m, step = step, barW = (top + 1) * step, barX = -m - lo * step }
+    if g.inside then
+        G.low = { x = -(hi - lo) * step - 2, w = (hi - lo) * step + span + 4 }
+    else
+        if lo > 0 then G.low = { x = span + 2, w = lo * step + span } end
+        -- every count past the high end, up to the full bar
+        if g.kind ~= "least" then G.high = { x = -(hi - lo) * step - 2, w = (top + 1 - hi) * step + span } end
+    end
+    return G
+end
+
+-- The bar and its pieces where CountGeom puts them, the bar's corner on `on`.
+function Factory.PlaceCountGate(bar, low, high, on, G)
+    bar:ClearAllPoints()
+    bar:SetSize(G.barW, G.gh)
+    bar:SetPoint("TOPLEFT", on, "TOPLEFT", G.barX, G.m)
+    local fill = bar:GetStatusBarTexture()
+    low:ClearAllPoints()
+    high:ClearAllPoints()
+    if G.low then
+        low:SetPoint("TOPLEFT", fill, "TOPRIGHT", G.low.x, 0)
+        low:SetSize(G.low.w, G.gh)
+        low:Show()
+    else
+        low:Hide()
+    end
+    if G.high then
+        high:SetPoint("TOPRIGHT", fill, "TOPRIGHT", G.high.x, 0)
+        high:SetSize(G.high.w, G.gh)
+        high:Show()
+    else
+        high:Hide()
+    end
+end
+
+-- A count's window on frame fr: the rect of CountGeom's inside piece, on the
+-- bar's fill edge. A mask clips only its own frame's textures.
+function Factory.CountMask(fr, fill, G)
+    local m = fr._adCountMask
+    if not m then
+        m = fr:CreateMaskTexture()
+        m:SetTexture(WHITE, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE", "NEAREST")
+        fr._adCountMask = m
+    end
+    m:ClearAllPoints()
+    m:SetPoint("TOPLEFT", fill, "TOPRIGHT", G.low.x, 0)
+    m:SetSize(G.low.w, G.gh)
+    return m
+end
+
+-- A count state's copy of the look on its own frame c, over the cut: the art
+-- (tex), its border, shadow and a skin's layers at the state's opacity, grey
+-- and tint, every texture cut to the window `mask`. anchor = the look's box.
+local function PaintCountCopy(c, rec, look, anchor, tex, w, h, padPx, mask)
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    if not c._adArt then
+        c._adArt = c:CreateTexture(nil, "ARTWORK")
+        c._adEdges = {}
+        for _, k in ipairs(BORDER_KEYS) do
+            local t = c:CreateTexture(nil, "OVERLAY", nil, 6)
+            t:SetColorTexture(1, 1, 1, 1)
+            c._adEdges[k] = t
+        end
+    end
+    local a = look.alpha
+    local art = c._adArt
+    art:SetTexture(tex)
+    art:SetTexCoord(IconTexCoords(rec, (w or 0) - 2 * padPx, (h or 0) - 2 * padPx))
+    art:ClearAllPoints()
+    if padPx > 0 then
+        art:SetPoint("TOPLEFT", anchor, "TOPLEFT", padPx, -padPx)
+        art:SetPoint("BOTTOMRIGHT", anchor, "BOTTOMRIGHT", -padPx, padPx)
+    else
+        art:SetAllPoints(anchor)
+    end
+    ShapeTex(art, Factory.MaskOf(rec))
+    local plan = Factory.SkinPlan(rec)
+    Factory.SkinArt(art, rec, plan, c, w or 36, h or 36)
+    local skinned = Factory.SkinLayers(plan, c, c, c, art, w or 36, h or 36, a)
+    art:SetDesaturated(look.grey == true)
+    local t = look.tint or { 1, 1, 1, 1 }
+    art:SetVertexColor(t[1], t[2], t[3], a)
+    if R("appearance", "borderEnabled") then
+        PaintBorderEdges(c._adEdges, anchor, rec, a, nil, look.grey == true)
+    else
+        for _, e in pairs(c._adEdges) do e:Hide() end
+    end
+    ApplyShadow(c, "_adShadow", art, rec, w, h, a, R("appearance", "shadowEnabled") == true)
+    SetGated(art, mask)
+    for _, k in ipairs(BORDER_KEYS) do SetGated(c._adEdges[k], mask) end
+    if c._adEdges._adRing then SetGated(c._adEdges._adRing, mask) end
+    if c._adShadow then SetGated(c._adShadow, mask) end
+    for _, st in ipairs(skinned) do SetGated(st, mask) end
+    c:Show()
+end
+Factory.PaintCountCopy = PaintCountCopy
+
+-- A count state's glow (its own fields and host, src) on fr, every texture
+-- it draws cut to the window. g nil or without a glow: off.
+Factory.STACKS_GLOW = { sec = "auraActive", pre = "stacks", key = "Stacks" }
+Factory.CHARGES_GLOW = { sec = "states", pre = "charges", key = "Charges" }
+local function CountGlow(fr, rec, g, w, h, alphaMul, src, fill, G)
+    local on = g ~= nil and g.glow == true and rec ~= nil
+    if not on and not fr["_adGlowHost" .. src.key] then return end
+    Factory.SetAuraButtonGlow(fr, rec, on, w, h, alphaMul, nil, nil, nil, src)
+    local host = fr["_adGlowHost" .. src.key]
+    if on and host then
+        for _, pair in ipairs(Factory.GlowTextures(host)) do
+            SetGated(pair[1], Factory.CountMask(pair[2], fill, G))
+        end
+    end
+end
+
+-- Pixels past the icon a glow reaches while on (sec, pre .. "Glow" .. suf):
+-- its offsets and moves, and a whole icon for its spread.
+function Factory.GlowReach(rec, sec, pre, w, kS, suf)
+    suf = suf or ""
+    if Store.Resolve(rec, sec, pre .. "Glow" .. suf) ~= true then return 0 end
+    local function V(k) return math.abs(tonumber(Store.Resolve(rec, sec, pre .. k .. suf)) or 0) end
+    return math.max(V("GlowXOffset") + V("GlowMoveX"), V("GlowYOffset") + V("GlowMoveY")) * math.max(1, kS or 1)
+        + (w or 36)
+end
+
+-- How far an aura icon's live look reaches: its texts and every glow its button draws.
+function Factory.CountReach(rec, kS, w)
+    local reach = Factory.LiveTextReach(rec, kS)
+    for k = 1, (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1 do
+        reach = math.max(reach, Factory.GlowReach(rec, "auraActive", "active", w, kS, (k > 1) and tostring(k) or ""))
+    end
+    return math.max(reach, Factory.GlowReach(rec, "auraActive", "stacks", w, kS))
+end
+
+-- The stacks state on the aura's button: the engine fills the bar by the
+-- stacks. g = DriverAura.CountGate(rec), nil = off; w, h = the button; reach =
+-- how far its texts and glows go; erase = the icon's own buffered stage, which
+-- any cut needs (opts.erase); alphaMul = Active alpha for its glow. Opacity 0
+-- cuts the whole look; a copy look cuts the art and border on the low stack's
+-- gate rung and draws its copy on the copy rung, the swipe and texts over it.
+-- True while on.
+local function ApplyCountGate(b, g, w, h, reach, rec, padPx, erase, alphaMul)
+    local cg = b._adCountGate
+    local E = NS.LayoutEngine
+    local on = g ~= nil and b.SetApplicationBar ~= nil and Enum ~= nil and Enum.StatusBarInterpolation ~= nil
+        and not (E ~= nil and E.IsEditMode ~= nil and E.IsEditMode() == true)
+    if not on then
+        if cg then
+            cg:Hide()
+            b._adCountCut:Hide()
+        end
+        if b._adCountCopy then b._adCountCopy:Hide() end
+        CountGlow(b, rec, nil, w, h, 1, Factory.STACKS_GLOW)
+        return false
+    end
+    if not cg then
+        cg = CreateFrame("StatusBar", nil, b)
+        cg:SetStatusBarTexture(WHITE)
+        cg:GetStatusBarTexture():SetColorTexture(0, 0, 0, 0)
+        cg:EnableMouse(false)
+        -- its own frame over the whole stack: texts and glows go with the art
+        local cut = CreateFrame("Frame", nil, b)
+        cut:SetAllPoints(b)
+        b._adCountGate, b._adCountCut = cg, cut
+        b._adCountLow, b._adCountHigh = CountPiece(cut), CountPiece(cut)
+    end
+    -- the range is the game's (min, max(max, 1)): sent again only for a new top
+    if b._adCountTop ~= g.max then
+        b._adCountTop = g.max
+        b:SetApplicationBar(cg, { minApplications = 0, maxApplications = g.max + 1,
+            interpolation = Enum.StatusBarInterpolation.Immediate })
+    end
+    local G = Factory.CountGeom(g, w, h, reach)
+    Factory.PlaceCountGate(cg, b._adCountLow, b._adCountHigh, b, G)
+    local fill = cg:GetStatusBarTexture()
+    -- a cut: everything (or the art and border under a copy), in a buffer only
+    local cut = erase ~= false and (g.whole or g.copy or g.inside ~= true) == true
+    local base = ButtonBase(b)
+    if base then
+        cg:SetFrameLevel(base + Factory.ButtonStack(b).gate)
+        b._adCountCut:SetFrameLevel(base + (g.copy and Factory.BUTTON_STACK_LOW.gate or (Factory.ButtonStack(b).gate + 1)))
+    end
+    cg:Show()
+    b._adCountCut:SetShown(cut)
+    local c = b._adCountCopy
+    if cut and g.copy and rec then
+        if not c then
+            c = CreateFrame("Frame", nil, b)
+            c:SetAllPoints(b)
+            c:EnableMouse(false)
+            b._adCountCopy = c
+        end
+        if base then c:SetFrameLevel(base + Factory.BUTTON_STACK_LOW.copy) end
+        PaintCountCopy(c, rec, g.look, b, Factory.AuraLiveTexture(rec), w, h, padPx or 0, Factory.CountMask(c, fill, G))
+    elseif c then
+        c:Hide()
+    end
+    CountGlow(b, rec, g.glow and g or nil, w, h, alphaMul, Factory.STACKS_GLOW, fill, G)
+    return true
+end
+Factory.ApplyCountGate = ApplyCountGate
+
+-- The charges state over a spell icon's stage (st, ours: DriverAura.SyncGate):
+-- our own bar fed the charge count (Factory.FeedChargeGate) and the same
+-- geometry. g = DriverAura.ChargeGate(rec), nil = off; w, h = the icon; reach
+-- = how far its texts and glows go; L = the holder's level; f = the holder;
+-- cutOK = the stage is buffered, which any cut needs. Opacity 0 cuts the whole
+-- look (CHARGE_CUT over it); a copy look cuts the art and border under the
+-- copy (CHARGE_LOW: the swipe goes up a rung meanwhile, Factory.ApplyStyle).
+-- Returns the bar while on.
+Factory.CHARGE_CUT = 120
+Factory.CHARGE_LOW = { cut = 2, copy = 3, swipe = 4 }
+function Factory.ApplyChargeGate(st, g, w, h, reach, L, rec, f, cutOK)
+    local cb = st._adChargeBar
+    if not g then
+        if cb then
+            cb:Hide()
+            st._adChargeCut:Hide()
+        end
+        if st._adCountCopy then st._adCountCopy:Hide() end
+        if st._adCountFace then CountGlow(st._adCountFace, rec, nil, w, h, 1, Factory.CHARGES_GLOW) end
+        return nil
+    end
+    if not cb then
+        cb = CreateFrame("StatusBar", nil, st)
+        cb:SetStatusBarTexture(WHITE)
+        cb:SetStatusBarColor(1, 1, 1, 0)
+        cb:EnableMouse(false)
+        local cut = CreateFrame("Frame", nil, st)
+        cut:SetAllPoints(st)
+        st._adChargeBar, st._adChargeCut = cb, cut
+        st._adChargeLow, st._adChargeHigh = CountPiece(cut), CountPiece(cut)
+    end
+    -- the range from the plain cap, sent again only for a new top
+    if st._adChargeTop ~= g.max then
+        st._adChargeTop = g.max
+        cb:SetMinMaxValues(0, g.max + 1)
+    end
+    local G = Factory.CountGeom(g, w, h, reach)
+    Factory.PlaceCountGate(cb, st._adChargeLow, st._adChargeHigh, st, G)
+    local fill = cb:GetStatusBarTexture()
+    local cut = cutOK == true and (g.whole or g.copy) == true
+    if type(L) == "number" then
+        cb:SetFrameLevel(L + 1)
+        st._adChargeCut:SetFrameLevel(L + (g.whole and Factory.CHARGE_CUT or Factory.CHARGE_LOW.cut))
+    end
+    cb:Show()
+    st._adChargeCut:SetShown(cut)
+    local c = st._adCountCopy
+    if cut and g.copy and rec and f then
+        if not c then
+            c = CreateFrame("Frame", nil, st._adDim or st)
+            c:SetAllPoints(st)
+            c:EnableMouse(false)
+            st._adCountCopy = c
+        end
+        if type(L) == "number" then c:SetFrameLevel(L + Factory.CHARGE_LOW.copy) end
+        -- the art the icon shows now, and every change of it after
+        if not f._adCopyHooked and hooksecurefunc then
+            f._adCopyHooked = true
+            hooksecurefunc(f.icon, "SetTexture", function(_, t)
+                local cc = f._adCountCopyOf
+                if cc and cc._adArt then cc._adArt:SetTexture(t) end
+            end)
+        end
+        f._adCountCopyOf = c
+        local kS = (h and h > 0) and (h / 36) or 1
+        PaintCountCopy(c, rec, g.look, f, f._adArt or Factory.GetTexture(rec), w, h,
+            (Store.Resolve(rec, "appearance", "padding") or 0) * kS, Factory.CountMask(c, fill, G))
+    elseif c then
+        c:Hide()
+    end
+    if g.glow or st._adCountFace then
+        local face = st._adCountFace
+        if not face then
+            face = CreateFrame("Frame", nil, st._adDim or st)
+            face:SetAllPoints(st)
+            face:EnableMouse(false)
+            -- drawn in the stage (GlowBlend)
+            face._adFlat = true
+            st._adCountFace = face
+        end
+        -- the level its glow counts from: the holder's, as the icon's lanes do
+        face._adLevel = L
+        CountGlow(face, rec, g.glow and g or nil, w, h, 1, Factory.CHARGES_GLOW, fill, G)
+    end
+    return cb
+end
+
+-- A charges state with a copy look in play (the options window shows the plain look).
+function Factory.ChargeCopyOn(rec)
+    local DA = NS.DriverAura
+    local g = DA and DA.ChargeGate and DA.ChargeGate(rec)
+    local E = NS.LayoutEngine
+    return g ~= nil and g.copy == true and not (E ~= nil and E.IsEditMode ~= nil and E.IsEditMode() == true)
+end
+
+-- The count as the game gives it: SetValue takes a secret, nothing compares it.
+-- ch = the spell's charge info, or nil to read it off the icon's spell.
+function Factory.FeedChargeGate(f, ch)
+    local bar = f and f._adChargeBar
+    if not bar then return end
+    if ch == nil then
+        local sid = f._adEffSid
+        if not sid then
+            local rec = Store.Get(f._adRecId)
+            sid = rec and Store.RecordSpellID(rec.driver)
+        end
+        ch = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
+    end
+    if ch then bar:SetValue(ch.currentCharges) end
+end
+
+-- Pixels past a spell icon its texts and glows can reach: the charges window covers them.
+local SPELL_GLOW_LANES = { "ready", "cooldown", "proc", "usable", "warn", "toggle", "assist", "range", "recharge",
+    "idle", "charges" }
+function Factory.SpellLookReach(rec, kS, w)
+    kS = kS or 1
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    local reach = Factory.LabelReachAll(rec, kS)
+    for _, t in ipairs({ { "duration", 5 }, { "stack", 3 } }) do
+        local p = t[1]
+        local off = math.max(math.abs(R("text", p .. "X") or 0), math.abs(R("text", p .. "Y") or 0))
+        reach = math.max(reach, (off + t[2] * (R("text", p .. "Size") or 14) * 0.7) * kS)
+    end
+    for _, pre in ipairs(SPELL_GLOW_LANES) do
+        reach = math.max(reach, Factory.GlowReach(rec, "states", pre, w or 36 * kS, kS))
+    end
+    return math.ceil(reach)
+end
+
 -- The live engine button shows exactly while the aura is up: no presence read, nothing read off it.
 function Factory.StyleAuraButton(b, rec, px, opts)
     if not (b and rec) then return end
@@ -3005,9 +3432,14 @@ function Factory.StyleAuraButton(b, rec, px, opts)
     local labelA = (aA > 0 and lb == true) and 1 or textA
     -- Active alpha goes on the pieces, so the button stays at 1.
     b:SetAlpha(1)
-    -- a Before that above 0 lays the low stack (the gate under the swipe and texts)
+    -- the stacks state (DriverAura.CountGate); "Hide icon art" leaves it nothing to draw
+    local DA = NS.DriverAura
+    local cnt = (rec.kind == "aura" and not forceHide and DA and DA.CountGate) and DA.CountGate(rec) or nil
+    -- a Before that above 0, or the stacks state's copy, lays the low stack (the
+    -- gate under the swipe and texts)
     local before = Factory.TimeGateBefore(rec)
-    local low = timed ~= nil and before > 0 and not forceHide
+    local low = (timed ~= nil and before > 0 and not forceHide)
+        or (cnt ~= nil and cnt.copy == true and opts.erase == true)
     if (b._adLowStack or false) ~= low then
         b._adLowStack = low
         LayStack(b)
@@ -3269,6 +3701,9 @@ function Factory.StyleAuraButton(b, rec, px, opts)
         ApplyShowGate(b, nil)
     end
     ApplyBeforeCopy(b, rec, gated and low, before, opts.w or px, opts.h or px, padPx)
+    -- The stacks state: its look while it holds (its cuts only with opts.erase)
+    ApplyCountGate(b, cnt, opts.w or px, opts.h or px, Factory.CountReach(rec, kS, opts.w or px), rec, padPx,
+        opts.erase == true, aA)
 end
 
 -- Aura button glow: drawn on the live engine button, so it shows exactly while
@@ -4406,6 +4841,7 @@ local function GlowTextures(host)
     end
     return out
 end
+Factory.GlowTextures = GlowTextures
 
 -- The time-left gate: frac = the fraction of time left the glow shows under
 -- (nil = no gate); W, H = the glow rect, centred on b and moved by mx, my.
@@ -4453,11 +4889,14 @@ end
 -- button size; alphaMul = Active alpha; slot 2+ = a numbered glow (its own
 -- fields and host); levelTo = an exact level (a Missing glow, which must stay
 -- under the live button), else the glow's own level over b; cap = a lane's
--- icon shows only under this share of time left. Accessible passes only.
-function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, cap)
+-- icon shows only under this share of time left; src = another state's glow
+-- fields and host ({ sec, pre, key }: a count state's). Accessible passes only.
+function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, cap, src)
     if not b then return end
     local suf = (slot and slot > 1) and tostring(slot) or ""
-    local hostKey, sigKey = "_adGlowHost" .. suf, "_adGlowSig" .. suf
+    local sec, pre = "auraActive", "active"
+    if src then sec, pre, suf = src.sec, src.pre, "" end
+    local hostKey, sigKey = "_adGlowHost" .. ((src and src.key) or suf), "_adGlowSig" .. ((src and src.key) or suf)
     local host = b[hostKey]
     if not on then
         if host and host._adOn then
@@ -4472,39 +4911,39 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
     local R = function(s, k) return Store.Resolve(rec, s, k .. suf) end
     w = (w and w > 0) and w or 36
     h = (h and h > 0) and h or w
-    local gtype = DrawnGlowStyle(R("auraActive", "activeGlowType") or "button", rec)
-    local c = R("auraActive", "activeGlowColor") or { 0.95, 0.95, 0.32, 1 }
+    local gtype = DrawnGlowStyle(R(sec, pre .. "GlowType") or "button", rec)
+    local c = R(sec, pre .. "GlowColor") or { 0.95, 0.95, 0.32, 1 }
     -- the game's own colour: the gold art untinted, the intensity its alpha
     local Sch = NS.Schema
-    local native = Sch ~= nil and Sch.GLOW_NATIVE_STYLES[ShapeStyle(gtype)] == true and R("auraActive", "activeGlowNative") == true
-    local backing = ShapeStyle(gtype) == "pixel" and R("auraActive", "activeGlowBacking") == true
-    local a = (native and 1 or (c[4] or 1)) * (R("auraActive", "activeGlowIntensity") or 1) * (alphaMul or 1)
-    local speed = math.max(0.05, R("auraActive", "activeGlowSpeed") or 0.25)
-    local xo = R("auraActive", "activeGlowXOffset") or 0
-    local yo = R("auraActive", "activeGlowYOffset") or 0
-    local lines = math.max(1, math.floor(R("auraActive", "activeGlowLines") or 8))
-    local th = R("auraActive", "activeGlowThickness") or 2
-    local parts = math.max(1, math.floor(R("auraActive", "activeGlowParticles") or 4))
-    local scale = R("auraActive", "activeGlowScale") or 1
-    local lvl = R("auraActive", "activeGlowLevel") or GLOW_LEVEL
-    local strata = R("auraActive", "activeGlowStrata") or "inherit"
+    local native = Sch ~= nil and Sch.GLOW_NATIVE_STYLES[ShapeStyle(gtype)] == true and R(sec, pre .. "GlowNative") == true
+    local backing = ShapeStyle(gtype) == "pixel" and R(sec, pre .. "GlowBacking") == true
+    local a = (native and 1 or (c[4] or 1)) * (R(sec, pre .. "GlowIntensity") or 1) * (alphaMul or 1)
+    local speed = math.max(0.05, R(sec, pre .. "GlowSpeed") or 0.25)
+    local xo = R(sec, pre .. "GlowXOffset") or 0
+    local yo = R(sec, pre .. "GlowYOffset") or 0
+    local lines = math.max(1, math.floor(R(sec, pre .. "GlowLines") or 8))
+    local th = R(sec, pre .. "GlowThickness") or 2
+    local parts = math.max(1, math.floor(R(sec, pre .. "GlowParticles") or 4))
+    local scale = R(sec, pre .. "GlowScale") or 1
+    local lvl = R(sec, pre .. "GlowLevel") or GLOW_LEVEL
+    local strata = R(sec, pre .. "GlowStrata") or "inherit"
     -- a Missing glow keeps the missing look's strata, under the button
     if levelTo then strata = "inherit" end
     -- Pixel dash length (0 = automatic) and the move.
-    local dash = R("auraActive", "activeGlowLength") or 0
-    local mx = R("auraActive", "activeGlowMoveX") or 0
-    local my = R("auraActive", "activeGlowMoveY") or 0
+    local dash = R(sec, pre .. "GlowLength") or 0
+    local mx = R(sec, pre .. "GlowMoveX") or 0
+    local my = R(sec, pre .. "GlowMoveY") or 0
     -- frac = the share of time left the glow shows under; nil = no gate.
-    local when = R("auraActive", "activeGlowWhen") or "always"
+    local when = R(sec, pre .. "GlowWhen") or "always"
     local frac
     if when == "pandemic" then
         frac = 0.3
     elseif when == "time" then
-        if (R("auraActive", "activeGlowTimeUnit") or "pct") == "sec" then
-            local len = R("auraActive", "activeGlowAuraLength") or 0
-            if len > 0 then frac = math.min(1, (R("auraActive", "activeGlowTimeSec") or 5) / len) end
+        if (R(sec, pre .. "GlowTimeUnit") or "pct") == "sec" then
+            local len = R(sec, pre .. "GlowAuraLength") or 0
+            if len > 0 then frac = math.min(1, (R(sec, pre .. "GlowTimeSec") or 5) / len) end
         else
-            frac = (R("auraActive", "activeGlowTimePct") or 30) / 100
+            frac = (R(sec, pre .. "GlowTimePct") or 30) / 100
         end
     end
     -- no sooner than the icon shows (the editor shows it the whole time)
@@ -4514,7 +4953,11 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
     end
     -- the level the button's stack counts from (ButtonBase)
     local base = ButtonBase(b)
-    local sig = table.concat({ gtype, w, h, c[1], c[2], c[3], a, speed, xo, yo,
+    -- a shaped skin's edge glows lay round its outer box; a fill stays on the icon
+    local keep, style, shape = KeepOf(gtype)
+    local plan = (shape and style ~= "shapefill" and Factory.SkinGlowShape(rec) == shape) and Factory.SkinPlan(rec) or nil
+    local gw, gh = GlowBase(plan, shape, w, h, b._adPxRef or b)
+    local sig = table.concat({ gtype, w, h, gw, gh, c[1], c[2], c[3], a, speed, xo, yo,
         lines, th, parts, scale, lvl, strata, base or -1,
         frac or -1, dash, mx, my, levelTo or -1, native and 1 or 0, backing and 1 or 0 }, ":")
     if not host then
@@ -4531,11 +4974,11 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
     b[sigKey] = sig
     host:ClearAllPoints()
     local W, H
-    local keep, style, shape = KeepOf(gtype)
     if style == "pixel" or style == "autocast" then
-        host:SetPoint("TOPLEFT", b, "TOPLEFT", -xo + mx, yo + my)
-        host:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", xo + mx, -yo + my)
-        W, H = w + 2 * xo, h + 2 * yo
+        local dx, dy = (gw - w) / 2, (gh - h) / 2
+        host:SetPoint("TOPLEFT", b, "TOPLEFT", -xo - dx + mx, yo + dy + my)
+        host:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", xo + dx + mx, -yo - dy + my)
+        W, H = gw + 2 * xo, gh + 2 * yo
     else
         -- button / proc lay their own 1.4x frame, ants / flash their
         -- template's 66/45 box, the red flash the icon itself, offsets
@@ -4556,7 +4999,7 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
         if style == "button" or style == "proc" or style == "procloop" then
             k = k * math.min(2, math.max(0.5, tonumber(scale) or 1))
         end
-        W, H = w * k + 2 * xo, h * k + 2 * yo
+        W, H = gw * k + 2 * xo, gh * k + 2 * yo
         if gtype == "pandemic" then
             local grow = math.min(w, h) * Factory.PANDEMIC_GROW
             W, H = w + 2 * grow + 2 * xo, h + 2 * grow + 2 * yo
@@ -4584,7 +5027,7 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
     local ref = b._adPxRef or b
     if keep == "shaped" then
         local tpx = SkinSnap(ref, (style == "pixel") and th or 2, 1)
-        GlowShaped(host, style, shape, W, H, w + 2 * xo, h + 2 * yo, {
+        GlowShaped(host, style, shape, W, H, gw + 2 * xo, gh + 2 * yo, {
             r = r, g = g, bl = bl, a = a, speed = speed, lines = lines, th = tpx, len = dash,
             back = backing and { w = tpx + SkinSnap(ref, 1, 1), a = 0.8 * (alphaMul or 1) } or nil,
             parts = parts, scale = scale })
@@ -4685,6 +5128,11 @@ local function LabelReach(rec, kS, pick)
         end
     end
     return reach
+end
+
+-- Pixels past the icon every custom text can reach.
+function Factory.LabelReachAll(rec, kS)
+    return LabelReach(rec, kS or 1, function() return true end)
 end
 
 -- Pixels past the icon those texts can reach.
@@ -5471,8 +5919,10 @@ local function TexLaneStart(f, key, gtype, p)
     -- (shaped ants keep the ants' 66/45 box: their ring sheet is drawn for it)
     local sheet = shape ~= nil and (style == "button" or style == "proc" or style == "procloop")
     if sheet then k = 1.4 * math.min(2, math.max(0.5, tonumber(p.scale) or 1)) end
-    local W = math.max(1, w * k + 2 * (p.xo or 0))
-    local H = math.max(1, h * k + 2 * (p.yo or 0))
+    -- a shaped skin's edge glows lay round its outer box (LaneLook's p.skin)
+    local gw, gh = GlowBase(style ~= "shapefill" and p.skin or nil, shape, w, h, f)
+    local W = math.max(1, gw * k + 2 * (p.xo or 0))
+    local H = math.max(1, gh * k + 2 * (p.yo or 0))
     if gtype == "pandemic" then
         local grow = math.min(w, h) * Factory.PANDEMIC_GROW
         W, H = math.max(1, w + 2 * grow + 2 * (p.xo or 0)), math.max(1, h + 2 * grow + 2 * (p.yo or 0))
@@ -5482,7 +5932,7 @@ local function TexLaneStart(f, key, gtype, p)
         -- the library's speeds are laps a second, its thickness 2 by default
         local tpx = SkinSnap(f, (style == "pixel") and (p.thickness or 2) or 2, 1)
         local col = c or { 0.95, 0.95, 0.32, 1 }
-        GlowShaped(host, style, shape, W, H, math.max(1, w + 2 * (p.xo or 0)), math.max(1, h + 2 * (p.yo or 0)), {
+        GlowShaped(host, style, shape, W, H, math.max(1, gw + 2 * (p.xo or 0)), math.max(1, gh + 2 * (p.yo or 0)), {
             r = col[1], g = col[2], bl = col[3], a = col[4] or 1, speed = p.speed, lines = p.lines,
             th = tpx, len = p.length, back = p.border and { w = tpx + SkinSnap(f, 1, 1), a = 0.8 } or nil,
             parts = p.particles, scale = p.scale })
@@ -5593,7 +6043,13 @@ local function LaneLook(rec, sec, glowPrefix, gtype, p, inten)
         local v = Store.Resolve(rec, sec, glowPrefix .. "FadeOut")
         p.fade = type(v) == "number" and v or 0
     end
-    return (p.native and (":n" .. p.inten) or "") .. (p.border and ":b" or "") .. (p.fade and (":o" .. p.fade) or "")
+    -- a style in the skin's shape lays round the skin's outer box (TexLaneStart)
+    local st, shape = ShapeStyle(gtype)
+    p.skin = nil
+    if shape and st ~= "shapefill" and Factory.SkinGlowShape(rec) == shape then p.skin = Factory.SkinPlan(rec) or nil end
+    local sk = p.skin and (":k" .. tostring(p.skin.id) .. "x" .. tostring(p.skin.scale)
+        .. (p.skin.gloss and "g" or "") .. (p.skin.backdrop and "d" or "")) or ""
+    return (p.native and (":n" .. p.inten) or "") .. (p.border and ":b" or "") .. (p.fade and (":o" .. p.fade) or "") .. sk
 end
 Factory.LaneLook = LaneLook
 
@@ -5670,6 +6126,8 @@ function Factory.SetChargeText(f, rec, sid, isCharge)
                 count = C_StringUtil.TruncateWhenZero(count)
             end
             f.stackText:SetText(count)
+            -- the charges state's bar, every charge update
+            if f._adChargeBar then Factory.FeedChargeGate(f, ch) end
         end
         -- nil charge info is transient (mid-GCD): keep the last text.
     end

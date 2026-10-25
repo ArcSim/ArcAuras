@@ -13,6 +13,32 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.1.1",
+        intro = "A new Effects tab, looks at a stack or charge count, and lighter aura icons.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Effects tab",
+                    desc = "The Conditions tab on icons is now Effects: your triggers in a list down the left, each with a small preview of how the icon looks then, and the picked trigger's effects beside it. + Add a trigger brings in another." },
+                { title = "Stacks and charges at a count",
+                    desc = "An aura icon can hide, fade, grey, tint or glow at a stack count, and a charge spell at a charge count, for example at 5 or more stacks or at 1 charge or fewer." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Performance",
+                    desc = "Aura icons and layout changes use less CPU." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Masque skins on Missing-only icons",
+                    desc = "A Masque skin's border now hides with the icon while the aura is up." },
+                { title = "Glows on round Masque skins",
+                    desc = "A glow now sits around a round skin's border instead of over the icon." },
+                { title = "Crafting on the cast bar",
+                    desc = "The player cast bar shows crafting casts." },
+                { title = "Spoken alerts",
+                    desc = "The Channel setting shows only for sound files, since spoken words always play at WoW's text to speech volume." },
+            } },
+        },
+    },
+    {
         version = "3.1.0",
         intro = "Steadier aura stack bars, and item pictures that come in after a login.",
         sections = {
@@ -1208,6 +1234,36 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.1.1",
+        intro = "A new Effects tab, looks at a stack or charge count, Arc Procs on New Layout and empowered casts.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Effects tab",
+                    desc = "The Conditions tab on icons is now Effects: your triggers in a list down the left, each with a small preview of how the icon looks then, and the picked trigger's effects beside it. + Add a trigger brings in another." },
+                { title = "Stacks and charges at a count",
+                    desc = "An aura icon can hide, fade, grey, tint or glow at a stack count, and a charge spell at a charge count, for example at 5 or more stacks or at 1 charge or fewer." },
+                { title = "Arc Procs on New Layout",
+                    desc = "New Layout has an Arc Procs card: tick the procs your class can use and get a layout with them ready to go." },
+                { title = "Empowered casts",
+                    desc = "The player cast bar shows empowered casts like Fire Breath and Soar, with a divider at each stage and optional stage colors." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Performance",
+                    desc = "Aura icons and layout changes use less CPU." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Masque skins on Missing-only icons",
+                    desc = "A Masque skin's border now hides with the icon while the aura is up." },
+                { title = "Glows on round Masque skins",
+                    desc = "A glow now sits around a round skin's border instead of over the icon." },
+                { title = "Crafting on the cast bar",
+                    desc = "The player cast bar shows crafting casts." },
+                { title = "Spoken alerts",
+                    desc = "The Channel setting shows only for sound files, since spoken words always play at WoW's text to speech volume." },
+            } },
+        },
+    },
     {
         version = "3.1.0",
         intro = "Steadier aura stack bars, and item pictures that come in after a login.",

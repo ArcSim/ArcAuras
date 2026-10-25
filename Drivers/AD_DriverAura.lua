@@ -7,6 +7,7 @@
 local ADDON, NS = ...
 local hooksecurefunc = NS.Perf and NS.Perf.Hooks("DriverAura") or hooksecurefunc   -- /arcperf times what they run
 local CreateFrame = NS.Perf and NS.Perf.Frames("DriverAura") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
+local C_Timer = NS.Perf and NS.Perf.Timers("DriverAura") or C_Timer   -- /arcperf times what they run
 local Store = NS.Store
 local Events = NS.Events
 local Factory = NS.Factory
@@ -84,6 +85,9 @@ function Driver.NeedsEraser(rec)
         return aA < 1 or Factory.CooldownLookReaches(rec)
     end
     if Driver.TimeGateFrac(rec) then return true end
+    -- the stacks state's cut needs its stage (a glow alone does not)
+    local cg = Driver.CountGate(rec)
+    if cg and (cg.whole or cg.copy) then return true end
     if not Driver.GhostShown(rec) then return false end
     if Store.Resolve(rec, "appearance", "forceHideIcon") == true then return true end
     if (Store.Resolve(rec, "auraActive", "activeAlpha") or 1) < 1 then return true end
@@ -333,6 +337,91 @@ function Driver.TimeGateFrac(rec)
     return frac
 end
 
+-- The stacks state: the same icons as the time gate.
+function Driver.CountGateOK(rec)
+    return Driver.TimeGateOK(rec)
+end
+
+-- A count state's rules (Schema.COUNT_RULES but "any").
+Driver.COUNT_KINDS = { least = true, most = true, exactly = true, between = true }
+
+-- A count state's look: its opacity, grey, tint (a colour, or nil) and glow.
+function Driver.CountLook(rec, sec, pre)
+    local R = function(k) return Store.Resolve(rec, sec, pre .. k) end
+    local a = tonumber(R("Alpha")) or 1
+    if a < 0 then a = 0 elseif a > 1 then a = 1 end
+    return { alpha = a, grey = R("Desaturate") == true,
+        tint = (R("TintEnabled") == true) and (R("TintColor") or { 1, 0.3, 0.3, 1 }) or nil,
+        glow = R("Glow") == true }
+end
+
+-- What a state's look asks of its count's window (inside: it covers the look
+-- while the rule holds): whole = opacity 0 cuts everything away; copy = the
+-- art and border redrawn at its opacity, grey or tint over a cut; glow = its
+-- glow shown only there. nil when the look changes nothing.
+function Driver.CountCut(s)
+    if not s then return nil end
+    local L = s.look
+    s.inside = true
+    s.whole = L.alpha <= 0
+    s.copy = not s.whole and (L.alpha < 1 or L.grey or L.tint ~= nil)
+    s.glow = not s.whole and L.glow
+    if not (s.whole or s.copy or s.glow) then return nil end
+    return s
+end
+
+-- The stacks state (an aura icon's), or nil (any count, or not offered): when
+-- it holds (kind least / most / exactly / between, a and b), the bar's top
+-- count, and its look (Driver.CountLook).
+function Driver.StacksState(rec)
+    if not Driver.CountGateOK(rec) then return nil end
+    local R = function(k) return Store.Resolve(rec, "auraActive", k) end
+    local kind = R("stacksRule") or "any"
+    if not Driver.COUNT_KINDS[kind] then return nil end
+    local a = math.max(1, math.floor(tonumber(R("stacksA")) or 3))
+    local b = (kind == "between") and math.max(a, math.floor(tonumber(R("stacksB")) or 5)) or a
+    -- one past the rule's high end at least, so a count over it reads as over
+    local top = math.max(a, b) + 1
+    local id = TrackedIDs(rec.driver or {})[1]
+    local Max = C_Spell and C_Spell.GetSpellMaxCumulativeAuraApplications
+    local m = (id and Max) and Max(id)
+    if type(m) == "number" and not (issecretvalue and issecretvalue(m)) and m > top then top = m end
+    return { kind = kind, a = a, b = b, max = top, look = Driver.CountLook(rec, "auraActive", "stacks") }
+end
+
+-- What the icon's button carries for the stacks state (Driver.CountCut), or nil.
+function Driver.CountGate(rec)
+    return Driver.CountCut(Driver.StacksState(rec))
+end
+
+-- The charges state: spell icons whose spell has charges.
+function Driver.ChargeGateOK(rec)
+    if not (FB_OK and IS_121 and rec and rec.kind == "spell") then return false end
+    local DC = NS.DriverCooldown
+    return DC ~= nil and DC.IsCharge ~= nil and DC.IsCharge(rec) == true
+end
+
+-- The charges state (a spell icon's), or nil: as the stacks state, its top
+-- from the spell's plain charge cap (one past the rule's high end at least).
+function Driver.ChargesState(rec)
+    if not Driver.ChargeGateOK(rec) then return nil end
+    local R = function(k) return Store.Resolve(rec, "states", k) end
+    local kind = R("chargesRule") or "any"
+    if not Driver.COUNT_KINDS[kind] then return nil end
+    local a = math.max(0, math.floor(tonumber(R("chargesA")) or 2))
+    local b = (kind == "between") and math.max(a, math.floor(tonumber(R("chargesB")) or 3)) or a
+    local DC = NS.DriverCooldown
+    local cap = DC and DC.ChargeMax and DC.ChargeMax(rec)
+    if not cap or cap < 2 then return nil end
+    return { kind = kind, a = a, b = b, max = math.max(cap, math.max(a, b) + 1),
+        look = Driver.CountLook(rec, "states", "charges") }
+end
+
+-- What the icon's stage carries for the charges state (DriverAura.SyncGate), or nil.
+function Driver.ChargeGate(rec)
+    return Driver.CountCut(Driver.ChargesState(rec))
+end
+
 function Driver.InCombat() return inCombat end
 
 -- With the options window open, glows that wait for combat show, as the
@@ -506,6 +595,28 @@ end
 -- A container refreshes only on UNIT_AURA for its unit, so a target, focus,
 -- pet or roster change needs a nudge. Events are probed: unknown names throw.
 
+-- Each container's slot switches as last set, so a swap nudge skips a
+-- container with every slot off (switched on, the game rebuilds it anyway).
+-- A container whose switches we never set counts as on.
+local slotState = setmetatable({}, { __mode = "k" })   -- [container] = { [key] = on }
+local function NoteSlot(c, key, on)
+    local t = slotState[c]
+    if not t then
+        t = {}
+        slotState[c] = t
+    end
+    t[key] = on
+end
+local function AnySlotOn(c)
+    local t = slotState[c]
+    if not t then return true end
+    for _, on in pairs(t) do
+        if on then return true end
+    end
+    return false
+end
+Driver.AnySlotOn = AnySlotOn
+
 local function OnIfValid(event, key, fn, units)
     if C_EventUtils and C_EventUtils.IsEventValid
         and not C_EventUtils.IsEventValid(event) then return end
@@ -518,7 +629,9 @@ local function ArmTargetSwapRefresh()
     swapArmed = true
     local function Refresh(unit)
         for _, rc in ipairs(allContainers) do
-            if rc.unit == unit and type(rc.frame.UpdateAllAuras) == "function" then
+            -- a hidden or all-off container rebuilds when it shows or a slot turns on
+            if rc.unit == unit and type(rc.frame.UpdateAllAuras) == "function"
+                and rc.frame:IsShown() and AnySlotOn(rc.frame) then
                 rc.frame:UpdateAllAuras()
             end
         end
@@ -602,6 +715,7 @@ function Driver.SideCheck(unit)
                 if on ~= r.on then
                     r.on = on
                     c:SetAuraSlotEnabled(key, on)
+                    NoteSlot(c, key, on)
                 end
             end
         end
@@ -828,7 +942,8 @@ end
 
 local function EnsureStage(entry, rec)
     if entry.stage then return entry.stage end
-    if not (FB_OK and rec and (rec.kind == "aura" or ShapeFor(rec))) then return nil end
+    -- an aura icon, an aura over a cooldown, or a charges state's cut
+    if not (FB_OK and rec and (rec.kind == "aura" or ShapeFor(rec) or entry.gate)) then return nil end
     local st = CreateFrame("Frame", nil, UIParent)
     st:SetSize(1, 1)
     st:SetPoint("TOP", UIParent, "TOP", 0, -80)
@@ -868,9 +983,10 @@ local function StageLook(entry, on)
     if not (f and entry.stage and entry.rec) then return end
     local aura = entry.rec.kind == "aura"
     local move = aura and Factory.StageMissingLook or Factory.StageCooldownLook
-    -- a cooldown's move runs again: a piece made since (a shadow switched on) follows
+    -- a cooldown's move runs again: a piece made since (a shadow switched on)
+    -- follows, and its texts with a charges state's cut
     if on and (not entry.staged or not aura) then
-        move(f, entry.stage._adDim)
+        move(f, entry.stage._adDim, entry.gate ~= nil)
         entry.staged = true
     elseif not on and entry.staged then
         move(f, nil)
@@ -889,26 +1005,56 @@ function Driver.FollowHolder(f)
     if e.stage:GetFrameLevel() ~= l then e.stage:SetFrameLevel(l) end
 end
 
--- On before any button needs it, off only after every button dropped it (DropBuffer).
+-- On before any button needs it, off only after every button dropped it
+-- (DropBuffer). A charges state's cut needs it too; the aura's button keeps its own setting.
+local function GateCuts(entry)
+    local g = entry.gate
+    return g ~= nil and (g.whole or g.copy) == true
+end
+
 local function BufferFor(entry, want)
     local st = entry.stage
-    if want and not entry.fbOn and not StageLocked(st) then
+    if (want or GateCuts(entry)) and not entry.fbOn and not StageLocked(st) then
         st:SetIsFrameBuffer(true)
         entry.fbOn = true
     end
     entry.erase = want and entry.fbOn == true
 end
 
+-- The charges state's cut over the whole look (Factory.ApplyChargeGate): only
+-- on a stage set up for it (BufferFor), never while the options window is open.
+local function SyncChargeGate(entry)
+    local st, f, g = entry.stage, entry.holder, entry.gate
+    -- nothing to cut and nothing built: most stages
+    if not st or (not g and not st._adChargeBar) then return end
+    local E = NS.LayoutEngine
+    local edit = E ~= nil and E.IsEditMode ~= nil and E.IsEditMode() == true
+    if not (g and f and entry.staged and not edit) then
+        Factory.ApplyChargeGate(st, nil)
+        if f and f._adChargeBar == st._adChargeBar then f._adChargeBar = nil end
+        return
+    end
+    local o = AuraButtonOpts(entry)
+    local lvl = f:GetFrameLevel()
+    if type(lvl) ~= "number" or (issecretvalue and issecretvalue(lvl)) then lvl = nil end
+    f._adChargeBar = Factory.ApplyChargeGate(st, g, o.w, o.h, Factory.SpellLookReach(entry.rec, o.h / 36, o.w),
+        lvl, entry.rec, f, entry.fbOn == true)
+    -- the count now; the cooldown driver's charge updates feed it from here
+    Factory.FeedChargeGate(f)
+end
+
 local function SyncEraser(entry)
     if not (entry.stage and entry.staged) then
         entry.erase = false
+        SyncChargeGate(entry)
         return
     end
     BufferFor(entry, Driver.NeedsEraser(entry.rec))
+    SyncChargeGate(entry)
 end
 
 local function DropBuffer(entry)
-    if entry.fbOn and not entry.erase
+    if entry.fbOn and not entry.erase and not GateCuts(entry)
         and entry.stage and not StageLocked(entry.stage) then
         entry.stage:SetIsFrameBuffer(false)
         entry.fbOn = false
@@ -931,6 +1077,7 @@ local function SlotOn(c, key, on, harmful, ids, unit)
         local want = on == true
         if unit and ids then want = SideSlot(c, key, unit, want, harmful, ids) end
         c:SetAuraSlotEnabled(key, want)
+        NoteSlot(c, key, want)
     end
 end
 Driver.SlotOn = SlotOn
@@ -966,7 +1113,7 @@ local function EnsureGlowSlots(iconId, entry, startParked)
                     .. (lane.harmful and "_h" or "_b") .. "_g" .. (entry.gen or 0)
                 local ids = (startParked or not gids) and { [0] = true } or gids
                 local g = { slot = slot, unit = lane.unit, key = key, container = c,
-                    harmful = lane.harmful, rise = lane.rise, filterSig = FilterSig(ids) }
+                    harmful = lane.harmful, rise = lane.rise, filterSig = FilterSig(ids), ids = ids }
                 entry.glows[#entry.glows + 1] = g
                 c:AddAuraSlot(key, FilterForLane(d, lane), {
                     maxFrameCount = 1,
@@ -1024,7 +1171,7 @@ local function EnsureSlots(iconId, rec, startParked)
             -- Parked creation bakes in the never-matching id.
             local ids = startParked and { [0] = true } or IncludeMap(d)
             local sub = { unit = lane.unit, key = key, container = c, harmful = lane.harmful,
-                rise = lane.rise, filterSig = FilterSig(ids), inStage = stage ~= nil }
+                rise = lane.rise, filterSig = FilterSig(ids), ids = ids, inStage = stage ~= nil }
             entry.subs[#entry.subs + 1] = sub
             c:AddAuraSlot(key, FilterForLane(d, lane), {
                 maxFrameCount = 1,
@@ -1051,16 +1198,135 @@ local function EnsureSlots(iconId, rec, startParked)
             SlotOn(c, key, not startParked, lane.harmful, ids, lane.unit)
         end
     end
+    entry.own = entry.subs
     return #entry.subs > 0
+end
+
+-- Shared containers
+-- Every live container on a unit re-reads each aura change there, so icons that
+-- ask nothing of a container of their own share one per group (or a layout's
+-- free icons) and unit: a slot each, its button pinned onto its own icon, as
+-- the own one is. A shared button takes its container's opacity, which follows
+-- the group's, so a member may only hide (its slot off), never dim alone; an
+-- icon that fades on its own, needs its own stage or has glow lanes
+-- keeps its own containers. Both sets are made in the load window: the own, as
+-- ever, and a slot in its group's shared ones, all at that container's birth (a
+-- container that has lived takes no new slot). The set in use is entry.subs;
+-- the other sits parked. An icon made later keeps its own until a reload.
+
+local domains = {}   -- [key] = { key, byUnit = { [unit] = container }, members = { [entry] = true }, parent, alpha }
+
+-- True when an aura icon may ride its group's shared containers.
+local function ShareOK(rec)
+    if not (IS_121 and rec and rec.kind == "aura") then return false end
+    -- Dynamic group rows and type looks draw their own
+    if not Driver.GlowLaneOK(rec) then return false end
+    if Driver.NeedsEraser(rec) or AnyGlowWanted(rec) or Driver.CountGate(rec) then return false end
+    local a = Store.Resolve(rec, "appearance", "alpha") or 1
+    if a ~= 1 and a ~= 0 then return false end
+    local C = NS.Conditions
+    return not (C and C.OwnFadeBinary) or C.OwnFadeBinary(rec)
+end
+Driver.ShareOK = ShareOK
+
+-- One key per frame its members' holders ride: the group, or a layout's free icons.
+local function DomainKey(rec)
+    if rec.groupId then return "g" .. tostring(rec.groupId) end
+    local lay = Store.LayoutOf and Store.LayoutOf(rec)
+    return "l" .. tostring(lay and lay.id or "none")
+end
+Driver.DomainKey = DomainKey
+
+-- The icon's slots in its group's shared containers, parked: load window only.
+local function AddSharedSlots(iconId, entry, rec)
+    local dk = DomainKey(rec)
+    local dom = domains[dk]
+    if dom and dom.sealed then return end
+    if not dom then
+        dom = { key = dk, byUnit = {}, members = {} }
+        domains[dk] = dom
+    end
+    local d = ShapeFor(rec) or {}
+    local never = { [0] = true }
+    local share = {}
+    for _, lane in ipairs(LanesFor(d)) do
+        local c = dom.byUnit[lane.unit]
+        if not c then
+            c = CreateIconContainer(lane.unit)
+            if not c then return end
+            dom.byUnit[lane.unit] = c
+        end
+        local key = "ads" .. tostring(iconId) .. "_" .. lane.unit
+            .. (lane.harmful and "_h" or "_b") .. "_g" .. (entry.gen or 0)
+        local sub = { unit = lane.unit, key = key, container = c, harmful = lane.harmful,
+            rise = lane.rise, filterSig = FilterSig(never), ids = never, dom = dom }
+        share[#share + 1] = sub
+        c:AddAuraSlot(key, FilterForLane(d, lane), {
+            maxFrameCount = 1,
+            initializeFrame = function(b)
+                WireButton(b)
+                local e = entries[iconId]
+                if not e then return end
+                sub.frame = b
+                if e.holder then AnchorButton(b, e.holder, SubLift(e, sub)) end
+                local r = e.rec
+                if r then
+                    local opts = AuraButtonOpts(e)
+                    opts.glowElsewhere = GlowMoved(e)
+                    opts.erase = false
+                    Factory.StyleAuraButton(b, r, HolderPx(e), opts)
+                end
+                b:EnableMouse(false)
+            end,
+            candidateFilters = { includeSpellIDs = never },
+        })
+        SlotOn(c, key, false, lane.harmful, never, lane.unit)
+    end
+    entry.share = share
+end
+
+-- The members' holders all ride one frame: the first to join names it.
+local function DomainFits(dom, entry)
+    local p = entry.holder and entry.holder:GetParent()
+    if not p then return false end
+    if dom.parent == nil or next(dom.members) == nil or (next(dom.members) == entry and next(dom.members, entry) == nil) then
+        dom.parent = p
+        return true
+    end
+    return dom.parent == p
+end
+
+-- The shared containers' opacity is their frame's: written on a change.
+local function SyncDomain(dom, holder)
+    local p = dom.parent
+    local pa = p and (p.GetEffectiveAlpha and p:GetEffectiveAlpha() or p:GetAlpha()) or 1
+    if type(pa) ~= "number" or (issecretvalue and issecretvalue(pa)) then pa = 1 end
+    if dom.alpha ~= pa then
+        dom.alpha = pa
+        for _, c in pairs(dom.byUnit) do c:SetAlpha(pa) end
+    end
+    for _, c in pairs(dom.byUnit) do FollowScale(c, holder) end
+    return pa
+end
+
+-- For /arcperf and the tests: shared containers, members riding them, slots made.
+function Driver.ShareCensus()
+    local nc, nm = 0, 0
+    for _, dom in pairs(domains) do
+        for _ in pairs(dom.byUnit) do nc = nc + 1 end
+        for _ in pairs(dom.members) do nm = nm + 1 end
+    end
+    return nc, nm
 end
 
 -- Park and unpark. Filter edits are data-only and legal anywhere, but are
 -- queued through combat anyway.
 
-local function ApplySlotFilters(entry, parked)
+-- One set of an icon's slots; a quiet one (its icon hidden) stays off.
+local function ApplySubs(entry, list, parked)
     -- a switched-off overlay reads as no ids: the never-matching sentinel
     local d = (entry.rec and ShapeFor(entry.rec)) or {}
-    for _, sub in ipairs(entry.subs) do
+    for _, sub in ipairs(list) do
         local c = sub.container
         -- Re-push the filter string so a Cast by edit reaches a live icon; an
         -- unchanged one is a no-op. The string goes first (unpark order).
@@ -1073,8 +1339,14 @@ local function ApplySlotFilters(entry, parked)
             sub.filterSig = sig
             c:SetAuraSlotCandidateFilters(sub.key, { includeSpellIDs = ids })
         end
-        SlotOn(c, sub.key, not parked, sub.harmful, ids, sub.unit)
+        sub.ids = ids
+        SlotOn(c, sub.key, not parked and not sub.quiet, sub.harmful, ids, sub.unit)
     end
+end
+
+local function ApplySlotFilters(entry, parked)
+    local d = (entry.rec and ShapeFor(entry.rec)) or {}
+    ApplySubs(entry, entry.subs, parked)
     -- glow lanes: each glow's ids while it wants its lane, else parked
     for _, g in ipairs(entry.glows or {}) do
         local c = g.container
@@ -1088,7 +1360,8 @@ local function ApplySlotFilters(entry, parked)
             g.filterSig = sig
             c:SetAuraSlotCandidateFilters(g.key, { includeSpellIDs = ids })
         end
-        SlotOn(c, g.key, gids ~= nil, g.harmful, ids, g.unit)
+        g.ids = ids
+        SlotOn(c, g.key, gids ~= nil and not g.quiet, g.harmful, ids, g.unit)
     end
     entry.parked = parked and true or false
 end
@@ -1100,6 +1373,38 @@ local function SetParked(entry, parked)
     end
     ApplySlotFilters(entry, parked)
 end
+
+-- Which set carries the icon: its group's shared slots while it qualifies,
+-- tracks the lanes they were made for and rides that group's frame; else its
+-- own. Switched out of combat only (the next settle edge otherwise); the set
+-- leaving is parked, the one arriving takes the icon's park state.
+local function SyncShare(entry)
+    local sh = entry.share
+    if not (sh and entry.own) then return end
+    local onShare = entry.subs == sh
+    local want = not entry.shareBad and ShareOK(entry.rec)
+        and LaneSig(sh) == LaneSig(LanesFor(ShapeFor(entry.rec) or {}))
+        and DomainFits(sh[1].dom, entry)
+    if want == onShare then
+        if onShare then sh[1].dom.members[entry] = true end
+        return
+    end
+    if InCombatLockdown() then
+        entry.sharePending = true
+        return
+    end
+    entry.sharePending = nil
+    ApplySubs(entry, entry.subs, true)
+    if onShare then
+        sh[1].dom.members[entry] = nil
+        entry.subs = entry.own
+    else
+        entry.subs = sh
+        sh[1].dom.members[entry] = true
+    end
+    ApplySlotFilters(entry, entry.parked)
+end
+Driver.SyncShare = SyncShare
 
 -- Whether this engine button may be written to in the current context.
 local function IsAccessible(b)
@@ -1128,8 +1433,50 @@ local function LaneBlind(unit, harmful, rec)
 end
 Driver.LaneBlind = LaneBlind
 
--- The button hangs off its container, not the holder, so the container mirrors the holder's alpha.
-local function SyncEntryAlpha(entry)
+local SyncEntryAlpha
+
+-- An icon coming back: its button fills on the container's next pass, so the
+-- missing look under it waits that long instead of showing for a frame.
+local function HoldReveal(entry)
+    if not entry.stage or entry.revealHold then return end
+    entry.revealHold = true
+    entry.stage:SetAlpha(0)
+    C_Timer.After(0.05, function()
+        entry.revealHold = nil
+        if entry.holder and not entry.off then SyncEntryAlpha(entry) end
+    end)
+end
+
+-- A slot that can show nothing (its icon hidden or at 0) is switched off, so
+-- it stops reading its unit's auras; on again, the game reads them afresh.
+local function SetQuiet(entry, sub, quiet)
+    quiet = quiet == true
+    -- never set reads as not quiet: a first pass that keeps it on changes nothing
+    if (sub.quiet == true) == quiet then return end
+    sub.quiet = quiet
+    -- parked: its slot is off already, and the unpark reads sub.quiet
+    if entry.parked then return end
+    SlotOn(sub.container, sub.key, not quiet, sub.harmful, sub.ids, sub.unit)
+    if not quiet and not sub.slot then HoldReveal(entry) end
+end
+
+-- A shared member at an opacity of its own: back to its own containers.
+local function ShareMismatch(entry)
+    if entry.shareBad then return end
+    entry.shareBad = true
+    if InCombatLockdown() then
+        entry.sharePending = true
+    else
+        C_Timer.After(0, function()
+            SyncShare(entry)
+            if entry.holder and not entry.off then SyncEntryAlpha(entry) end
+        end)
+    end
+end
+
+-- The button hangs off its container, not the holder, so the container mirrors
+-- the holder's alpha; a shared container its group's.
+SyncEntryAlpha = function(entry)
     local holder = entry.holder
     if not holder then return end
     local ea = holder.GetEffectiveAlpha and holder:GetEffectiveAlpha() or holder:GetAlpha() or 1
@@ -1142,21 +1489,31 @@ local function SyncEntryAlpha(entry)
     if scr and entry.rec and scr.On(entry.rec.id) then a = 0 end
     -- its totem shows first, on the icon itself (Drivers\AD_DriverPhase.lua): the aura steps aside
     if holder._adPhaseUp then a = 0 end
-    if entry.stage then
-        -- not a holder child: a hidden holder hides its missing look here
-        local vis = holder:IsVisible()
+    -- not a holder child: a hidden holder hides its missing look here, and
+    -- quiets a shared slot (its container stays up for the rest)
+    local vis = true
+    if holder.IsVisible then
+        vis = holder:IsVisible()
         if issecretvalue and issecretvalue(vis) then vis = true end
-        entry.stage:SetAlpha((vis and entry.staged) and 1 or 0)
+    end
+    if entry.stage then
+        entry.stage:SetAlpha((vis and entry.staged and not entry.revealHold) and 1 or 0)
         entry.stage._adDim:SetAlpha(ea)
     end
+    -- a switched-off overlay keeps its containers at 0: only a cut's stage follows
+    if entry.off then return end
     for _, sub in ipairs(entry.subs) do
-        if LaneBlind(sub.unit, sub.harmful, entry.rec) then
-            sub.container:SetAlpha(0)
+        local sa = a
+        if LaneBlind(sub.unit, sub.harmful, entry.rec) then sa = 0 end
+        if sub.dom then
+            local pa = SyncDomain(sub.dom, holder)
+            if sa > 0 and math.abs(sa - pa) > 0.01 then ShareMismatch(entry) end
         elseif sub.inStage then
-            sub.container:SetAlpha(a > 0 and 1 or 0)
+            sub.container:SetAlpha(sa > 0 and 1 or 0)
         else
-            sub.container:SetAlpha(a)
+            sub.container:SetAlpha(sa)
         end
+        SetQuiet(entry, sub, sa <= 0 or not vis)
     end
     -- the glow lanes: the icon's alpha while their glow wants them, and a
     -- combat-only glow also waits for combat
@@ -1171,6 +1528,7 @@ local function SyncEntryAlpha(entry)
             ga = 0
         end
         g.container:SetAlpha(ga)
+        SetQuiet(entry, g, ga <= 0 or not vis)
     end
 end
 
@@ -1192,7 +1550,7 @@ end
 -- Play on screen starting or stopping on this icon: its container follows.
 function Driver.SyncAlpha(id)
     local entry = entries[id]
-    if entry and entry.holder and #entry.subs > 0 and not entry.off then
+    if entry and entry.holder and ((#entry.subs > 0 and not entry.off) or entry.gate) then
         SyncEntryAlpha(entry)
     end
 end
@@ -1219,16 +1577,26 @@ local function RestyleEntry(entry)
         Factory.ApplyMissingGlows(entry.holder, entry.rec, opts.w, opts.h, GlowsForCombat())
         Factory.ApplyAlwaysGlows(entry.holder, entry.rec, opts.w, opts.h, GlowsForCombat())
     end
-    for _, sub in ipairs(entry.subs) do
-        local b = sub.frame
-        if b then
-            if IsAccessible(b) then
-                if not sub.inStage then FollowScale(sub.container, entry.holder) end
-                AnchorButton(b, entry.holder, SubLift(entry, sub))
-                Factory.StyleAuraButton(b, entry.rec, px, opts)
-            else
-                entry.stylePending = true
-                locked = true
+    -- both sets, so a switch between them finds its buttons ready
+    local other = entry.share and ((entry.subs == entry.share) and entry.own or entry.share) or nil
+    for _, list in ipairs({ entry.subs, other }) do
+        for _, sub in ipairs(list) do
+            local b = sub.frame
+            if b then
+                if IsAccessible(b) then
+                    if not (sub.inStage or sub.dom) then FollowScale(sub.container, entry.holder) end
+                    AnchorButton(b, entry.holder, SubLift(entry, sub))
+                    local so = opts
+                    if sub.dom and opts.erase then
+                        so = {}
+                        for k, v in pairs(opts) do so[k] = v end
+                        so.erase = false
+                    end
+                    Factory.StyleAuraButton(b, entry.rec, px, so)
+                elseif list == entry.subs then
+                    entry.stylePending = true
+                    locked = true
+                end
             end
         end
     end
@@ -1253,11 +1621,16 @@ local function HookHolder(f)
     f._adStageHooked = true
     f:HookScript("OnHide", function(self)
         local e = entries[self._adRecId]
-        if e and e.stage and e.holder == self then e.stage:SetAlpha(0) end
+        if e and e.stage and e.holder == self then
+            e.stage:SetAlpha(0)
+            -- a shared container stays up for the rest: this icon's slots go quiet
+            for _, sub in ipairs(e.subs) do SetQuiet(e, sub, true) end
+            for _, g in ipairs(e.glows or {}) do SetQuiet(e, g, true) end
+        end
     end)
     f:HookScript("OnShow", function(self)
         local e = entries[self._adRecId]
-        if e and e.stage and e.holder == self and not e.off then SyncEntryAlpha(e) end
+        if e and e.stage and e.holder == self and (not e.off or e.gate) then SyncEntryAlpha(e) end
     end)
     hooksecurefunc(f, "SetFrameStrata", Driver.FollowHolder)
     hooksecurefunc(f, "SetFrameLevel", Driver.FollowHolder)
@@ -1274,6 +1647,50 @@ function Driver.FollowUnder(frame)
     end
 end
 
+-- The charges state with no aura shown over the icon: its whole look rides a
+-- stage of its own (the overlay's, parked, when it has one), made only once a
+-- cut is wanted. With the overlay's aura showing, AttachEntry does this.
+local function SyncGate(rec, f)
+    local entry = entries[rec.id]
+    local g = Driver.ChargeGate(rec)
+    if not g and not (entry and entry.gate) then return end
+    if not entry then
+        entry = { rec = rec, subs = {}, parked = false, gen = 0 }
+        entries[rec.id] = entry
+    end
+    entry.gate = g
+    if #entry.subs > 0 and not entry.off then
+        -- the overlay's stage: the texts follow the cut there, or come home
+        if entry.holder == f and entry.stage then
+            if entry.staged and AnchorStage(entry) then StageLook(entry, true) end
+            SyncEraser(entry)
+            if not g then DropBuffer(entry) end
+        end
+        return
+    end
+    if not g then
+        SyncChargeGate(entry)
+        StageLook(entry, false)
+        if entry.stage then entry.stage:SetAlpha(0) end
+        DropBuffer(entry)
+        return
+    end
+    if entry.holder and entry.holder ~= f then StageLook(entry, false) end
+    entry.rec, entry.holder = rec, f
+    if not EnsureStage(entry, rec) then return end
+    HookHolder(f)
+    if AnchorStage(entry) then StageLook(entry, true) end
+    SyncEraser(entry)
+    SyncEntryAlpha(entry)
+end
+
+-- A spell's charge cap moved (a talent): the cut's range and pieces follow.
+function Driver.ChargeCapMoved(rec, f)
+    if not (IS_121 and rec and f) then return end
+    local e = entries[rec.id]
+    if (e and e.gate) or Driver.ChargeGate(rec) then SyncGate(rec, f) end
+end
+
 -- Driver API, reached through NS.DriverCooldown's Attach and Detach
 
 -- Shared attach for an aura icon and a spell icon's overlay.
@@ -1288,18 +1705,32 @@ local function AttachEntry(rec, f, d)
     entry.rec = rec
     entry.holder = f
     entry.off = nil
+    -- each attach judges the shared set afresh (an opacity of its own may be gone)
+    entry.shareBad = nil
     entry.lift = (rec.kind ~= "aura") and 1 or nil
+    -- a spell's charges state cuts the whole look on this stage, the aura's with it
+    entry.gate = (rec.kind ~= "aura") and Driver.ChargeGate(rec) or nil
     local unit = LaneOf(d)
     entry.laneUnit = unit
 
     -- A lane change (new unit, buff to debuff, one unit to two) parks and
     -- retires the old slots, which cannot be removed; fresh ones take the next
     -- generation key. Creation is not combat-safe, so in combat this waits for
-    -- a settle edge.
+    -- a settle edge. Shared slots are never retired (their containers carry
+    -- other icons): the icon goes back to its own set, which retires.
     if #entry.subs > 0 and LaneSig(entry.subs) ~= LaneSig(LanesFor(d)) then
         if InCombatLockdown() then
             entry.lanePending = true
         else
+            if entry.share and entry.subs == entry.share then
+                ApplySubs(entry, entry.share, true)
+                entry.share[1].dom.members[entry] = nil
+                entry.subs = entry.own or {}
+            end
+        end
+    end
+    if #entry.subs > 0 and LaneSig(entry.subs) ~= LaneSig(LanesFor(d)) then
+        if not InCombatLockdown() then
             ApplySlotFilters(entry, true)
             entry.retired = entry.retired or {}
             for _, sub in ipairs(entry.subs) do
@@ -1331,6 +1762,8 @@ local function AttachEntry(rec, f, d)
     elseif entry.staged then
         StageLook(entry, false)
     end
+    -- its group's shared slots, or its own (Shared containers above)
+    SyncShare(entry)
 
     if not fresh then
         -- a glow set after the slots were made gets its lane now
@@ -1370,10 +1803,18 @@ function Driver.AttachOverlay(rec, f)
         StageLook(entry, false)
         entry.rec, entry.holder, entry.off = rec, f, true
         SetParked(entry, true)
-        for _, sub in ipairs(entry.subs) do sub.container:SetAlpha(0) end
-        for _, g in ipairs(entry.glows or {}) do g.container:SetAlpha(0) end
+        for _, sub in ipairs(entry.subs) do
+            SetQuiet(entry, sub, true)
+            sub.container:SetAlpha(0)
+        end
+        for _, g in ipairs(entry.glows or {}) do
+            SetQuiet(entry, g, true)
+            g.container:SetAlpha(0)
+        end
         if entry.stage then entry.stage:SetAlpha(0) end
     end
+    -- no aura over it: a charges state's cut keeps a stage of its own
+    if rec.kind == "spell" then SyncGate(rec, f) end
 end
 
 function Driver.Detach(id)
@@ -1382,13 +1823,22 @@ function Driver.Detach(id)
     if #entry.subs > 0 then
         SetParked(entry, true)
         -- The park can wait out combat and the button is its container's
-        -- child, not the holder's: zero the container (legal in combat).
-        -- SyncEntryAlpha restores it on attach.
-        for _, sub in ipairs(entry.subs) do sub.container:SetAlpha(0) end
-        for _, g in ipairs(entry.glows or {}) do g.container:SetAlpha(0) end
+        -- child, not the holder's: zero the container (legal in combat), or
+        -- for a shared one switch this icon's slot off, which is legal too.
+        -- SyncEntryAlpha restores either on attach.
+        for _, sub in ipairs(entry.subs) do
+            SetQuiet(entry, sub, true)
+            if not sub.dom then sub.container:SetAlpha(0) end
+        end
+        for _, g in ipairs(entry.glows or {}) do
+            SetQuiet(entry, g, true)
+            g.container:SetAlpha(0)
+        end
+        if entry.share and entry.subs == entry.share then entry.share[1].dom.members[entry] = nil end
     end
     -- the missing look goes home for the editor preview; the stage empties
     StageLook(entry, false)
+    SyncChargeGate(entry)
     if entry.stage then entry.stage:SetAlpha(0) end
     if entry.holder then Factory.StopAuraGlow(entry.holder) end
 end
@@ -1402,15 +1852,22 @@ end
 
 -- Load-window prebuild, called by AD_Init right after Store.Init: every saved
 -- aura icon's slots are made parked at ADDON_LOADED, legal even on a reload
--- into combat or an instance. The first Attach unparks them.
+-- into combat or an instance, and a qualifying icon's slots in its group's
+-- shared containers with them. The first Attach unparks them.
 function Driver.PreBuild()
     if not IS_121 then return end
     if not (Store and Store.EachRecord) then return end
     Store.EachRecord(function(id, rec)
         if rec.type == "icon" and ShapeFor(rec) then
             EnsureSlots(id, rec, true)
+            local entry = entries[id]
+            if entry and #entry.subs > 0 and not entry.share and ShareOK(rec) then
+                AddSharedSlots(id, entry, rec)
+            end
         end
     end)
+    -- from here on they have lived: no slot is ever added to them again
+    for _, dom in pairs(domains) do dom.sealed = true end
 end
 
 local function Reattach(rec, holder)
@@ -1443,6 +1900,12 @@ local function OnSettleEdge()
     -- Work that combat or secrecy deferred: lane swaps and button re-styles.
     for id, entry in pairs(entries) do
         if entry.holder and entry.holder:IsShown() and not entry.off then
+            -- a shared / own switch combat held back
+            if entry.sharePending and not entry.lanePending then
+                SyncShare(entry)
+                entry.stylePending = true
+                SyncEntryAlpha(entry)
+            end
             if entry.lanePending then
                 entry.lanePending = nil
                 local rec = Store.Get(id)
@@ -1520,8 +1983,8 @@ end)
 -- paint: mirror the holders' effective alpha onto the containers
 Events.OnMessage("AD_VISIBILITY", "adaura", function()
     for _, entry in pairs(entries) do
-        -- a switched-off overlay keeps its container at 0
-        if entry.holder and #entry.subs > 0 and not entry.off and entry.holder:IsShown() then
+        -- a switched-off overlay keeps its container at 0; a charges state's stage follows
+        if entry.holder and ((#entry.subs > 0 and not entry.off) or entry.gate) and entry.holder:IsShown() then
             SyncEntryAlpha(entry)
         end
     end

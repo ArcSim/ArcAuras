@@ -46,6 +46,11 @@ function ET.ShowAll()
     return Store.GetSetting("showEveryOption") == true
 end
 
+-- The Effects tab's folds (Fine tune, More) open for this session only: they
+-- start shut after every /reload, whatever an older More left saved open.
+local sessionFolds = {}
+function ET.SessionFolds() return sessionFolds end
+
 -- Which folds are open, by key, in the panel's own saved state.
 function ET.FoldState()
     local u = Store.UI()
@@ -884,6 +889,8 @@ local function SetSwitch(rec, def, v)
     if v and def.onOn then def.onOn(rec) end
 end
 
+ET.SetSwitch = SetSwitch
+
 -- The colour an effect's cell lights in: a glow's own (the first one on),
 -- the accent for the others.
 local function FxColor(rec, kind, keys)
@@ -1083,6 +1090,12 @@ local GLYPH = {
     art = { { 12, 1.5, 0, 4 }, { 12, 1.5, 0, -4 }, { 1.5, 8, -5.25, 0 }, { 1.5, 8, 5.25, 0 },
         { 4.6, 1.5, -2.4, -1.3, 49 }, { 5.3, 1.5, 1.1, -1.3, -41 } },
     add = { { 8, 1.5, 0, 0 }, { 1.5, 8, 0, 0 } },
+    -- a funnel: a count state's rule (the Effects tab's When)
+    when = { { 10.5, 1.4, 0, 4.4 }, { 6.1, 1.4, -3.1, 2, -51.6 }, { 6.1, 1.4, 3.1, 2, 51.6 }, { 2.2, 4.6, 0, -2.6 } },
+    -- a dial split down the middle: the look (opacity, grey out, tint)
+    look = { { 3.8, 1.2, 4.6, 0, 90 }, { 3.8, 1.2, 3.25, 3.25, 135 }, { 3.8, 1.2, 0, 4.6 },
+        { 3.8, 1.2, -3.25, 3.25, 45 }, { 3.8, 1.2, -4.6, 0, 90 }, { 3.8, 1.2, -3.25, -3.25, 135 },
+        { 3.8, 1.2, 0, -4.6 }, { 3.8, 1.2, 3.25, -3.25, 45 }, { 1.3, 8.6, 0, 0 } },
     -- a dial of eight chords and its two hands
     clock = { { 3.8, 1.2, 4.6, 0, 90 }, { 3.8, 1.2, 3.25, 3.25, 135 }, { 3.8, 1.2, 0, 4.6 },
         { 3.8, 1.2, -3.25, 3.25, 45 }, { 3.8, 1.2, -4.6, 0, 90 }, { 3.8, 1.2, -3.25, -3.25, 135 },
@@ -1122,6 +1135,8 @@ local function MakePair(ed, blk, field, ctx, owner, relay)
     lbl:SetWordWrap(false)
     lbl:SetText(Tr(words))
     P.label, P.words = lbl, words
+    -- P.lw: a row's first label column, so its controls line up down the rows
+    local function LW() return math.max(Measure(lbl) + 8, P.lw or 0) end
     local function Get()
         local r = ctx()
         return r and Store.Resolve(r, section, field)
@@ -1197,7 +1212,7 @@ local function MakePair(ed, blk, field, ctx, owner, relay)
             P.extra = play
             -- on a line too short for it the field narrows, long names cut short
             P.fit = function(room)
-                local other = Measure(lbl) + 8 + 4 + play:GetWidth()
+                local other = LW() + 4 + play:GetWidth()
                 dd:SetWidth(math.max(80, math.floor(room - other)))
                 return P.width()
             end
@@ -1230,7 +1245,7 @@ local function MakePair(ed, blk, field, ctx, owner, relay)
         Tip(say, "Speak", "Hear the words once.")
         P.extra = say
         P.fit = function(room)
-            local other = Measure(lbl) + 8 + 4 + say:GetWidth()
+            local other = LW() + 4 + say:GetWidth()
             box:SetWidth(math.max(80, math.floor(room - other)))
             return P.width()
         end
@@ -1279,18 +1294,20 @@ local function MakePair(ed, blk, field, ctx, owner, relay)
     end
     if not P.ctrl then return nil end
     if fdef.desc then Tip(P.ctrl, fdef.label or words, fdef.desc) end
+    P.labelSpan = LW
     P.width = function()
-        local w = Measure(lbl) + 8 + (P.ctrl:GetWidth() or 0) + (P.trail or 0)
+        local w = LW() + (P.ctrl:GetWidth() or 0) + (P.trail or 0)
         if P.extra then w = w + (P.extraGap or 4) + (P.extra:GetWidth() or 0) end
         -- the Default button's place is kept while it hides: the row never shifts
         if P.extra2 then w = w + 6 + (P.extra2:GetWidth() or 0) end
         return w
     end
-    P.place = function(x, y)
+    -- cx, cy: the control on a line of its own under the label (a narrow panel)
+    P.place = function(x, y, cx, cy)
         lbl:ClearAllPoints()
         lbl:SetPoint("LEFT", ed, "TOPLEFT", x, y)
         P.ctrl:ClearAllPoints()
-        P.ctrl:SetPoint("LEFT", ed, "TOPLEFT", x + Measure(lbl) + 8, y)
+        P.ctrl:SetPoint("LEFT", ed, "TOPLEFT", cx or (x + LW()), cy or y)
         if P.extra then
             P.extra:ClearAllPoints()
             P.extra:SetPoint("LEFT", P.ctrl, "RIGHT", P.extraGap or 4, 0)
@@ -1371,16 +1388,19 @@ local function BlockLine(ed, blk, ctx, owner, relay)
     end
     if blk.lineName ~= false then
         local nm = ed:CreateFontString(nil, "OVERLAY")
-        nm:SetFont(AT.FONT, 12, "")
-        nm:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+        -- blk.cap: a caption before the line's settings, not a name
+        local c = blk.cap and COL.faint or COL.ink
+        nm:SetFont(AT.FONT, blk.cap and 10 or 12, "")
+        nm:SetTextColor(c[1], c[2], c[3])
         nm:SetWordWrap(false)
         nm:SetText(Tr(blk.lineName or blk.title or ""))
         B.name = nm
     end
+    -- blk.flat: every setting on the line, none behind More
     for i = blk.isCard and 2 or 1, #blk.fields do
         local P = MakePair(ed, blk, blk.fields[i], ctx, owner, relay)
         if P then
-            if P.adv then B.adv[#B.adv + 1] = P else B.pairs[#B.pairs + 1] = P end
+            if P.adv and not blk.flat then B.adv[#B.adv + 1] = P else B.pairs[#B.pairs + 1] = P end
         end
     end
     -- the finer settings fold away behind More (Settings > Panel > Show every
@@ -1393,18 +1413,29 @@ local function BlockLine(ed, blk, ctx, owner, relay)
         local fs = mb:CreateFontString(nil, "OVERLAY")
         fs:SetFont(AT.FONT, 12, "")
         fs:SetPoint("LEFT", chev, "RIGHT", 4, 0)
-        fs:SetText(Tr("More"))
+        fs:SetText(Tr(blk.foldWord or "More"))
         mb:SetWidth(16 + Measure(fs) + 2)
+        -- blk.foldRow: the fold on a line of its own, what it holds in a few words while shut
+        if blk.foldRow then
+            local sum = ed:CreateFontString(nil, "OVERLAY")
+            sum:SetFont(AT.FONT, 11, "")
+            sum:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
+            sum:SetWordWrap(false)
+            B.sum = sum
+        end
         B.foldKey = "fx." .. blk.section .. "." .. blk.fields[1]
+        -- blk.foldSession: open for this session only
+        local function Folds() return blk.foldSession and sessionFolds or ET.FoldState() end
+        B.folds = Folds
         local function Paint()
             local c = mb._hot and COL.ink or COL.dim
             fs:SetTextColor(c[1], c[2], c[3])
             chev:SetColor(mb._hot and COL.arc or COL.dim)
-            chev:SetDown(ET.FoldState()[B.foldKey] == true)
+            chev:SetDown(Folds()[B.foldKey] == true)
         end
         mb:SetScript("OnClick", function()
             AT.CloseDropdown()
-            local stt = ET.FoldState()
+            local stt = Folds()
             local open = stt[B.foldKey] ~= true
             stt[B.foldKey] = open or nil
             PlaySound(open and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON
@@ -1413,18 +1444,272 @@ local function BlockLine(ed, blk, ctx, owner, relay)
         end)
         mb:SetScript("OnEnter", function() mb._hot = true Paint() end)
         mb:SetScript("OnLeave", function() mb._hot = nil Paint() end)
-        Tip(mb, "More", "Fine-tuning for this one. Click to show or hide it.")
+        Tip(mb, blk.foldWord or "More", "Fine-tuning for this one. Click to show or hide it.")
         B.more, B.paintMore = mb, Paint
         B.moreText = fs
     end
+    B.caps = {}
     function B:Hide()
         if self.check then self.check:Hide() end
         if self.name then self.name:Hide() end
         for _, P in ipairs(self.pairs) do P.show(false) end
         for _, P in ipairs(self.adv) do P.show(false) end
         if self.more then self.more:Hide() end
+        if self.sum then self.sum:Hide() end
+        for _, c in pairs(self.caps) do c:Hide() end
     end
     return B
+end
+ET.BlockLine, ET.MakePair = BlockLine, MakePair
+
+-- Lays effect lines in `ed` from x0, the first line's top at y (negative, from
+-- ed's top), wrapping at `right`: each line's switch, name, settings, More and
+-- its tuning, then the blocks' note when `note` is given. Line(def) finds or
+-- builds a def's line. Returns the y under the last line.
+-- opts.flat: a nameless line starts at x0 and a caption (def.cap) takes its own
+-- width; opts.gap: the space between settings; opts.minRoom: the room a named
+-- line needs after its name, else its settings start under it; opts.squeeze: a
+-- setting too wide for a narrow panel drops the label column, then starts
+-- under its line's name, then puts its control under its label, and a fold's
+-- caption that leaves too little room sits on a line of its own. A def may also carry noCheck
+-- (its switch hidden, the line on), breakBefore[field] (that setting starts a
+-- line), labelW (each line's first label column), foldRow / foldSum (More on a
+-- line of its own, its words while shut), advGroup(field) and advOrder (the
+-- open fold's settings grouped under captions) or advRows (each on its own line).
+function ET.LayLines(ed, r, defs, Line, x0, right, y, note, opts)
+    local flat = opts ~= nil and opts.flat == true
+    local squeeze = opts ~= nil and opts.squeeze == true
+    local gap = (opts and opts.gap) or PAIR_GAP
+    -- the names' column: as wide as the widest name shown
+    local nameW, anyCheck = 0, false
+    for _, def in ipairs(defs) do
+        local B = Line(def)
+        if B.name and not (flat and def.cap) then nameW = math.max(nameW, Measure(B.name)) end
+        if B.check and not def.noCheck then anyCheck = true end
+    end
+    local MS = Options.MultiSelect
+    for _, def in ipairs(defs) do
+        local B = Line(def)
+        local on = (not B.check) or def.noCheck == true or Store.Resolve(r, def.section, def.fields[1]) == true
+        local yc = y - LINE_H / 2
+        local x = x0
+        local function NewLine(to)
+            y = y - LINE_H
+            yc = y - LINE_H / 2
+            x = to
+        end
+        if B.check then
+            if def.noCheck then
+                B.check:Hide()
+            else
+                B.check:ClearAllPoints()
+                B.check:SetPoint("LEFT", ed, "TOPLEFT", x, yc)
+                B.check:SetOn(on)
+                B.check:Show()
+            end
+        end
+        if anyCheck then x = x + 24 end
+        if B.name then
+            B.name:ClearAllPoints()
+            B.name:SetPoint("LEFT", ed, "TOPLEFT", x, yc)
+            B.name:Show()
+            if not flat then
+                x = x + nameW + 16
+            elseif def.cap then
+                x = x + math.max(Measure(B.name) + 12, def.capW or 0)
+            elseif Measure(B.name) > 0 then
+                x = x + nameW + 16
+            end
+        end
+        local px0 = x
+        -- opts.minRoom: a name that leaves the panel too little room puts its
+        -- settings on the line under it, never past the edge
+        if flat and opts.minRoom and B.name and not def.cap and Measure(B.name) > 0 and right - x < opts.minRoom then
+            NewLine(x0 + (anyCheck and 24 or 0))
+            px0 = x
+        end
+        local home = x0 + (anyCheck and 24 or 0)
+        local function Flow(P, lineX)
+            -- a fold's settings keep to the fold's edge; the others may go under the name
+            local floor = lineX or home
+            lineX = lineX or px0
+            if def.breakBefore and def.breakBefore[P.field] and x > lineX then NewLine(lineX) end
+            P.lw = (x == lineX) and def.labelW or nil
+            local w = P.width()
+            if x + w > right and x > lineX then
+                NewLine(lineX)
+                P.lw = def.labelW
+                w = P.width()
+            end
+            if squeeze and x + w > right and P.labelSpan then
+                P.lw = nil
+                w = P.width()
+                if x + w > right and x > floor then
+                    NewLine(floor)
+                    w = P.width()
+                end
+                if x + w > right then
+                    -- the control on the line under its label
+                    local lx, ly, span = x, yc, P.labelSpan()
+                    NewLine(x)
+                    w = P.width() - span
+                    -- under the switches' column too when it needs that
+                    if x + w > right and x > x0 then x = x0 end
+                    if x + w > right and P.fit then w = P.fit(right - x + span) - span end
+                    P.place(lx, ly, x, yc)
+                    P.stacked = true
+                    x = x + w + gap
+                    return
+                end
+            end
+            P.stacked = nil
+            -- still too wide on a line of its own: never past the edge
+            if x + w > right and P.fit then w = P.fit(right - x) end
+            P.place(x, yc)
+            x = x + w + gap
+        end
+        -- "(mixed)" after a label while several records disagree
+        local editing = MS ~= nil and MS.editing and r._adMulti == true
+        local function Mark(P)
+            if P.noMark then return end
+            if editing then MS.SetMark(P, P.label, MS.Mixed(r, P.section or def.section, P.field) == true)
+            elseif MS and P._adPlainLabel then MS.SetMark(P, P.label, false) end
+        end
+        -- a pair with its own show test (an own look's cells)
+        local function Shows(P)
+            if P.shows then return P.shows() == true end
+            return PairShows(r, def, P.fdef)
+        end
+        if B.name and B.check and not def.noCheck then
+            if editing then MS.SetMark(B, B.name, MS.Mixed(r, def.section, def.fields[1]) == true)
+            elseif MS and B._adPlainLabel then MS.SetMark(B, B.name, false) end
+        end
+        for _, P in ipairs(B.pairs) do
+            local shows = Shows(P)
+            P.show(shows)
+            if shows then
+                P.sync()
+                P.dim(not on)
+                Mark(P)
+                Flow(P)
+            end
+        end
+        -- More, then its settings while it is open
+        local advShown = {}
+        for _, P in ipairs(B.adv) do
+            if Shows(P) then advShown[#advShown + 1] = P else P.show(false) end
+        end
+        local showAll = ET.ShowAll()
+        local foldOpen = showAll or (B.foldKey and (B.folds and B.folds() or ET.FoldState())[B.foldKey] == true)
+        if B.sum then B.sum:Hide() end
+        if B.more then
+            B.more:SetShown(#advShown > 0 and not showAll)
+            if #advShown > 0 and not showAll then
+                B.paintMore()
+                local w = B.more:GetWidth()
+                if def.foldRow then
+                    if x > px0 then NewLine(px0) end
+                elseif x + w > right and x > px0 then
+                    NewLine(px0)
+                end
+                B.more:ClearAllPoints()
+                B.more:SetPoint("LEFT", ed, "TOPLEFT", x, yc)
+                x = x + w + gap
+                if B.sum and not foldOpen then
+                    B.sum:SetText(def.foldSum and (def.foldSum(r, advShown, def) or "") or "")
+                    B.sum:ClearAllPoints()
+                    B.sum:SetPoint("LEFT", B.more, "RIGHT", 6, 0)
+                    B.sum:Show()
+                end
+            end
+        end
+        for _, c in pairs(B.caps or {}) do c:Hide() end
+        -- flat: the open fold's rows hang under the line's switch, not after its name
+        local indent = (flat and (x0 + (anyCheck and 24 or 0)) or px0) + (def.advIndent or 0)
+        if foldOpen and (def.advGroup or def.advRows) and #advShown > 0 then
+            -- grouped: a line per caption, its settings after it; rows: a line each
+            local groups, order = {}, {}
+            for _, P in ipairs(advShown) do
+                local g = def.advGroup and def.advGroup(P.field) or P.field
+                if not groups[g] then
+                    groups[g] = {}
+                    order[#order + 1] = g
+                end
+                table.insert(groups[g], P)
+            end
+            if def.advOrder then
+                local rank = {}
+                for i, g in ipairs(def.advOrder) do rank[g] = i end
+                table.sort(order, function(a, b) return (rank[a] or 99) < (rank[b] or 99) end)
+            end
+            for _, g in ipairs(order) do
+                NewLine(indent)
+                local lineX = indent
+                if def.advGroup then
+                    local c = B.caps[g]
+                    if not c then
+                        c = ed:CreateFontString(nil, "OVERLAY")
+                        c:SetFont(AT.FONT, 10, "")
+                        c:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
+                        c:SetWordWrap(false)
+                        c:SetText(Tr(g))
+                        B.caps[g] = c
+                    end
+                    c:ClearAllPoints()
+                    c:SetPoint("LEFT", ed, "TOPLEFT", indent, yc)
+                    c:Show()
+                    lineX = indent + math.max(Measure(c) + 12, def.capW or 0)
+                    x = lineX
+                    -- a narrow panel: the caption on a line of its own, its
+                    -- settings from the fold's edge under it
+                    if squeeze then
+                        local widest = 0
+                        for _, P in ipairs(groups[g]) do
+                            P.lw = def.labelW
+                            widest = math.max(widest, P.width())
+                        end
+                        if lineX + widest > right then
+                            NewLine(indent)
+                            lineX = indent
+                        end
+                    end
+                end
+                for _, P in ipairs(groups[g]) do
+                    P.show(true)
+                    P.sync()
+                    P.dim(not on)
+                    Mark(P)
+                    Flow(P, lineX)
+                end
+            end
+        else
+            for _, P in ipairs(advShown) do
+                P.show(foldOpen)
+                if foldOpen then
+                    P.sync()
+                    P.dim(not on)
+                    Mark(P)
+                    Flow(P)
+                end
+            end
+        end
+        y = y - LINE_H - BLOCK_GAP
+    end
+    -- a line under the blocks (the game plays an aura's sounds itself)
+    if note then
+        local text
+        for _, def in ipairs(defs) do
+            if def.note then text = text or def.note(r) end
+        end
+        note:SetShown(text ~= nil)
+        if text then
+            note:ClearAllPoints()
+            note:SetPoint("TOPLEFT", ed, "TOPLEFT", x0, y + BLOCK_GAP - 2)
+            note:SetText(Tr(text))
+            y = y - 16
+        end
+    end
+    return y
 end
 
 -- A click on the page outside the open editor shuts it, as Done does. The
@@ -1607,111 +1892,7 @@ local function EditorRow(pg, T, ctx, vis, kind, st, owner, stateRow)
         rule:SetPoint("TOPLEFT", ed, "TOPLEFT", x0 - 12, -6)
         rule:SetPoint("BOTTOMLEFT", ed, "BOTTOMLEFT", x0 - 12, 6)
         rule:SetWidth(AT.Hairline(ed))
-        -- the names' column: as wide as the widest name shown
-        local nameW, anyCheck = 0, false
-        for _, def in ipairs(defs) do
-            local B = Line(def)
-            if B.name then nameW = math.max(nameW, Measure(B.name)) end
-            if B.check then anyCheck = true end
-        end
-        local y = -8
-        local MS = Options.MultiSelect
-        for _, def in ipairs(defs) do
-            local B = Line(def)
-            local on = (not B.check) or Store.Resolve(r, def.section, def.fields[1]) == true
-            local yc = y - LINE_H / 2
-            local x = x0
-            if B.check then
-                B.check:ClearAllPoints()
-                B.check:SetPoint("LEFT", ed, "TOPLEFT", x, yc)
-                B.check:SetOn(on)
-                B.check:Show()
-            end
-            if anyCheck then x = x + 24 end
-            if B.name then
-                B.name:ClearAllPoints()
-                B.name:SetPoint("LEFT", ed, "TOPLEFT", x, yc)
-                B.name:Show()
-                x = x + nameW + 16
-            end
-            local px0 = x
-            local function Flow(P)
-                local w = P.width()
-                if x + w > right and x > px0 then
-                    y = y - LINE_H
-                    yc = y - LINE_H / 2
-                    x = px0
-                end
-                -- still too wide on a line of its own: never past the edge
-                if x + w > right and P.fit then w = P.fit(right - x) end
-                P.place(x, yc)
-                x = x + w + PAIR_GAP
-            end
-            -- "(mixed)" after a label while several records disagree
-            local editing = MS ~= nil and MS.editing and r._adMulti == true
-            local function Mark(P)
-                if editing then MS.SetMark(P, P.label, MS.Mixed(r, def.section, P.field) == true)
-                elseif MS and P._adPlainLabel then MS.SetMark(P, P.label, false) end
-            end
-            if B.name and B.check then
-                if editing then MS.SetMark(B, B.name, MS.Mixed(r, def.section, def.fields[1]) == true)
-                elseif MS and B._adPlainLabel then MS.SetMark(B, B.name, false) end
-            end
-            for _, P in ipairs(B.pairs) do
-                local shows = PairShows(r, def, P.fdef)
-                P.show(shows)
-                if shows then
-                    P.sync()
-                    P.dim(not on)
-                    Mark(P)
-                    Flow(P)
-                end
-            end
-            -- More, then its settings while it is open
-            local advShown = {}
-            for _, P in ipairs(B.adv) do
-                if PairShows(r, def, P.fdef) then advShown[#advShown + 1] = P else P.show(false) end
-            end
-            local showAll = ET.ShowAll()
-            local foldOpen = showAll or (B.foldKey and ET.FoldState()[B.foldKey] == true)
-            if B.more then
-                B.more:SetShown(#advShown > 0 and not showAll)
-                if #advShown > 0 and not showAll then
-                    B.paintMore()
-                    local w = B.more:GetWidth()
-                    if x + w > right and x > px0 then
-                        y = y - LINE_H
-                        yc = y - LINE_H / 2
-                        x = px0
-                    end
-                    B.more:ClearAllPoints()
-                    B.more:SetPoint("LEFT", ed, "TOPLEFT", x, yc)
-                    x = x + w + PAIR_GAP
-                end
-            end
-            for _, P in ipairs(advShown) do
-                P.show(foldOpen)
-                if foldOpen then
-                    P.sync()
-                    P.dim(not on)
-                    Mark(P)
-                    Flow(P)
-                end
-            end
-            y = y - LINE_H - BLOCK_GAP
-        end
-        -- a line under the blocks (the game plays an aura's sounds itself)
-        local text
-        for _, def in ipairs(defs) do
-            if def.note then text = text or def.note(r) end
-        end
-        note:SetShown(text ~= nil)
-        if text then
-            note:ClearAllPoints()
-            note:SetPoint("TOPLEFT", ed, "TOPLEFT", x0, y + BLOCK_GAP - 2)
-            note:SetText(Tr(text))
-            y = y - 16
-        end
+        local y = ET.LayLines(ed, r, defs, Line, x0, right, -8, note)
         -- the lines, or the head (its glyph, name and Done) when taller
         local h = math.max(-y - BLOCK_GAP + 10, 62)
         local want = math.floor(h + 14 + 0.5)
@@ -2143,6 +2324,188 @@ function ET.TimePop(T)
     return p
 end
 
+-- The Effects tab's Look line for state st: its opacity (the clock after it
+-- on a timed state), grey out and tint as labelled pairs for ET.LayLines. A
+-- setting whose dep fails dims in place, as the table's cell does. T: the
+-- popover's home ({ owner = window }). Returns the line and its block def.
+function ET.LookLine(ed, st, ctx, owner, relay, T)
+    local B = { pairs = {}, adv = {}, st = st }
+    local nm = ed:CreateFontString(nil, "OVERLAY")
+    nm:SetFont(AT.FONT, 12, "")
+    nm:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+    nm:SetWordWrap(false)
+    nm:SetText(Tr("Look"))
+    B.name = nm
+    local function Rec() return ctx() end
+    local function Get(section, field)
+        local r = Rec()
+        return r and Store.Resolve(r, section, field)
+    end
+    local function Put(section, field, v)
+        local r = Rec()
+        if r then Store.SetOverride(r, section, field, v) end
+    end
+    local function Pair(section, field, words, ctrl, sync)
+        local fdef = Def(section, field)
+        local lbl = ed:CreateFontString(nil, "OVERLAY")
+        lbl:SetFont(AT.FONT, 12, "")
+        lbl:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+        lbl:SetWordWrap(false)
+        lbl:SetText(Tr(words))
+        -- the line dims a failed dep itself, so the layout never drops the pair
+        local P = { field = field, section = section, label = lbl, words = words, ctrl = ctrl, adv = false,
+            fdef = fdef and setmetatable({ dep = false }, { __index = fdef }) }
+        P.sync = function()
+            local r = Rec()
+            P._off = r ~= nil and not DepOK(r, section, field)
+            sync()
+        end
+        P.labelSpan = function() return Measure(lbl) + 8 end
+        P.width = function()
+            local w = Measure(lbl) + 8 + (ctrl:GetWidth() or 0) + (P.trail or 0)
+            if P.extra and P.extra:IsShown() then w = w + 6 + (P.extra:GetWidth() or 0) end
+            return w
+        end
+        -- cx, cy: the control on a line of its own under the label (a narrow panel)
+        P.place = function(x, y, cx, cy)
+            lbl:ClearAllPoints()
+            lbl:SetPoint("LEFT", ed, "TOPLEFT", x, y)
+            ctrl:ClearAllPoints()
+            ctrl:SetPoint("LEFT", ed, "TOPLEFT", cx or (x + Measure(lbl) + 8), cy or y)
+            if P.extra then
+                P.extra:ClearAllPoints()
+                P.extra:SetPoint("LEFT", P.after or ctrl, "RIGHT", 6, 0)
+            end
+        end
+        P.show = function(on)
+            lbl:SetShown(on)
+            ctrl:SetShown(on)
+            P.shownNow = on
+        end
+        P.dim = function(off)
+            local dim = off or P._off
+            local a = dim and 0.45 or 1
+            lbl:SetAlpha(a)
+            ctrl:SetAlpha(a)
+            if P.trail then AT.SliderMouse(ctrl, not dim) else ctrl:EnableMouse(not dim) end
+        end
+        if fdef and fdef.desc then Tip(ctrl, fdef.label or words, fdef.desc) end
+        B.pairs[#B.pairs + 1] = P
+        return P
+    end
+    local function Check(section, field, words)
+        local cb = AT.MakeCheckbox(ed)
+        cb:SetScript("OnClick", function()
+            AT.CloseDropdown()
+            Put(section, field, Get(section, field) ~= true)
+            PlaySound(Get(section, field) == true and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON
+                or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF, "Master")
+            relay()
+        end)
+        cb:HookScript("OnEnter", function() cb:SetHover(true) end)
+        cb:HookScript("OnLeave", function() cb:SetHover(false) end)
+        return Pair(section, field, words, cb, function() cb:SetOn(Get(section, field) == true) end)
+    end
+    local stateWord = st.when or ""
+    local sec
+    local a, g, t = st.alpha, st.grey, st.tint
+    if a then
+        sec = a[1]
+        if a.on then
+            local ondef = Def(a[1], a.on)
+            local P = Check(a[1], a.on, (ondef and ondef.label) or a.on)
+            Tip(P.ctrl, (ondef and ondef.label) or a.on, st.onTip or (ondef and ondef.desc) or "")
+        end
+        local def = Def(a[1], a[2])
+        local s, _, refresh = OpacityCell(ed, function() return Get(a[1], a[2]) or (def and def.d) or 1 end,
+            function(v) Put(a[1], a[2], v) end)
+        local P = Pair(a[1], a[2], "Opacity", s, refresh)
+        P.trail, P.after = AT.SLIDER_TRAIL, s.plus
+        local body = (def and def.desc) or function()
+            return Tr("How visible the icon is %s."):format(Tr(stateWord)) .. " " .. Tr(st.alphaTip or "0 hides it.")
+        end
+        Tip(s, (def and def.label) or a[2], body)
+        if st.timed then
+            -- the clock: when this opacity starts (ET.TimePop)
+            local ck = CreateFrame("Button", nil, ed, "BackdropTemplate")
+            ck:SetSize(40, 18)
+            AT.Skin(ck, COL.well, COL.line2)
+            ck._adGlyph = ET.Glyph(ck, "clock")
+            ck._adWord = ck:CreateFontString(nil, "OVERLAY")
+            ck._adWord:SetFont(AT.FONT, 11, "")
+            ck:SetScript("OnClick", function()
+                AT.CloseDropdown()
+                local pop = ET.TimePop(T)
+                if pop:IsShown() and pop._row == ed then pop:Close() else pop:Open(ed, st, ck, Rec, relay) end
+            end)
+            Tip(ck, "When it starts", function()
+                local word = ET.TimedWord(Rec(), st)
+                if not word then return "Right away. Click to make it wait for the last seconds." end
+                if not ET.TimedLive(Rec(), st) then return "Seconds need the aura's length: click to set it." end
+                return Tr("With %s left. Click to change it."):format(word)
+            end)
+            P.extra = ck
+            local base = P.sync
+            P.sync = function()
+                base()
+                local r = Rec()
+                local tm = st.timed
+                local on = r ~= nil and tm.ok(r) == true and Applies(r, tm[1], tm.on)
+                ck:SetShown(on and P.shownNow ~= false)
+                if on then PaintClock(ck, r, st) end
+                local pop = T and T.pop
+                if pop and pop._row == ed and pop:IsShown() then pop:Sync() end
+            end
+            local show = P.show
+            P.show = function(on)
+                show(on)
+                if not on then ck:Hide() end
+            end
+        end
+    end
+    if g then
+        sec = sec or g[1]
+        local P = Check(g[1], g[2], "Grey out")
+        local gdef = Def(g[1], g[2])
+        Tip(P.ctrl, (gdef and gdef.label) or g[2], (gdef and gdef.desc) or function()
+            return Tr("Greys the icon out %s."):format(Tr(stateWord))
+        end)
+    end
+    if t then
+        sec = sec or t[1]
+        if t.on then
+            local ondef = Def(t[1], t.on)
+            local P = Check(t[1], t.on, "Tint")
+            Tip(P.ctrl, (ondef and ondef.label) or t.on, (ondef and ondef.desc) or function()
+                return Tr("Colors the icon %s."):format(Tr(stateWord))
+            end)
+        end
+        local tdef = Def(t[1], t[2])
+        local sw = AT.MakeSwatch(ed, 28, 14)
+        -- no opacity in the picker: a tint's alpha belongs to the state's opacity
+        PickColor(sw, function() return Get(t[1], t[2]) or (tdef and tdef.d) or { 1, 1, 1, 1 } end,
+            function(v) Put(t[1], t[2], v) end, false, nil, relay)
+        Pair(t[1], t[2], t.on and "Tint color" or "Tint", sw, function()
+            local c = Get(t[1], t[2]) or (tdef and tdef.d) or { 1, 1, 1 }
+            sw:SetColor({ c[1] or 1, c[2] or 1, c[3] or 1 })
+        end)
+        Tip(sw, (tdef and tdef.label) or t[2], (tdef and tdef.desc) or function()
+            return Tr("The color %s."):format(Tr(stateWord))
+        end)
+    end
+    function B:Hide()
+        nm:Hide()
+        for _, P in ipairs(self.pairs) do
+            P.show(false)
+            if P.extra then P.extra:Hide() end
+        end
+    end
+    local def = { section = sec, fields = {}, look = true }
+    for _, P in ipairs(B.pairs) do def.fields[#def.fields + 1] = P.field end
+    return B, def
+end
+ET.KeyDef, ET.FxColor = KeyDef, FxColor
+
 local function StateRow(pg, T, ctx, vis, kind, st, owner)
     local lbl
     -- a row with a base pick carries it on a second line under its words
@@ -2495,8 +2858,8 @@ local LOOK_X, JOINT_X = 26, 17
 -- up, down and x after the effect columns
 local CTL_BTN, CTL_GAP = 17, 3
 local CTL_W = 3 * CTL_BTN + 2 * CTL_GAP
--- the rail's "+ Add New" green
-local GREEN = { 0.482, 0.847, 0.561 }
+-- the rail's "+ Add New" green, and its edge at rest
+local GREEN, GREEN_EDGE = { 0.482, 0.847, 0.561 }, { 0.243, 0.478, 0.267 }
 
 -- One icon's table, the Defaults page's kind (the looks its icons take) and
 -- several icons at once (the lead's rows, each edit made on all of them):
@@ -2621,6 +2984,7 @@ local function LookMove(r, idx, dir)
         OL.Move(r, idx, dir)
     end
 end
+ET.LookMove, ET.LookRemove = LookMove, LookRemove
 -- a new look starts as each icon's own look of the state
 local function LookAdd(r, st, condKey)
     local OL = NS.OwnLooks
@@ -2740,6 +3104,7 @@ local function LookGlowColor(r, keys)
     end
     return first or COL.arc
 end
+ET.LooksOf, ET.LookAt, ET.LookCols, ET.LookTag, ET.LookGlowColor = LooksOf, LookAt, LookCols, LookTag, LookGlowColor
 
 -- A tooltip of one line (the theme's wants a body too).
 local function TipLine(region, text)
@@ -3254,6 +3619,256 @@ function ET.LookPick(T)
     return p
 end
 
+-- A look can be added under the state on the record: looks are on, the
+-- state has a column a look can set, and the engine's cap is not reached.
+function ET.LookCanAdd(r, st)
+    if not (r and LooksOn(r)) then return false end
+    -- the Defaults page draws every state; a state only some icons have
+    -- (Recharging, Toggled on) gets its looks on those icons, which keeps
+    -- the page within its height
+    if r._adDefaults and st.showIf and st.showIf(r) ~= true then return false end
+    -- at the engine's cap a pick could add nothing (an inherited list
+    -- counts: the add copies it first)
+    local max, OL, o = Schema.OWN_LOOK_MAX, NS.OwnLooks, Owner(r)
+    local list = (OL.Effective and o and OL.Effective(o)) or (o and o.ownLooks)
+    if max and type(list) == "table" and #list >= max then return false end
+    return LookCols(r, st).any
+end
+
+-- The Effects tab's lines for one own look (UI\AD_EffectsTab.lua): the cells
+-- a look of its state can set, then its order and removal. which(): the
+-- record, the state and the look's place under it; place(i): the look moved
+-- to i, or was removed (nil). One pair of lines serves every look.
+function ET.OwnLookLines(ed, which, relay, place)
+    local function Entry()
+        local r, st, i = which()
+        if not (r and st and i) then return nil end
+        return r, st, i, LooksOf(r, st)[i]
+    end
+    local function Val(field)
+        local r, st, _, e = Entry()
+        local _, look = LookAt(e)
+        if not look then return nil end
+        if look[field] ~= nil then return look[field] end
+        return ET.LookCopy(r, st, true)[field]
+    end
+    local function Put(field, v)
+        local r, _, _, e = Entry()
+        local idx = LookAt(e)
+        if idx and NS.OwnLooks then LookSet(r, idx, field, v) end
+    end
+    local function Has(c)
+        local r, st, _, e = Entry()
+        if not e then return false end
+        local has = LookCols(r, st)
+        if c == "tintOn" then return has.tint == true and st.tint.on ~= nil end
+        if c == "glow" then return has.glow ~= nil end
+        return has[c] == true
+    end
+    local function Name(text)
+        local fs = ed:CreateFontString(nil, "OVERLAY")
+        fs:SetFont(AT.FONT, 12, "")
+        fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+        fs:SetWordWrap(false)
+        fs:SetText(Tr(text))
+        return fs
+    end
+    local function Line(name)
+        local B = { pairs = {}, adv = {}, name = Name(name) }
+        function B:Hide()
+            self.name:Hide()
+            for _, P in ipairs(self.pairs) do P.show(false) end
+        end
+        return B, { section = "states", fields = {}, ownLook = true }
+    end
+    -- a pair with its own show test (P.shows) and no mixed mark: a look's
+    -- cells are not fields of the record
+    local function Pair(B, words, ctrl, shows, sync)
+        local lbl = ed:CreateFontString(nil, "OVERLAY")
+        lbl:SetFont(AT.FONT, 12, "")
+        lbl:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+        lbl:SetWordWrap(false)
+        lbl:SetText(Tr(words))
+        local P = { label = lbl, words = words, ctrl = ctrl, adv = false, noMark = true, shows = shows }
+        local function LabelW() return words ~= "" and (Measure(lbl) + 8) or 0 end
+        P.sync = sync or function() end
+        P.width = function() return LabelW() + (ctrl:GetWidth() or 0) + (P.trail or 0) end
+        P.place = function(x, y)
+            lbl:ClearAllPoints()
+            lbl:SetPoint("LEFT", ed, "TOPLEFT", x, y)
+            ctrl:ClearAllPoints()
+            ctrl:SetPoint("LEFT", ed, "TOPLEFT", x + LabelW(), y)
+        end
+        P.show = function(on)
+            lbl:SetShown(on and words ~= "")
+            ctrl:SetShown(on)
+        end
+        P.dim = function() end
+        B.pairs[#B.pairs + 1] = P
+        return P
+    end
+    local function Check(B, words, field, shows, body)
+        local cb = AT.MakeCheckbox(ed)
+        cb:SetScript("OnClick", function()
+            AT.CloseDropdown()
+            local v = Val(field) ~= true
+            Put(field, v)
+            PlaySound(v and SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_ON
+                or SOUNDKIT.IG_MAINMENU_OPTION_CHECKBOX_OFF, "Master")
+            relay()
+        end)
+        cb:HookScript("OnEnter", function() cb:SetHover(true) end)
+        cb:HookScript("OnLeave", function() cb:SetHover(false) end)
+        Tip(cb, words, function() return Tr(body) end)
+        return Pair(B, words, cb, shows, function() cb:SetOn(Val(field) == true) end)
+    end
+
+    local B1, def1 = Line("Look")
+    local s, _, refresh = OpacityCell(ed, function() return Val("alpha") or 1 end, function(v) Put("alpha", v) end)
+    local P = Pair(B1, "Opacity", s, function() return Has("alpha") end, refresh)
+    P.trail = AT.SLIDER_TRAIL
+    Tip(s, "Opacity", function() return Tr("How visible the icon is while this look shows. 0 hides it.") end)
+    Check(B1, "Grey out", "grey", function() return Has("grey") end, "Greys the icon out while this look shows.")
+    Check(B1, "Tint", "tint", function() return Has("tintOn") end, "Colors the icon while this look shows.")
+    local sw = AT.MakeSwatch(ed, 28, 14)
+    PickColor(sw, function()
+        local v = Val("tintColor") or { 1, 1, 1 }
+        return { v[1] or 1, v[2] or 1, v[3] or 1, v[4] }
+    end, function(v) Put("tintColor", { v[1], v[2], v[3] }) end, false, nil, relay)
+    local tc = Pair(B1, "Tint color", sw, function() return Has("tint") end)
+    tc.sync = function()
+        tc.label:SetText(Tr(Has("tintOn") and "Tint color" or "Tint"))
+        local v = Val("tintColor") or { 1, 1, 1 }
+        sw:SetColor({ v[1] or 1, v[2] or 1, v[3] or 1 })
+    end
+    Tip(sw, "Tint color", function() return Tr("Colors the icon while this look shows.") end)
+    Check(B1, "Glow", "glow", function() return Has("glow") end,
+        "It glows while this look shows, in its state's glow colour.")
+
+    -- up and down swap it with its neighbour under the state; the top wins
+    local B2, def2 = Line("")
+    local function Move(dir)
+        AT.CloseDropdown()
+        local r, st, i, e = Entry()
+        local idx = LookAt(e)
+        if not (idx and NS.OwnLooks) or i + dir < 1 or i + dir > #LooksOf(r, st) then return end
+        LookMove(r, idx, dir)
+        place(i + dir)
+        relay()
+    end
+    local function Many()
+        local r, st = Entry()
+        return r ~= nil and #LooksOf(r, st) >= 2
+    end
+    local up = AT.MakeSmallButton(ed, "Move up", 84)
+    up:SetScript("OnClick", function() Move(-1) end)
+    local dn = AT.MakeSmallButton(ed, "Move down", 94)
+    dn:SetScript("OnClick", function() Move(1) end)
+    local order = function() return Tr("The top look wins when several hold.") end
+    Tip(up, "Move up", order)
+    Tip(dn, "Move down", order)
+    Pair(B2, "", up, Many, function()
+        local _, _, i = Entry()
+        up:SetAlpha(i == 1 and 0.45 or 1)
+    end)
+    Pair(B2, "", dn, Many, function()
+        local r, st, i = Entry()
+        dn:SetAlpha((r and i == #LooksOf(r, st)) and 0.45 or 1)
+    end)
+    local rm = AT.MakeQuietButton(ed, "Remove look", 104)
+    rm:SetScript("OnClick", function()
+        AT.CloseDropdown()
+        local r, _, _, e = Entry()
+        local idx = LookAt(e)
+        if not (idx and NS.OwnLooks) then return end
+        LookRemove(r, idx)
+        place(nil)
+        relay()
+    end)
+    Tip(rm, "Remove look", function() return Tr("Takes this look off the icon.") end)
+    Pair(B2, "", rm, function() return Entry() ~= nil end)
+    return B1, def1, B2, def2
+end
+
+-- The line under a state's look on the Effects tab: "+ Add a Ready look
+-- while...", opening the condition pick; added(i): the new look's place.
+function ET.AddLookLine(ed, which, T, pg, relay, added)
+    local B = { pairs = {}, adv = {} }
+    local nm = ed:CreateFontString(nil, "OVERLAY")
+    nm:SetFont(AT.FONT, 12, "")
+    nm:SetText("")
+    B.name = nm
+    local btn = AT.MakeQuietButton(ed, "+", 120)
+    local function Paint()
+        local p = T.lookPick
+        local hot = btn._hot or (p ~= nil and p:IsShown() and p._owner == btn)
+        if hot then btn:SetBackdropColor(COL.btnHover[1], COL.btnHover[2], COL.btnHover[3], 1)
+        else btn:SetBackdropColor(0, 0, 0, 0) end
+        local e = hot and GREEN or GREEN_EDGE
+        btn:SetBackdropBorderColor(e[1], e[2], e[3], 1)
+        btn.fs:SetTextColor(GREEN[1], GREEN[2], GREEN[3])
+    end
+    btn._adPaint = Paint
+    btn:SetScript("OnEnter", function() btn._hot = true Paint() end)
+    btn:SetScript("OnLeave", function() btn._hot = nil Paint() end)
+    btn:SetScript("OnClick", function()
+        local p = ET.LookPick(T)
+        if p:IsShown() and p._owner == btn then
+            AT.CloseDropdown()
+            return
+        end
+        AT.CloseDropdown()
+        p:Open(btn, function(key)
+            local r, st = which()
+            if r and st and ET.LookCanAdd(r, st) then
+                LookAdd(r, st, key)
+                added(#LooksOf(r, st))
+            end
+            relay()
+        end, pg)
+        Paint()
+    end)
+    Tip(btn, function()
+            local r, st = which()
+            if not (r and st) then return Tr("Own look") end
+            return (ET.AddLookWords(r, st):gsub("^%+%s*", ""))
+        end,
+        function() return Tr("It starts as this state's look. When several hold, the top one wins.") end)
+    local P = { label = nm, words = "", ctrl = btn, adv = false, noMark = true }
+    P.shows = function()
+        local r, st = which()
+        return r ~= nil and st ~= nil and ET.LookCanAdd(r, st)
+    end
+    P.sync = function()
+        local r, st = which()
+        if not (r and st) then return end
+        btn.fs:SetText(ET.AddLookWords(r, st))
+        btn:SetWidth(Measure(btn.fs) + 20)
+        Paint()
+    end
+    P.width = function() return btn:GetWidth() or 0 end
+    -- a panel too narrow for it: the words without the state (the panel names it)
+    P.fit = function()
+        btn.fs:SetText(Tr("+ Add a look while..."))
+        btn:SetWidth(Measure(btn.fs) + 20)
+        return P.width()
+    end
+    P.place = function(x, y)
+        btn:ClearAllPoints()
+        btn:SetPoint("LEFT", ed, "TOPLEFT", x, y)
+    end
+    P.show = function(on) btn:SetShown(on) end
+    P.dim = function() end
+    B.pairs[1] = P
+    function B:Hide()
+        nm:Hide()
+        btn:Hide()
+        local p = T.lookPick
+        if p and p:IsShown() and p._owner == btn then AT.CloseDropdown() end
+    end
+    return B, { section = "states", fields = {}, addLook = true }
+end
+
 -- The green + right after a state's name and the pick it opens; a pick adds
 -- a look that starts as the state's look. Only a state with a column a look
 -- can set shows one; made on first show. erow: the state's editor row, the
@@ -3263,17 +3878,7 @@ local function LookSlot(pg, T, ctx, vis, kind, st, srow, erow)
     T.slots[#T.slots + 1] = slot
     srow._adLookSlot = slot
     local function CanAdd(r)
-        if not (r and r.kind == kind and LooksOn(r)) then return false end
-        -- the Defaults page draws every state; a state only some icons have
-        -- (Recharging, Toggled on) gets its looks on those icons, which keeps
-        -- the page within its height
-        if r._adDefaults and st.showIf and st.showIf(r) ~= true then return false end
-        -- at the engine's cap a pick could add nothing (an inherited list
-        -- counts: the add copies it first)
-        local max, OL, o = Schema.OWN_LOOK_MAX, NS.OwnLooks, Owner(r)
-        local list = (OL.Effective and o and OL.Effective(o)) or (o and o.ownLooks)
-        if max and type(list) == "table" and #list >= max then return false end
-        return LookCols(r, st).any
+        return r ~= nil and r.kind == kind and ET.LookCanAdd(r, st)
     end
     -- the room the + takes after the name, for the table's first column
     srow._adPlusW = function()
@@ -3539,14 +4144,15 @@ end
 -- pick that names an old place lands there, never on an empty page.
 local ICON_STATE_TABS = { ["Spell State"] = true, ["Aura State"] = true, ["Item State"] = true,
     ["Timer State"] = true, ["Totem State"] = true, ["Enchant State"] = true }
-local ICON_STATE_SUB = { Proc = { "Conditions", "By State" }, Warning = { "Conditions", "By State" },
+local ICON_STATE_SUB = { Proc = { "Effects" }, Warning = { "Effects" },
     Pulse = { "Appearance", "Icon" }, ["Aura Swipe"] = { "Appearance", "Swipe" } }
--- the tabs Conditions took in: Show & Hide keeps its sub-tab, the glows and
--- sounds are under the states
-local ICON_TO_CONDITIONS = { ["Show & Hide"] = true, Glows = "By State", Sounds = "By State", Alerts = "By State" }
+-- the tabs Effects took in (Conditions, and the ones Conditions had taken
+-- in): no sub-tabs, everything sits under its trigger; the fade rules' old
+-- places open on the WHILE trigger (a third value: the Effects pick)
+local ICON_TO_EFFECTS = { Conditions = true, ["Show & Hide"] = true, Glows = true, Sounds = true, Alerts = true }
 local ICON_SUB = {
     Appearance = { Size = { "Appearance", "Icon" }, Look = { "Appearance", "Icon" },
-        Visibility = { "Conditions", "Fade When" } },
+        Visibility = { "Effects", nil, "while" } },
     Position = { Mouse = { "Position", "Position" } },
     Text = { ["Duration Text"] = { "Text", "Duration" }, ["Stack & Charges"] = { "Text", "Stacks" },
         ["Ammo Stack Text"] = { "Text", "Stacks" }, Keybind = { "Text", "Custom Text & Keybind" },
@@ -3574,13 +4180,12 @@ function ET.Home(fam, tab, sub, rec)
         if ICON_STATE_TABS[tab] then
             local h = ICON_STATE_SUB[sub]
             if h then return h[1], h[2] end
-            return "Conditions", "By State"
+            return "Effects", nil
         end
         if tab == "Swipe" then return "Appearance", "Swipe" end
-        local c = ICON_TO_CONDITIONS[tab]
-        if c then return "Conditions", (c == true) and sub or c end
+        if ICON_TO_EFFECTS[tab] then return "Effects", nil, sub == "Fade When" and "while" or nil end
         local h = ICON_SUB[tab] and ICON_SUB[tab][sub]
-        if h then return h[1], h[2] end
+        if h then return h[1], h[2], h[3] end
         return tab, sub
     end
     if fam == "bar" then
@@ -3608,11 +4213,14 @@ function ET.FixPicks(fam, ui, rec, tabKey, secKey)
     local secs = ui[secKey]
     local t = ui[tabKey]
     if t then
-        local nt, ns = ET.Home(fam, t, secs[t], rec)
+        local nt, ns, pick = ET.Home(fam, t, secs[t], rec)
         if nt ~= t then
             secs[t] = nil
             ui[tabKey] = nt
             if ns then secs[nt] = ns end
+            -- the open tab's old Fade When opens on the fade rules
+            local EF = Options.EffectsTab
+            if pick and rec and EF then EF.Pick(rec, pick) end
         elseif ns ~= secs[t] then
             secs[t] = ns
         end
@@ -3661,7 +4269,7 @@ for k, v in pairs(ET.BAR_TAB_HOME) do Options.RENAMED_BAR_TABS[k] = v[1] end
 -- New tabs and sub-tabs (the regroup's, an aura group's Tracking), marked new
 -- for one version (Options.NewBadge), by strip.
 ET.BADGES = {
-    icon = { Conditions = "tab:conditions" },
+    icon = { Effects = "tab:effects" },
     iconSub = { ["Custom Text & Keybind"] = "sub:labelskeybind" },
     -- the bars' Conditions tab was Show & Hide: a rename keeps its mark's id
     bar = { Conditions = "bar:showhide" },

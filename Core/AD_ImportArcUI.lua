@@ -150,6 +150,8 @@ IA.CONV = {
     end,
     num = function(v) return tonumber(v) end,
     bool = function(v) return v == true end,
+    -- a switch that is on by default: only its off is written
+    off = function(v) if v == false then return false end end,
     int = function(v)
         v = tonumber(v)
         return v and math.floor(v + 0.5) or nil
@@ -618,6 +620,7 @@ IA.BAR_SPECIALS = {
     castHold = "cast.holdTime / holdIntColor / holdFailColor (the player's flash: one colour for both endings, its fade time; focus / target: the hold time)",
     castTicks = "ticks.* of a castbar (the channel profile's when it turns ticks on): mode, percent (5-50), custom list as percent, colour, thickness, height and its anchor, channels only",
     castProfiles = "v1's cast-type profiles folded: a per-type key from the Hardcast profile unless its category is shared; fill.castChannelOn / castChannelColor from the Channel profile",
+    castStages = "fill.castStageColor1..8: each empowered stage's colour, alpha kept",
     castColor = "fill.color = the class colour (a player bar), or white with no lock colour (Use Texture Colors)",
     castType = "a cast bar shows every cast (v1's cast-type filter is reported)",
     litColors = "the lit points' colour by how many are lit: a colour from 1 up as the bar's own (fill.color / pointColor), the rest powerthresholds above, absolute",
@@ -672,12 +675,14 @@ IA.CAST_MAP = {
     iconMovable = { special = "castIcon" }, iconPosition = { special = "castIcon" },
     hideOutOfCombat = { special = "hideWhen" },
     barMovable = { special = "identity" },
+    -- an empowered cast's stages; the count is the editor's and the edit sample's, as in v1
+    empowerStageDividers = { "ticks", "castStageMarks", "off" },
+    empowerDividerPerColor = { "ticks", "castStageMarkColors", "bool" },
+    empowerSegmentColorsEnabled = { "fill", "castStageColors", "bool" },
+    empowerSegmentColors = { special = "castStages" },
+    empowerMaxStages = { "fill", "castStageCount", "int" },
     -- options Arc Auras does not offer yet
     matchSlotsOnly = { gap = "a matched width spans the group's frame, not only its slots (it comes in centred, as v1 drew it)" },
-    empowerSegmentColorsEnabled = { gap = "Arc Auras does not draw empowered casts yet" },
-    empowerSegmentColors = { gap = "Arc Auras does not draw empowered casts yet" },
-    empowerStageDividers = { gap = "Arc Auras does not draw empowered casts yet" },
-    empowerDividerPerColor = { gap = "Arc Auras does not draw empowered casts yet" },
     spellOverrides = { gap = "per-spell cast bar looks are not offered yet" },
     conditionalColorEnabled = { gap = "cast bar threshold colours are not offered yet" },
     conditionalColorAsSec = { gap = "cast bar threshold colours are not offered yet" },
@@ -727,7 +732,6 @@ IA.CAST_MAP = {
     kickNotReadyColor = { gap = "no interrupt-ready tint or tick yet" },
     kickTickColor = { gap = "no interrupt-ready tint or tick yet" },
     -- nothing v1 draws
-    empowerMaxStages = { gap = "Arc UI's panel preview count; live casts use the real one", nv = true },
     raidMarkerDefault = { gap = "Arc UI's preview sample", nv = true },
     tickMarksDefaultCount = { gap = "not an Arc UI setting", nv = true },
 }
@@ -2072,6 +2076,12 @@ function IA.BarGroupAnchor(d)
     return { kind = "group", group = d.anchorGroupName, src = src, dst = dst,
         x = tonumber(d.anchorOffsetX) or 0, y = tonumber(d.anchorOffsetY) or 0,
         match = match, adjust = tonumber(d.matchWidthAdjust) or 0 }
+end
+
+-- v1 keeps an empowered cast's stage colours in one list; each is its own key here
+function IA.CastStages(o, cfg)
+    local cols = type(cfg.empowerSegmentColors) == "table" and cfg.empowerSegmentColors or {}
+    for i = 1, 8 do Put(o, "fill", "castStageColor" .. i, Color(cols[i])) end
 end
 
 -- A castbar's look beyond its matrix rows: what Arc Auras' new-castbar template turns on
@@ -3467,6 +3477,7 @@ function IA.PlanBars(ctx, charDB, L, own)
         for path, row in pairs(IA.CAST_MAP) do
             if not row.gap and not row.special then IA.MapRow(B.o, row, eff[path]) end
         end
+        IA.CastStages(B.o, eff)
         IA.CastLook(B, cfg, eff, unit, ctx.classID)
         -- what v1 drew differently for a channel (beyond its colour and ticks) or, on an
         -- Evoker, an empowered cast: those casts take the bar's hardcast look

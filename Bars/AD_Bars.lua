@@ -193,7 +193,9 @@ Bars.LADDER = { aura = 1, auraTop = 18, border = 19, glow = 20, missBtn = 21, ma
     -- Bars\AD_ResColors.lua), and the cost preview and regen marks over them
     rule = 10, fillMarks = 18,
     -- a ranged swing bar's windup overlay, just over its fill
-    windup = 2 }
+    windup = 2,
+    -- a castbar's empowered stage colours, just over its fill
+    stages = 2 }
 
 -- The texture the picker window is trying on one bar: read before the
 -- record, so the bar shows it without a write (Bars.PreviewTexture).
@@ -2457,14 +2459,16 @@ local function LayoutTicks(entry)
     -- A charge-slot cooldown bar has no ticks (its slot gaps are the marks);
     -- a pips bar draws cells. Other counted bars draw "Every point" marks
     -- from the live maximum.
-    local fracs, from
+    local fracs, from, markCols
     if not (entry.mode == "stack" and entry.kind == "cooldown") and not entry.pipsOn then
         local unitMax, integerUnit, costs = TickUnit(entry)
         fracs, from = TickFractions(rec, unitMax, integerUnit, costs)
     end
-    -- a kind in its own file may hand its own marks (a deck bar's procs), in
-    -- one colour
-    local KT = Bars.KINDS[entry.kind]; if KT and KT.TickFractions then fracs, from = KT.TickFractions(entry), nil end
+    -- a kind in its own file may hand its own marks (a deck bar's procs, a
+    -- castbar's empowered stages), with the colour sources Color each tick
+    -- reads, or a colour of its own per mark
+    local KT = Bars.KINDS[entry.kind]
+    if KT and KT.TickFractions then fracs, from, markCols = KT.TickFractions(entry) end
     if not fracs then
         for _, t in ipairs(pool) do t:Hide() end
         entry.tickCount = 0
@@ -2517,7 +2521,7 @@ local function LayoutTicks(entry)
             R(rec, "ticks", "tickColor4") or c, R(rec, "ticks", "tickColor5") or c,
             R(rec, "ticks", "tickColor6") or c }
     end
-    entry.tickRGBAs = cols and {} or nil
+    entry.tickRGBAs = (cols or markCols) and {} or nil
     local len = vertical and H or W
     local cross = vertical and W or H
     local tickCross = math.max(px, math.floor(cross * hp / px + 0.5) * px)
@@ -2531,7 +2535,10 @@ local function LayoutTicks(entry)
             pool[n] = t
         end
         local tc = c
-        if cols then
+        if markCols then
+            tc = markCols[n] or c
+            entry.tickRGBAs[n] = tc
+        elseif cols then
             tc = cols[math.min(math.max(from[n] or 1, 1), 6)]
             entry.tickRGBAs[n] = tc
         end

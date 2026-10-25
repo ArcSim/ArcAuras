@@ -1,5 +1,25 @@
 # Arc Auras
 
+## 3.1.1
+
+A new Effects tab, looks at a stack or charge count, and lighter aura icons.
+
+### New Features
+
+- **Effects tab** - The Conditions tab on icons is now Effects: your triggers in a list down the left, each with a small preview of how the icon looks then, and the picked trigger's effects beside it. + Add a trigger brings in another.
+- **Stacks and charges at a count** - An aura icon can hide, fade, grey, tint or glow at a stack count, and a charge spell at a charge count, for example at 5 or more stacks or at 1 charge or fewer.
+
+### Improvements
+
+- **Performance** - Aura icons and layout changes use less CPU.
+
+### Bug Fixes
+
+- **Masque skins on Missing-only icons** - A Masque skin's border now hides with the icon while the aura is up.
+- **Glows on round Masque skins** - A glow now sits around a round skin's border instead of over the icon.
+- **Crafting on the cast bar** - The player cast bar shows crafting casts.
+- **Spoken alerts** - The Channel setting shows only for sound files, since spoken words always play at WoW's text to speech volume.
+
 ## 3.1.0
 
 Steadier aura stack bars, and item pictures that come in after a login.

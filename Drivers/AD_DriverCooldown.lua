@@ -693,6 +693,14 @@ Feed = function(a)
     end
     -- the tooltip shows this rank / override too (our own frame field)
     a.frame._adEffSid = sid
+    -- a new charge cap (a talent, an override) moves the charges state's bar range
+    local cap = a.maxCharges
+    if issecretvalue and issecretvalue(cap) then cap = nil end
+    cap = cap or false
+    if a.capSeen ~= nil and a.capSeen ~= cap and NS.DriverAura and NS.DriverAura.ChargeCapMoved then
+        NS.DriverAura.ChargeCapMoved(a.rec, a.frame)
+    end
+    a.capSeen = cap
 
     -- isOnGCD (never secret) backs up ignoreGCD, which is unproven on Forever:
     -- a spell waiting only on the GCD skips the main shadow and, with the GCD
@@ -1598,6 +1606,15 @@ end
 
 local USAB_GAP = 0.25   -- out of combat, seconds between usability passes at most
 Driver.USAB_COMBAT_GAP = 0.1   -- in combat
+-- The bag event comes with every global cooldown, and each check reads every
+-- item's cooldown: in combat it runs at most this often (its last request
+-- always runs). An item just used is checked the next frame.
+Driver.ITEM_COMBAT_GAP = 0.25
+Driver.ITEM_USED_SECS = 1
+local itemUsedAt = -math.huge
+local function QueueMovedItems(urgent)
+    Events.CoalesceCapped("adcd_moveditems", FeedMovedItems, 0, urgent, Driver.ITEM_COMBAT_GAP)
+end
 -- A talent that replaces a spell moves what Store.TrackedSpellID answers;
 -- SPELLS_CHANGED should follow, these catch a client that sends only them.
 Driver.TALENT_EVENTS = { "TRAIT_CONFIG_UPDATED", "PLAYER_TALENT_UPDATE" }
@@ -1625,7 +1642,11 @@ local function EnsureEvents()
         if unit ~= "player" then return end
         Driver.NoteCast(spellID)
         -- an item used: its Can't use it state may follow (a Healthstone)
-        if Driver.IsItemUseSpell(spellID) then Events.Coalesce("adcd_itemusab", FeedItemUsabilitySoon) end
+        if Driver.IsItemUseSpell(spellID) then
+            Events.Coalesce("adcd_itemusab", FeedItemUsabilitySoon)
+            itemUsedAt = GetTime()
+            QueueMovedItems(true)
+        end
         for _, a in pairs(attached) do
             -- an icon with several spells turns to the one just cast (and feeds)
             local turned = a.rec.driver and Store.HasSpellAlts(a.rec.driver) and Driver.TurnTo(a, spellID)
@@ -1643,7 +1664,7 @@ local function EnsureEvents()
         end
     end, { "player" })
     Events.On("BAG_UPDATE_COOLDOWN", "adcd", function()
-        Events.Coalesce("adcd_moveditems", FeedMovedItems)
+        QueueMovedItems(GetTime() - itemUsedAt < Driver.ITEM_USED_SECS)
     end)
     -- a cooldown held through combat starts as it ends
     Events.On("PLAYER_REGEN_ENABLED", "adcd_held", function()
@@ -1987,6 +2008,23 @@ function Driver.IsCharge(rec)
     local sid = Store.RecordSpellID(rec.driver)
     local info = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
     return (info and (info.maxCharges or 0) > 1) == true
+end
+
+-- A spell icon's charge cap (maxCharges never reads secret), or nil: the
+-- charges state's bar range (DriverAura.ChargesState).
+function Driver.ChargeMax(rec)
+    if not (rec and rec.kind == "spell") then return nil end
+    local a = attached[rec.id]
+    local mx
+    if a and a.chargeSid then
+        mx = a.maxCharges
+    else
+        local sid = Store.RecordSpellID(rec.driver)
+        local info = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
+        mx = info and info.maxCharges
+    end
+    if type(mx) ~= "number" or (issecretvalue and issecretvalue(mx)) then return nil end
+    return mx
 end
 
 -- Spell watches: Ready / Recharging / On cooldown of any spell, for things

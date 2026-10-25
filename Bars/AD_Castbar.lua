@@ -5,6 +5,10 @@
 -- A cast of yours the game starts with no START event (Forever's Multi-Shot)
 -- is drawn from its press, UNIT_SPELLCAST_SENT, for the spell's cast time.
 
+-- Like Blizzard's bar, a cast is what UnitCastingInfo / UnitChannelInfo name:
+-- one the game hands no duration object for runs from its plain times, and an
+-- empowered cast fills up to its hold with a mark where each stage is reached.
+
 local ADDON, NS = ...
 local C_Timer = NS.Perf and NS.Perf.Timers("Castbar") or C_Timer   -- /arcperf times what they run
 local CreateFrame = NS.Perf and NS.Perf.Frames("Castbar") or function(...) return CreateFrame(...) end   -- /arcperf counts each file's frames and its sweep skips those on the game's aura buttons
@@ -39,10 +43,10 @@ CB.SAMPLE_TICKS = { 0.2, 0.4, 0.6, 0.8 }   -- the edit-mode sample: a five-tick 
 CB.EVENTS = { "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_FAILED",
     "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_DELAYED", "UNIT_SPELLCAST_CHANNEL_START",
     "UNIT_SPELLCAST_CHANNEL_UPDATE", "UNIT_SPELLCAST_CHANNEL_STOP",
-    "UNIT_SPELLCAST_INTERRUPTIBLE", "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" }
+    "UNIT_SPELLCAST_INTERRUPTIBLE", "UNIT_SPELLCAST_NOT_INTERRUPTIBLE",
+    "UNIT_SPELLCAST_EMPOWER_START", "UNIT_SPELLCAST_EMPOWER_UPDATE", "UNIT_SPELLCAST_EMPOWER_STOP" }
 -- Your castbars also hear the press and how it went, for casts drawn from it.
-CB.PLAYER_EVENTS = { "UNIT_SPELLCAST_SENT", "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_FAILED_QUIET",
-    "UNIT_SPELLCAST_EMPOWER_START" }
+CB.PLAYER_EVENTS = { "UNIT_SPELLCAST_SENT", "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_FAILED_QUIET" }
 -- A START answers a press after the round trip, so a press waits that long
 -- (the connection's delay) before it is drawn; the bounds in seconds.
 CB.SENT_SETTLE = 0.05
@@ -54,6 +58,12 @@ CB.SENT_GRACE = 1
 -- the edit-mode sample's cast length: 1.2 s left at 60%
 CB.SAMPLE_LEN = 3
 CB.QUEUE_COLOR = { 0.35, 0.85, 1, 1 }
+-- An empowered cast's stage colors in stage order; a stage past the last
+-- wears the last.
+CB.STAGE_COLOR_KEYS = { { "fill", "castStageColor1" }, { "fill", "castStageColor2" }, { "fill", "castStageColor3" },
+    { "fill", "castStageColor4" }, { "fill", "castStageColor5" }, { "fill", "castStageColor6" },
+    { "fill", "castStageColor7" }, { "fill", "castStageColor8" } }
+CB.STAGE_MASK = "Interface\\Buttons\\WHITE8X8"
 -- The events CastingBarMixin:SetUnit registers on the player castbar;
 -- registered again to undo hiding it.
 CB.BLIZZ_EVENTS = { "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_DELAYED",
@@ -84,12 +94,107 @@ function CB.Vertical(rec)
     return (R(rec, "fill", "orientation") or "HORIZONTAL") == "VERTICAL"
 end
 
--- The unit's cast or channel duration object, or nil. Only nil-check it:
--- it may be secret.
+-- Whether the unit casts, channels or empowers now: a duration object or a
+-- name, each only nil-tested (either may be secret).
+function CB.CastingNow(u)
+    if UnitCastingDuration and UnitCastingDuration(u) ~= nil then return true end
+    if UnitChannelDuration and UnitChannelDuration(u) ~= nil then return true end
+    if UnitEmpoweredChannelDuration and UnitEmpoweredChannelDuration(u, true) ~= nil then return true end
+    if UnitCastingInfo and UnitCastingInfo(u) ~= nil then return true end
+    return UnitChannelInfo ~= nil and UnitChannelInfo(u) ~= nil
+end
+
 function CB.StillCasting(e)
-    local u = e.castUnit or CB.Unit(e)
-    return (UnitCastingDuration and UnitCastingDuration(u))
-        or (UnitChannelDuration and UnitChannelDuration(u))
+    return CB.CastingNow(e.castUnit or CB.Unit(e))
+end
+
+-- A duration object from plain start / end times in ms (plus extra ms), or
+-- nil when any reads secret.
+function CB.Built(sMs, eMs, extraMs)
+    sMs, eMs, extraMs = CB.Plain(sMs), CB.Plain(eMs), CB.Plain(extraMs or 0)
+    if type(sMs) ~= "number" or type(eMs) ~= "number" or type(extraMs) ~= "number" or eMs <= sMs then
+        return nil
+    end
+    return CB.FakeDuration(sMs / 1000, (eMs - sMs + math.max(0, extraMs)) / 1000)
+end
+
+-- Where an empowered cast reaches each of its n stages, as fractions of the
+-- whole cast with its hold at the top, where Blizzard's bar puts its pips:
+-- the game's stage shares added up, else the stage times. Nil without stages
+-- or when a value reads secret.
+function CB.StageFracs(unit, n)
+    if type(n) ~= "number" or n < 1 then return nil end
+    local pc = UnitEmpoweredStagePercentages and CB.Plain(UnitEmpoweredStagePercentages(unit, true))
+    local out = type(pc) == "table" and CB.StageMarks(pc, n, #pc) or nil
+    if out or not (GetUnitEmpowerStageDuration and GetUnitEmpowerHoldAtMaxTime) then return out end
+    local parts = {}
+    for i = 1, n do parts[i] = GetUnitEmpowerStageDuration(unit, i - 1) end
+    parts[n + 1] = GetUnitEmpowerHoldAtMaxTime(unit)
+    return CB.StageMarks(parts, n, n + 1)
+end
+
+-- parts[1..count] = the stages' shares or times, the hold last; the marks
+-- stand where the first n end, over the sum of all. -1 is the game's "no time".
+function CB.StageMarks(parts, n, count)
+    if count < n then return nil end
+    local total = 0
+    for i = 1, count do
+        local v = CB.Plain(parts[i])
+        if type(v) ~= "number" or v < 0 then return nil end
+        total = total + v
+    end
+    if total <= 0 then return nil end
+    local out, sum = {}, 0
+    for i = 1, n do
+        sum = sum + parts[i]
+        local f = sum / total
+        if f > 0.0005 and f < 0.9995 then out[#out + 1] = f end
+    end
+    return #out > 0 and out or nil
+end
+
+-- What the unit casts now. A channel or an empowered cast first, then a cast,
+-- as Blizzard's bar reads them: the game's duration object, else, for one
+-- UnitChannelInfo / UnitCastingInfo names, one built from its plain times.
+-- Returns kind ("cast", "channel" or "empower"), the duration object and
+-- whether it was built.
+function CB.Read(unit)
+    local cn, sMs, eMs, emp, stages
+    if UnitChannelInfo then
+        local _
+        cn, _, _, sMs, eMs, _, _, _, emp, stages = UnitChannelInfo(unit)
+    end
+    if CB.Plain(emp) == true then
+        -- the hold at the top counts only when there are stages
+        stages = CB.Plain(stages)
+        local d = UnitEmpoweredChannelDuration and UnitEmpoweredChannelDuration(unit, true)
+        if d then return "empower", d, false end
+        local hold = 0
+        if type(stages) == "number" and stages > 0 then
+            hold = GetUnitEmpowerHoldAtMaxTime and GetUnitEmpowerHoldAtMaxTime(unit)
+        end
+        d = CB.Built(sMs, eMs, hold)
+        if d then return "empower", d, true end
+        d = UnitChannelDuration and UnitChannelDuration(unit)
+        if d then return "empower", d, false end
+        return nil
+    end
+    local d = UnitChannelDuration and UnitChannelDuration(unit)
+    if d then return "channel", d, false end
+    if cn ~= nil then
+        d = CB.Built(sMs, eMs)
+        if d then return "channel", d, true end
+    end
+    d = UnitCastingDuration and UnitCastingDuration(unit)
+    if d then return "cast", d, false end
+    if UnitCastingInfo then
+        local n, _, _, s, en = UnitCastingInfo(unit)
+        if n ~= nil then
+            d = CB.Built(s, en)
+            if d then return "cast", d, true end
+        end
+    end
+    return nil
 end
 
 -- Widgets, built once per entry
@@ -241,10 +346,11 @@ function CB.LockLook(e)
     K.ShellAlpha(e, gate)
 end
 
--- LayoutTicks honours e.ticksOff when it lays the marks out again.
+-- LayoutTicks honours e.ticksOff when it lays the marks out again. An
+-- empowered cast's stage dividers show whatever the ticks do.
 function CB.TicksFor(e)
     e.ticksOff = (not CB.PerTick(e) and R(e.rec, "ticks", "tickChannelOnly") == true
-        and not e.castChannel) or nil
+        and not e.castChannel and not CB.StageMarksOn(e)) or nil
     local ticks = e.shell.ticks
     for i = 1, e.tickCount or 0 do
         if ticks[i] then ticks[i]:SetShown(not e.ticksOff) end
@@ -293,6 +399,128 @@ end
 function CB.TickUnit(e)
     if not CB.PerTick(e) then return nil, false end
     return nil, false, e.castTickFracs
+end
+
+-- Whether an empowered cast's stage dividers stand on the bar now.
+function CB.StageMarksOn(e)
+    return e.castStageFracs ~= nil and R(e.rec, "ticks", "castStageMarks") == true
+end
+
+-- The castbar's marks: an empowered cast's stage dividers whatever the Ticks
+-- block says, as Blizzard's bar always shows its pips, each in its stage's
+-- color if asked; else the block's own.
+function CB.TickFractions(e)
+    if not CB.StageMarksOn(e) then return Bars.TickFractions(e.rec, CB.TickUnit(e)) end
+    local fr = e.castStageFracs
+    if R(e.rec, "ticks", "castStageMarkColors") ~= true then return fr end
+    local cols = {}
+    for i = 1, #fr do cols[i] = CB.StageColor(e.rec, i) end
+    return fr, nil, cols
+end
+
+function CB.StageColor(rec, i)
+    local keys = CB.STAGE_COLOR_KEYS
+    local k = keys[math.min(math.max(i, 1), #keys)]
+    return R(rec, k[1], k[2]) or { 1, 1, 1, 1 }
+end
+
+-- One stage's stretch, a to b physical pixels from the fill's origin (b nil:
+-- on to the far end), its texture sampled where the whole bar's would be.
+function CB.PlaceSeg(t, fill, a, b, len, vertical, rev, rot)
+    t:ClearAllPoints()
+    local fa, fb = a / len, (b or len) / len
+    if not vertical then
+        if rev then
+            t:SetPoint("TOPRIGHT", fill, "TOPRIGHT", -a, 0)
+            if b then t:SetPoint("BOTTOMLEFT", fill, "BOTTOMRIGHT", -b, 0)
+            else t:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", 0, 0) end
+            t:SetTexCoord(1 - fb, 1 - fa, 0, 1)
+        else
+            t:SetPoint("TOPLEFT", fill, "TOPLEFT", a, 0)
+            if b then t:SetPoint("BOTTOMRIGHT", fill, "BOTTOMLEFT", b, 0)
+            else t:SetPoint("BOTTOMRIGHT", fill, "BOTTOMRIGHT", 0, 0) end
+            t:SetTexCoord(fa, fb, 0, 1)
+        end
+        return
+    end
+    -- t0 / t1: the stretch's top and bottom as shares of the bar from its top
+    local t0, t1
+    if rev then
+        t:SetPoint("TOPLEFT", fill, "TOPLEFT", 0, -a)
+        if b then t:SetPoint("BOTTOMRIGHT", fill, "TOPRIGHT", 0, -b)
+        else t:SetPoint("BOTTOMRIGHT", fill, "BOTTOMRIGHT", 0, 0) end
+        t0, t1 = fa, fb
+    else
+        t:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", 0, a)
+        if b then t:SetPoint("TOPRIGHT", fill, "BOTTOMRIGHT", 0, b)
+        else t:SetPoint("TOPRIGHT", fill, "TOPRIGHT", 0, 0) end
+        t0, t1 = 1 - fb, 1 - fa
+    end
+    if rot then t:SetTexCoord(t0, 1, t1, 1, t0, 0, t1, 0) else t:SetTexCoord(0, 1, t0, t1) end
+end
+
+-- Each stage of an empowered cast in its own color: the bar's texture over
+-- the stage's stretch, cut to the fill's reach by a mask on the fill texture,
+-- so the engine moves it with no Lua per frame, a target's secret timer too.
+-- fracs = the stage marks (nil hides them); each edge on a whole pixel where
+-- the dividers stand.
+function CB.StageSegs(e, fracs)
+    local rec, shell = e.rec, e.shell
+    e.castSegFracs = fracs
+    local host = e.castSegHost
+    local fill = shell.fill
+    local len = 0
+    if fracs and R(rec, "fill", "castStageColors") == true and not Bars.RectHidden(fill) then
+        len = (CB.Vertical(rec) and fill:GetHeight() or fill:GetWidth()) or 0
+    end
+    if len <= 1 then
+        if host then host:Hide() end
+        return
+    end
+    if not host then
+        host = CreateFrame("Frame", nil, shell)
+        host:EnableMouse(false)
+        host.mask = host:CreateMaskTexture()
+        host.mask:SetTexture(CB.STAGE_MASK, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE", "NEAREST")
+        host.tex = {}
+        e.castSegHost = host
+    end
+    host:SetFrameLevel(fill:GetFrameLevel() + Bars.LADDER.stages)
+    host:ClearAllPoints()
+    host:SetAllPoints(fill)
+    -- a texture swap hands the fill a new texture object
+    local ft = shell.fillTex or fill:GetStatusBarTexture()
+    if host.maskOf ~= ft then
+        host.maskOf = ft
+        host.mask:ClearAllPoints()
+        host.mask:SetPoint("TOPLEFT", ft, "TOPLEFT", 0, 0)
+        host.mask:SetPoint("BOTTOMRIGHT", ft, "BOTTOMRIGHT", 0, 0)
+    end
+    local vertical = CB.Vertical(rec)
+    local rev = R(rec, "fill", "reverseFill") == true
+    local rot = vertical and R(rec, "fill", "rotateTexture") == true
+    local path = K.ResolveBarTexture(R(rec, "fill", "texture"))
+    local px = K.Px(shell)
+    local n, a = #fracs + 1, 0
+    for i = 1, n do
+        local t = host.tex[i]
+        if not t then
+            t = host:CreateTexture(nil, "ARTWORK")
+            if t.SetSnapToPixelGrid then t:SetSnapToPixelGrid(false) end
+            if t.SetTexelSnappingBias then t:SetTexelSnappingBias(0) end
+            t:AddMaskTexture(host.mask)
+            host.tex[i] = t
+        end
+        local b = (i < n) and math.floor(len * fracs[i] / px + 0.5) * px or nil
+        t:SetTexture(path)
+        local c = CB.StageColor(rec, i)
+        t:SetVertexColor(c[1], c[2], c[3], c[4] or 1)
+        CB.PlaceSeg(t, fill, a, b, len, vertical, rev, rot)
+        t:Show()
+        a = b or len
+    end
+    for i = n + 1, #host.tex do host.tex[i]:Hide() end
+    host:Show()
 end
 
 -- Player casts only, never channels. frac = the share of the cast the
@@ -451,10 +679,12 @@ function CB.StopFade(e)
     if e.castFade and e.castFade:IsPlaying() then e.castFade:Stop() end
 end
 
--- info = { dur, channel, name, tex, notInt, barID, latency, spellID, len, sent },
--- from CB.Begin, CB.FromSent or the editor preview. spellID and len are plain:
--- spellID set for a player channel, len for any cast or channel of yours.
--- sent = the press a cast was drawn from (CB.sent), copied.
+-- info = { dur, channel, name, tex, notInt, barID, latency, spellID, len, sent,
+-- empower, stages, built }, from CB.Begin, CB.FromSent or the editor preview.
+-- spellID and len are plain: spellID set for a player channel, len for any
+-- cast or channel of yours. sent = the press a cast was drawn from (CB.sent),
+-- copied. stages = an empowered cast's stage marks; built = the duration came
+-- from plain times.
 function CB.Show(e, info)
     local rec, shell = e.rec, e.shell
     CB.StopFade(e)
@@ -462,6 +692,8 @@ function CB.Show(e, info)
     e.castOn, e.castHold, e.castHow = true, nil, nil
     e.castChannel, e.castBarID, e.castDur = info.channel and true or false, info.barID, info.dur
     e.castNotInt, e.castTex = info.notInt, info.tex
+    local hadStages = e.castStageFracs ~= nil
+    e.castEmpower, e.castStageFracs, e.castBuilt = info.empower == true, info.stages, info.built == true
     local s = info.sent
     e.castSent, e.castLen = s ~= nil, info.len
     if s then e.castSentGUID, e.castSentSpell, e.castSentEnd = s.guid, s.sid, s.start + s.len end
@@ -475,10 +707,11 @@ function CB.Show(e, info)
     CB.Paint(e)
     CB.LockLook(e)
     e.castTickFracs = e.castChannel and CB.ChannelTicks(info.spellID, info.len) or nil
-    if CB.PerTick(e) then K.LayoutTicks(e) end
+    if CB.PerTick(e) or hadStages or e.castStageFracs then K.LayoutTicks(e) end
     CB.TicksFor(e)
     CB.Latency(e, info.latency)
     CB.QueueTick(e, info.len)
+    CB.StageSegs(e, e.castStageFracs)
     CB.SparkShown(e, true)
     CB.StartTicker(e)
     e.stateHidden = false
@@ -491,21 +724,26 @@ function CB.Sync(e)
     if e.isPreview then return end
     local unit = e.castUnit or CB.Unit(e)
     e.castUnit = unit
-    local dur = UnitChannelDuration and UnitChannelDuration(unit)
-    if dur then return CB.Begin(e, true, dur) end
-    dur = UnitCastingDuration and UnitCastingDuration(unit)
-    if dur then return CB.Begin(e, false, dur) end
+    local kind, dur, built = CB.Read(unit)
+    if kind then return CB.Begin(e, kind, dur, built) end
     if not (e.castHold or e.castSent) then CB.Rest(e) end
 end
 
-function CB.Begin(e, channel, dur)
+-- kind = "cast", "channel" or "empower" (fills like a cast, never hidden as a
+-- channel, no latency or queue tick: it ends when the key is let go).
+function CB.Begin(e, kind, dur, built)
     local rec, unit = e.rec, e.castUnit
+    local channel = kind == "channel"
     if channel and R(rec, "cast", "hideChannels") == true then
         e.castOn = false
         return CB.Rest(e)
     end
-    local name, tex, ni, bid, sid, len
-    if channel then
+    local name, tex, ni, bid, sid, len, stages
+    if kind == "empower" then
+        local n, _, t, _, _, _, x, _, _, st, b = UnitChannelInfo(unit)
+        name, tex, ni, bid = n, t, x, b
+        stages = CB.StageFracs(unit, CB.Plain(st))
+    elseif channel then
         local n, _, t, sMs, eMs, _, x, id, _, _, b = UnitChannelInfo(unit)
         name, tex, ni, bid = n, t, x, b
         -- the player's own channel reads plain; any other unit's may be secret
@@ -522,8 +760,8 @@ function CB.Begin(e, channel, dur)
         end
     end
     CB.Show(e, { dur = dur, channel = channel, name = name, tex = tex, notInt = ni,
-        barID = CB.Plain(bid), spellID = sid, len = len,
-        latency = (not channel and unit == "player") and CB.LiveLatency() or nil })
+        barID = CB.Plain(bid), spellID = sid, len = len, empower = kind == "empower", stages = stages,
+        built = built, latency = (kind == "cast" and unit == "player") and CB.LiveLatency() or nil })
 end
 
 -- how = "done", "failed" or "interrupted". An end event whose cast bar id is
@@ -574,6 +812,7 @@ function CB.HoldLook(e, how)
     e.castHold, e.castHow = true, how
     shell.fill:SetMinMaxValues(0, 1)
     shell.fill:SetValue(1)
+    CB.StageSegs(e, nil)
     CB.HoldColor(e)
     if not CB.CustomName(rec) then
         K.SetRunText(shell, "name", how == "interrupted" and (INTERRUPTED or "Interrupted")
@@ -605,9 +844,11 @@ end
 -- Hidden while playing (Hidden opacity can show it faintly); the sample while
 -- editing.
 function CB.Rest(e)
+    local hadStages = e.castStageFracs ~= nil
     e.castOn, e.castHold, e.castDur, e.castNotInt, e.castBarID = false, nil, nil, nil, nil
     e.castChannel, e.castTex, e.castGoneAt, e.castHow = false, nil, nil, nil
     e.castTickFracs, e.castSent, e.castLen = nil, nil, nil
+    e.castEmpower, e.castStageFracs, e.castBuilt = nil, nil, nil
     CB.StopFade(e)
     CB.StopTicker(e)
     if e.castLat then e.castLat:Hide() end
@@ -616,6 +857,7 @@ function CB.Rest(e)
     local shell = e.shell
     K.ShellAlpha(e, nil)
     K.SetRunText(shell, "dur", "")
+    CB.StageSegs(e, nil)
     if K.IsEditMode() and not e.isPreview then
         CB.Sample(e)
         e.stateHidden = false
@@ -629,7 +871,7 @@ function CB.Rest(e)
         if e.iconF and e.iconF.tex then e.iconF.tex:SetTexture(nil) end
         e.stateHidden = true
     end
-    if CB.PerTick(e) then K.LayoutTicks(e) end
+    if CB.PerTick(e) or hadStages or e.castStageFracs then K.LayoutTicks(e) end
     e.ticksOff = nil
     CB.TicksFor(e)
     K.ApplyVisibility(e)
@@ -655,6 +897,18 @@ function CB.Sample(e)
     e.castTickFracs = CB.SAMPLE_TICKS
     e.castLen = CB.SAMPLE_LEN
     CB.QueueTick(e, CB.SAMPLE_LEN)
+    -- with stage colors on, as many even stages as colors listed, so the
+    -- colors and dividers can be styled
+    e.castStageFracs = CB.SampleStages(rec)
+    CB.StageSegs(e, e.castStageFracs)
+end
+
+function CB.SampleStages(rec)
+    if R(rec, "fill", "castStageColors") ~= true then return nil end
+    local n = math.max(1, math.min(#CB.STAGE_COLOR_KEYS, math.floor(R(rec, "fill", "castStageCount") or 4)))
+    local out = {}
+    for i = 1, n - 1 do out[i] = i / n end
+    return out
 end
 
 -- Blizzard's player castbar is a managed frame: calling its Hide from addon
@@ -709,10 +963,12 @@ function CB.SyncIfOn(e)
 end
 
 -- The cast bar id is NeverSecret. INTERRUPTED and CHANNEL_STOP carry one extra
--- argument before it.
+-- argument before it, EMPOWER_STOP two (complete, interruptedBy).
 function CB.BarIDOf(event, ...)
     local id
-    if event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
+    if event == "UNIT_SPELLCAST_EMPOWER_STOP" then
+        id = select(6, ...)
+    elseif event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
         id = select(5, ...)
     else
         id = select(4, ...)
@@ -767,8 +1023,7 @@ end
 function CB.Settle()
     local s = CB.sent
     if not s.live or GetTime() < s.due - 0.001 then return end
-    if (UnitCastingDuration and UnitCastingDuration("player"))
-        or (UnitChannelDuration and UnitChannelDuration("player")) then
+    if CB.CastingNow("player") then
         s.blocked = true
         return
     end
@@ -813,7 +1068,7 @@ function CB.EndSent(e)
     end
 end
 
--- An empowered cast is not drawn here; it ends a cast drawn from a press.
+-- An empowered cast's start ends a cast drawn from a press before it is read.
 function CB.EndAnySent(e)
     if e.castOn and e.castSent then CB.Finish(e, "done") end
 end
@@ -830,23 +1085,28 @@ function CB.OnCast(event, unit, ...)
     CB.evGUID, CB.evSpell = CB.Plain(guid), CB.Plain(sid)
     local mine = unit == "player"
     if event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START"
-        or event == "UNIT_SPELLCAST_DELAYED" or event == "UNIT_SPELLCAST_CHANNEL_UPDATE" then
+        or event == "UNIT_SPELLCAST_EMPOWER_START" or event == "UNIT_SPELLCAST_DELAYED"
+        or event == "UNIT_SPELLCAST_CHANNEL_UPDATE" or event == "UNIT_SPELLCAST_EMPOWER_UPDATE" then
         -- a START wins over a press still waiting or already drawn
-        if mine and (event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START") then
+        if mine and (event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START"
+            or event == "UNIT_SPELLCAST_EMPOWER_START") then
             CB.sent.live = false
         end
+        if mine and event == "UNIT_SPELLCAST_EMPOWER_START" then CB.ForUnit(unit, CB.EndAnySent) end
         CB.ForUnit(unit, CB.Sync)
     elseif event == "UNIT_SPELLCAST_INTERRUPTIBLE" or event == "UNIT_SPELLCAST_NOT_INTERRUPTIBLE" then
         CB.ForUnit(unit, CB.SyncIfOn)
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" or event == "UNIT_SPELLCAST_FAILED_QUIET" then
         CB.Resolve()
         CB.ForUnit(unit, CB.EndSent)
-    elseif event == "UNIT_SPELLCAST_EMPOWER_START" then
-        CB.sent.live = false
-        CB.ForUnit(unit, CB.EndAnySent)
     else
         local how = (event == "UNIT_SPELLCAST_INTERRUPTED" and "interrupted")
             or (event == "UNIT_SPELLCAST_FAILED" and "failed") or "done"
+        -- an empowered cast let go ends "done"; one that did not complete is
+        -- shown interrupted, as Blizzard's bar does; a secret flag is not tested
+        if event == "UNIT_SPELLCAST_EMPOWER_STOP" and CB.Plain((select(3, ...))) == false then
+            how = "interrupted"
+        end
         if mine then CB.Resolve() end
         CB.ForUnit(unit, CB.End, how, id)
     end
@@ -926,10 +1186,13 @@ function CB.Relayout(e)
     CB.Style(e)
     if e.castOn then CB.LockLook(e) end
     if e.castLen then CB.QueueTick(e, e.castLen) end
+    if e.castSegFracs then CB.StageSegs(e, e.castSegFracs) end
 end
 
 function CB.Release(e)
     e.castOn, e.castHold, e.castSent, e.castLen = false, nil, nil, nil
+    e.castEmpower, e.castStageFracs, e.castBuilt = nil, nil, nil
+    CB.StageSegs(e, nil)
     CB.StopTicker(e)
     CB.StopFade(e)
     CB.Listen()
@@ -937,7 +1200,8 @@ function CB.Release(e)
 end
 
 -- ApplyStyle resets the icon to the bar's "?" and the fill to its base colour;
--- put back the art this castbar last showed and the colour of what is on screen.
+-- put back the art this castbar last showed and the colour of what is on screen,
+-- and the stage colours in the bar's new texture.
 function CB.Styled(e)
     if e.iconF and e.iconF.tex then e.iconF.tex:SetTexture(e.castArt) end
     if e.castHold then
@@ -945,6 +1209,7 @@ function CB.Styled(e)
     elseif e.castOn or (e.castFade and e.castFade:IsPlaying()) then
         CB.Paint(e)
     end
+    CB.StageSegs(e, (not e.castHold) and e.castStageFracs or nil)
 end
 
 -- One /adbars diag line; plain values only (casting now is a nil test). The
@@ -954,10 +1219,11 @@ function CB.Diag(e)
     if last and last ~= "watchdog" then
         last = last:gsub("^UNIT_SPELLCAST_", "") .. "#" .. tostring(e.castLastID)
     end
-    return ("%s [cast %s] on=%s channel=%s hold=%s barID=%s last=%s castingNow=%s fromPress=%s blizzardHidden=%s"):format(
+    return ("%s [cast %s] on=%s channel=%s empower=%s stages=%d built=%s hold=%s barID=%s last=%s castingNow=%s fromPress=%s blizzardHidden=%s"):format(
         tostring(e.rec.name), tostring(e.castUnit), tostring(e.castOn == true),
-        tostring(e.castChannel == true), tostring(e.castHold == true), tostring(e.castBarID),
-        tostring(last), tostring(CB.StillCasting(e) ~= nil), tostring(e.castSent == true),
+        tostring(e.castChannel == true), tostring(e.castEmpower == true), e.castStageFracs and #e.castStageFracs or 0,
+        tostring(e.castBuilt == true), tostring(e.castHold == true), tostring(e.castBarID),
+        tostring(last), tostring(CB.StillCasting(e)), tostring(e.castSent == true),
         tostring(CB.blizzOff == true))
 end
 
@@ -1013,8 +1279,9 @@ function CB.PreviewApply(e, loop, t, fresh)
             K.ShellAlpha(e, nil)
             if e.castShield then e.castShield:Hide() end
             e.castOn = false
+            local had = e.castStageFracs ~= nil
             CB.Sample(e)
-            if CB.PerTick(e) then K.LayoutTicks(e) end
+            if CB.PerTick(e) or had or e.castStageFracs then K.LayoutTicks(e) end
             if e.castLat then e.castLat:Hide() end
         end
         return
@@ -1082,6 +1349,7 @@ Bars.RegisterKind("cast", {
     Release = CB.Release,
     Styled = CB.Styled,
     TickUnit = CB.TickUnit,
+    TickFractions = CB.TickFractions,
     Diag = CB.Diag,
     ownsName = true,
     PreviewModes = CB.PreviewModes,

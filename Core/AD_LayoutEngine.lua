@@ -2225,7 +2225,136 @@ local function ShowEditChrome()
     end
 end
 
+-- What the next pass draws: everything, or the records changes named since
+-- the last one (Engine.OnDirty). A full pass covers whatever was named.
+local want = { full = false, ids = {}, why = nil }
+
+-- One group of a shown layout: drawn, or its icons released while it does not
+-- show. The full pass and the partial one draw a group through here.
+local function DrawGroup(group, container)
+    local gf = EnsureGroupFrame(group)
+    if ShowsRec(group) then
+        gf:SetParent(container)
+        gf:SetFrameStrata(ElementStrata(group))
+        gf:SetFrameLevel(Store.Resolve(group, "frame", "level") or 1)
+        gf:ClearAllPoints()
+        gf:SetPoint("CENTER", container, "CENTER", group.pos.x or 0, group.pos.y or 0)
+        -- The post-pass re-places it if it is anchored.
+        if NS.Anchor then NS.Anchor.Register(group, gf) end
+        gf:Show()
+        local gk = Engine.HandlerFor(group)
+        -- a group a handler lets go of (an aura group back on its
+        -- icons) is released by it before the grid draws
+        local was = gf._adPlacer
+        if was and was ~= gk and was.release then was.release(group) end
+        gf._adPlacer = gk
+        if gk then
+            -- a claimed grid group keeps its icons, undrawn
+            if was ~= gk then
+                for _, rec in ipairs(Store.IconsOf(group)) do
+                    Factory.Release(rec.id)
+                    NS.DriverCooldown.Detach(rec.id)
+                end
+            end
+            gk.place(group, gf, editMode)
+            ContainerLook(group, gf)
+            -- the handler sized it: now the spot, on a pixel
+            PlaceGroupRoot(group, gf, 0, 0)
+        else
+            -- Panel closed and a dynamic aura group: engine-flow
+            -- mode. Holders release and the AuraContainer rows
+            -- show only the auras that are up. With Dynamic off
+            -- the static grid stays in play too, each member
+            -- keeping its cell and missing look.
+            local flowMode = group.groupKind == "aura" and not editMode
+                and NS.DriverAuraGroups ~= nil
+                and NS.DriverAuraGroups.IsAvailable()
+                and Store.Resolve(group, "arrangement", "dynamicLayout") == true
+            PlaceGroup(group, gf, flowMode)
+        end
+        WireGroupEdit(gf, group)
+        GhostTag(gf, group, 4)
+    else
+        gf:Hide()
+        local gk = gf._adPlacer or Engine.HandlerFor(group)
+        gf._adPlacer = nil
+        if gk and gk.release then gk.release(group) end
+        for _, rec in ipairs(Store.IconsOf(group)) do
+            Factory.Release(rec.id)
+            NS.DriverCooldown.Detach(rec.id)
+        end
+    end
+end
+
+-- One free icon of a shown layout.
+local function DrawFree(rec, container)
+    if ShowsRec(rec) then
+        local f = Factory.Ensure(rec)
+        f:SetParent(container)
+        f:ClearAllPoints()
+        ApplyIconPosition(f, rec, container,
+            rec.pos.x or 0, rec.pos.y or 0, 36, 36)
+        -- The post-pass re-places it if it is anchored.
+        if NS.Anchor then NS.Anchor.Register(rec, f) end
+        Factory.ApplyStyle(f, rec)
+        NS.DriverCooldown.Attach(rec, f)
+        WireIconDrag(f)
+        f:SetMovable(CanMove(rec))
+        Factory.ApplyMouse(f, editMode, rec)
+        Factory.SetEditMode(f, rec, editMode)
+        GhostTag(f, rec)
+        ShowIcon(f, rec)
+    else
+        if NS.Anchor then NS.Anchor.Unregister(rec.id) end
+        Factory.Release(rec.id)
+        NS.DriverCooldown.Detach(rec.id)
+    end
+end
+
+-- One bar of a shown layout.
+local function DrawBar(rec, container)
+    if ShowsRec(rec) then
+        PlaceBar(rec, container)
+        local bf = barFrames[rec.id]
+        if bf then GhostTag(bf, rec) end
+    else
+        ReleaseBar(rec.id)
+    end
+end
+
+-- The last word: whichever path drew it, nothing that does not load here
+-- (itself, its group or its layout) stays on screen. The release only
+-- touches our frames and parks the aura slots, so it holds in combat too.
+local function LastWord()
+    for iconId, f in pairs(Factory.frames) do
+        local rec = f:IsShown() and Store.Get(iconId)
+        if rec and not DrawnHere(rec) then
+            if NS.Anchor then NS.Anchor.Unregister(iconId) end
+            Factory.Release(iconId)
+            NS.DriverCooldown.Detach(iconId)
+        end
+    end
+    for bid, bf in pairs(barFrames) do
+        local rec = bf:IsShown() and Store.Get(bid)
+        if rec and not DrawnHere(rec) then ReleaseBar(bid) end
+    end
+end
+
+-- Post-passes: anchors need every live frame (cross-layout too), and game
+-- frames pinned to a group need its anchored spot; then the conditions
+-- pass paints alphas this same frame, so none render stale.
+local function PostPasses()
+    ApplyAnchors()
+    -- texts riding our own items: their frames may be new this pass
+    if NS.TextAnchor and NS.TextAnchor.ReapplyItems then NS.TextAnchor.ReapplyItems() end
+    if NS.Pins then NS.Pins.ApplyAll() end
+    if NS.Conditions then NS.Conditions.Pass() end
+    Engine.RefreshEditing()
+    if screenEditing then HideEditChrome() end
+end
+
 function Engine.Rebuild()
+    want.full, want.ids, want.why = false, {}, nil
     -- One fresh world read for the whole rebuild: placement asks the
     -- conditions (dynamic drop-outs) before their pass runs at the end.
     if NS.Conditions then NS.Conditions.Refresh() end
@@ -2243,59 +2372,8 @@ function Engine.Rebuild()
             local groups, freeIcons, bars = Store.ChildrenOf(layout)
             local liveGroups = {}
             for _, group in ipairs(groups) do
-                local gf = EnsureGroupFrame(group)
                 liveGroups[group.id] = true
-                if ShowsRec(group) then
-                    gf:SetParent(container)
-                    gf:SetFrameStrata(ElementStrata(group))
-                    gf:SetFrameLevel(Store.Resolve(group, "frame", "level") or 1)
-                    gf:ClearAllPoints()
-                    gf:SetPoint("CENTER", container, "CENTER", group.pos.x or 0, group.pos.y or 0)
-                    -- The post-pass re-places it if it is anchored.
-                    if NS.Anchor then NS.Anchor.Register(group, gf) end
-                    gf:Show()
-                    local gk = Engine.HandlerFor(group)
-                    -- a group a handler lets go of (an aura group back on its
-                    -- icons) is released by it before the grid draws
-                    local was = gf._adPlacer
-                    if was and was ~= gk and was.release then was.release(group) end
-                    gf._adPlacer = gk
-                    if gk then
-                        -- a claimed grid group keeps its icons, undrawn
-                        if was ~= gk then
-                            for _, rec in ipairs(Store.IconsOf(group)) do
-                                Factory.Release(rec.id)
-                                NS.DriverCooldown.Detach(rec.id)
-                            end
-                        end
-                        gk.place(group, gf, editMode)
-                        ContainerLook(group, gf)
-                        -- the handler sized it: now the spot, on a pixel
-                        PlaceGroupRoot(group, gf, 0, 0)
-                    else
-                        -- Panel closed and a dynamic aura group: engine-flow
-                        -- mode. Holders release and the AuraContainer rows
-                        -- show only the auras that are up. With Dynamic off
-                        -- the static grid stays in play too, each member
-                        -- keeping its cell and missing look.
-                        local flowMode = group.groupKind == "aura" and not editMode
-                            and NS.DriverAuraGroups ~= nil
-                            and NS.DriverAuraGroups.IsAvailable()
-                            and Store.Resolve(group, "arrangement", "dynamicLayout") == true
-                        PlaceGroup(group, gf, flowMode)
-                    end
-                    WireGroupEdit(gf, group)
-                    GhostTag(gf, group, 4)
-                else
-                    gf:Hide()
-                    local gk = gf._adPlacer or Engine.HandlerFor(group)
-                    gf._adPlacer = nil
-                    if gk and gk.release then gk.release(group) end
-                    for _, rec in ipairs(Store.IconsOf(group)) do
-                        Factory.Release(rec.id)
-                        NS.DriverCooldown.Detach(rec.id)
-                    end
-                end
+                DrawGroup(group, container)
             end
             for gid, gf in pairs(groupFrames) do
                 local grec = Store.Get(gid)
@@ -2304,40 +2382,10 @@ function Engine.Rebuild()
                 end
             end
 
-            for _, rec in ipairs(freeIcons) do
-                if ShowsRec(rec) then
-                    local f = Factory.Ensure(rec)
-                    f:SetParent(container)
-                    f:ClearAllPoints()
-                    ApplyIconPosition(f, rec, container,
-                        rec.pos.x or 0, rec.pos.y or 0, 36, 36)
-                    -- The post-pass re-places it if it is anchored.
-                    if NS.Anchor then NS.Anchor.Register(rec, f) end
-                    Factory.ApplyStyle(f, rec)
-                    NS.DriverCooldown.Attach(rec, f)
-                    WireIconDrag(f)
-                    f:SetMovable(CanMove(rec))
-                    Factory.ApplyMouse(f, editMode, rec)
-                    Factory.SetEditMode(f, rec, editMode)
-                    GhostTag(f, rec)
-                    ShowIcon(f, rec)
-                else
-                    if NS.Anchor then NS.Anchor.Unregister(rec.id) end
-                    Factory.Release(rec.id)
-                    NS.DriverCooldown.Detach(rec.id)
-                end
-            end
+            for _, rec in ipairs(freeIcons) do DrawFree(rec, container) end
 
             -- Bars place after groups so group anchoring reads live frames.
-            for _, rec in ipairs(bars) do
-                if ShowsRec(rec) then
-                    PlaceBar(rec, container)
-                    local bf = barFrames[rec.id]
-                    if bf then GhostTag(bf, rec) end
-                else
-                    ReleaseBar(rec.id)
-                end
-            end
+            for _, rec in ipairs(bars) do DrawBar(rec, container) end
         else
             container:Hide()
             local groups, freeIcons, bars = Store.ChildrenOf(layout)
@@ -2379,35 +2427,146 @@ function Engine.Rebuild()
             NS.DriverCooldown.Detach(iconId)
         end
     end
-    -- The last word: whichever path drew it, nothing that does not load here
-    -- (itself, its group or its layout) stays on screen. The release only
-    -- touches our frames and parks the aura slots, so it holds in combat too.
-    for iconId, f in pairs(Factory.frames) do
-        local rec = f:IsShown() and Store.Get(iconId)
-        if rec and not DrawnHere(rec) then
-            if NS.Anchor then NS.Anchor.Unregister(iconId) end
-            Factory.Release(iconId)
-            NS.DriverCooldown.Detach(iconId)
-        end
-    end
-    for bid, bf in pairs(barFrames) do
-        local rec = bf:IsShown() and Store.Get(bid)
-        if rec and not DrawnHere(rec) then ReleaseBar(bid) end
-    end
-    -- Post-passes: anchors need every live frame (cross-layout too), and game
-    -- frames pinned to a group need its anchored spot; then the conditions
-    -- pass paints alphas this same frame, so none render stale.
-    ApplyAnchors()
-    -- texts riding our own items: their frames may be new this pass
-    if NS.TextAnchor and NS.TextAnchor.ReapplyItems then NS.TextAnchor.ReapplyItems() end
-    if NS.Pins then NS.Pins.ApplyAll() end
-    if NS.Conditions then NS.Conditions.Pass() end
-    Engine.RefreshEditing()
-    if screenEditing then HideEditChrome() end
+    LastWord()
+    PostPasses()
 end
 
+-- A change that names its records redraws only what holds them: an icon's
+-- group (a free icon itself), a group, a bar, each in its layout while that
+-- shows; then the same last word and post-passes. Anything else (a layout, a
+-- record gone, another type) is the full pass, which redraws every icon of
+-- every layout in one frame.
+function Engine.RebuildSome(ids)
+    if NS.Conditions then NS.Conditions.Refresh() end
+    local groups, frees, bars = {}, {}, {}
+    for id in pairs(ids) do
+        local rec = Store.Get(id)
+        local t = rec and rec.type
+        if t == "icon" and rec.groupId then
+            if not Store.Get(rec.groupId) then return Engine.Rebuild() end
+            groups[rec.groupId] = true
+        elseif t == "icon" then
+            frees[#frees + 1] = rec
+        elseif t == "group" then
+            groups[id] = true
+        elseif t == "bar" then
+            bars[#bars + 1] = rec
+        else
+            return Engine.Rebuild()
+        end
+    end
+    -- Whatever pins to a piece redrawn is redrawn too, down the chain: a full
+    -- pass places it again, and a group gone hidden sends what rode it home.
+    local touched = {}
+    local function Touch(rec) touched[rec.id] = true end
+    local function TouchGroup(gid)
+        local g = Store.Get(gid)
+        if not g then return end
+        Touch(g)
+        for _, r in ipairs(Store.IconsOf(g)) do Touch(r) end
+    end
+    for gid in pairs(groups) do TouchGroup(gid) end
+    for _, r in ipairs(frees) do Touch(r) end
+    for _, r in ipairs(bars) do Touch(r) end
+    local A = NS.Anchor
+    local grew, whole = A ~= nil and A.CandidateIds ~= nil, false
+    while grew and not whole do
+        grew = false
+        Store.EachRecord(function(id, rec)
+            if touched[id] or whole then return end
+            for _, tid in ipairs(A.CandidateIds(rec)) do
+                if touched[tid] then
+                    grew = true
+                    if rec.type == "group" then
+                        groups[id] = true
+                        TouchGroup(id)
+                    elseif rec.type == "icon" and not rec.groupId then
+                        frees[#frees + 1] = rec
+                        Touch(rec)
+                    elseif rec.type == "bar" then
+                        bars[#bars + 1] = rec
+                        Touch(rec)
+                    else
+                        -- a layout riding it: the full pass places layouts
+                        whole = true
+                    end
+                    return
+                end
+            end
+        end)
+    end
+    if whole then return Engine.Rebuild() end
+    -- its layout's frame while the layout shows; a hidden layout keeps
+    -- nothing drawn, so there is nothing to redraw
+    local function Container(rec)
+        local lay = rec.layoutId and Store.Get(rec.layoutId)
+        local c = lay and layoutFrames[lay.id]
+        if not (c and ShowsRec(lay) and c:IsShown()) then return nil end
+        return c
+    end
+    for gid in pairs(groups) do
+        local group = Store.Get(gid)
+        local c = group and Container(group)
+        if c then DrawGroup(group, c) end
+    end
+    for _, rec in ipairs(frees) do
+        local c = Container(rec)
+        if c then DrawFree(rec, c) end
+    end
+    -- bars after groups: group anchoring reads live frames
+    for _, rec in ipairs(bars) do
+        local c = Container(rec)
+        if c then DrawBar(rec, c) end
+    end
+    LastWord()
+    PostPasses()
+end
+
+-- While /arcperf records, a full pass says who asked for it.
+local NAMED = { style = true, load = true }
+local PIECES = { icon = true, group = true, bar = true }
+local function RunWanted()
+    local full, ids, why = want.full, want.ids, want.why
+    want.full, want.ids, want.why = false, {}, nil
+    -- a direct full pass this frame already drew it all
+    if not full and next(ids) == nil then return end
+    local P = NS.Perf
+    if full then
+        if P and P.on and P.NoteRebuild then P.NoteRebuild(true, why) end
+        return Engine.Rebuild()
+    end
+    if P and P.on and P.NoteRebuild then P.NoteRebuild(false) end
+    Engine.RebuildSome(ids)
+end
+local ASKERS = { ["Core/AD_LayoutEngine.lua"] = true, ["Core/AD_Store.lua"] = true, ["Core/AD_Events.lua"] = true }
+local function AskFull(why)
+    want.full = true
+    local P = NS.Perf
+    if P and P.on and not want.why then
+        local at = P.Caller and P.Caller(ASKERS)
+        want.why = (why or "a full pass") .. (at and (" from " .. at) or "")
+    end
+    Events.Coalesce("ad_rebuild", RunWanted)
+end
+Engine.AskFull = AskFull
+
 function Engine.QueueRebuild()
-    Events.Coalesce("ad_rebuild", Engine.Rebuild)
+    AskFull()
+end
+
+-- A change ("style" or "load") naming an icon, a group or a bar queues that
+-- record's piece; one naming none, a layout, a structure change ("tree") or a
+-- record gone, the full pass.
+function Engine.OnDirty(what, id)
+    local rec = id ~= nil and Store.Get(id)
+    if not (rec and NAMED[what] and PIECES[rec.type]) then
+        local on = (id == nil and " naming no record") or (not rec and " naming a record gone")
+            or (" on a " .. tostring(rec.type))
+        AskFull(tostring(what or "change") .. on)
+        return
+    end
+    want.ids[id] = true
+    Events.Coalesce("ad_rebuild", RunWanted)
 end
 
 -- Records an import is still bringing in (Options.RunImport): not drawn until
@@ -2831,7 +2990,7 @@ function Engine.WireArtEvents(pass)
 end
 
 function Engine.Init()
-    Events.OnMessage("AD_DIRTY", "engine", function() Engine.QueueRebuild() end)
+    Events.OnMessage("AD_DIRTY", "engine", function(_, what, id) Engine.OnDirty(what, id) end)
     -- A combat edge restyles nothing: combat conditions run their own pass,
     -- so only the combat-only glows re-check, a frame later, as
     -- InCombatLockdown still reads false while PLAYER_REGEN_DISABLED runs.

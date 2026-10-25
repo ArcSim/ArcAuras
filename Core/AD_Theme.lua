@@ -8,7 +8,7 @@ local AT = {}
 -- Other addons carry copies of this file, generated from it by the
 -- arc-theme-sync tool, which compares this number to find stale copies.
 -- Bump it on every change and never edit a copy.
-AT.VERSION = 34
+AT.VERSION = 35
 
 -- The addon this copy loads in: a palette's font file sits in its folder.
 local THEME_ADDON = ...
@@ -1832,7 +1832,7 @@ local function LayRows(pg, sec, side, bw, synced)
         -- the window) with the section insets.
         bw = bw or sec.box:GetWidth() or 0
         if bw <= 60 then
-            local pw = pg:GetWidth() or 0
+            local pw = (pg:GetWidth() or 0) - (pg._leadX or 0)
             if pw > 60 then
                 bw = (side and (pw / 2) or pw) - 12
             end
@@ -1952,7 +1952,8 @@ function AT.LayoutCards(pg, run, y)
         pg._sizeUnresolved = true
         pw = LAY.cardMax + 12
     end
-    local avail = pw - 12 - (pg._scroll and AT.ScrollExtra() or 0)
+    local L0 = pg._leadX or 0
+    local avail = pw - 12 - L0 - (pg._scroll and AT.ScrollExtra() or 0)
     local need = LAY.cardMin
     for _, sec in ipairs(shown) do
         local n = AT.CardNeed(sec)
@@ -1974,7 +1975,7 @@ function AT.LayoutCards(pg, run, y)
         for k = idx, last do
             local sec = shown[k]
             sec.box:ClearAllPoints()
-            sec.box:SetPoint("TOPLEFT", pg, "TOPLEFT", 6 + (k - idx) * (w + LAY.cardGap), y)
+            sec.box:SetPoint("TOPLEFT", pg, "TOPLEFT", 6 + L0 + (k - idx) * (w + LAY.cardGap), y)
             sec.box:SetWidth(w)
             sec.box:Show()
             -- the rows, and a little room under the last one
@@ -1993,8 +1994,19 @@ end
 -- pass runs row._sync (builders set it; custom rows set their own) and hides
 -- any row or section whose visibleFn returns false. Cards (AT.Card) that follow
 -- each other flow in lines (AT.LayoutCards).
+-- A lead column: a frame pinned at the left under the page's top rows (a
+-- header, its tabs) while visibleFn holds, every section and card then
+-- starting w + gap to its right; the two halves of a side-by-side pair split
+-- what is left. layout() lays the frame's own contents and returns its
+-- height. Whole units keep it on the pixel grid.
+function AT.SetLead(pg, frame, w, gap, visibleFn, layout)
+    pg._lead = { frame = frame, w = math.floor(w + 0.5), gap = math.floor((gap or 12) + 0.5),
+        visibleFn = visibleFn, layout = layout }
+end
+
 function AT.LayoutPage(pg)
     if not (pg and pg._sections) then return end
+    local lead = pg._lead
     if pg._scroll then
         -- Clamped against the last measured content; it is one pass stale only
         -- when content shrinks under the scroll, and the next pass fixes it.
@@ -2015,6 +2027,12 @@ function AT.LayoutPage(pg)
             row:Show(); y = y - row._h
         else row:Hide() end
     end
+    -- the lead after the top rows' syncs: a tab row's sync can move the tab
+    -- the lead belongs to
+    local leadOn = lead ~= nil and ((not lead.visibleFn) or lead.visibleFn() == true)
+    local L0 = leadOn and (lead.w + lead.gap) or 0
+    pg._leadX = L0
+    local leadTop = y
     local pairTopY, pairBottomY
     local secs = pg._sections
     local i = 1
@@ -2060,11 +2078,11 @@ function AT.LayoutPage(pg)
             local function span(f, top)
                 f:ClearAllPoints()
                 if side == "L" then
-                    f:SetPoint("TOPLEFT", 6, top); f:SetPoint("TOPRIGHT", pg, "TOP", -6, top)
+                    f:SetPoint("TOPLEFT", 6 + L0, top); f:SetPoint("TOPRIGHT", pg, "TOP", -6 + L0 / 2, top)
                 elseif side == "R" then
-                    f:SetPoint("TOPLEFT", pg, "TOP", 6, top); f:SetPoint("TOPRIGHT", -6 - extra, top)
+                    f:SetPoint("TOPLEFT", pg, "TOP", 6 + L0 / 2, top); f:SetPoint("TOPRIGHT", -6 - extra, top)
                 else
-                    f:SetPoint("TOPLEFT", 6, top); f:SetPoint("TOPRIGHT", -6 - extra, top)
+                    f:SetPoint("TOPLEFT", 6 + L0, top); f:SetPoint("TOPRIGHT", -6 - extra, top)
                 end
             end
             if sec.hit then
@@ -2079,8 +2097,8 @@ function AT.LayoutPage(pg)
                 sec.title:Show()
             elseif sec.title then
                 sec.title:ClearAllPoints()
-                if side == "R" then sec.title:SetPoint("TOPLEFT", pg, "TOP", 12, topY - 2)
-                else sec.title:SetPoint("TOPLEFT", 12, topY - 2) end
+                if side == "R" then sec.title:SetPoint("TOPLEFT", pg, "TOP", 12 + L0 / 2, topY - 2)
+                else sec.title:SetPoint("TOPLEFT", 12 + L0, topY - 2) end
                 sec.title:Show(); hdrH = LAY.hdr
                 if sec.hr then
                     span(sec.hr, topY - hdrH + 5)   -- same edges as the box
@@ -2114,6 +2132,21 @@ function AT.LayoutPage(pg)
     end
     -- _contentH is the full laid-out height, so add the scroll offset back.
     pg._contentH = -y + 8 + (pg._scrollOff or 0)
+    if lead and lead.frame then
+        if leadOn then
+            local top = leadTop
+            lead.frame:ClearAllPoints()
+            lead.frame:SetPoint("TOPLEFT", pg, "TOPLEFT", 6, top)
+            lead.frame:SetWidth(lead.w)
+            local h = math.floor(((lead.layout and lead.layout()) or lead.frame:GetHeight() or 0) + 0.5)
+            lead.frame:SetHeight(math.max(1, h))
+            lead.frame:Show()
+            -- the page is as tall as the longer column
+            pg._contentH = math.max(pg._contentH, -top + h + 8 + (pg._scrollOff or 0))
+        else
+            lead.frame:Hide()
+        end
+    end
     if pg._scroll then
         -- The clamp above had the last pass's height. Content that just got
         -- shorter (a bigger window flows more cards to a line) would leave the

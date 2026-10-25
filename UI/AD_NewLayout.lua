@@ -42,8 +42,9 @@ function NL.AddSpotlight(t)
 end
 
 -- Cards other files add to the start row (an importer): the card entry plus an
--- `avail` test, read once when the window builds; `lead` puts one right after
--- the templates, the rest go after Import.
+-- `avail` test, read once when the window builds; `first` puts one right after
+-- the templates, `lead` after those, the rest go after Import. `lit` keeps a
+-- card in its hover look while it answers true (its window is open).
 NL.EXTRA = {}
 
 function NL.AddOwnCard(entry)
@@ -327,7 +328,7 @@ function NL.MakeCard(parent, entry)
         if entry.src then NL.ShowBig(s) end
     end)
     c:SetScript("OnLeave", function(s)
-        NL.Paint(s, false)
+        NL.Paint(s, entry.lit ~= nil and entry.lit() == true)
         if entry.src then NL.HideBig() end
     end)
     c:SetScript("OnClick", function() entry.pick() end)
@@ -422,17 +423,21 @@ function NL.Fill(pane)
     pg:Show()
     NL.pg = pg
     -- the packs the player has, and their updates, are on Home (UI\AD_Home.lua)
-    -- Every way to start, in one row on top: the templates, a card another file
-    -- puts first (lead: the Cooldown Manager's), an empty layout, an import, then
-    -- the other importers. The packs follow, in a fold the player can shut.
+    -- Every way to start, in one row on top: the templates, the cards other
+    -- files put first (the proc picker's) and lead (the Cooldown Manager's), an
+    -- empty layout, an import, then the other importers. The packs follow, in a
+    -- fold the player can shut.
     AT.Section(pg, "Start from a template")
     local start = NL.Cards(NL.TEMPLATES)
-    local rest = {}
+    local lead, rest = {}, {}
     for _, e in ipairs(NL.EXTRA) do
         if not e.avail or e.avail() then
-            if e.lead then start[#start + 1] = e else rest[#rest + 1] = e end
+            if e.first then start[#start + 1] = e
+            elseif e.lead then lead[#lead + 1] = e
+            else rest[#rest + 1] = e end
         end
     end
+    for _, e in ipairs(lead) do start[#start + 1] = e end
     start[#start + 1] = { title = "Empty Layout", desc = "A blank layout. Add your own groups, icons and bars.",
         draw = NL.DrawEmpty, pick = function() O.OpenLayout(S.NewLayout()) end }
     start[#start + 1] = { title = "Import a Layout", desc = "Paste a layout someone shared with you.",

@@ -548,11 +548,46 @@ local function AuraSoundShows(rec)
     return type(ov) == "table" and ov.on == true
 end
 
+-- The sound channel steers sound files only: the game's speech takes a volume
+-- and no channel (C_VoiceChat.SpeakText), so the row waits for a picked sound.
+local function SoundFileShows(rec)
+    local Store, sec = NS.Store, Schema.icon and Schema.icon.alerts
+    if not (rec and Store and Store.Resolve and Store.KindOf and sec) then return true end
+    local kind = Store.KindOf(rec)
+    for f, def in pairs(sec.fields) do
+        if def.t == "sound" and Schema.Applies(def, sec, kind) and (not def.showIf or def.showIf(rec) == true) then
+            local v = Store.Resolve(rec, "alerts", f)
+            if type(v) == "string" and v ~= "" then return true end
+        end
+    end
+    return false
+end
+Schema.SoundFileShows = SoundFileShows
+
 -- "Show only when little time is left" needs the icon's own button.
 local function TimeGateShows(rec)
     local DA = NS.DriverAura
     return DA ~= nil and DA.TimeGateOK ~= nil and DA.TimeGateOK(rec)
 end
+
+-- The stacks state: the same icons as the time gate (DriverAura.CountGateOK).
+local function CountGateShows(rec)
+    local DA = NS.DriverAura
+    return DA ~= nil and DA.CountGateOK ~= nil and DA.CountGateOK(rec)
+end
+
+-- The charges state: spell icons whose spell has charges (DriverAura.ChargeGateOK).
+local function ChargeCountShows(rec)
+    local DA = NS.DriverAura
+    return DA ~= nil and DA.ChargeGateOK ~= nil and DA.ChargeGateOK(rec)
+end
+Schema.ChargeCountShows = ChargeCountShows
+Schema.CountGateShows = CountGateShows
+
+-- A count state's rule: when it holds.
+Schema.COUNT_RULES = { "any", "least", "most", "exactly", "between" }
+Schema.COUNT_RULE_LABELS = { any = "Any count", least = "At least", most = "At most", exactly = "Exactly",
+    between = "Between" }
 
 -- The ammo count's own threshold colours show with the text that carries the
 -- count: the ammo icon's stack text, a spell icon's ammo text.
@@ -1186,6 +1221,29 @@ Schema.icon = {
             kinds = SP, label = "Out-of-range glow strata", dep = { field = "rangeGlow" } },
         rangeGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, kinds = SP, label = "Out-of-range glow frame level",
             dep = { field = "rangeGlow" } },
+        -- The charges state: holds while the spell has a count of charges (the
+        -- rule); its look applies only then. The count is secret in combat, so
+        -- it only feeds a bar (DriverAura.ChargeGate). Opacity 0 cuts the
+        -- whole look away; under 1, grey and tint redraw the art and border at
+        -- that count, the swipe and texts over them; its glow shows only then.
+        -- In a Dynamic group the icon keeps its place: a count can't move it.
+        chargesRule = { d = "any", t = "enum", values = Schema.COUNT_RULES, labels = Schema.COUNT_RULE_LABELS,
+            kinds = SP, showIf = ChargeCountShows, label = "Charges",
+            desc = "Holds while the spell has this many charges. Its effects apply only then; in a Dynamic group it keeps its place." },
+        chargesA = { d = 2, t = "int", min = 0, max = 99, input = true, kinds = SP, showIf = ChargeCountShows,
+            label = "Charge count", dep = { field = "chargesRule", notValue = "any" } },
+        chargesB = { d = 3, t = "int", min = 0, max = 99, input = true, kinds = SP, showIf = ChargeCountShows,
+            label = "Up to charges", dep = { field = "chargesRule", value = "between" } },
+        chargesAlpha = { d = 1, t = "num", min = 0, max = 1, kinds = SP, showIf = ChargeCountShows,
+            label = "Opacity at that count", dep = { field = "chargesRule", notValue = "any" },
+            desc = "The icon's art and border at this opacity while the rule holds. 0% hides the whole icon, texts and glows too." },
+        chargesDesaturate = { d = false, t = "bool", kinds = SP, showIf = ChargeCountShows,
+            label = "Desaturate at that count", dep = { field = "chargesRule", notValue = "any" } },
+        chargesTintEnabled = { d = false, t = "bool", kinds = SP, showIf = ChargeCountShows,
+            label = "Tint at that count", dep = { field = "chargesRule", notValue = "any" } },
+        chargesTintColor = { d = { 1, 0.3, 0.3, 1 }, t = "color", kinds = SP, showIf = ChargeCountShows,
+            label = "Tint color at that count",
+            dep = { { field = "chargesRule", notValue = "any" }, { field = "chargesTintEnabled" } } },
         -- Recharging: a charge spell with a charge left and another on its way,
         -- a state with its own look (a save from before keeps what it showed:
         -- Store.KeepRechargeLook).
@@ -1447,18 +1505,20 @@ Schema.icon = {
                 end
                 return t
             end)(),
-            label = "Sound channel" },
+            label = "Sound channel",
+            desc = "Which of the game's volume sliders the sounds follow. Spoken words use WoW's text to speech volume.",
+            showIf = SoundFileShows },
         readySoundEnabled = { d = false, t = "bool", kinds = USE_CD, label = "Play a sound when ready" },
         readySound = { d = "", t = "sound", kinds = USE_CD, label = "Ready sound", dep = { field = "readySoundEnabled" } },
         readySpeech = { noDefault = true, inherit = false, d = "", t = "text", kinds = USE_CD, label = "Say when ready",
-            desc = "Spoken by the game's text to speech, in the voice Arc Auras speaks with. Empty says nothing.",
+            desc = "Spoken by WoW's text to speech at its own speech volume, not on the sound channel. Empty says nothing.",
             dep = { field = "readySoundEnabled" } },
         -- From shadow edges, never secret numbers: cooldown start, recharge
         -- start, and a charge returning while the spell stays castable.
         cooldownSoundEnabled = { d = false, t = "bool", kinds = USE_CD, label = "Play a sound when the cooldown starts" },
         cooldownSound = { d = "", t = "sound", kinds = USE_CD, label = "Cooldown-start sound", dep = { field = "cooldownSoundEnabled" } },
         cooldownSpeech = { noDefault = true, inherit = false, d = "", t = "text", kinds = USE_CD, label = "Say when the cooldown starts",
-            desc = "Spoken by the game's text to speech, in the voice Arc Auras speaks with. Empty says nothing.",
+            desc = "Spoken by WoW's text to speech at its own speech volume, not on the sound channel. Empty says nothing.",
             dep = { field = "cooldownSoundEnabled" } },
         -- a Custom Icon's Ready: its timer idle and its cooldown spell ready
         idleSoundEnabled = { d = false, t = "bool", kinds = TIM, showIf = CdShows, label = "Play a sound when ready" },
@@ -1466,36 +1526,36 @@ Schema.icon = {
             dep = { field = "idleSoundEnabled" } },
         idleSpeech = { noDefault = true, inherit = false, d = "", t = "text", kinds = TIM, showIf = CdShows,
             label = "Say when ready",
-            desc = "Spoken by the game's text to speech, in the voice Arc Auras speaks with. Empty says nothing.",
+            desc = "Spoken by WoW's text to speech at its own speech volume, not on the sound channel. Empty says nothing.",
             dep = { field = "idleSoundEnabled" } },
         -- A special icon's moments: the tracker's proc edge (NS.Special.Proc),
         -- and the draw its chance reads as 100%.
         procSoundEnabled = { d = false, t = "bool", kinds = SPC, label = "Play a sound on proc" },
         procSound = { d = "", t = "sound", kinds = SPC, label = "Proc sound", dep = { field = "procSoundEnabled" } },
         procSpeech = { noDefault = true, inherit = false, d = "", t = "text", kinds = SPC, label = "Say on proc",
-            desc = "Spoken by the game's text to speech, in the voice Arc Auras speaks with. Empty says nothing.",
+            desc = "Spoken by WoW's text to speech at its own speech volume, not on the sound channel. Empty says nothing.",
             dep = { field = "procSoundEnabled" } },
         sureSoundEnabled = { d = false, t = "bool", kinds = SPC, label = "Play a sound when the next draw is guaranteed" },
         sureSound = { d = "", t = "sound", kinds = SPC, label = "Guaranteed sound", dep = { field = "sureSoundEnabled" } },
         sureSpeech = { noDefault = true, inherit = false, d = "", t = "text", kinds = SPC, label = "Say when the next draw is guaranteed",
-            desc = "Spoken by the game's text to speech, in the voice Arc Auras speaks with. Empty says nothing.",
+            desc = "Spoken by WoW's text to speech at its own speech volume, not on the sound channel. Empty says nothing.",
             dep = { field = "sureSoundEnabled" } },
         rechargeSoundEnabled = { d = false, t = "bool", kinds = SP, label = "Play a sound when recharging starts" },
         rechargeSound = { d = "", t = "sound", kinds = SP, label = "Recharge-start sound", dep = { field = "rechargeSoundEnabled" } },
         rechargeSpeech = { noDefault = true, inherit = false, d = "", t = "text", kinds = SP, label = "Say when recharging starts",
-            desc = "Spoken by the game's text to speech, in the voice Arc Auras speaks with. Empty says nothing.",
+            desc = "Spoken by WoW's text to speech at its own speech volume, not on the sound channel. Empty says nothing.",
             dep = { field = "rechargeSoundEnabled" } },
         chargeGainedSoundEnabled = { d = false, t = "bool", kinds = SP, label = "Play a sound when a charge returns" },
         chargeGainedSound = { d = "", t = "sound", kinds = SP, label = "Charge-gained sound", dep = { field = "chargeGainedSoundEnabled" } },
         chargeGainedSpeech = { noDefault = true, inherit = false, d = "", t = "text", kinds = SP, label = "Say when a charge returns",
-            desc = "Spoken by the game's text to speech, in the voice Arc Auras speaks with. Empty says nothing.",
+            desc = "Spoken by WoW's text to speech at its own speech volume, not on the sound channel. Empty says nothing.",
             dep = { field = "chargeGainedSoundEnabled" } },
         -- The moment it can be pressed: usable (IsSpellUsable, plain) and off
         -- its real cooldown. A reactive spell (Mongoose Bite) rings on the dodge.
         usableSoundEnabled = { d = false, t = "bool", kinds = SP, label = "Play a sound when usable" },
         usableSound = { d = "", t = "sound", kinds = SP, label = "Usable sound", dep = { field = "usableSoundEnabled" } },
         usableSpeech = { noDefault = true, inherit = false, d = "", t = "text", kinds = SP, label = "Say when usable",
-            desc = "Spoken by the game's text to speech, in the voice Arc Auras speaks with. Empty says nothing.",
+            desc = "Spoken by WoW's text to speech at its own speech volume, not on the sound channel. Empty says nothing.",
             dep = { field = "usableSoundEnabled" } },
         -- An aura icon's moments, played by the game (Drivers\AD_AuraSounds.lua):
         -- in combat too, for any caster's copy; `files`: a sound file, no kit.
@@ -1759,6 +1819,28 @@ Schema.icon = {
             label = "The aura lasts (seconds)",
             desc = "The aura's full length, which the game keeps from addons: seconds need it, percent does not. 0 = not set: always shown.",
             dep = { { field = "activeTimeOnly" }, { field = "activeTimeUnit", value = "sec" } } },
+        -- The stacks state: holds while the aura is up at a count (the rule);
+        -- its look applies only then. Engine-driven like the time gate
+        -- (DriverAura.CountGate): the game fills a bar by the stacks. Opacity
+        -- 0 cuts the whole look away; under 1, grey and tint redraw the art and
+        -- border at that count, the swipe and texts over them; its glow shows only then.
+        stacksRule = { d = "any", t = "enum", values = Schema.COUNT_RULES, labels = Schema.COUNT_RULE_LABELS,
+            kinds = AU, showIf = CountGateShows, label = "Stacks",
+            desc = "Holds while the aura is up at this many stacks. Its effects apply only then." },
+        stacksA = { d = 3, t = "int", min = 1, max = 99, input = true, kinds = AU, showIf = CountGateShows,
+            label = "Stack count", dep = { field = "stacksRule", notValue = "any" } },
+        stacksB = { d = 5, t = "int", min = 1, max = 99, input = true, kinds = AU, showIf = CountGateShows,
+            label = "Up to stacks", dep = { field = "stacksRule", value = "between" } },
+        stacksAlpha = { d = 1, t = "num", min = 0, max = 1, kinds = AU, showIf = CountGateShows,
+            label = "Opacity at that count", dep = { field = "stacksRule", notValue = "any" },
+            desc = "The icon's art and border at this opacity while the rule holds. 0% hides the whole icon, texts and glows too." },
+        stacksDesaturate = { d = false, t = "bool", kinds = AU, showIf = CountGateShows,
+            label = "Desaturate at that count", dep = { field = "stacksRule", notValue = "any" } },
+        stacksTintEnabled = { d = false, t = "bool", kinds = AU, showIf = CountGateShows,
+            label = "Tint at that count", dep = { field = "stacksRule", notValue = "any" } },
+        stacksTintColor = { d = { 1, 0.3, 0.3, 1 }, t = "color", kinds = AU, showIf = CountGateShows,
+            label = "Tint color at that count",
+            dep = { { field = "stacksRule", notValue = "any" }, { field = "stacksTintEnabled" } } },
         activeGlow = { d = false, t = "bool", label = "Glow while active" },
         -- The gates ride a lane: the icon's own (DriverAura) or its Dynamic
         -- row's (AD_DriverAuraRows). The pick is one of the icon's spells, its
@@ -2152,10 +2234,58 @@ Schema.GLOW_LANE_WORDS = { ready = "Glow", cooldown = "Cooldown glow", proc = "P
     idle = "Ready glow", active = "Active glow" }
 Schema.LANE_LABELS = { native = "%s in the game's own color", backing = "%s dark backing line",
     fade = "%s fade out (seconds)" }
+-- the count glows' rows read as a state's own glow rows ("Glow style", "Glow in the game's own color")
+Schema.GLOW_LANE_WORDS.stacks = "Glow"
+Schema.GLOW_LANE_WORDS.charges = "Glow"
+
+-- A count state's glow (the stacks and the charges state): the Recharging
+-- glow's rows, drawn by our own builders (Factory.SetAuraButtonGlow) and shown
+-- only while the count meets the rule. No combat-only switch or strata: the
+-- stacks glow rides the aura's button, the charges glow the icon's stage.
+Schema.COUNT_GLOW_PARTS = { "Glow", "GlowType", "GlowColor", "GlowSpeed", "GlowLines", "GlowThickness",
+    "GlowLength", "GlowParticles", "GlowScale", "GlowIntensity", "GlowXOffset", "GlowYOffset",
+    "GlowMoveX", "GlowMoveY", "GlowLevel" }
+Schema.COUNT_GLOW_LABELS = { Glow = "Glow at that count", GlowType = "Glow style", GlowColor = "Glow color",
+    GlowSpeed = "Glow speed", GlowLines = "Glow lines", GlowThickness = "Glow thickness",
+    GlowLength = "Glow line length (0 = auto)", GlowParticles = "Glow particles", GlowScale = "Glow size",
+    GlowIntensity = "Glow intensity", GlowXOffset = "Glow X offset", GlowYOffset = "Glow Y offset",
+    GlowMoveX = "Glow move X", GlowMoveY = "Glow move Y", GlowLevel = "Glow frame level" }
+do
+    local src = Schema.icon.states.fields
+    local function copy(v)
+        if type(v) ~= "table" then return v end
+        local t = {}
+        for k, x in pairs(v) do t[k] = copy(x) end
+        return t
+    end
+    for _, st in ipairs({ { "auraActive", "stacks", AU, CountGateShows }, { "states", "charges", SP, ChargeCountShows } }) do
+        local fields, pre = Schema.icon[st[1]].fields, st[2]
+        local rule = { field = pre .. "Rule", notValue = "any" }
+        for _, part in ipairs(Schema.COUNT_GLOW_PARTS) do
+            local from = src["recharge" .. part]
+            local def = {}
+            for k, v in pairs(from) do def[k] = v end
+            def.d = copy(from.d)
+            def.kinds, def.showIf, def.label = st[3], st[4], Schema.COUNT_GLOW_LABELS[part]
+            -- every dep names this state's own glow, and the rule comes first
+            local deps = { rule }
+            if from.dep then
+                for _, d in ipairs(from.dep.field and { from.dep } or from.dep) do
+                    local t = copy(d)
+                    t.field = t.field:gsub("^recharge", pre)
+                    deps[#deps + 1] = t
+                end
+            end
+            def.dep = deps
+            fields[pre .. part] = def
+        end
+    end
+end
 do
     local lanes = { { "states", "ready" }, { "states", "cooldown" }, { "states", "proc" }, { "states", "usable" },
         { "states", "warn" }, { "states", "toggle" }, { "states", "assist" }, { "states", "range" },
-        { "states", "recharge" }, { "states", "totemRange" }, { "states", "idle" }, { "auraActive", "active" } }
+        { "states", "recharge" }, { "states", "totemRange" }, { "states", "idle" }, { "auraActive", "active" },
+        { "auraActive", "stacks" }, { "states", "charges" } }
     for _, ln in ipairs(lanes) do
         local sec, pre = ln[1], ln[2]
         local fields = Schema.icon[sec].fields
@@ -2175,8 +2305,8 @@ do
             fields[pre .. "GlowBacking"] = Lane({ adv = "glow", d = false, t = "bool", label = Schema.LANE_LABELS.backing:format(word),
                 desc = "A dim dark line along the edge, under the moving lines.",
                 dep = { { field = sw }, { field = ty, value = "pixel" } } })
-            -- the aura's Active glow draws its own button art, which has no fade
-            if pre ~= "active" then
+            -- the aura's Active glow and the count glows draw their own art, which has no fade
+            if pre ~= "active" and pre ~= "stacks" and pre ~= "charges" then
                 fields[pre .. "GlowFadeOut"] = Lane({ adv = "glow", d = 0, t = "num", min = 0, max = 1, step = 0.05,
                     fmt = "%g", label = Schema.LANE_LABELS.fade:format(word),
                     desc = "How long the button glow takes to fade when it stops. 0: it goes at once.",
@@ -2833,11 +2963,12 @@ do
     end
 end
 
--- A reminder group plays on the same channels as the alerts.
+-- A reminder group plays on the same channels as the alerts, its spoken lines
+-- on none (its default sound always needs the row, so no showIf).
 do
     local from = Schema.icon.alerts.fields.soundChannel
     local to = Schema.iconGroup.audio.fields.soundChannel
-    to.values, to.labels = from.values, from.labels
+    to.values, to.labels, to.desc = from.values, from.labels, from.desc
 end
 
 -- A reminder record (a Reminder group's member) keeps its triggers as a list
@@ -3068,6 +3199,14 @@ function Schema.TickValues(s)
     end
     return out
 end
+-- A castbar's stage colors list while the stages fill in them or the
+-- dividers wear them.
+Schema.StageColorsShow = function(rec)
+    local S = NS.Store
+    if not (S and rec) then return false end
+    return S.Resolve(rec, "fill", "castStageColors") == true
+        or (S.Resolve(rec, "ticks", "castStageMarks") == true and S.Resolve(rec, "ticks", "castStageMarkColors") == true)
+end
 -- Color each tick's rows past the first: one per number in the list.
 local function EachTickDep(n)
     return { { field = "tickColorEach" }, { field = "ticksShow" }, { field = "tickMode", value = "custom" },
@@ -3151,6 +3290,31 @@ Schema.bar = {
             desc = "Casts you cannot interrupt take this color. The game hides this from addons in combat, so it can only change the bar's look." },
         castLockColor = { d = { 0.62, 0.64, 0.68, 1 }, t = "color", alpha = true, kinds = BK_CAST, label = "Can't be interrupted color",
             dep = { field = "castLockOn" } },
+        -- An empowered cast: each stage, from the start to the first divider
+        -- and on to the hold, in its own color. The count is how many colors
+        -- the editor lists and the edit sample shows; a cast uses its own
+        -- stage count (a stage past eight wears the eighth).
+        castStageColors = { d = false, t = "bool", kinds = BK_CAST, label = "Color stage segments",
+            desc = "Each stage of an empowered cast fills in its own color." },
+        castStageColor1 = { d = { 0.6, 0.2, 1, 1 }, t = "color", alpha = true, kinds = BK_CAST, label = "Stage 1 color",
+            showIf = Schema.StageColorsShow, dep = { field = "castStageCount", min = 1 } },
+        castStageColor2 = { d = { 0.9, 0.1, 0.6, 1 }, t = "color", alpha = true, kinds = BK_CAST, label = "Stage 2 color",
+            showIf = Schema.StageColorsShow, dep = { field = "castStageCount", min = 2 } },
+        castStageColor3 = { d = { 1, 0.3, 0.1, 1 }, t = "color", alpha = true, kinds = BK_CAST, label = "Stage 3 color",
+            showIf = Schema.StageColorsShow, dep = { field = "castStageCount", min = 3 } },
+        castStageColor4 = { d = { 1, 0.7, 0.1, 1 }, t = "color", alpha = true, kinds = BK_CAST, label = "Stage 4 color",
+            showIf = Schema.StageColorsShow, dep = { field = "castStageCount", min = 4 } },
+        castStageColor5 = { d = { 0.1, 0.9, 0.3, 1 }, t = "color", alpha = true, kinds = BK_CAST, label = "Stage 5 color",
+            showIf = Schema.StageColorsShow, dep = { field = "castStageCount", min = 5 } },
+        castStageColor6 = { d = { 0.1, 0.7, 1, 1 }, t = "color", alpha = true, kinds = BK_CAST, label = "Stage 6 color",
+            showIf = Schema.StageColorsShow, dep = { field = "castStageCount", min = 6 } },
+        castStageColor7 = { d = { 1, 1, 0.2, 1 }, t = "color", alpha = true, kinds = BK_CAST, label = "Stage 7 color",
+            showIf = Schema.StageColorsShow, dep = { field = "castStageCount", min = 7 } },
+        castStageColor8 = { d = { 0.8, 0.8, 0.8, 1 }, t = "color", alpha = true, kinds = BK_CAST, label = "Stage 8 color",
+            showIf = Schema.StageColorsShow, dep = { field = "castStageCount", min = 8 } },
+        castStageCount = { d = 4, t = "int", min = 1, max = 8, kinds = BK_CAST, adds = "stage color", label = "Stage colors",
+            desc = "How many stage colors to list and show while editing; set it to your spell's stages.",
+            showIf = Schema.StageColorsShow },
         -- Cooldown stack bars draw charge slots, never the fill, so they lack
         -- orientation and reverse; aura stack bars keep them. onSet runs after
         -- the editor writes: Horizontal lays a standing bar down.
@@ -3892,6 +4056,12 @@ Schema.bar = {
             dep = { { field = "ticksShow" }, { field = "tickSpellIcons" } } },
         tickChannelOnly = { inherit = false, d = false, t = "bool", kinds = BK_CAST, label = "Tick marks on channels only",
             dep = { field = "ticksShow" } },
+        -- On by default: the game's own castbar always shows its stages.
+        castStageMarks = { d = true, t = "bool", kinds = BK_CAST, label = "Stage dividers",
+            desc = "A divider where each stage of an empowered cast begins, in the tick look. Shows with tick marks off too." },
+        castStageMarkColors = { d = false, t = "bool", kinds = BK_CAST, label = "Color per divider",
+            desc = "Each divider wears the color of the stage it closes (Fill & Colors > Empowered stages).",
+            dep = { field = "castStageMarks" } },
         tickColor = { d = { 0, 0, 0, 1 }, t = "color", alpha = true, label = "Tick color", dep = { field = "ticksShow" } },
         -- Custom values only: the nth number typed wears tick colour n (the
         -- Tick color is the first; numbers past six wear the sixth). Per bar

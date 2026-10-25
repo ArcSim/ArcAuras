@@ -307,8 +307,16 @@ function Options.SoundRows(pg, ctx, trackVis, owner)
             vis, p.tip)
         row._adMeta = { family = "bar", section = "sound", field = p.key, def = { label = p.label }, baseVis = vis }
     end
-    -- the game channel it plays on, as an icon's sounds pick theirs
+    -- the game channel its sounds play on, as an icon's sounds pick theirs;
+    -- speech has no channel (SpeakText takes a volume), so a rule must play a sound
     local chDef = NS.Schema.icon.alerts.fields.soundChannel
+    local function chVis()
+        if not vis() then return false end
+        for _, r in ipairs(NS.SoundItems.Rules(Rec())) do
+            if r.act ~= "speak" then return true end
+        end
+        return false
+    end
     local ch = AT.RowDropdown(pg, owner, "Sound channel",
         function()
             local r, SN = Rec(), NS.SoundItems
@@ -322,8 +330,8 @@ function Options.SoundRows(pg, ctx, trackVis, owner)
             local out = {}
             for _, v in ipairs(chDef.values) do out[#out + 1] = { value = v, text = (chDef.labels and chDef.labels[v]) or v } end
             return out
-        end, vis, function() AT.LayoutPage(pg) end)
-    AT.Tooltip(ch, "Sound channel", "Which of the game's volume sliders its sounds come out of.")
+        end, chVis, function() AT.LayoutPage(pg) end)
+    AT.Tooltip(ch, "Sound channel", chDef.desc)
     if CO and CO.RuleRows then CO.RuleRows(pg, Rec, vis, owner, true, SO.RuleOpts(owner)) end
     SO.SpeechRows(pg, vis, Rec)
     AT.Section(pg, nil)

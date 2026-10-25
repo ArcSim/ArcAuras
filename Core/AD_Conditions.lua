@@ -1263,6 +1263,16 @@ function Conditions.AlphaFor(rec)
     return FadeTarget(rec)
 end
 
+-- True when the record's own condition opacity is only ever 0 or 1: it never
+-- fades to a value between nor glides through one (a shared aura container
+-- can hide a member, never dim it alone).
+function Conditions.OwnFadeBinary(rec)
+    if not rec then return true end
+    local c = rec.c or EMPTY
+    if FadeValue(c, "fadeAlpha") == 0 and FadeValue(c, "fadeTime") == 0 then return true end
+    return not (SetHas(c.showWhen) or SetHas(c.fadeWhen) or Conditions.RangeRule(rec) ~= nil)
+end
+
 -- The whole chain: an icon under a group faded to nothing ignores the mouse too.
 function Conditions.MouseBlocked(rec)
     if not rec or EditMode() then return false end

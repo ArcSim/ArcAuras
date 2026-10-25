@@ -122,16 +122,47 @@ end
 -- that set it, or its file and the hooked method.
 local ADDON_PAT = ADDON:gsub("%p", "%%%0")
 
--- The first line of ours on the stack that is not this file, as "file:line".
-local function Caller()
-    local s = debugstack and debugstack(2, 6, 0)
+-- The first line of ours on the stack that is not this file, as "file:line";
+-- skip: more files to look past (a set of "Core/AD_Store.lua" style paths).
+local function Caller(skip)
+    local s = debugstack and debugstack(2, skip and 14 or 6, 0)
     -- secret across a secure frame: no string work on it
     if type(s) ~= "string" or (issecretvalue and issecretvalue(s)) then return nil end
     for file, line in s:gmatch("[/\\]" .. ADDON_PAT .. "[/\\]([^\"%]:\n]-%.lua)[\"%]]*:(%d+)") do
         file = file:gsub("\\", "/")
-        if file ~= "Core/AD_Perf.lua" then return file .. ":" .. line end
+        if file ~= "Core/AD_Perf.lua" and not (skip and skip[file]) then return file .. ":" .. line end
     end
     return nil
+end
+Perf.Caller = Caller
+
+-- The layout passes while recording (Core\AD_LayoutEngine.lua tells): each
+-- full one with who asked for it, the partial ones (one group, icon or bar) counted.
+function Perf.NoteRebuild(full, why)
+    if not Perf.on then return end
+    local m = Meta(Perf.cur)
+    if full then
+        m.fullWhy = m.fullWhy or {}
+        why = why or "?"
+        m.fullWhy[why] = (m.fullWhy[why] or 0) + 1
+    else
+        m.partial = (m.partial or 0) + 1
+    end
+end
+
+-- "Layout passes: 1 full (load naming no record from Core/AD_Conditions.lua:1557), 3 partial."
+local function RebuildLine(out, t)
+    local m = Perf.meta[t]
+    if not (m and (m.fullWhy or m.partial)) then return end
+    local n, why = 0, {}
+    for w, k in pairs(m.fullWhy or {}) do
+        n = n + k
+        why[#why + 1] = k > 1 and (w .. " x" .. k) or w
+    end
+    table.sort(why)
+    local s = ("Layout passes: %d full"):format(n)
+    if n > 0 then s = s .. " (" .. table.concat(why, "; ") .. ")" end
+    out[#out + 1] = s .. (", %d partial (one group, icon or bar)."):format(m.partial or 0)
 end
 
 function Perf.Timers(file)
@@ -214,6 +245,11 @@ function Perf.FramesLine()
         local n, off = DA.SideCensus()
         line = line .. (" %d target or focus aura slots, %d of them off for the unit's side."):format(n, off)
     end
+    -- groups' shared aura containers and the icons riding them
+    if DA and DA.ShareCensus then
+        local nc, nm = DA.ShareCensus()
+        line = line .. (" %d shared aura containers, %d icons on them."):format(nc, nm)
+    end
     return line
 end
 
@@ -286,7 +322,7 @@ function Perf.Unwrap()
 end
 
 function Perf.Reset()
-    Perf.hudPeak = nil
+    Perf.hudPeak, Perf.hudCombatPeak = nil, nil
     wipe(Perf.stats)
     wipe(Perf.after)
     wipe(Perf.meta)
@@ -527,6 +563,7 @@ local function KindLines(out, t, secs)
     if #parts > 0 then out[#out + 1] = "Traced by kind: " .. table.concat(parts, ", ") .. "." end
     -- each timed call pays bookkeeping, part of it outside what is measured
     out[#out + 1] = ("Timed calls: %d, %.0f per second."):format(calls, calls / secs)
+    RebuildLine(out, t)
 end
 
 -- Deep view: the game's script profiler (the scriptProfile setting) times every
@@ -854,8 +891,9 @@ function Perf.Status()
 end
 
 -- The addon list's figure for this addon on screen while profiling: one
--- line, read once a second, its highest since profiling started beside it,
--- dragged anywhere (ArcAurasDB.perfHud keeps the spot). Up while a recording,
+-- line, read once a second, its highest since profiling started beside it
+-- and its highest in combat (loading screens and the work after a fight
+-- left out), dragged anywhere (ArcAurasDB.perfHud keeps the spot). Up while a recording,
 -- a measure or an M+ run is armed or running, or pinned by /arcperf hud;
 -- hidden, it reads nothing.
 Perf.HUD_SECS = 1
@@ -870,7 +908,11 @@ function Perf.HudText()
     if not P then return "|cff3fc9f2Arc|r Auras: the game's profiler is off" end
     local pct = Perf.AddonPct(ADDON, M.RecentAverageTime)
     if pct and (not Perf.hudPeak or pct > Perf.hudPeak) then Perf.hudPeak = pct end
-    return ("|cff3fc9f2Arc|r Auras  %s   |cffb3c7e0highest %s|r"):format(Perf.PctText(pct), Perf.PctText(Perf.hudPeak))
+    if pct and InCombatLockdown() and (not Perf.hudCombatPeak or pct > Perf.hudCombatPeak) then
+        Perf.hudCombatPeak = pct
+    end
+    return ("|cff3fc9f2Arc|r Auras  %s   |cffb3c7e0highest %s   in combat %s|r"):format(Perf.PctText(pct),
+        Perf.PctText(Perf.hudPeak), Perf.PctText(Perf.hudCombatPeak))
 end
 
 local function HudPlace(f)
@@ -909,7 +951,7 @@ function Perf.HudBuild()
         HudPlace(self)
     end)
     if AT and AT.Tooltip then
-        AT.Tooltip(f, "Arc Auras CPU", "The addon list's figure for Arc Auras, once a second. Drag to move it.")
+        AT.Tooltip(f, "Arc Auras CPU", "The addon list's figure for Arc Auras, once a second, its highest, and its highest in combat. Drag to move it.")
     end
     HudPlace(f)
     f:Hide()
@@ -1563,6 +1605,8 @@ SlashCmdList.ARCPERF = function(msg)
         Perf.ArmMeasure()
     elseif cmd == "hud" then
         Perf.hudPinned = not Perf.hudPinned
+        -- turned on, its highest start now, not with a loading screen before it
+        if Perf.hudPinned then Perf.hudPeak, Perf.hudCombatPeak = nil, nil end
         Perf.HudSync()
         return
     elseif cmd == "mplus" then

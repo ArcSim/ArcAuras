@@ -37,9 +37,10 @@ function SO.ForClass(def)
 end
 
 -- A class tag's word: as the game names the class on another language, the
--- tag in English words on an English client.
+-- tag in English words on an English client (two-word tags spelled out).
+SO.CLASS_EN = { DEATHKNIGHT = "Death Knight", DEMONHUNTER = "Demon Hunter" }
 function SO.ClassWord(tag)
-    local en = tag:sub(1, 1) .. tag:sub(2):lower()
+    local en = SO.CLASS_EN[tag] or (tag:sub(1, 1) .. tag:sub(2):lower())
     local loc = GetLocale and GetLocale()
     if loc == nil or loc == "enUS" or loc == "enGB" then return en end
     local names = LOCALIZED_CLASS_NAMES_MALE
@@ -47,17 +48,23 @@ function SO.ClassWord(tag)
     return (type(nm) == "string" and nm ~= "") and nm or en
 end
 
--- the class and spec words of a tracker
-function SO.WhoWords(def)
-    local words = def.class and SO.ClassWord(def.class) or Tr("Every class")
-    if def.specs and #def.specs > 0 and GetSpecializationInfoForSpecID then
-        local names = {}
+-- a tracker's spec names in the client's words, "" when it names none
+function SO.SpecWords(def)
+    local names = {}
+    if def.specs and GetSpecializationInfoForSpecID then
         for _, id in ipairs(def.specs) do
             local _, name = GetSpecializationInfoForSpecID(id)
             if type(name) == "string" and name ~= "" then names[#names + 1] = name end
         end
-        if #names > 0 then words = words .. ", " .. table.concat(names, " / ") end
     end
+    return table.concat(names, " / ")
+end
+
+-- the class and spec words of a tracker
+function SO.WhoWords(def)
+    local words = def.class and SO.ClassWord(def.class) or Tr("Every class")
+    local specs = SO.SpecWords(def)
+    if specs ~= "" then words = words .. ", " .. specs end
     return words
 end
 

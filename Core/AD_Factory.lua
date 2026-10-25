@@ -2850,7 +2850,7 @@ function Factory.HideCooldownLook(f)
 end
 
 -- A cooldown icon's look that reaches past its art, which the aura's art and
--- plate alone cannot hide: a glow or the out-of-range shadow.
+-- plate alone cannot hide: a glow, the out-of-range shadow or its countdown.
 local REACH_FIELDS = { "readyGlow", "cooldownGlow", "procGlow", "usableGlow", "warnGlow", "toggleGlow",
     "assistGlow", "rangeGlow", "rechargeGlow", "idleGlow", "rangeShadow" }
 function Factory.CooldownLookReaches(rec)
@@ -2861,7 +2861,32 @@ function Factory.CooldownLookReaches(rec)
         local def = sec.fields[k]
         if def and S.Applies(def, sec, rec.kind) and Store.Resolve(rec, "states", k) == true then return true end
     end
-    return false
+    return Factory.CountdownPastArt(rec)
+end
+
+-- A cooldown icon's countdown number that draws past its art (under the icon,
+-- or wider than it), measured on a 36-unit icon as its offsets are; three
+-- digits wide. A pinned one rides another frame, which no aura covers.
+function Factory.CountdownPastArt(rec)
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    if R("text", "durationText") == false then return false end
+    local pin = R("text", "durationPinTo")
+    if pin ~= nil and pin ~= "own" then return false end
+    local size = R("text", "durationSize") or 14
+    local tw, th = 3 * size * 0.6, size
+    local a = R("text", "durationAnchor") or "CENTER"
+    local x, y = R("text", "durationX") or 0, R("text", "durationY") or 0
+    local l = a:find("LEFT") and x or a:find("RIGHT") and (36 - tw + x) or ((36 - tw) / 2 + x)
+    local b = a:find("BOTTOM") and y or a:find("TOP") and (36 - th + y) or ((36 - th) / 2 + y)
+    return l < 0 or l + tw > 36 or b < 0 or b + th > 36
+end
+
+-- Pixels past the icon a cooldown icon's countdown number can reach.
+function Factory.CountdownReach(rec, kS)
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    if R("text", "durationText") == false then return 0 end
+    local off = math.max(math.abs(R("text", "durationX") or 0), math.abs(R("text", "durationY") or 0))
+    return math.ceil((off + 5 * (R("text", "durationSize") or 14) * 0.7) * (kS or 1))
 end
 
 -- The texts' rise: Rise, and a staged aura's buttons under them (DriverAura.TextLift).
@@ -3505,6 +3530,7 @@ function Factory.StyleAuraButton(b, rec, px, opts)
     if er then
         if opts.erase == true then
             local m = math.max((px and px > 0) and px or 36, Factory.MissingTextReach(rec, kS))
+            if rec.kind ~= "aura" then m = math.max(m, Factory.CountdownReach(rec, kS)) end
             er:ClearAllPoints()
             er:SetPoint("TOPLEFT", b, "TOPLEFT", -m, m)
             er:SetPoint("BOTTOMRIGHT", b, "BOTTOMRIGHT", m, -m)

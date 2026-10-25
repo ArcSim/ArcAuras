@@ -19,6 +19,7 @@ A new Effects tab, looks at a stack or charge count, and lighter aura icons.
 - **Glows on round Masque skins** - A glow now sits around a round skin's border instead of over the icon.
 - **Crafting on the cast bar** - The player cast bar shows crafting casts.
 - **Spoken alerts** - The Channel setting shows only for sound files, since spoken words always play at WoW's text to speech volume.
+- **Cooldown numbers under an aura** - An icon showing its aura (a trinket's on-use buff, for example) no longer shows its own cooldown number next to the aura's timer when that number sits outside the icon.
 
 ## 3.1.0
 

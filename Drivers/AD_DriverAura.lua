@@ -78,7 +78,7 @@ function Driver.NeedsEraser(rec)
     if rec.kind ~= "aura" then
         -- a cooldown icon's aura erases the cooldown's look while its own shows
         -- (none at Active 0: a glow-only aura keeps the cooldown), where the
-        -- plate alone would not hide it: a look past the art, or a dimmed aura
+        -- plate alone would not hide it: a look or countdown past the art, or a dimmed aura
         if not Driver.ShapeFor(rec) then return false end
         local aA = Store.Resolve(rec, "auraActive", "activeAlpha") or 1
         if aA <= 0 then return false end

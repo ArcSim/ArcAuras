@@ -189,6 +189,9 @@ local ForEach
 -- mark and label, a resource bar's recharge countdowns), and the overlay host
 -- (ticks, texts) over all of them.
 Bars.LADDER = { aura = 1, auraTop = 18, border = 19, glow = 20, missBtn = 21, marks = 22, overlay = 23,
+    -- an aura bar's stack text rides a host one over the overlay; the "0"
+    -- shown while its aura is missing sits on that rung, its button one over
+    stkZero = 24, zeroBtn = 25,
     -- a resource bar: its colour rules' layers from here up (two rungs each,
     -- Bars\AD_ResColors.lua), and the cost preview and regen marks over them
     rule = 10, fillMarks = 18,
@@ -1119,11 +1122,15 @@ local function ApplyStyle(entry)
     local bgShow = R(rec, "look", "bgShow") ~= false and not pipsOn
     local bgC = R(rec, "look", "bgColor") or { 0.039, 0.067, 0.125, 1 }
     local bgKey = R(rec, "look", "bgTexture")
-    shell.bg:SetTexture(ResolveBarTexture((bgKey == nil or bgKey == "") and R(rec, "fill", "texture") or bgKey))
+    local bgPath = ResolveBarTexture((bgKey == nil or bgKey == "") and R(rec, "fill", "texture") or bgKey)
+    shell.bg:SetTexture(bgPath)
     -- The opacity slider is the only alpha: the colour picker cannot show the
     -- colour's own, so a hidden one would cap the slider below 100.
     local bgA = R(rec, "look", "bgAlpha") or 1
     shell.bg:SetVertexColor(bgC[1], bgC[2], bgC[3], bgShow and bgA or 0)
+    -- kept for a kind that paints the same background elsewhere (a castbar's
+    -- idle icon box)
+    entry.bgPath, entry.bgRGBA = bgPath, { bgC[1], bgC[2], bgC[3], bgShow and bgA or 0 }
 
     local borderOn = R(rec, "look", "borderEnabled") ~= false and not pipsOn
     local bc = R(rec, "look", "borderColor") or { 0.114, 0.165, 0.247, 1 }
@@ -1960,7 +1967,13 @@ local function CooldownRefresh(entry)
         -- (single-charge too) the main cooldown; never switched mid-run.
         local src = entry.isCharge and chargeDur or mainDur
         local active = entry.isCharge and c or m
-        if active then
+        if R(rec, "fill", "fillMode") == "solid" then
+            -- Solid: a still block while the shadow shows (the GCD never feeds
+            -- it), empty when ready; the duration itself is never read.
+            StopPlainFallback(entry)
+            entry.shell.fill:SetMinMaxValues(0, 1)
+            entry.shell.fill:SetValue(active and 1 or 0)
+        elseif active then
             if FeedStatusBarTimer(entry.shell.fill, src, smooth, drain) then
                 StopPlainFallback(entry)
             elseif not StartPlainFallback(entry, sid, entry.isCharge, drain) then
@@ -6648,18 +6661,24 @@ end
 -- a cooldown's continuous fill at `remaining` of `len` (0 = ready)
 function PV.PaintCooldown(e, remaining, len, started)
     local shell, rec = e.shell, e.rec
-    local drain = (R(rec, "fill", "fillMode") or "drain") == "drain"
+    local mode = R(rec, "fill", "fillMode") or "drain"
+    local solid = mode == "solid"
     local readyFS = shell.texts.ready
     if remaining <= 0 then
         shell.fill:SetMinMaxValues(0, 1)
-        shell.fill:SetValue(R(rec, "fill", "idleEmpty") == true and 0 or 1)
+        shell.fill:SetValue((solid or R(rec, "fill", "idleEmpty") == true) and 0 or 1)
         shell.fill:SetStatusBarColor(BarColorOf(rec))
         if e.durCD then e.durCD:Clear() end
         if readyFS and readyFS:IsShown() then readyFS:SetText(Bars.ReadyWords(e, rec)) end
         return
     end
-    shell.fill:SetMinMaxValues(0, len)
-    shell.fill:SetValue(drain and remaining or (len - remaining))
+    if solid then
+        shell.fill:SetMinMaxValues(0, 1)
+        shell.fill:SetValue(1)
+    else
+        shell.fill:SetMinMaxValues(0, len)
+        shell.fill:SetValue(mode == "drain" and remaining or (len - remaining))
+    end
     if e.curve then
         local col = e.curve:Evaluate(remaining / len)
         if col then shell.fill:SetStatusBarColor(col:GetRGBA()) end
@@ -7220,6 +7239,10 @@ Bars.Kit = {
     -- drives them), and the stack helpers its stack mode paints with
     RunTimedFill = RunTimedFill, TimerStop = TimerStop, BuildPlainBands = BuildPlainBands,
     LayoutDividers = LayoutDividers, StackCount = StackCount,
+    -- an aura bar's engine texts: whether a run shows, and its style on any
+    -- string (the stack text's "0" while the aura is missing, Bars\AD_BarGlow.lua)
+    AuraTextWanted = AuraTextWanted,
+    StyleAuraText = function(fs, entry, key) AuraStyleText(fs, entry, TEXT_DEF_BY_KEY[key]) end,
     -- a custom bar's stacks as cells (pips, icons, segments)
     LayoutPips = LayoutPips, PaintPips = PaintPips, FeedCells = FeedCells, CellStyle = CellStyle,
     -- a Cooldown that draws only its countdown, in the bar's duration text

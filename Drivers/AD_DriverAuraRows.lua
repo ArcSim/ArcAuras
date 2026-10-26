@@ -717,6 +717,20 @@ function AR.PaintLook(p, rec, w, h)
             fs:Hide()
         end
     end
+    -- the count's "0" at no stacks
+    local zf = look.zero
+    if F.ZeroCountOn and F.ZeroCountOn(rec) then
+        if not zf then
+            zf = st:CreateFontString(nil, "OVERLAY")
+            zf:SetDrawLayer("OVERLAY", 7)
+            look.zero = zf
+        end
+        F.StyleZeroCount(zf, rec, kS, st)
+        zf:SetAlpha(ta)
+        zf:Show()
+    elseif zf then
+        zf:Hide()
+    end
 end
 
 -- A member's Missing and Always glows on its stage, at its piece's level (the

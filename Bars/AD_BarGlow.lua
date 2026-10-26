@@ -1,6 +1,7 @@
 -- Arc Auras, all rights reserved: do not copy or adapt this code into another addon without permission.
 -- AD_BarGlow: up to three glows around any bar (Bars.Glow), one module for every kind that draws one.
 -- Owns the glow frames and the aura lanes they ride; AD_Bars calls in at fixed points.
+-- An aura bar's "0" in its stack text's place while its aura is missing rides a lane of the same make.
 -- A kind opts in with one entry in Schema.BAR_GLOW_KINDS (what it tracks of its own, its marks' rung).
 -- Aura presence is never read: the game shows a lane's button exactly while its aura is up.
 local ADDON, NS = ...
@@ -16,13 +17,16 @@ Bars.Glow = G
 -- [barKind] = { own, ownOff, marks }: the one kind table, the schema's
 G.KINDS = (NS.Schema and NS.Schema.BAR_GLOW_KINDS) or {}
 G.CD_WHEN = { ready = true, recharging = true, cooldown = true }
-G.LANE_KINDS = { "up", "miss" }
+-- zero: an aura bar's "0" in its stack text's place while its aura is missing
+G.LANE_KINDS = { "up", "miss", "zero" }
 -- An icon's glow laps its 36 x 36 rect once per period; a bar's lap is
 -- stretched by its own perimeter, so both move at the same pixels a second.
 G.ICON_PERIM = 144
 -- how far past the glow rect the missing lane's button reaches (sparkles overhang)
 G.REACH = 32
-G.state = {}    -- [barId] = { anchor, cd = {}, up = {}, miss = {}, retired = {}, gen }
+-- how far past the "0" the zero lane's button reaches (outline and shadow)
+G.ZERO_REACH = 8
+G.state = {}    -- [barId] = { anchor, cd = {}, up = {}, miss = {}, zero = {}, retired = {}, gen }
 G.queue = {}    -- [lane] = parked, filter edits waiting out combat
 G.inCombat = InCombatLockdown() and true or false
 
@@ -257,6 +261,35 @@ function G.Shape(rec, k)
     return G.GlowRec(rec, k, false) or {}
 end
 
+-- the aura a lane watches: the zero always the bar's own
+function G.LaneShape(lane)
+    local rec = lane.st.rec
+    if not rec then return nil end
+    if lane.kind == "zero" then return rec.driver or {} end
+    return G.Shape(rec, lane.slot)
+end
+
+-- An aura bar's stack text shown on the bar with Stack hides at zero off:
+-- a "0" in its place while the bar's aura is missing.
+function G.WantsZero(e)
+    local rec = e and e.rec
+    if not (rec and rec.barKind == "aura" and rec.driver and rec.driver.spellID) then return false end
+    if Store.Resolve(rec, "text", "stkHideAtZero") ~= false then return false end
+    return K.AuraTextWanted ~= nil and K.AuraTextWanted(e, "stk") == true
+end
+
+-- How far past the bar the "0" can reach, in whole pixels: its offset and a
+-- box twice its size (an outside anchor hangs it past the edge), plus its margin.
+function G.ZeroReach(e)
+    local rec = e.rec
+    local x = tonumber(Store.Resolve(rec, "text", "stkOffsetX")) or 0
+    local y = tonumber(Store.Resolve(rec, "text", "stkOffsetY")) or 0
+    local size = tonumber(Store.Resolve(rec, "text", "stkSize")) or 12
+    local m = math.max(math.abs(x), math.abs(y)) + 2 * size + G.ZERO_REACH
+    local px = K.Px(e.shell)
+    return math.ceil(m / px - 1e-6) * px
+end
+
 -- A cooldown bar on a spell with charges.
 function G.IsChargeBar(rec)
     if not rec then return false end
@@ -364,7 +397,7 @@ end
 local function State(id)
     local st = G.state[id]
     if not st then
-        st = { cd = {}, row = {}, up = {}, miss = {}, retired = {}, gen = 0 }
+        st = { cd = {}, row = {}, up = {}, miss = {}, zero = {}, retired = {}, gen = 0 }
         G.state[id] = st
     end
     return st
@@ -381,8 +414,7 @@ function G.Refilter(lane, parked)
     end
     G.queue[lane] = nil
     local DA = NS.DriverAura
-    local st = lane.st
-    local shape = (not parked) and st.rec and G.Shape(st.rec, lane.slot) or nil
+    local shape = (not parked) and G.LaneShape(lane) or nil
     if not shape then parked = true end
     local c = lane.container
     if not parked and c.SetAuraSlotFilterString then
@@ -404,7 +436,8 @@ end
 
 -- The init window, the one write that always lands: the button follows the
 -- bar's rect at its rung. An up lane's glow is drawn on it; a missing lane's
--- button gets the piece that covers its glow.
+-- button gets the piece that covers its glow, a zero lane's the piece that
+-- covers its "0".
 function G.WireLane(lane, b)
     local st = lane.st
     b:EnableMouse(false)
@@ -412,12 +445,15 @@ function G.WireLane(lane, b)
     b:SetPoint("TOPLEFT", st.anchor, "TOPLEFT", 0, 0)
     b:SetPoint("BOTTOMRIGHT", st.anchor, "BOTTOMRIGHT", 0, 0)
     G.LevelButton(lane, b)
-    if lane.kind == "miss" then
+    if lane.kind ~= "up" then
         local er = b:CreateTexture(nil, "BACKGROUND", nil, -8)
         er:SetColorTexture(0, 0, 0, 0)
         er:SetBlendMode("DISABLE")
-        er:SetPoint("TOPLEFT", lane.host, "TOPLEFT", -G.REACH, G.REACH)
-        er:SetPoint("BOTTOMRIGHT", lane.host, "BOTTOMRIGHT", G.REACH, -G.REACH)
+        -- a zero lane's rides the "0" itself: a new place, size or font needs no button write
+        local to, m = lane.host, G.REACH
+        if lane.kind == "zero" then to, m = lane.zero, G.ZERO_REACH end
+        er:SetPoint("TOPLEFT", to, "TOPLEFT", -m, m)
+        er:SetPoint("BOTTOMRIGHT", to, "BOTTOMRIGHT", m, -m)
         lane.cover = er
         return
     end
@@ -427,10 +463,17 @@ function G.WireLane(lane, b)
     G.PaintUp(lane)
 end
 
+-- a lane button's rung: over the glow it carries, the glow its piece covers,
+-- or the "0" its piece covers
+function G.BtnRung(kind)
+    local L = Bars.LADDER
+    if kind == "zero" then return L.zeroBtn end
+    return (kind == "miss") and L.missBtn or L.glow
+end
+
 function G.LevelButton(lane, b)
     local st = lane.st
-    local L = Bars.LADDER
-    local lvl = (st.base or 1) + ((lane.kind == "miss") and L.missBtn or L.glow)
+    local lvl = (st.base or 1) + G.BtnRung(lane.kind)
     if st.strata then b:SetFrameStrata(st.strata) end
     b:SetFrameLevel(lvl)
     lane.level, lane.strata = lvl, st.strata
@@ -457,6 +500,30 @@ function G.PaintMiss(lane)
     G.Paint(lane.host, lane.look, lane.gm)
 end
 
+-- a zero lane's "0": our own frames, writable any time, on the stack text's
+-- rung in its style, the stage reaching as far as the text can
+function G.PaintZero(lane)
+    local st = lane.st
+    local e = st.entry
+    local stage = lane.stage
+    local lvl = (st.base or 1) + Bars.LADDER.stkZero
+    if lane.slvl ~= lvl or lane.sstrata ~= st.strata then
+        lane.slvl, lane.sstrata = lvl, st.strata
+        if st.strata then stage:SetFrameStrata(st.strata) end
+        stage:SetFrameLevel(lvl)
+        lane.host:SetFrameLevel(lvl)
+    end
+    if not e then return end
+    K.StyleAuraText(lane.zero, e, "stk")
+    local m = G.ZeroReach(e)
+    if lane.reach ~= m then
+        lane.reach = m
+        stage:ClearAllPoints()
+        stage:SetPoint("TOPLEFT", st.anchor, "TOPLEFT", -m, m)
+        stage:SetPoint("BOTTOMRIGHT", st.anchor, "BOTTOMRIGHT", m, -m)
+    end
+end
+
 -- false = not now (auras secret outside the login window, or no engine)
 local function CanCreate()
     local DA = NS.DriverAura
@@ -471,7 +538,7 @@ function G.MakeLane(st, k, kind, shape, unit, harmful, look, gm)
     local lane = { kind = kind, slot = k, unit = unit, harmful = harmful, st = st,
         look = look, gm = gm, on = true, combat = look and look.combat }
     local parent
-    if kind == "miss" then
+    if kind ~= "up" then
         if not DA.EraserAvailable() then return nil end
         local stage = CreateFrame("Frame", nil, UIParent)
         stage:SetFlattensRenderLayers(true)
@@ -483,9 +550,19 @@ function G.MakeLane(st, k, kind, shape, unit, harmful, look, gm)
         stage:SetPoint("BOTTOMRIGHT", st.anchor, "BOTTOMRIGHT", 0, 0)
         local host = CreateFrame("Frame", nil, stage)
         host:EnableMouse(false)
-        -- drawn in the stage (Factory.GlowBlend)
-        host._adFlat = true
         lane.stage, lane.host = stage, host
+        if kind == "zero" then
+            local fs = host:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            fs:SetWordWrap(false)
+            lane.zero = fs
+            -- styled before its text, and on its rung before the container
+            -- is born, so the button is born on its rung too
+            G.PaintZero(lane)
+            fs:SetText("0")
+        else
+            -- drawn in the stage (Factory.GlowBlend)
+            host._adFlat = true
+        end
         parent = stage
     end
     local c = DA.CreateIconContainer(unit, parent)
@@ -493,10 +570,10 @@ function G.MakeLane(st, k, kind, shape, unit, harmful, look, gm)
         if lane.stage then lane.stage:SetIsFrameBuffer(false) end
         return nil
     end
-    c:SetAlpha(kind == "miss" and 1 or 0)
+    c:SetAlpha(kind == "up" and 0 or 1)
     lane.container = c
     st.gen = st.gen + 1
-    lane.key = "adbarglow" .. k .. "_" .. tostring(st.id) .. "_" .. unit
+    lane.key = ((kind == "zero") and "adbarzero" or ("adbarglow" .. k)) .. "_" .. tostring(st.id) .. "_" .. unit
         .. (harmful and "_h" or "_b") .. "_g" .. st.gen
     local ids = DA.IncludeMap(shape)
     lane.filterSig = DA.FilterSig(ids)
@@ -561,14 +638,52 @@ function G.SlotLane(st, e, k, kind, look)
     if kind == "miss" then G.PaintMiss(lane) end
     if b then
         if DA.IsAccessible(b) then
-            if lane.level ~= (st.base or 1) + ((kind == "miss") and Bars.LADDER.missBtn or Bars.LADDER.glow)
-                or lane.strata ~= st.strata then
+            if lane.level ~= (st.base or 1) + G.BtnRung(kind) or lane.strata ~= st.strata then
                 G.LevelButton(lane, b)
             end
             if kind == "up" then G.PaintUp(lane) end
         else
             st.pending = true
         end
+    end
+end
+
+-- An aura bar's "0" (G.WantsZero): a lane of its own on the bar's own aura,
+-- made, kept in step with the settings, or parked.
+function G.SlotZero(st, e, on)
+    local lane = st.zero[1]
+    if not on then
+        if lane and lane.on then
+            lane.on = false
+            G.Refilter(lane, true)
+        end
+        return
+    end
+    local DA = NS.DriverAura
+    local shape = e.rec.driver
+    local unit, harmful = DA.LaneOf(shape)
+    if lane and (lane.unit ~= unit or lane.harmful ~= harmful) then
+        G.Retire(st, lane)
+        lane = nil
+    end
+    if not lane then
+        lane = G.MakeLane(st, 1, "zero", shape, unit, harmful)
+        if not lane then
+            st.pending = true
+            return
+        end
+    end
+    lane.on = true
+    G.Refilter(lane, false)
+    local b = lane.frame
+    -- born on UIParent: the bar's layout scale, so the "0" counts in its units
+    local LE = NS.LayoutEngine
+    if LE and LE.FollowScale and (not b or DA.IsAccessible(b)) then
+        LE.FollowScale(lane.stage, e.shell)
+    end
+    G.PaintZero(lane)
+    if b and (lane.level ~= (st.base or 1) + G.BtnRung("zero") or lane.strata ~= st.strata) then
+        if DA.IsAccessible(b) then G.LevelButton(lane, b) else st.pending = true end
     end
 end
 
@@ -754,7 +869,8 @@ function G.Styled(e)
             if G.On(rec, k) then any = true end
         end
     end
-    if not (any or st) then return end
+    local zero = G.WantsZero(e)
+    if not (any or zero or st) then return end
     st = st or State(id)
     st.id, st.rec, st.entry = id, rec, e
     -- the size this pass lays, which G.Relayout compares against
@@ -785,6 +901,7 @@ function G.Styled(e)
         G.SlotLane(st, e, k, "up", (kind == "up") and look or nil)
         G.SlotLane(st, e, k, "miss", (kind == "miss") and look or nil)
     end
+    G.SlotZero(st, e, zero)
     G.SyncEvents()
     G.Visible(e)
 end
@@ -813,9 +930,9 @@ end
 function G.Blind(lane)
     if not NS.AuraEngine1210 then return false end
     local DA = NS.DriverAura
-    local st = lane.st
-    return DA ~= nil and DA.LaneBlindFor ~= nil and st.rec ~= nil
-        and DA.LaneBlindFor(lane.unit, lane.harmful, G.Shape(st.rec, lane.slot)) == true
+    local shape = G.LaneShape(lane)
+    return DA ~= nil and DA.LaneBlindFor ~= nil and shape ~= nil
+        and DA.LaneBlindFor(lane.unit, lane.harmful, shape) == true
 end
 
 -- The lanes hang off UIParent: they take the bar's shown alpha, the combat
@@ -847,6 +964,14 @@ function G.Visible(e)
             if CRm and CRm.Off(e, select(2, G.Row(e.rec, lane.slot))) then la = 0 end
             if kind == "up" and G.Blind(lane) then la = 0 end
             local f = (kind == "up") and lane.container or lane.stage
+            -- a stage only shows or hides; its fade rides the host
+            if kind ~= "up" then
+                if lane.halpha ~= la then
+                    lane.halpha = la
+                    lane.host:SetAlpha(la)
+                end
+                la = (la > 0) and 1 or 0
+            end
             if gate ~= nil and la > 0 and f.SetAlphaFromBoolean then
                 f:SetAlphaFromBoolean(gate, 0, la)
                 -- the next plain write must land
@@ -855,7 +980,7 @@ function G.Visible(e)
                 lane.alpha = la
                 f:SetAlpha(la)
             end
-            if kind == "miss" then
+            if kind ~= "up" then
                 local ca = G.Blind(lane) and 0 or 1
                 if lane.calpha ~= ca then
                     lane.calpha = ca
@@ -900,7 +1025,8 @@ function G.Release(e)
         for _, lane in pairs(st[kind]) do
             lane.on = false
             G.Refilter(lane, true)
-            lane.alpha = 0
+            -- kept in step, so the bar's return lights a staged lane's button again
+            lane.alpha, lane.calpha = 0, 0
             lane.container:SetAlpha(0)
             if lane.stage then lane.stage:SetAlpha(0) end
         end

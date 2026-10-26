@@ -176,10 +176,19 @@ function Factory.AuraActiveTexture(rec)
     local ov = OverrideFor(rec, "auraActive", "activeIcon")
     if ov then return ov end
     if rec.kind ~= "aura" then
+        -- an item's or trinket's aura button wears the aura's own picture, drawn by
+        -- the game: the item's art can read empty after a loading screen, and in an
+        -- instance the button is styled only once
+        if not Factory.OverlayOwnArtOK(rec) then return nil end
         if Store.Resolve(rec, "auraActive", "overlayArt") == "aura" then return nil end
         return Factory.GetTexture(rec)
     end
     return OverrideFor(rec, "appearance", "customIcon")
+end
+
+-- "Its own icon" while the aura is up: spell icons and Custom Icons only.
+function Factory.OverlayOwnArtOK(rec)
+    return rec ~= nil and rec.kind ~= "item" and rec.kind ~= "trinket"
 end
 
 -- The Cooldown Manager's own picture for each item category it lists
@@ -332,7 +341,16 @@ end
 -- The art the live aura button shows (the preview's "aura up" phase draws it):
 -- the Active override, else the aura's own art, approximated by its spell's.
 function Factory.AuraLiveTexture(rec)
-    return Factory.AuraActiveTexture(rec) or KindTexture(rec)
+    local ov = Factory.AuraActiveTexture(rec)
+    if ov then return ov end
+    -- an item's or trinket's aura: its first tracked aura's art
+    if not Factory.OverlayOwnArtOK(rec) then
+        local o = rec.driver and rec.driver.overlay
+        local id = type(o) == "table" and Store.TrackedAuraIDs(o)[1]
+        local tex = id and C_Spell.GetSpellTexture(id)
+        if tex then return tex end
+    end
+    return KindTexture(rec)
 end
 -- The preview's stand-in engine button takes this as the engine's art.
 Factory.KindTexture = KindTexture
@@ -2688,6 +2706,28 @@ function Factory.ApplyMissingLabels(f, rec, kS)
             fs:SetText("")
             fs:Hide()
         end
+    end
+    -- the count's "0" at no stacks, under the live count
+    local zero = ok and Factory.ZeroCountOn(rec)
+    if zero and not clip then
+        clip = CreateFrame("Frame", nil, f._adStage or f)
+        clip:SetClipsChildren(true)
+        clip._fs = {}
+        f._adMissClip = clip
+    end
+    local zf = clip and clip._zero
+    if zero then
+        if not zf then
+            zf = clip:CreateFontString(nil, "OVERLAY")
+            zf:SetDrawLayer("OVERLAY", 7)
+            clip._zero = zf
+        end
+        Factory.StyleZeroCount(zf, rec, kS, f)
+        zf:Show()
+        any = true
+    elseif zf then
+        zf:SetText("")
+        zf:Hide()
     end
     if not clip then return end
     if any then
@@ -5129,9 +5169,34 @@ function Factory.HolderGlowOn(rec, slot)
     return Factory.MissingGlowOn(rec, slot) or Factory.AlwaysGlowOn(rec, slot)
 end
 
--- An aura icon's custom texts kept to the aura's absence.
+-- An aura icon's count at 0 stacks: a "0" in the count's place, with the Missing look.
+function Factory.ZeroCountOn(rec)
+    return rec ~= nil and rec.kind == "aura" and Store.Resolve(rec, "text", "stackText") ~= false
+        and Store.Resolve(rec, "text", "stackShowZero") == true
+end
+
+-- That "0" in the count's style and place on the icon (the count's own drag and colour bands stay on the live count).
+function Factory.StyleZeroCount(fs, rec, kS, anchorTo)
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    local outline = R("text", "stackOutline") or "OUTLINE"
+    if outline == "NONE" then outline = "" end
+    fs:SetFont(IconFont(R("text", "stackFont")),
+        math.max(6, math.floor((R("text", "stackSize") or 14) * kS + 0.5)), outline)
+    fs._adTextRGBA = R("text", "stackColor") or { 1, 1, 1, 1 }
+    PaintText(fs)
+    local anch = R("text", "stackAnchor") or "BOTTOMRIGHT"
+    fs:ClearAllPoints()
+    fs:SetPoint(anch, anchorTo, anch, (R("text", "stackX") or 0) * kS, (R("text", "stackY") or 0) * kS)
+    local ssc = R("text", "stackShadowColor") or { 0, 0, 0, 1 }
+    fs:SetShadowColor(ssc[1], ssc[2], ssc[3], R("text", "stackShadow") == true and (ssc[4] or 1) or 0)
+    fs:SetShadowOffset(R("text", "stackShadowX") or 1, R("text", "stackShadowY") or -1)
+    fs:SetText("0")
+end
+
+-- An aura icon's custom texts kept to the aura's absence, and its "0".
 function Factory.HasMissingText(rec)
     if not (rec and rec.kind == "aura") then return false end
+    if Factory.ZeroCountOn(rec) then return true end
     for _, suf in ipairs({ "", "2", "3" }) do
         local t = Store.Resolve(rec, "label", "labelText" .. suf)
         if Factory.LabelWithMissing(rec, suf) and t ~= nil and t ~= "" then
@@ -5164,7 +5229,14 @@ end
 -- Pixels past the icon those texts can reach.
 function Factory.MissingTextReach(rec, kS)
     if not Factory.HasMissingText(rec) then return 0 end
-    return math.ceil(LabelReach(rec, kS or 1, Factory.LabelWithMissing))
+    kS = kS or 1
+    local reach = LabelReach(rec, kS, Factory.LabelWithMissing)
+    if Factory.ZeroCountOn(rec) then
+        local R = function(k) return Store.Resolve(rec, "text", k) end
+        local off = math.max(math.abs(R("stackX") or 0), math.abs(R("stackY") or 0))
+        reach = math.max(reach, (off + (R("stackSize") or 14)) * kS)
+    end
+    return math.ceil(reach)
 end
 
 -- Pixels past the icon the live button's texts can reach: its labels, the

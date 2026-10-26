@@ -852,9 +852,25 @@ function Anchor.Placeless(rec)
     return type(K) == "table" and K.noHolder == true
 end
 
+-- The layout a record sits in (its group's, else its own); a layout is its own.
+local function LayoutOf(r)
+    if r.type == "layout" then return r end
+    local g = r.groupId and Store.Get(r.groupId)
+    return Store.Get((g and g.layoutId) or r.layoutId)
+end
+
+-- Another layout that does not load on this character: its items are nothing
+-- to anchor to here.
+function Anchor.OffLayout(rec, other)
+    local lay = LayoutOf(other)
+    if not lay or lay == LayoutOf(rec) or type(lay.c) ~= "table" then return false end
+    return not Store.IsLoaded(lay)
+end
+
 -- A grouped icon is picked on screen (Pick Frame), so the list holds only the
 -- ones rec already uses, each with its group's name: a list of every icon in
--- every group would bury the rest.
+-- every group would bury the rest. Items of a layout that does not load here
+-- are left out, unless rec already uses one.
 function Anchor.TargetChoices(rec, kind)
     local out = {}
     if not (rec and Store.EachRecord) then return out end
@@ -864,6 +880,7 @@ function Anchor.TargetChoices(rec, kind)
         local grouped = kind == "icon" and other.groupId ~= nil
         if id ~= rec.id and other.type == kind
             and (not grouped or mine[id])
+            and (mine[id] or not Anchor.OffLayout(rec, other))
             and not Anchor.Placeless(other)
             and not Anchor.CreatesCycle(rec.id, other) then
             local text = other.name or ((KIND_LABEL[kind] or "Record") .. " " .. id)

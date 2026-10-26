@@ -916,6 +916,7 @@ Below, right
 Berserker Stance
 Between
 Between Casts
+Between casts the icon box takes the bar's background instead of staying empty. Seen when Hidden opacity is above 0.
 Beyond
 Blank at zero
 Blessing of Kings
@@ -1083,6 +1084,7 @@ Class color border
 Classes
 Clear
 Clear all
+Clear anchors
 Clear log
 Clear selection
 Clear stacks when the timer ends
@@ -1676,6 +1678,7 @@ Every class
 Every default of this kind back to Arc's. It asks first, then whether the items you have change too.
 Every food counts.
 Every group in this layout uses these looks unless it sets its own.
+Every group, bar and icon in this layout lets go of its anchor and stays where it is. Undo brings them back.
 Every icon
 Every icon in the group as the game's Cooldown Manager draws it: rounded corners, border, shadow and swipe.
 Every icon in this layout uses these looks unless it sets its own.
@@ -2204,6 +2207,7 @@ Icons only
 Icons that use this group's size keep their picture's shape: its edges are cropped, never stretched.
 Icons with no shape of their own take this one.
 Icons, bars, texts and the gaps between them grow together.
+Idle icon shows the bar's background
 Ignore hard ICD
 Ignore spell overrides
 Imbue damage with your weapon
@@ -3733,6 +3737,7 @@ Slots in use: First is the lowest totem slot, and the one left moves up. Order o
 Smooth fill
 Snap back
 Soft light
+Solid while on cooldown
 Solo
 Some conditions here are for the other game version and are ignored.
 Some procs used color

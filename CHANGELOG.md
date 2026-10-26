@@ -1,5 +1,25 @@
 # Arc Auras
 
+## 3.1.2
+
+A 0 at no stacks, Clear anchors, solid cooldown bars, and trinket icons that keep their picture in raids.
+
+### New Features
+
+- **Show 0 at no stacks** - Aura icons (Text > Stacks > Show count at 0 stacks) and aura bars (turn off Stack hides at zero) can show a 0 in the stack count's place while the aura is missing.
+- **Clear anchors** - Edit on screen has a Clear anchors button: every item in the layout lets go of its anchor and stays where it is. Undo brings them back.
+- **Solid cooldown bars** - A cooldown bar's fill can be solid while on cooldown and empty when ready, with no draining.
+- **Cast bar icon between casts** - A cast bar can fill its icon box with the bar's background between casts, so an always-shown bar reads as one block.
+
+### Improvements
+
+- **Anchor list** - The anchor list leaves out groups, bars and icons of layouts that don't load on this character.
+
+### Bug Fixes
+
+- **Trinket and item icons while their buff is up** - They show the buff's picture with its timer, so a question mark no longer appears after a loading screen or in a raid. A custom Active icon still shows instead.
+- **Bar glows while an aura is missing** - A bar's "While the aura is missing" glow now shows at the bar's opacity, and still goes away while the aura is up after the bar was hidden and shown again.
+
 ## 3.1.1
 
 A new Effects tab, looks at a stack or charge count, and lighter aura icons.

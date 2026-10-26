@@ -605,6 +605,15 @@ Schema.TEXT_STRATA = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }
 -- Hidden while the text is pinned to another frame (it draws over that one),
 -- and for `under` (a spell's countdown) while an aura overlay's button covers
 -- the spell's look.
+-- "Icon while the aura is up": an item's or trinket's aura always wears the
+-- aura's own picture, so there it only picks the picture of a set duration or totem time.
+function Schema.OverlayArtShows(rec)
+    if not (rec and (rec.kind == "item" or rec.kind == "trinket")) then return true end
+    local ov = type(rec.driver) == "table" and rec.driver.overlay
+    if type(ov) ~= "table" then return false end
+    return ov.source == "cast" or ov.source == "totem" or ov.totem == true
+end
+
 function Schema.TextStrataShows(rec, sec, pinKey, under)
     local Store, TA, D = NS.Store, NS.TextAnchor, NS.DriverAura
     if not (rec and Store) then return true end
@@ -1770,7 +1779,7 @@ Schema.icon = {
         -- keeps the cooldown's picture; Active icon below overrides both.
         overlayArt = { d = "aura", t = "enum", values = { "spell", "aura" }, kinds = SPX,
             labels = { spell = "Its own icon", aura = "The aura's icon" },
-            label = "Icon while the aura is up" },
+            label = "Icon while the aura is up", showIf = function(r) return Schema.OverlayArtShows(r) end },
         -- Greys the cooldown under a spell icon's aura button for good. The
         -- button covers it while the aura is up, so it reads grey exactly while
         -- the aura is down. It wins over every other desaturation.
@@ -2076,8 +2085,9 @@ Schema.icon = {
             kinds = { spell = true, item = true, timer = true, ammo = true, enchant = true, special = true, groupbuff = true },
             label = "Stack text pin target", dep = { field = "stackText" } },
         hideChargeAtZero = { d = false, t = "bool", kinds = SP, label = "Hide charge count at zero", dep = { field = "stackText" } },
-        -- a Custom icon's count at no stacks: blank, or a "0"
-        stackShowZero = { d = false, t = "bool", kinds = { timer = true }, label = "Show count at 0 stacks",
+        -- a Custom icon's count at no stacks: blank, or a "0"; an aura icon's
+        -- "0" shows with its Missing look
+        stackShowZero = { d = false, t = "bool", kinds = { timer = true, aura = true }, label = "Show count at 0 stacks",
             dep = { field = "stackText" } },
         -- The engine prints an aura's count only above 1 unless it is handed a
         -- NumericRuleFormatter. The same formatter carries a color escape per
@@ -3052,8 +3062,9 @@ end
 -- Timer (custom) bars write their rule-driven stacks as the stack text.
 local BK_CST  = { cooldown = true, stack = true, aura = true, enchant = true, timer = true }
 -- Hide-at-zero needs our own writer to pass the count through the secret-safe
--- truncator; the engine writes an aura bar's stack text.
-local BK_STKZ = { cooldown = true, stack = true, timer = true }
+-- truncator; the engine writes an aura bar's stack text, so its "0" is a piece
+-- of ours that shows while the aura is missing.
+local BK_STKZ = { cooldown = true, stack = true, timer = true, aura = true }
 local BK_TMSW = { timer = true, swing = true, aura = true, enchant = true, cdmbar = true, totembar = true }
 -- Aura bars too: SetDurationBar takes direction and interpolation from the
 -- caller, so fillMode and smoothing work on aura duration bars.
@@ -3062,6 +3073,12 @@ local BK_FILL = { cooldown = true, timer = true, swing = true, aura = true, ench
 -- interpolation on 12.x). Timer and swing fills are per-frame GetTime math with
 -- nothing to interpolate, so they are left out.
 local BK_SMOOTH = { cooldown = true, aura = true, resource = true, health = true }
+-- A cooldown bar whose fill is a still block (fillMode "solid", duration mode).
+function Schema.CdSolid(rec)
+    local S = NS.Store
+    return type(rec) == "table" and rec.barKind == "cooldown" and (rec.barMode or "duration") == "duration"
+        and S ~= nil and S.Resolve ~= nil and S.Resolve(rec, "fill", "fillMode") == "solid"
+end
 -- Every kind but range bars, whose plate is always full in its band's colour: no
 -- fill colour, fill direction or tick marks there.
 local BK_NOTRANGE = { cooldown = true, aura = true, timer = true, stack = true, swing = true,
@@ -3327,16 +3344,22 @@ Schema.bar = {
                 end
             end },
         reverseFill = { d = false, t = "bool", label = "Reverse fill", kinds = BK_TINT,
-            kindModes = { cooldown = { duration = true } } },
+            kindModes = { cooldown = { duration = true } },
+            showIf = function(rec) return not Schema.CdSolid(rec) end },
         -- Cooldowns drain toward ready; swing bars fill (dk: per-kind
         -- defaults). Duration mode only: a stack fill is a count, not a timer.
-        fillMode    = { d = "drain", dk = { swing = "fill" }, t = "enum", values = { "drain", "fill" }, kinds = BK_FILL,
-            modes = { duration = true }, label = "Fill mode" },
+        -- "solid", cooldown bars only: a still full block while on cooldown,
+        -- empty when ready. Left on another kind by a push it reads as "fill".
+        fillMode    = { d = "drain", dk = { swing = "fill" }, t = "enum", values = { "drain", "fill", "solid" }, kinds = BK_FILL,
+            modes = { duration = true }, label = "Fill mode", labels = { solid = "Solid while on cooldown" },
+            valueIf = { solid = function(r) return r.barKind == "cooldown" end } },
         -- On: the fill empties whenever nothing is running (a swing bar between
         -- swings, a cooldown bar while ready). Timer and aura bars empty on
-        -- their own; stack bars show charges, so they are left out.
+        -- their own; stack bars show charges, so they are left out. A solid
+        -- fill is always empty when ready.
         idleEmpty   = { d = false, dk = { swing = true }, t = "bool", kinds = { cooldown = true, swing = true },
-            kindModes = { cooldown = { duration = true } }, label = "Empty fill when idle" },
+            kindModes = { cooldown = { duration = true } }, label = "Empty fill when idle",
+            dep = { field = "fillMode", notValue = "solid" } },
         -- Main-hand swing bars: the off-hand's swing as a second track on the
         -- same bar (Bars\AD_SwingOffhand.lua). Hidden: Tracking draws its switch.
         swingOffhand      = { d = false, t = "bool", inherit = false, hidden = true, kinds = { swing = true },
@@ -3460,8 +3483,10 @@ Schema.bar = {
             dep = { { field = "swingAbilities" }, { field = "swingAbilReady" } }, label = "Ready color" },
         swingAbilColorQueued = { d = { 0.247, 0.788, 0.949, 1 }, t = "color", alpha = true, kinds = { swing = true },
             dep = { { field = "swingAbilities" }, { field = "swingAbilQueued" } }, label = "Queued color" },
-        -- Stack bars use this for the slot recharge animation too.
-        smoothing   = { d = true, t = "bool", kinds = BK_SMOOTH, label = "Smooth fill" },
+        -- Stack bars use this for the slot recharge animation too. A solid
+        -- cooldown fill never moves, so it has nothing to smooth.
+        smoothing   = { d = true, t = "bool", kinds = BK_SMOOTH, label = "Smooth fill",
+            showIf = function(rec) return not Schema.CdSolid(rec) end },
         useGradient = { d = true, t = "bool", label = "Gradient fill" },
         -- VERTICAL fades toward the bottom, HORIZONTAL toward the far end.
         gradientDir = { d = "VERTICAL", t = "enum", values = { "VERTICAL", "HORIZONTAL" },
@@ -3640,6 +3665,11 @@ Schema.bar = {
         iconShield = { d = false, t = "bool", kinds = BK_CAST, label = "Shield on casts that can't be interrupted" },
         iconShieldSize = { d = 0, t = "int", min = 0, max = 96, kinds = BK_CAST,
             label = "Shield size (0 = automatic)", dep = { field = "iconShield" } },
+        -- Cast bars: between casts the empty icon box wears the bar's own
+        -- background, so the idle bar and its box read as one block.
+        iconIdleBg = { d = false, t = "bool", kinds = BK_CAST, label = "Idle icon shows the bar's background",
+            desc = "Between casts the icon box takes the bar's background instead of staying empty. Seen when Hidden opacity is above 0.",
+            dep = { field = "iconShow" } },
     } },
     -- Each text is a flat-prefixed run (dur, stk, res, hp, name, ready) so the
     -- generic rows cluster them. Changing an anchor zeroes that text's offsets.

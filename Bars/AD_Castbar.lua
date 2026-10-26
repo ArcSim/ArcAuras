@@ -703,6 +703,8 @@ function CB.Show(e, info)
     -- castArt is what Styled puts back after a restyle; tex may be secret
     e.castArt = info.tex
     if e.iconF and e.iconF.tex then e.iconF.tex:SetTexture(info.tex) end
+    e.castIdle = nil
+    CB.IdleIcon(e)
     K.SetRunText(shell, "dur", "")
     CB.Paint(e)
     CB.LockLook(e)
@@ -866,9 +868,7 @@ function CB.Rest(e)
         shell.fill:SetValue(0)
         CB.SparkShown(e, false)
         if not CB.CustomName(e.rec) then K.SetRunText(shell, "name", "") end
-        -- An empty icon box, not the "?", if Hidden opacity shows the idle bar.
-        e.castArt = nil
-        if e.iconF and e.iconF.tex then e.iconF.tex:SetTexture(nil) end
+        CB.IdleArt(e)
         e.stateHidden = true
     end
     if CB.PerTick(e) or hadStages or e.castStageFracs then K.LayoutTicks(e) end
@@ -877,9 +877,43 @@ function CB.Rest(e)
     K.ApplyVisibility(e)
 end
 
+-- An empty icon box, not the "?", if Hidden opacity shows the idle bar.
+function CB.IdleArt(e)
+    e.castArt = nil
+    if e.iconF and e.iconF.tex then e.iconF.tex:SetTexture(nil) end
+    e.castIdle = true
+    CB.IdleIcon(e)
+end
+
+-- With iconIdleBg on, the idle box wears the bar's own background (the look
+-- ApplyStyle painted, kept on the entry), so bar and box read as one block.
+-- Settings only: nothing of a cast is read.
+function CB.IdleIcon(e)
+    local f = e.iconF
+    if not (f and f.tex) then return end
+    local t = f.castIdleBg
+    if not (e.castIdle == true and R(e.rec, "icon", "iconIdleBg") == true) then
+        if t then t:Hide() end
+        return
+    end
+    if not t then
+        -- over the empty art, under the box's border
+        t = f:CreateTexture(nil, "ARTWORK", nil, 1)
+        f.castIdleBg = t
+    end
+    t:ClearAllPoints()
+    t:SetAllPoints(f.tex)
+    t:SetTexture(e.bgPath or K.WHITE)
+    local c = e.bgRGBA or { 0, 0, 0, 0 }
+    t:SetVertexColor(c[1], c[2], c[3], c[4] or 1)
+    t:Show()
+end
+
 -- A still bar to style and place while editing.
 function CB.Sample(e)
     local rec, shell = e.rec, e.shell
+    e.castIdle = nil
+    CB.IdleIcon(e)
     shell.fill:SetMinMaxValues(0, 1)
     shell.fill:SetValue(0.6)
     e.castChannel, e.castNotInt = false, nil
@@ -1204,6 +1238,7 @@ end
 -- and the stage colours in the bar's new texture.
 function CB.Styled(e)
     if e.iconF and e.iconF.tex then e.iconF.tex:SetTexture(e.castArt) end
+    CB.IdleIcon(e)
     if e.castHold then
         CB.HoldColor(e)
     elseif e.castOn or (e.castFade and e.castFade:IsPlaying()) then
@@ -1338,6 +1373,8 @@ function CB.PreviewApply(e, loop, t, fresh)
         e.shell.fill:SetValue(0)
         K.SetRunText(e.shell, "dur", "")
         if CB.PerTick(e) then K.LayoutTicks(e) end
+        -- the idle box as play shows it, when it wears the bar's background
+        if R(rec, "icon", "iconIdleBg") == true then CB.IdleArt(e) end
     end
 end
 

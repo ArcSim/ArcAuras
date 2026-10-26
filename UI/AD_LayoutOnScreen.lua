@@ -170,6 +170,31 @@ end
 
 function LOS.Center() LOS.Change(LOS.CenterNow) end
 
+-- The layout's groups, bars and free icons that hang on an anchor (a locked one stays).
+function LOS.Anchored(layout)
+    local out, A = {}, NS.Anchor
+    if not (layout and A and A.IsEnabled and Store.MembersOf) then return out end
+    for _, rec in ipairs(Store.MembersOf(layout)) do
+        if A.IsEnabled(rec) and not Store.Locked(rec) then out[#out + 1] = rec.id end
+    end
+    return out
+end
+
+-- Every anchor off, each item kept where it is (EditOps.Free); one undo step.
+function LOS.FreeAllNow()
+    local layout, EO = LOS.Layout(), NS.EditOps
+    if not (LOS.open and layout and EO and EO.Free) or Store.Locked(layout) then return end
+    for _, id in ipairs(LOS.Anchored(layout)) do EO.Free(id) end
+end
+
+-- never mid-drag or with a step open, as Undo
+function LOS.FreeAll()
+    local LT = LOS.Tools
+    if InCombatLockdown() or LOS.session or LOS.dragging or LOS.pointDrag or LOS.corner or (LT and LT.drag) then return end
+    LOS.Change(LOS.FreeAllNow)
+    if LOS.Redraw then LOS.Redraw() end
+end
+
 function LOS.GetScale(layout)
     local v = Store.LayoutScale and tonumber(Store.LayoutScale(layout))
     return v or 1
@@ -667,9 +692,14 @@ function LOS.BuildToolbar()
     tb.names:SetPoint("RIGHT", tb.done, "LEFT", -8, 0)
     tb.center = Button(tb, "Center", ROW_H, 14, function() LOS.Center() end)
     tb.center:SetPoint("RIGHT", tb.names, "LEFT", -8, 0)
+    tb.free = Button(tb, "Clear anchors", ROW_H, 14, function() LOS.FreeAll() end)
+    tb.free:SetPoint("RIGHT", tb.center, "LEFT", -8, 0)
+    if AT.Tooltip then
+        AT.Tooltip(tb.free, "Clear anchors", "Every group, bar and icon in this layout lets go of its anchor and stays where it is. Undo brings them back.")
+    end
     tb.rule = tb:CreateTexture(nil, "ARTWORK")
     tb.rule:SetColorTexture(COL.line2[1], COL.line2[2], COL.line2[3], 1)
-    tb.rule:SetPoint("RIGHT", tb.center, "LEFT", -8, 0)
+    tb.rule:SetPoint("RIGHT", tb.free, "LEFT", -8, 0)
     tb.redo = Button(tb, "Redo", ROW_H, 14, function() LOS.Redo() end)
     tb.redo:SetPoint("RIGHT", tb.rule, "LEFT", -8, 0)
     tb.undo = Button(tb, "Undo", ROW_H, 14, function() LOS.Undo() end)
@@ -853,6 +883,7 @@ function LOS.LayoutToolbar()
     tb.count:SetWidth(Width(tb.count.fs) + 14)
     tb.reset:SetWidth(Width(tb.reset.fs) + 22)
     tb.center:SetWidth(Width(tb.center.fs) + 30)
+    tb.free:SetWidth(Width(tb.free.fs) + 30)
     tb.done:SetWidth(Width(tb.done.fs) + 30)
     tb.undo:SetWidth(Width(tb.undo.fs) + 30)
     tb.redo:SetWidth(Width(tb.redo.fs) + 30)
@@ -865,7 +896,7 @@ function LOS.LayoutToolbar()
         + 10 + 140 + 10 + 26 + 10 + 54 + 10 + 26 + 10 + tb.reset:GetWidth()
         + 10 + Width(tb.xLbl) + 8 + 54 + 10 + Width(tb.yLbl) + 8 + 54 + 15
     local row2 = 15 + hw + 16 + tb.undo:GetWidth() + 8 + tb.redo:GetWidth() + 8 + 1 + 8
-        + tb.center:GetWidth() + 8 + nw + 8 + tb.done:GetWidth() + 15
+        + tb.free:GetWidth() + 8 + tb.center:GetWidth() + 8 + nw + 8 + tb.done:GetWidth() + 15
     local w = math.max(BAR_W, row1, row2)
     local s = LOS.ChromeScale(w)
     if tb._w == w and tb._s == s then return end
@@ -903,6 +934,7 @@ function LOS.SyncToolbar(layout)
     tb.hint:SetText(Tr(hint))
     tb.undo:SetAlpha(LOS.CanStep("CanUndo") and 1 or UNDO_DIM)
     tb.redo:SetAlpha(LOS.CanStep("CanRedo") and 1 or UNDO_DIM)
+    tb.free:SetAlpha((#LOS.Anchored(layout) > 0 and not Store.Locked(layout)) and 1 or UNDO_DIM)
     LOS.LayoutToolbar()
 end
 

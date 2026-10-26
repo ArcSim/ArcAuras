@@ -13,6 +13,32 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.1.2",
+        intro = "A 0 at no stacks, Clear anchors, solid cooldown bars, and trinket icons that keep their picture in raids.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Show 0 at no stacks",
+                    desc = "Aura icons (Text > Stacks > Show count at 0 stacks) and aura bars (turn off Stack hides at zero) can show a 0 in the stack count's place while the aura is missing." },
+                { title = "Clear anchors",
+                    desc = "Edit on screen has a Clear anchors button: every item in the layout lets go of its anchor and stays where it is. Undo brings them back." },
+                { title = "Solid cooldown bars",
+                    desc = "A cooldown bar's fill can be solid while on cooldown and empty when ready, with no draining." },
+                { title = "Cast bar icon between casts",
+                    desc = "A cast bar can fill its icon box with the bar's background between casts, so an always-shown bar reads as one block." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Anchor list",
+                    desc = "The anchor list leaves out groups, bars and icons of layouts that don't load on this character." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Trinket and item icons while their buff is up",
+                    desc = "They show the buff's picture with its timer, so a question mark no longer appears after a loading screen or in a raid. A custom Active icon still shows instead." },
+                { title = "Bar glows while an aura is missing",
+                    desc = "A bar's \"While the aura is missing\" glow now shows at the bar's opacity, and still goes away while the aura is up after the bar was hidden and shown again." },
+            } },
+        },
+    },
+    {
         version = "3.1.1",
         intro = "A new Effects tab, looks at a stack or charge count, and lighter aura icons.",
         sections = {
@@ -1236,6 +1262,32 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.1.2",
+        intro = "A 0 at no stacks, Clear anchors, solid cooldown bars, and trinket icons that keep their picture in raids.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Show 0 at no stacks",
+                    desc = "Aura icons (Text > Stacks > Show count at 0 stacks) and aura bars (turn off Stack hides at zero) can show a 0 in the stack count's place while the aura is missing." },
+                { title = "Clear anchors",
+                    desc = "Edit on screen has a Clear anchors button: every item in the layout lets go of its anchor and stays where it is. Undo brings them back." },
+                { title = "Solid cooldown bars",
+                    desc = "A cooldown bar's fill can be solid while on cooldown and empty when ready, with no draining." },
+                { title = "Cast bar icon between casts",
+                    desc = "A cast bar can fill its icon box with the bar's background between casts, so an always-shown bar reads as one block." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Anchor list",
+                    desc = "The anchor list leaves out groups, bars and icons of layouts that don't load on this character." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Trinket and item icons while their buff is up",
+                    desc = "They show the buff's picture with its timer, so a question mark no longer appears after a loading screen or in a raid. A custom Active icon still shows instead." },
+                { title = "Bar glows while an aura is missing",
+                    desc = "A bar's \"While the aura is missing\" glow now shows at the bar's opacity, and still goes away while the aura is up after the bar was hidden and shown again." },
+            } },
+        },
+    },
     {
         version = "3.1.1",
         intro = "A new Effects tab, looks at a stack or charge count, Arc Procs on New Layout and empowered casts.",

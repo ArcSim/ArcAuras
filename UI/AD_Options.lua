@@ -10458,7 +10458,7 @@ local function BuildIconEditor(parent)
     }, { fx = "art.active", lineName = false,
         labels = { overlayArt = "Show", activeIconFrom = "Icon from", activeIcon = "ID" }, lit = function(r)
         return (tonumber(Store.Resolve(r, "auraActive", "activeIcon")) or 0) ~= 0
-            or (r.kind ~= "aura" and Store.Resolve(r, "auraActive", "overlayArt") == "spell")
+            or (r.kind ~= "aura" and NS.Schema.OverlayArtShows(r) and Store.Resolve(r, "auraActive", "overlayArt") == "spell")
     end })
     Block(CT, nil, "Art while missing", "auraMissing", { "missingIconFrom", "missingIcon" },
         { fx = "art.missing", lineName = false, labels = { missingIconFrom = "Icon from", missingIcon = "ID" },
@@ -13262,6 +13262,9 @@ local function BuildBarPane()
     BarSub(icoVis, "Can't Be Interrupted", "icon", {
         "iconShield", "iconShieldSize",
     })
+    -- the castbar's icon box between casts (Castbar > Between Casts sets how
+    -- much of the idle bar shows)
+    BarSub(icoVis, "Between Casts", "icon", { "iconIdleBg" })
     SubPush("Appearance", "Icon")
 
     -- Appearance > Swing (swing bars): the off-hand track, the closing fill and

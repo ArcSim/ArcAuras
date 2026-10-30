@@ -1,5 +1,28 @@
 # Arc Auras
 
+## 3.1.3
+
+Arc Pings and Kick Assist modules, Custom Icons in one place, items that show while equipped, and charge spell fixes.
+
+### New Features
+
+- **Arc Pings and Kick Assist** - Now modules on the Modules page, off until you switch them on; the Arc UI import brings their setup.
+- **Show while equipped** - Item icons for trinkets and other gear can show only while worn (Arc UI's Hide when unequipped imports as this).
+- **Import groups only** - The Arc UI import can bring your layouts and groups in empty.
+- **Flip a draining texture** - A texture shown as a fill can be flipped and still drain.
+
+### Improvements
+
+- **Custom Icons** - Everything now lives in Tracking: Rules, Timer and active, Icon, and On the icon. The Triggers tab is gone.
+- **Buff groups from Arc UI** - Arc UI buff groups that close their gaps import as Aura Groups.
+
+### Bug Fixes
+
+- **Short charge locks** - Spells like Shimmer no longer grey out after each cast and show their recharge timer.
+- **Proc charges** - Crash Lightning and Stormstrike show ready, with the action bar's charge count, when a proc gives a charge.
+- **Ignore spell overrides** - The icon keeps its own picture (Blink with Shimmer talented).
+- **Custom Icons** - Effects names the active state after Active while.
+
 ## 3.1.2
 
 A 0 at no stacks, Clear anchors, solid cooldown bars, and trinket icons that keep their picture in raids.

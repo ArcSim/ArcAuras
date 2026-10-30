@@ -111,8 +111,8 @@ local KIND_TABS = {
     aura    = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
     trinket = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
     item    = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
-    -- a Custom Icon: its rules on Triggers (UI\AD_CustomOptions.lua)
-    timer   = { "Tracking", "Triggers", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
+    -- a Custom Icon: its rules on Tracking's Rules sub-tab (UI\AD_CustomOptions.lua)
+    timer   = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
     totem   = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
     ammo    = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
     enchant = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
@@ -1823,7 +1823,8 @@ local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
             -- Two exclusive switches as one pick: Always (both off), While the
             -- aura is up (this one), While the aura is missing (its partner).
             -- def.pickWords(rec) words them for a kind and may leave the second out.
-            local other = def.showPick
+            -- def.wornPick: a third switch, offered while the words carry `worn`.
+            local other, worn = def.showPick, def.wornPick
             local function Words(r)
                 return (def.pickWords and def.pickWords(r))
                     or { up = "While the aura is up", missing = "While the aura is missing" }
@@ -1834,6 +1835,7 @@ local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
                     if not r then return "always" end
                     if Store.Resolve(r, section, field) == true then return "up" end
                     if Store.Resolve(r, section, other) == true then return "missing" end
+                    if worn and Words(r).worn and Store.Resolve(r, section, worn) == true then return "worn" end
                     return "always"
                 end,
                 function(v)
@@ -1841,11 +1843,13 @@ local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
                     if not r then return end
                     Store.SetOverride(r, section, field, v == "up")
                     Store.SetOverride(r, section, other, v == "missing")
+                    if worn then Store.SetOverride(r, section, worn, v == "worn") end
                 end,
                 function()
                     local w = Words(ctx())
                     local items = { { value = "always", text = "Always" }, { value = "up", text = w.up } }
                     if w.missing then items[#items + 1] = { value = "missing", text = w.missing } end
+                    if worn and w.worn then items[#items + 1] = { value = "worn", text = w.worn } end
                     return items
                 end,
                 visible)
@@ -2143,7 +2147,7 @@ local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
             end
             -- "(mixed)" after the label while several records disagree
             if Options.MultiSelect then
-                Options.MultiSelect.MarkRow(row, ctx, section, field, def.showPick or def.statePick)
+                Options.MultiSelect.MarkRow(row, ctx, section, field, def.showPick or def.statePick, def.wornPick)
             end
             -- def.desc: the row's tooltip; a text box shows its own
             local box = (def.t == "text" and not def.media and not def.font)
@@ -8046,8 +8050,37 @@ end
 
 -- the chip set follows the record: an aura icon uses the aura chips, every
 -- other kind the cooldown ones (one ui.prevMode, normalized per kind)
+-- a Custom Icon that is always active never shows these
+Options.NEVER_CHIPS = { tploop = true, tready = true, tcd = true, tina = true, tloop = true }
+
+-- A Custom Icon's jumps: Effects, and its Tracking > Timer and active with
+-- the Active while list open (the Effects card's Change).
+function Options.OpenEffectsTab()
+    ui.icoTab = "Effects"
+    if Options.RefreshAll then Options.RefreshAll() end
+end
+function Options.OpenActiveWhile()
+    ui.icoTab = "Tracking"
+    ui.icoSec = ui.icoSec or {}
+    ui.icoSec.Tracking = "Timer and active"
+    if Options.RefreshAll then Options.RefreshAll() end
+    -- the list opens once the page has laid out its new sub-tab
+    local function Open()
+        local CO = Options.Custom
+        local row = CO and CO.activeRow
+        local dd = row and row._colCtrl
+        if dd and dd:IsVisible() and dd:GetScript("OnClick") then dd:GetScript("OnClick")(dd) end
+    end
+    if C_Timer and C_Timer.After then C_Timer.After(0, Open) else Open() end
+end
+
 function Options.PreviewMode(rec)
     local m = ui.prevMode or "off"
+    local ETx = Options.EditorTabs
+    if rec ~= nil and rec.kind == "timer" and ETx ~= nil and ETx.NeverInactive ~= nil and ETx.NeverInactive(rec) then
+        if m == "ovup" and NS.DriverAura and NS.DriverAura.OverlayOn(rec) then return m end
+        return Options.CustomPhased(rec) and "trun" or "tact"
+    end
     local auraKey = (m == "aup" or m == "aloop" or m == "amiss")
     local timerKey = (m == "tact" or m == "tina" or m == "tloop")
     local phaseKey = (m == "tploop" or m == "tready" or m == "trun" or m == "tcd")
@@ -8915,12 +8948,26 @@ local function AttachPreview(parent, y, shown, rel)
     -- a Custom Icon's Ready and On cooldown need its cooldown; without one it rests Not active
     local cdOn = phased and rec.driver.cdOn == true
     local shownChips, total = {}, -6
+    -- a Custom Icon: its Active chip named as Effects names it; Always active
+    -- keeps only that state and the aura
+    local ETx = Options.EditorTabs
+    local never = ETx ~= nil and ETx.NeverInactive ~= nil and ETx.NeverInactive(rec)
+    local activeWord = (rec.kind == "timer" and ETx ~= nil and ETx.ActiveWords ~= nil) and (ETx.ActiveWords(rec)) or nil
     for _, m in ipairs(PREV_MODES) do
         local b = prevChips[m.key]
         local on = ((m.set == set) and (not m.charge or Options.PreviewCharge(rec))
                 and not (phased and (m.key == "tready" or m.key == "tcd") and not cdOn))
             or (ov and m.set == "ov")
             or (phased and not cdOn and m.key == "tina")
+        if never and Options.NEVER_CHIPS[m.key] then on = false end
+        if m.key == "trun" or m.key == "tact" then
+            local word = activeWord or m.text
+            if b._adWord ~= word then
+                b._adWord = word
+                b:SetLabel(word, m.w)
+                b._adW = math.max(m.w, math.floor((b:GetWidth() or m.w) + 0.5))
+            end
+        end
         b:SetShown(on)
         if on then
             shownChips[#shownChips + 1] = b
@@ -9480,6 +9527,36 @@ local function BuildIconEditor(parent)
             return trackVis() and r ~= nil and r.kind == "spell"
         end,
         "Replacement forms (Windstrike, proc spells) normally drive this icon's cooldown and art. On = pin the BASE spell instead.")
+    -- one line while the pinned spell is replaced (Shimmer for Blink)
+    Options.BuildYield()
+    do
+        local row = AT.AddRow(pg, 20, function()
+            local r = SelIcon()
+            return trackVis() and r ~= nil and r.kind == "spell" and Store.PinnedReplacedBy(r.driver) ~= nil
+        end)
+        local fs = row:CreateFontString(nil, "OVERLAY")
+        fs:SetFont(AT.FONT, 11, "")
+        fs:SetPoint("LEFT", 10, 0)
+        fs:SetJustifyH("LEFT")
+        fs:SetWordWrap(false)
+        fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+        row._adText = fs
+        row._sync = function()
+            local r = SelIcon()
+            local ov = r and Store.PinnedReplacedBy(r.driver)
+            if not ov then return end
+            local sid = Store.RecordSpellID(r.driver)
+            fs:SetText(AT.Tr("%s is replaced by %s right now, so this icon tracks a spell you can't cast."):format(
+                C_Spell.GetSpellName(sid) or "?", -- raw-id: the note names the pinned spell
+                C_Spell.GetSpellName(ov) or "?")) -- raw-id: and the form replacing it
+        end
+    end
+    -- one field shown here, in the GCD block and on the Effects tab
+    Options.BuildYield()
+    SectionRows(pg, "icon", "states", SelIcon, function()
+        local r = SelIcon()
+        return trackVis() and r ~= nil and r.kind == "spell"
+    end, { "skipShortLocks" })
     -- a "who" gate (Store.IsLoaded), so a change is a load pass
     Options.BuildYield()
     AT.RowToggle(pg, "Only load once learned",
@@ -9895,11 +9972,7 @@ local function BuildIconEditor(parent)
     AT.Tooltip(ovCasterRow, "Cast by",
         "Me: only your own copy shows on this icon, the usual choice. Anyone: any copy. Anyone but me: only copies from other players.")
 
-    -- a Custom Icon's tracking rows and its Triggers tab (UI\AD_CustomOptions.lua)
-    Options.BuildYield()
-    if Options.CustomIconRows then
-        Options.CustomIconRows(pg, SelIcon, IconTabVisible("Tracking"), IconTabVisible("Triggers"), win)
-    end
+    -- a Custom Icon's Tracking sub-tabs come after the panes exist (below)
     -- a Special Aura's tracking rows (UI\AD_SpecialOptions.lua)
     Options.BuildYield()
     if Options.SpecialIconRows then Options.SpecialIconRows(pg, SelIcon, IconTabVisible("Tracking"), win) end
@@ -10062,6 +10135,18 @@ local function BuildIconEditor(parent)
     local NOT_AURA = { spell = true, item = true, trinket = true, timer = true, totem = true, ammo = true,
         enchant = true }
 
+    -- A Custom Icon's Tracking: four sub-tabs (UI\AD_CustomOptions.lua)
+    if Options.CustomIconRows then
+        local function IsCustom(r) return r.type == "icon" and r.kind == "timer" end
+        Options.BuildYield()
+        Options.CustomIconRows(pg, SelIcon, {
+            rules = Pane("Tracking", "Rules", IsCustom),
+            timer = Pane("Tracking", "Timer and active", IsCustom),
+            icon = Pane("Tracking", "Icon", IsCustom),
+            onIcon = Pane("Tracking", "On the icon", IsCustom),
+        }, win)
+    end
+
     -- Appearance > Icon: the size, the look and the art (a totem's pulse timer
     -- too: it is drawn on the icon).
     local sizeDef = Block("Appearance", "Icon", "Size", "position", {
@@ -10162,9 +10247,11 @@ local function BuildIconEditor(parent)
     local wandGate = Schema.icon.swipe.fields.wandSwipe.classOnly
     local gcdTitle = (NS.IsForever == true and wandGate and wandGate[Store.ClassTag() or ""])
         and "GCD & Wand" or "GCD"
-    Block("Appearance", "Swipe", gcdTitle, "swipe", {
+    local gcdDef = Block("Appearance", "Swipe", gcdTitle, "swipe", {
         "gcdSwipe", "gcdSwipeColor", "wandSwipe", "wandSwipeColor",
     })
+    -- per icon only: the defaults' Swipe and By State pages are full
+    More(gcdDef, "states", { "skipShortLocks" }, { noLook = true })
     -- the aura's own swipe (our Cooldown widget on its button): a spell, item or
     -- trinket icon's aura phase (the Cooldown Manager's gold by default), an aura icon's
     local OV_KINDS = { spell = true, item = true, trinket = true }
@@ -10476,7 +10563,7 @@ local function BuildIconEditor(parent)
     PushOnly("states", { "procOverride", "procOverrideWhen", "usableOverride", "usabilityOnCooldown",
         "usabilityReadyOnly", "usabilityAlphaReplaces", "readyGreyUsable" }, NOT_AURA)
     PushOnly("states", { "preserveDurationText", "preserveSwipe", "preserveTextWhen", "labelsFullOpacity",
-        "ignoreHardICD" }, NOT_AURA)
+        "ignoreHardICD", "skipShortLocks" }, NOT_AURA)
     PushOnly("auraMissing", { "missingPreserveText" }, "aura")
     PushOnly("auraActive", { "activePreserveText", "activePreserveSwipe", "activeLabelsBright" }, "aura")
     Options.BuildYield()
@@ -15908,6 +15995,7 @@ function IE.Tick(parent, text, get, set)
     b.Sync = function() b.check:SetOn(get() == true) end
     return b
 end
+Options.ImportKit.Tick = IE.Tick
 
 -- the Import button's green, and its edge
 IE.GREEN = GREENC

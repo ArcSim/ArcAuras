@@ -453,8 +453,8 @@ end
 
 -- Wraps a schema row's sync (SectionRows): the mark while Edit together is
 -- open and the records disagree on the field (or on `also`, the second
--- field a showPick dropdown writes). Costs one boolean otherwise.
-function M.MarkRow(row, ctx, section, field, also)
+-- field a showPick dropdown writes, `also2` its third). Costs one boolean otherwise.
+function M.MarkRow(row, ctx, section, field, also, also2)
     local sync = row._sync
     row._sync = function()
         if sync then sync() end
@@ -464,7 +464,8 @@ function M.MarkRow(row, ctx, section, field, also)
         end
         local r = ctx()
         M.SetMark(row, row._colLabel, r ~= nil and r._adMulti == true
-            and (M.Mixed(r, section, field) or (also ~= nil and M.Mixed(r, section, also))))
+            and (M.Mixed(r, section, field) or (also ~= nil and M.Mixed(r, section, also))
+                or (also2 ~= nil and M.Mixed(r, section, also2))))
     end
 end
 

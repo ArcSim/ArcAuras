@@ -1,5 +1,23 @@
 # Arc Auras
 
+## 3.1.3
+
+The Arc Pings module, Custom Icons in one place, and items that show while equipped.
+
+### New Features
+
+- **Arc Pings** - Now a module on the Modules page, off until you switch it on.
+- **Show while equipped** - Item icons for trinkets and other gear can show only while worn.
+- **Flip a draining texture** - A texture shown as a fill can be flipped and still drain.
+
+### Improvements
+
+- **Custom Icons** - Everything now lives in Tracking: Rules, Timer and active, Icon, and On the icon. The Triggers tab is gone.
+
+### Bug Fixes
+
+- **Custom Icons** - Effects names the active state after Active while.
+
 ## 3.1.2
 
 A 0 at no stacks, Clear anchors, solid cooldown bars, and trinket icons that keep their picture in raids.

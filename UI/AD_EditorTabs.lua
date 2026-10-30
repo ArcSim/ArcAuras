@@ -73,7 +73,9 @@ ET.FOLD_TITLES = { fade = "More fade options", frame = "More frame options", glo
 -- The rows the caller adds after it show while it is open. A plain fold: it
 -- opens and shuts on a click (the search opens it for a hit), and a changed
 -- value inside only shows in its tooltip.
-function ET.NewFold(pg, key, word, ctx)
+-- opts: title (its own whole title), noCount (no count badge), tip (its own tooltip).
+function ET.NewFold(pg, key, word, ctx, opts)
+    opts = opts or {}
     local f = setmetatable({ key = key, ctx = ctx, items = {}, pg = pg }, Fold)
     local title, shown = "More options", nil
     if type(word) == "string" and word ~= "" then
@@ -81,6 +83,7 @@ function ET.NewFold(pg, key, word, ctx)
         -- a word with no title of its own: the sentence and the word translate apart
         if not ET.FOLD_TITLES[word] then shown = Tr("More %s options"):format(Tr(word)) end
     end
+    if opts.title then title, shown = opts.title, nil end
     f.title = title
     local row = AT.AddRow(pg, 24, function() return f:HeadShown() end)
     f.row = row
@@ -117,6 +120,7 @@ function ET.NewFold(pg, key, word, ctx)
         nfs:SetText(tostring(n))
         local w = nfs:GetStringWidth() or 6
         nb:SetWidth(math.max(18, math.floor(w + 10.5)))
+        nb:SetShown(not opts.noCount)
         chev:SetDown(f:IsOpen())
         Paint()
     end
@@ -125,6 +129,7 @@ function ET.NewFold(pg, key, word, ctx)
     row:SetScript("OnEnter", function() f.hot = true Paint() end)
     row:SetScript("OnLeave", function() f.hot = nil Paint() end)
     AT.Tooltip(row, title, function()
+        if opts.tip then return opts.tip end
         if f:Changed() then return "Fine-tuning for the rows above; some differ from their default. Click to show or hide it." end
         return "Fine-tuning for the rows above. Click to show or hide it."
     end)
@@ -400,6 +405,48 @@ end
 function ET.CustomCd(r)
     return r ~= nil and r.kind == "timer" and type(r.driver) == "table" and r.driver.cdOn == true
 end
+-- a Custom Icon's Show as active while: what its Active state is
+function ET.ShowWhile(r)
+    return (r ~= nil and type(r.driver) == "table" and r.driver.showWhile) or "timer"
+end
+-- Always active: Not active, On cooldown and Ready never come
+function ET.NeverInactive(r)
+    return r ~= nil and r.kind == "timer" and ET.ShowWhile(r) == "always"
+end
+-- the Active state named for what makes it, and its line under the name
+ET.SHOW_WHILE_WORDS = {
+    always = { "Always active", "always: Active while on Tracking is set to Always" },
+    stacks = { "Has stacks", "while it has stacks" },
+    either = { "Timer or stacks", "while the timer runs or it has stacks" },
+}
+-- how long the timer runs and what starts it, from its first start rule:
+-- "20 s after you cast Ghost Wolf"
+function ET.TimerDetail(r)
+    local CU = NS.DriverCustom
+    local rules = CU and CU.Rules and CU.Rules(r) or nil
+    for _, ru in ipairs(rules or {}) do
+        if (ru.act or "start") == "start" then
+            local secs = tonumber(ru.secs) or tonumber(r.driver.duration)
+            local CO = Options.Custom
+            local names = CO and CO.SpellList and CO.SpellList(ru)
+            if secs and ru.when == "cast" and names then
+                return Tr("%s s after you cast %s"):format(("%g"):format(secs), names)
+            end
+            if secs then return Tr("%s s at a time"):format(("%g"):format(secs)) end
+            return nil
+        end
+    end
+    return nil
+end
+function ET.ActiveWords(r)
+    local w = ET.SHOW_WHILE_WORDS[ET.ShowWhile(r)]
+    if w then return w[1], w[2] end
+    if ET.CustomPhased(r) then
+        local d = ET.TimerDetail(r)
+        return "Timer running", d and Tr("while the timer runs: %s"):format(d) or "while the timer runs"
+    end
+    return "Active", nil
+end
 local OUT_OF_STOCK = { key = "out", label = "Out of stock", when = "while none is left", alpha = { O, "outAlpha", on = "outAlphaEnabled" },
     grey = { O, "outDesaturate" }, tint = { O, "outTintColor", on = "outTintEnabled" },
     onTip = "On: this opacity while none is left. Off: it keeps its opacity." }
@@ -518,13 +565,18 @@ ET.STATES = {
         TIMER_AURA,
         { key = "active", label = "Active", when = "while it is active", alpha = READY.alpha,
           grey = READY.grey, tint = READY.tint, alphaTip = READY.alphaTip,
-          labelFn = function(r) return ET.CustomPhased(r) and "Timer running" or "Active" end,
+          labelFn = function(r) return (ET.ActiveWords(r)) end,
+          whenFn = function(r) return select(2, ET.ActiveWords(r)) end,
+          -- its card's Change opens Active while (Tracking > Timer and active)
+          change = function(r) return r ~= nil and r.type == "icon" end,
           fx = { glow = { "states.readyGlow" }, sound = { "alerts.readySoundEnabled" } } },
         { key = "inactive", label = "Not active", when = "while it is not active", alpha = COOLDOWN.alpha,
           grey = COOLDOWN.grey, tint = COOLDOWN.tint,
           labelFn = function(r) return ET.CustomCd(r) and "On cooldown" or "Not active" end,
+          showIf = function(r) return not ET.NeverInactive(r) end,
           fx = { glow = { "states.cooldownGlow" }, sound = { "alerts.cooldownSoundEnabled" } } },
-        { key = "idle", label = "Ready", when = "while it is ready", showIf = function(r) return ET.CustomCd(r) end,
+        { key = "idle", label = "Ready", when = "while it is ready",
+          showIf = function(r) return ET.CustomCd(r) and not ET.NeverInactive(r) end,
           alpha = { S, "idleAlpha" }, grey = { S, "idleDesaturate" }, tint = { S, "idleTintColor", on = "idleTintEnabled" },
           fx = { glow = { "states.idleGlow" }, sound = { "alerts.idleSoundEnabled" } } },
         WARNING,

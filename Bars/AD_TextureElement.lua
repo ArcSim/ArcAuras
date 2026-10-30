@@ -53,6 +53,13 @@ function TP.FillMode(rec)
     return TP.Mode(rec) ~= "show"
 end
 
+-- A fill whose picture is flipped. The bar owns its fill texture's
+-- coordinates, so a flipped fill draws through the masked copy.
+function TP.FillFlipped(rec)
+    return TP.Mode(rec) == "fill"
+        and (R(rec, "texlook", "flipH") == true or R(rec, "texlook", "flipV") == true)
+end
+
 function TP.ByStacks(rec)
     local s = TP.Source(rec)
     return TP.FillMode(rec) and (s == "aura" or s == "rules") and R(rec, "texlook", "fillBy") == "stacks"
@@ -245,7 +252,11 @@ function TP.Dress(tex, rec, dim, frame, w, h, over)
             art.t + (art.b - art.t) * y0, art.t + (art.b - art.t) * y1)
     end
     if TP.FillMode(rec) then
-        Map(0, 1, 0, 1)
+        -- a flipped fill: its copy (DressBar) and the dim copy behind it
+        local fl = TP.FillFlipped(rec)
+        local x0 = (fl and R(rec, "texlook", "flipH") == true) and 1 or 0
+        local y0 = (fl and R(rec, "texlook", "flipV") == true) and 1 or 0
+        Map(x0, 1 - x0, y0, 1 - y0)
         if tex.SetRotation then tex:SetRotation(0) end
         return
     end
@@ -466,7 +477,7 @@ end
 
 -- A fill's or a ring's bar: the picture as its fill texture (the bar reveals
 -- it, never squeezes it), its direction or ring, colour, blend and grey. An
--- atlas fill: the bar's own fill turns invisible and a copy of the picture,
+-- atlas or flipped fill: the bar's own fill turns invisible and a copy of the picture,
 -- dressed like the whole picture, is cut to it by a mask (both on the bar,
 -- so the mask may follow the engine's fill). over: the time-left copy.
 function TP.DressBar(bar, rec, over)
@@ -483,7 +494,7 @@ function TP.DressBar(bar, rec, over)
         bar:SetReverseFill(dir == "LEFT" or dir == "DOWN")
     end
     bar:SetRotatesTexture(false)
-    local masked = art.atlas ~= nil and not ring
+    local masked = (art.atlas ~= nil or TP.FillFlipped(rec)) and not ring
     local want = masked and TP.WHITE or art.file
     if bar._adPic ~= want then
         bar._adPic = want

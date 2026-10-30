@@ -258,6 +258,9 @@ Schema.CUSTOM_MAX_SECONDS = 7200
 Schema.CUSTOM_SHOW_WHILE = { "timer", "stacks", "either", "always" }
 Schema.CUSTOM_SHOW_WHILE_LABELS = { timer = "The timer runs", stacks = "Stacks are above 0",
     either = "The timer runs or stacks are above 0", always = "Always" }
+-- a Custom Icon's Active while (Tracking > Timer and active)
+Schema.CUSTOM_ACTIVE_WHILE_LABELS = { timer = "The timer runs", stacks = "It has stacks",
+    either = "The timer runs or it has stacks", always = "Always" }
 -- Trigger groups, in the dropdown's order; each trigger lists in one group.
 Schema.CUSTOM_TRIGGER_GROUPS = {
     { key = "spell", label = "Spells",
@@ -598,6 +601,26 @@ function Schema.AmmoCountShown(rec)
     return Store.Resolve(rec, "text", "ammoText") == true
 end
 
+-- An item worn in a slot (a trinket, a ring): its instant info names the slot.
+function Schema.Wearable(iid)
+    local GI = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant
+    if not (iid and GI) then return false end
+    local loc = select(4, GI(iid))
+    if type(loc) ~= "string" or (issecretvalue and issecretvalue(loc)) then return false end
+    return loc ~= "" and loc ~= "INVTYPE_NON_EQUIP" and loc ~= "INVTYPE_NON_EQUIP_IGNORE"
+end
+
+-- While equipped joins an item's Show pick when the item is worn in a slot,
+-- and on a page for many items (defaults, a selection), where it reaches the
+-- worn ones only. Never on a several-item icon.
+function Schema.WornPick(rec)
+    if not (rec and rec.kind == "item") then return false end
+    local d = rec.driver or {}
+    if type(d.itemIDs) == "table" or d.category ~= nil then return false end
+    if d.itemID == nil then return true end
+    return Schema.Wearable(d.itemID)
+end
+
 -- A text's own strata (Core\AD_TextAnchor.lua TA.Strata): "inherit" draws it
 -- with the other texts. Never on a text the game's aura button draws.
 Schema.TEXT_STRATA = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }
@@ -871,6 +894,10 @@ Schema.icon = {
         -- spent the last of two (Drivers\AD_DriverCooldown.lua ShadowState).
         ignoreHardICD = { d = false, t = "bool", kinds = SP, showIf = ChargeShows, label = "Ignore hard ICD",
             desc = "For a charge spell that also locks for a while after each cast: show its charges and recharge, not that lock." },
+        -- The same lock when it is short (Shimmer's 0.5 s): for its first
+        -- second after a cast it reads as recharging (ShadowState).
+        skipShortLocks = { d = true, t = "bool", kinds = SP, showIf = ChargeShows, label = "Skip short locks",
+            desc = "The brief lock some charge spells have after each cast never greys the icon. Longer locks still show." },
         -- Which state a proc's full opacity covers; recharging counts as on cooldown.
         procOverrideWhen = { d = "always", t = "enum", values = { "always", "ready", "cooldown" }, kinds = SP,
             labels = { always = "Ready or on cooldown", ready = "Only while ready", cooldown = "Only while on cooldown" },
@@ -1629,14 +1656,19 @@ Schema.icon = {
             dep = { field = "outTintEnabled" } },
         -- Show: Always, while in stock (hidden while missing) or only when out
         -- (its partner). An item is missing when its guarded bag count is
-        -- empty, a trinket when nothing is equipped in its slot.
+        -- empty, a trinket when nothing is equipped in its slot. An item worn
+        -- in a slot adds While equipped (wornPick).
         hideWhenMissing = { d = false, t = "bool", label = "Show", showPick = "showOnlyWhenOut",
+            wornPick = "showWhileWorn",
             pickWords = function(rec)
                 if rec and rec.kind == "trinket" then return { up = "While equipped" } end
-                return { up = "While in stock", missing = "Only when out of stock" }
+                return { up = "While in stock", missing = "Only when out of stock",
+                    worn = Schema.WornPick(rec) and "While equipped" or nil }
             end },
         showOnlyWhenOut = { d = false, t = "bool", kinds = { item = true, ammo = true },
             label = "Only when out of stock", pickedBy = "hideWhenMissing" },
+        showWhileWorn = { d = false, t = "bool", kinds = { item = true },
+            label = "While equipped", pickedBy = "hideWhenMissing" },
     } },
     -- A trinket slot that shows only on-use trinkets: a passive one (no use
     -- spell) hides and gives up its cell in a dynamic group, as a missing one.
@@ -4380,8 +4412,8 @@ Schema.bar = {
             label = "Rounding", showIf = Schema.TextTimed },
     } },
     -- A texture's picture (Bars\AD_TextureElement.lua): the whole picture while
-    -- it is active, or a fill that runs like a bar. Turning, flipping and zoom
-    -- reach the whole picture only: a fill's picture stays upright.
+    -- it is active, or a fill that runs like a bar. Turning and zoom reach the
+    -- whole picture only; flipping reaches a fill too (never a ring).
     texlook = { push = true, inherit = true, kinds = { texture = true }, fields = {
         -- "" = the tracked spell's icon; else a FileDataID or a file path
         image = { noDefault = true, inherit = false, d = "", t = "text", picture = true, label = "Picture" },
@@ -4475,8 +4507,10 @@ Schema.bar = {
             dep = { { field = "bgShow" }, { field = "bgDesat" } } },
         rotation = { d = 0, t = "int", min = -180, max = 180, label = "Turn the picture (degrees)",
             dep = { field = "mode", value = "show" } },
-        flipH = { d = false, t = "bool", label = "Flip the picture left to right", dep = { field = "mode", value = "show" } },
-        flipV = { d = false, t = "bool", label = "Flip the picture upside down", dep = { field = "mode", value = "show" } },
+        flipH = { d = false, t = "bool", label = "Flip the picture left to right",
+            dep = { field = "mode", anyOf = { show = true, fill = true } } },
+        flipV = { d = false, t = "bool", label = "Flip the picture upside down",
+            dep = { field = "mode", anyOf = { show = true, fill = true } } },
         zoom = { d = 0, t = "int", min = 0, max = 45, label = "Picture zoom (%)", dep = { field = "mode", value = "show" } },
         -- Crop cuts an edge off where it is: the rest keeps its size and place.
         cropL = { d = 0, t = "int", min = 0, max = 90, label = "Crop the left edge (%)", dep = { field = "mode", value = "show" } },

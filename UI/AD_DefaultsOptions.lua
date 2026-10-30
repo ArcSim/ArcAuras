@@ -278,6 +278,7 @@ local function RowFields(m)
     local def = m.def
     local list = { m.field }
     if def.showPick then list[#list + 1] = def.showPick end
+    if def.wornPick then list[#list + 1] = def.wornPick end
     if def.statePick then list[#list + 1] = def.statePick end
     if def.rangePick then list[#list + 1] = def.rangePick end
     return list
@@ -292,6 +293,7 @@ local function PickArc(family, px, m)
             or { up = "While the aura is up", missing = "While the aura is missing" }
         if A(m.field) == true then return Tr(w.up) end
         if A(def.showPick) == true and w.missing then return Tr(w.missing) end
+        if def.wornPick and A(def.wornPick) == true and w.worn then return Tr(w.worn) end
         return Tr("Always")
     end
     local one, two = Options.StateWords(px)

@@ -378,7 +378,8 @@ local USE_FOLD = { section = "states", fields = { "usabilityOnCooldown", "usabil
 local EXTRA = {
     ready = { { section = "states", fields = { "readyGreyUsable" }, lineName = false, flat = true,
         labels = { readyGreyUsable = "Grey out only while usable" } } },
-    recharge = { { section = "states", fields = { "ignoreHardICD" }, lineName = false, flat = true } },
+    cooldown = { { section = "states", fields = { "skipShortLocks" }, lineName = false, flat = true } },
+    recharge = { { section = "states", fields = { "ignoreHardICD", "skipShortLocks" }, lineName = false, flat = true } },
     unusable = { USE_FOLD },
     nomana = { USE_FOLD },
 }
@@ -887,10 +888,12 @@ function EF.CardWords(r, c)
     return name, ""
 end
 
--- a state's when, as a line of its own ("While it is ready")
-function EF.WhenWords(st)
-    if not (st and st.when) then return "" end
-    return (Tr(st.when):gsub("^%l", string.upper))
+-- a state's when, as a line of its own ("While it is ready"); a record's own
+-- words when the state names one (st.whenFn)
+function EF.WhenWords(st, r)
+    local w = st and st.whenFn and r and st.whenFn(r) or (st and st.when)
+    if not w then return "" end
+    return (Tr(w):gsub("^%l", string.upper))
 end
 
 -- a count state's: "While it has 5+ stacks", "While it has 1 charge or fewer"
@@ -955,7 +958,7 @@ function EF.Offers(r)
     local states, aura = {}, {}
     for _, c in ipairs(AllCards(r)) do
         if not c.i and not c.isWhile and not c.isCount then
-            local t = { key = c.key, card = c, name = Tr(ET().StateWord(r, c.st)), line = EF.WhenWords(c.st),
+            local t = { key = c.key, card = c, name = Tr(ET().StateWord(r, c.st)), line = EF.WhenWords(c.st, r),
                 added = listed[c.key] == true }
             if c.kind == "aura" then aura[#aura + 1] = t else states[#states + 1] = t end
         end
@@ -1829,7 +1832,7 @@ function EF.Build(pg, ctx, vis, owner, under)
         headEdge:Color(COL.line)
         PaintMini(head._mini, r, EF.MiniLook(r, c))
         local name, rule = EF.CardWords(r, c)
-        local when = (c.st and not c.i) and EF.WhenWords(c.st) or ""
+        local when = (c.st and not c.i) and EF.WhenWords(c.st, r) or ""
         -- a count state: its name, its rule in the when ("While it has 5+ stacks")
         if c.isCount then rule, when = "", EF.CountWhen(r, c) end
         head._name:SetText(name .. (rule ~= "" and ("|cff" .. AT.Hex(COL.arc) .. rule .. "|r") or ""))
@@ -1850,6 +1853,24 @@ function EF.Build(pg, ctx, vis, owner, under)
         if head._up then
             head._up:SetShown(arrows)
             head._dn:SetShown(arrows)
+        end
+        -- a Custom Icon's Active state: Change opens what makes it
+        local chg = c.st ~= nil and not c.i and c.st.change ~= nil and c.st.change(r) == true
+        if chg and not head._chg then
+            head._chg = AT.MakeSmallButton(head, "Change", 64)
+            head._chg:SetScript("OnClick", function()
+                AT.CloseDropdown()
+                if Options.OpenActiveWhile then Options.OpenActiveWhile() end
+            end)
+            AT.Tooltip(head._chg, "Change", "Opens Active while on Tracking, which decides when this state holds.")
+        end
+        if head._chg then
+            head._chg:SetShown(chg)
+            if chg then
+                head._chg:ClearAllPoints()
+                head._chg:SetPoint("RIGHT", trm, "LEFT", -8, 0)
+                right = right - ((head._chg:GetWidth() or 64) + 8)
+            end
         end
         local x0 = 10 + 20 + 8
         local room = math.max(40, math.floor(right - x0))

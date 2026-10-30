@@ -13,6 +13,28 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.1.3",
+        intro = "The Arc Pings module, Custom Icons in one place, and items that show while equipped.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Arc Pings",
+                    desc = "Now a module on the Modules page, off until you switch it on." },
+                { title = "Show while equipped",
+                    desc = "Item icons for trinkets and other gear can show only while worn." },
+                { title = "Flip a draining texture",
+                    desc = "A texture shown as a fill can be flipped and still drain." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Custom Icons",
+                    desc = "Everything now lives in Tracking: Rules, Timer and active, Icon, and On the icon. The Triggers tab is gone." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Custom Icons",
+                    desc = "Effects names the active state after Active while." },
+            } },
+        },
+    },
+    {
         version = "3.1.2",
         intro = "A 0 at no stacks, Clear anchors, solid cooldown bars, and trinket icons that keep their picture in raids.",
         sections = {
@@ -1262,6 +1284,38 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.1.3",
+        intro = "Arc Pings and Kick Assist modules, Custom Icons in one place, items that show while equipped, and charge spell fixes.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Arc Pings and Kick Assist",
+                    desc = "Now modules on the Modules page, off until you switch them on; the Arc UI import brings their setup." },
+                { title = "Show while equipped",
+                    desc = "Item icons for trinkets and other gear can show only while worn (Arc UI's Hide when unequipped imports as this)." },
+                { title = "Import groups only",
+                    desc = "The Arc UI import can bring your layouts and groups in empty." },
+                { title = "Flip a draining texture",
+                    desc = "A texture shown as a fill can be flipped and still drain." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Custom Icons",
+                    desc = "Everything now lives in Tracking: Rules, Timer and active, Icon, and On the icon. The Triggers tab is gone." },
+                { title = "Buff groups from Arc UI",
+                    desc = "Arc UI buff groups that close their gaps import as Aura Groups." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Short charge locks",
+                    desc = "Spells like Shimmer no longer grey out after each cast and show their recharge timer." },
+                { title = "Proc charges",
+                    desc = "Crash Lightning and Stormstrike show ready, with the action bar's charge count, when a proc gives a charge." },
+                { title = "Ignore spell overrides",
+                    desc = "The icon keeps its own picture (Blink with Shimmer talented)." },
+                { title = "Custom Icons",
+                    desc = "Effects names the active state after Active while." },
+            } },
+        },
+    },
     {
         version = "3.1.2",
         intro = "A 0 at no stacks, Clear anchors, solid cooldown bars, and trinket icons that keep their picture in raids.",

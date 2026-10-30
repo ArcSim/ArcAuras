@@ -3102,6 +3102,18 @@ function Store.RecordSpellID(d, sid)
     return Store.TrackedSpellID(sid, NS.IsForever == true, false)
 end
 
+-- The form replacing a record's pinned spell right now (Ignore override on,
+-- an override in effect: Shimmer for Blink), or nil. The bar and the game's
+-- current art show that form; the icon keeps the pinned spell's own.
+function Store.PinnedReplacedBy(d)
+    if type(d) ~= "table" or d.ignoreSpellOverride ~= true then return nil end
+    local sid = Store.RecordSpellID(d)
+    if not sid then return nil end
+    local ov = OverrideOf(sid)
+    if ov ~= sid then return ov end
+    return nil
+end
+
 -- The one matcher: does a spell the game reports (`got`: a cast, a press, a
 -- bar slot, a proc) stand for a tracked one (`want`, and `eff`, the ID it
 -- resolved to when the caller holds it)? Either may be the other's override

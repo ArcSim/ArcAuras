@@ -49,6 +49,8 @@ local pane, plan, offer
 local picks, opened = {}, {}
 -- the characters whose bars load on them alone (Only on), by character key
 local charOnly = {}
+-- Groups only: the layouts and their groups come in with no icons
+local groupsOnly = false
 local sel, sub = nil, "icons"
 -- the foot bar's lines after an import or a refusal: { text, text2, bad }
 local said
@@ -56,7 +58,8 @@ local W = { chars = {}, boxes = {}, rows = {}, chips = {} }
 -- for harnesses: the widgets, and the state they paint
 IW.W = W
 function IW.Get()
-    return { plan = plan, picks = picks, sel = sel, sub = sub, said = said, opened = opened, pane = pane, charOnly = charOnly }
+    return { plan = plan, picks = picks, sel = sel, sub = sub, said = said, opened = opened, pane = pane, charOnly = charOnly,
+        groupsOnly = groupsOnly }
 end
 
 -- the page's parts, shared with the Proc Tracker tab (UI\AD_Options.lua)
@@ -611,6 +614,8 @@ local function PaintBody(w)
         for _, lf in ipairs(Kids(Kids(node, "shared")[1], "reminders")) do also[#also + 1] = lf end
         for _, lf in ipairs(Kids(node, "look")) do also[#also + 1] = lf end
         for _, lf in ipairs(Kids(node, "press")) do also[#also + 1] = lf end
+        for _, lf in ipairs(Kids(node, "kick")) do also[#also + 1] = lf end
+        for _, lf in ipairs(Kids(node, "pings")) do also[#also + 1] = lf end
         if #also > 0 then
             local b = NewBox(Tr("Also"), nil, also)
             for _, lf in ipairs(also) do
@@ -623,6 +628,9 @@ local function PaintBody(w)
                     local look = plan.looks and plan.looks[node.charKey]
                     detail = Tr("from its profile '%s'"):format(tostring(look and look.profile or "Default"))
                     tip = "Untick to keep the Arc Auras look."
+                elseif lf.kind == "kick" or lf.kind == "pings" then
+                    detail = Tr("its setup")
+                    tip = "Switches the module on with this character's Arc UI setup."
                 else
                     detail = Tr("switched on")
                     tip = "Switches it on with the same look."
@@ -780,6 +788,8 @@ local function PaintStrip(node)
     local also = Kids(Kids(node, "shared")[1], "reminders")
     for _, lf in ipairs(Kids(node, "look")) do also[#also + 1] = lf end
     for _, lf in ipairs(Kids(node, "press")) do also[#also + 1] = lf end
+    for _, lf in ipairs(Kids(node, "kick")) do also[#also + 1] = lf end
+    for _, lf in ipairs(Kids(node, "pings")) do also[#also + 1] = lf end
     for _, lf in ipairs(also) do
         icons = icons + 1
         if picks[lf.unit] then iconsOn = iconsOn + 1 end
@@ -829,6 +839,7 @@ end
 local function PaintFoot()
     local COL = NS.AT.COL
     local nProf, nBars, nTex, nRem, look, press, again = 0, 0, 0, 0, false, false, 0
+    local kick, pings = false, false
     local who = {}
     for _, node in ipairs(plan and plan.tree or {}) do
         local any = false
@@ -861,6 +872,8 @@ local function PaintFoot()
         for _, lf in ipairs(Kids(Kids(node, "shared")[1], "reminders")) do if One(lf) then nRem = nRem + 1 end end
         for _, lf in ipairs(Kids(node, "look")) do if One(lf) then look = true end end
         for _, lf in ipairs(Kids(node, "press")) do if One(lf) then press = true end end
+        for _, lf in ipairs(Kids(node, "kick")) do if One(lf) then kick = true end end
+        for _, lf in ipairs(Kids(node, "pings")) do if One(lf) then pings = true end end
         if any then who[#who + 1] = node.name or node.label end
     end
     local text, text2, col = "", "", COL.ink
@@ -877,6 +890,8 @@ local function PaintFoot()
         if nRem > 0 then bits[#bits + 1] = Plural(nRem, Tr("the Cooldown Reminder"), Tr("%d Cooldown Reminders")) end
         if look then bits[#bits + 1] = Tr("the icon look") end
         if press then bits[#bits + 1] = Tr("the press highlight") end
+        if kick then bits[#bits + 1] = Tr("Kick Assist") end
+        if pings then bits[#bits + 1] = Tr("Arc Pings") end
         -- the list's last two joined as one sentence piece, so each language picks its "and"
         local list = bits[1] or ""
         if #bits > 1 then list = Tr("%s and %s"):format(table.concat(bits, ", ", 1, #bits - 1), bits[#bits]) end
@@ -884,6 +899,8 @@ local function PaintFoot()
         if again > 0 then
             text2 = (again == 1) and Tr("1 of them is in Arc Auras already: importing again adds a second copy.")
                 or Tr("%d of them are in Arc Auras already: importing again adds a second copy."):format(again)
+        elseif groupsOnly then
+            text2 = Tr("Groups only: each group comes in empty.")
         end
     end
     W.sum:SetText(text)
@@ -891,7 +908,8 @@ local function PaintFoot()
     W.sum2:SetText(text2)
     W.sum:ClearAllPoints()
     W.sum:SetPoint("LEFT", W.foot, "LEFT", 12, (text2 ~= "") and 7 or 0)
-    W.sum:SetPoint("RIGHT", W.importBtn, "LEFT", -12, (text2 ~= "") and 7 or 0)
+    W.sum:SetPoint("RIGHT", W.groupsOnly or W.importBtn, "LEFT", -12, (text2 ~= "") and 7 or 0)
+    if W.groupsOnly then W.groupsOnly.Sync() end
     W.sum2:SetShown(text2 ~= "")
     W.importBtn:SetAlpha(#who > 0 and 1 or 0.45)
     W.importBtn:EnableMouse(#who > 0)
@@ -1062,10 +1080,16 @@ function IW.BuildPane(parent)
     end)
     imp:SetScript("OnClick", function() IW.DoImport() end)
     W.importBtn = imp
+    W.groupsOnly = Options.ImportKit.Tick(fb, "Groups only", function() return groupsOnly end, function(v)
+        groupsOnly = v
+        IW.Paint()
+    end)
+    W.groupsOnly:SetPoint("RIGHT", imp, "LEFT", -14, 0)
+    AT.Tooltip(W.groupsOnly, "Groups only", "Brings the layouts and their groups, each one empty: you add the icons yourself.")
     W.sum = Font(fb, 12, COL.ink)
     W.sum2 = Font(fb, 11, COL.dim)
     W.sum2:SetPoint("LEFT", fb, "LEFT", 12, -8)
-    W.sum2:SetPoint("RIGHT", imp, "LEFT", -12, -8)
+    W.sum2:SetPoint("RIGHT", W.groupsOnly, "LEFT", -12, -8)
     -- Arc UI off, or nothing to copy: one line where the boxes would be
     W.off = Font(pane, 12, COL.dim)
     W.off:SetPoint("TOPLEFT", pane, "TOPLEFT", 4, -(IW.NOTE_H + 4))
@@ -1095,7 +1119,7 @@ function IW.DoImport()
         return
     end
     if next(picks) == nil then return end
-    local res, err = IA.Apply(plan, picks, { charOnly = charOnly })
+    local res, err = IA.Apply(plan, picks, { charOnly = charOnly, groupsOnly = groupsOnly })
     if not res then
         said = { text = err or Tr("The import did not run."), bad = true }
         IW.Paint()

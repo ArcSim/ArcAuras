@@ -207,6 +207,12 @@ Factory.CATEGORY_ART = {
 local function SpellArt(d, activeArt)
     local sid = Store.RecordSpellID(d)
     if not sid then return QUESTION_MARK end
+    -- a pinned spell while another form replaces it: the bar and the current
+    -- art show that form, so the pinned spell's own
+    if Store.PinnedReplacedBy(d) then
+        local tex, orig = C_Spell.GetSpellTexture(sid)
+        return orig or tex or QUESTION_MARK
+    end
     if activeArt then
         local live = LiveSpellArt(sid)
         if live then return live end
@@ -2217,9 +2223,11 @@ function Factory.KeybindEnabled(rec)
 end
 
 -- An item its stock hides: out while it shows only in stock, or in stock while
--- it shows only when out (a trinket is out while its slot is empty).
+-- it shows only when out (a trinket is out while its slot is empty), or an
+-- item worn in a slot set to show while equipped and not on.
 function Factory.StockHidden(f, rec)
     if not (rec.kind == "item" or rec.kind == "trinket" or rec.kind == "ammo") then return false end
+    if f._adUnworn and Store.Resolve(rec, "outOfStock", "showWhileWorn") == true then return true end
     if f._adItemEmpty then return Store.Resolve(rec, "outOfStock", "hideWhenMissing") == true end
     return rec.kind ~= "trinket" and Store.Resolve(rec, "outOfStock", "showOnlyWhenOut") == true
 end
@@ -6945,6 +6953,9 @@ SlashCmdList.ADSTATE = function(msg)
                 plain(f._adUsability), plain(f._adProcOn),
                 R("states", "readyAlpha"), R("states", "cooldownAlpha"), R("states", "unusableAlpha"), R("states", "resourceAlpha"),
                 R("appearance", "keepBright"), R("states", "procOverride"), R("states", "usableOverride")))
+            local DC = NS.DriverCooldown
+            local line = DC and DC.StateLine and DC.StateLine(id)
+            if line then print(line) end
         end
     end
     if n == 0 then print("  no live icon with that name") end

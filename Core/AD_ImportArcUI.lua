@@ -995,6 +995,64 @@ end
 -- every key it writes, a nil one too: the import resets what it leaves at the default
 IA.PRESS_KEYS = { "pressHighlight", "pressMode", "pressDuration", "pressLook", "pressColor", "pressAlpha", "pressTint" }
 
+-- v1's kick marker setup (per character) -> Arc Auras' kick module: the same setting names,
+-- into the character's own setup; nil while v1 never set it up there. Its alert sound by
+-- name becomes the game's sound id, read in game.
+IA.KICK_KEYS = { "marker", "showOnReadyCheck", "announceOnReadyCheck", "smartOpen", "message", "contexts",
+    "interruptAlert", "interruptAlertTTS", "interruptAlertText", "interruptAlertChannel",
+    "macroEnabled", "macroName", "macroTemplate", "setFocusName", "setFocusTemplate", "autoTabName", "autoTabTemplate" }
+IA.KICK_SOUNDS = { ["Ready Check"] = "READY_CHECK", ["Raid Warning"] = "RAID_WARNING",
+    ["Alarm Clock"] = "ALARM_CLOCK_WARNING_3", ["Boss Whisper"] = "UI_RAID_BOSS_WHISPER_WARNING",
+    ["Map Ping"] = "MAP_PING", ["BNet Toast"] = "UI_BNET_TOAST", ["Whisper"] = "TELL_MESSAGE" }
+function IA.KickSetup(k)
+    if type(k) ~= "table" or next(k) == nil then return nil end
+    local out = {}
+    for _, key in ipairs(IA.KICK_KEYS) do
+        if k[key] ~= nil then out[key] = Copy(k[key]) end
+    end
+    local snd = k.interruptAlertSound
+    if snd == "None" then
+        out.interruptAlertSound = ""
+    elseif type(snd) == "string" and snd ~= "Default" then
+        local kit = IA.KICK_SOUNDS[snd]
+        local SK = rawget(_G, "SOUNDKIT")
+        if kit then
+            local id = SK and SK[kit]
+            if id then out.interruptAlertSound = "kit:" .. id end
+        else
+            out.interruptAlertSound = snd
+        end
+    end
+    return out
+end
+
+-- v1's pings: the account's settings with the character's own patch on top (v1's spec
+-- patches have no twin here), and the character's picked spells.
+IA.PINGS_CHAR = { pkSpells = true, pkAutoOn = true }
+function IA.PingsSetup(g, c, charKey, cov)
+    if type(g) ~= "table" and type(c) ~= "table" then return nil end
+    local acct, own = {}, {}
+    for k, v in pairs(type(g) == "table" and g or {}) do
+        if type(k) == "string" and k:sub(1, 1) ~= "_" and k ~= "pkEditScope" and not IA.PINGS_CHAR[k] then
+            acct[k] = Copy(v)
+        end
+    end
+    local ov = type(g) == "table" and type(g._ov) == "table" and g._ov or {}
+    for k, v in pairs(type(ov[charKey]) == "table" and ov[charKey] or {}) do
+        if not IA.PINGS_CHAR[k] then acct[k] = Copy(v) end
+    end
+    for key in pairs(ov) do
+        if type(key) == "string" and key:sub(1, #charKey + 1) == charKey .. "|" then
+            IA.Gap(cov, "a ping setting kept for one spec (Arc Auras keeps one per account)")
+            break
+        end
+    end
+    for k in pairs(IA.PINGS_CHAR) do
+        if type(c) == "table" and c[k] ~= nil then own[k] = Copy(c[k]) end
+    end
+    return { account = acct, char = own }
+end
+
 -- v1's group hide keys -> Arc Auras fade conditions. Arc UI never reads three of the keys a
 -- group can carry, and "in a group" there is a party or a raid.
 IA.GROUP_HIDE = {}
@@ -1196,7 +1254,27 @@ function IA.PlaceCells(g, icons, cov, ppu)
         for i = 1, 4 do fix.m[i] = over[i] > 0 and 4 or 0 end
     end
     if v.packed and own then IA.Gap(cov, "a packed group with icons of their own size (Arc Auras packs by the slot)", "group") end
-    if v.dynAuras and auras then IA.Gap(cov, "a gone aura's spot closing up (Arc UI's Dynamic Auras)", "group") end
+    -- Arc UI's Dynamic Auras packs the auras of any group; Arc Auras closes a gone aura's spot
+    -- in an aura group, so a packed group of auras alone becomes one (its cooldown-only
+    -- settings go) and a mixed group keeps its kind, the gap said
+    local allAuras = #icons > 0
+    for _, I in ipairs(icons) do
+        if I.kind ~= "aura" then allAuras = false break end
+    end
+    if v.dynAuras and allAuras and g.kind == "cooldown" then
+        g.kind = "aura"
+        local A = g.o.arrangement
+        local F = NS.Schema and NS.Schema.iconGroup and NS.Schema.iconGroup.arrangement.fields
+        if A and F then
+            for k in pairs(A) do
+                local def = F[k]
+                if def and def.kinds and not def.kinds.aura then A[k] = nil end
+            end
+        end
+        Put(g.o, "arrangement", "dynamicAxis", (rows > 1 and cols <= 1) and "vertical" or "horizontal")
+    elseif v.dynAuras and auras then
+        IA.Gap(cov, "a gone aura's spot closing up (Arc UI's Dynamic Auras)", "group")
+    end
     -- v1 packs a row right from an even pixel count of the grid and steps back over the block's
     -- own width rounded up to even (a column down the same way), while Arc Auras' whole-pixel frame
     -- leans left and up; the group moves by the difference for its icons all up (ppu: the client's
@@ -1397,7 +1475,11 @@ function IA.ResolveArc(arcID, arcDB, specKey, classID, cov, opts)
         if type(def) ~= "table" then return nil, "no tracked item for this id" end
         if def.enabled == false then return nil, "the item icon was disabled in v1" end
         local o = {}
-        if def.hideWhenUnequipped == true then Put(o, "outOfStock", "hideWhenMissing", true) end
+        if def.hideWhenUnequipped == true then
+            -- an item worn in a slot shows while equipped; anything else while in stock
+            local worn = kind == "item" and NS.Schema and NS.Schema.Wearable(tonumber(def.itemID) or id)
+            Put(o, "outOfStock", worn and "showWhileWorn" or "hideWhenMissing", true)
+        end
         if kind == "trinket" then
             local slot = tonumber(def.slotID) or id
             -- an auto-tracked slot toggled off is never drawn (nil counts as on)
@@ -4062,6 +4144,19 @@ function IA.Plan(db, opts)
                     look.pressUnit = "press:" .. charKey
                     Leaf(node, "press", look.pressUnit, "Button Press Highlight", 1, nil, "Button Press Highlight")
                 end
+                -- its kick marker and ping setups, each its own pick, for the modules
+                local g = type(db.global) == "table" and db.global or {}
+                look.kick = IA.KickSetup(type(charDB) == "table" and charDB.setMyKick or nil)
+                if look.kick then
+                    look.kickUnit = "kick:" .. charKey
+                    Leaf(node, "kick", look.kickUnit, "Kick Assist", 1, nil, "Kick Assist")
+                end
+                local gp, cp = g.pings, type(charDB) == "table" and charDB.pings or nil
+                if type(gp) == "table" or type(cp) == "table" then
+                    look.pings = IA.PingsSetup(gp, cp, charKey, cov)
+                    look.pingsUnit = "pings:" .. charKey
+                    Leaf(node, "pings", look.pingsUnit, "Arc Pings", 1, nil, "Arc Pings")
+                end
             end
             if hadLayout or #node.later > 0 or #node.textures > 0 then
                 plan.counts.chars = plan.counts.chars + 1
@@ -4494,6 +4589,8 @@ function IA.Apply(plan, picks, how)
     end
     -- who: the icon's profile place, for one its group refuses (it goes free in the layout)
     local function AddIcon(I, lay, groupId, who)
+        -- Groups only: the layouts and their groups come in empty
+        if how and how.groupsOnly == true then return end
         if I.unresolved or (I.kind == "spell" and not I.driver.spellID) then
             res.skipped = res.skipped + 1
             return
@@ -4557,6 +4654,29 @@ function IA.Apply(plan, picks, how)
             Mark(look.unit)
         end
         -- the press highlight it had on, its own pick (the last picked one wins, as the look)
+        -- the kick module: the character's own setup, the module switched on
+        if look.kick and Picked(look.kickUnit) then
+            db.kick = type(db.kick) == "table" and db.kick or {}
+            db.kick.chars = type(db.kick.chars) == "table" and db.kick.chars or {}
+            local mine = Copy(look.kick)
+            local was = db.kick.chars[charKey]
+            if type(was) == "table" and was.customKick ~= nil then mine.customKick = was.customKick end
+            db.kick.chars[charKey] = mine
+            local KA = NS.KickAssist
+            if KA and KA.SetOn then KA.SetOn(true) else db.kick.on = true end
+            Mark(look.kickUnit)
+        end
+        -- pings: the account's settings (the last picked wins), the character's spells, switched on
+        if look.pings and Picked(look.pingsUnit) then
+            local chars = type(db.pings) == "table" and type(db.pings.chars) == "table" and db.pings.chars or {}
+            local P = Copy(look.pings.account)
+            P.chars = chars
+            if next(look.pings.char) then chars[charKey] = Copy(look.pings.char) end
+            db.pings = P
+            local PM = NS.Pings
+            if PM and PM.SetOn then PM.SetOn(true) else P.on = true end
+            Mark(look.pingsUnit)
+        end
         if look.press and Picked(look.pressUnit) then
             for _, k in ipairs(IA.PRESS_KEYS) do Store.SetSetting(k, Copy(look.press[k])) end
             Mark(look.pressUnit)

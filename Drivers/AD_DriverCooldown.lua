@@ -402,7 +402,7 @@ function Driver.TurnTo(a, cast)
     if not pick or pick == shown then return false end
     Store.PickSpell(d, pick)
     if Store.ShownSpell(d) == shown then return false end
-    a.icdToZero = nil
+    a.icdToZero, a.lockUntil, a.chg = nil, nil, nil
     a.frame._adUsabSig = nil
     a.frame._adStateSig = nil
     Factory.RefreshArt(a.frame, a.rec)
@@ -570,13 +570,50 @@ end
 -- cooldown runs), c = a charge coming back. A charge spell that locks itself
 -- after each cast (a hard ICD, Zenith) shows its main cooldown with a charge
 -- in hand; with Ignore hard ICD that reads as a charge coming back, unless the
--- cast that started it spent the last of two charges (a.icdToZero).
+-- cast that started it spent the last of two charges (a.icdToZero). Skip short
+-- locks does the same for the first LOCK_GRACE seconds after a cast only
+-- (a.lockUntil, plain game time): Shimmer's half second never shows.
+local LOCK_GRACE = 1
+Driver.LOCK_GRACE = LOCK_GRACE
+
+-- The charge cap as a plain number, or nil (never secret; guarded anyway).
+local function PlainCap(a)
+    local mx = a.maxCharges
+    if issecretvalue and issecretvalue(mx) then return nil end
+    return type(mx) == "number" and mx or nil
+end
+
+-- A spell's kind follows its own charge count (an icon's or a watch's table).
+-- No talent moves it in combat, so a count that rises there on a spell that
+-- had charges is a proc's extra one (Storm Unleashed gives Crash Lightning a
+-- second for a while): the spell keeps its kind, Ready while a charge is in hand.
+local function LearnCharges(t, sid)
+    local info = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
+    local mx = info and info.maxCharges
+    if issecretvalue and issecretvalue(mx) then mx = nil end
+    mx = type(mx) == "number" and mx or 0
+    local extra = t.ownSid == sid and (t.ownMax or 0) >= 1 and mx > t.ownMax and InCombatLockdown()
+    if not extra then t.ownSid, t.ownMax = sid, mx end
+    t.isCharge = t.ownMax > 1
+    t.hasCharges = info ~= nil
+    return info
+end
+
+-- A cast's first LOCK_GRACE seconds: the cooldown update may not have landed
+-- yet, so its verdict holds and the count is not reset to full.
+local function CastFresh(a)
+    return a.castAt ~= nil and GetTime() - a.castAt < LOCK_GRACE
+end
 local function ShadowState(a)
     local m = a.sCD:IsShown() == true
     local c = a.isCharge and a.sCharge:IsShown() == true or false
-    if m and c and not a.icdToZero
-        and Store.Resolve(a.rec, "states", "ignoreHardICD") == true then
-        m = false
+    if m and c and not a.icdToZero then
+        if Store.Resolve(a.rec, "states", "ignoreHardICD") == true then
+            m = false
+        elseif a.lockUntil and GetTime() < a.lockUntil
+            and Store.Resolve(a.rec, "states", "skipShortLocks") ~= false then
+            m = false
+        end
     end
     return m, c
 end
@@ -640,6 +677,26 @@ local function QueueState(a)
     end)
 end
 
+-- A charge spell's main cooldown can end with a recharge still running and no
+-- event (Shimmer's lock after each cast): a whole feed moves the swipe onto it.
+local function QueueFeed(a)
+    if not a.isCharge then return QueueState(a) end
+    Events.Coalesce("adcd_feed_" .. a.rec.id, function()
+        local live = attached[a.rec.id]
+        if live then Feed(live) end
+    end)
+end
+
+-- Skip short locks: a lock still running when its grace ends is a long one,
+-- so the icon re-reads and shows it.
+local function ArmLockEnd(a)
+    local id = a.rec.id
+    C_Timer.After(LOCK_GRACE, function()
+        local live = attached[id]
+        if live and live.sCD:IsShown() == true and live.sCharge:IsShown() == true then Feed(live) end
+    end)
+end
+
 -- One re-feed at the GCD's end. 61304 is the GCD; its numbers read plain in
 -- normal play but are guarded, with a 0.3s fallback. Chained GCDs re-arm.
 local function PostGCDDelay()
@@ -686,10 +743,16 @@ Feed = function(a)
     a.effSid = sid
     -- charges are the current rank's or override's: re-read when it changes
     if a.chargeSid ~= sid then
-        a.chargeSid = sid
-        local info = C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
-        a.isCharge = (info and (info.maxCharges or 0) > 1) == true
+        a.chargeSid, a.chg = sid, nil
+        local info = LearnCharges(a, sid)
         a.maxCharges = info and info.maxCharges or nil
+    elseif a.hasCharges then
+        -- the cap is the game's own, read each feed: a proc's extra charge moves
+        -- it with no SPELLS_CHANGED; the kind stays as learned. A gap in the
+        -- charge info keeps the last one.
+        local info = C_Spell.GetSpellCharges(sid)
+        local mx = info and info.maxCharges
+        if type(mx) == "number" and not (issecretvalue and issecretvalue(mx)) then a.maxCharges = mx end
     end
     -- the tooltip shows this rank / override too (our own frame field)
     a.frame._adEffSid = sid
@@ -744,10 +807,16 @@ Feed = function(a)
         end
     end
 
-    -- the last cast's verdict holds only while both shadows run
-    if not (a.sCD:IsShown() == true and a.isCharge and a.sCharge:IsShown() == true) then
+    -- the last cast's verdict holds only while both shadows run, or until they
+    -- first do (the cooldown update may land after the cast); nothing coming
+    -- back = every charge
+    local fresh = CastFresh(a)
+    local both = a.sCD:IsShown() == true and a.isCharge and a.sCharge:IsShown() == true
+    if both then a.bothSeen = true end
+    if not both and not (fresh and not a.bothSeen) then
         a.icdToZero = nil
     end
+    if a.isCharge and not fresh and a.sCharge:IsShown() ~= true then a.chg = PlainCap(a) end
     local m, c = ShadowState(a)
     -- How this GCD spin draws; the wand's lock has its own look.
     local look = Store.Resolve(a.rec, "swipe", wandGCD and "wandSwipe" or "gcdSwipe")
@@ -794,7 +863,9 @@ Feed = function(a)
     -- options can suppress the dark fill and edge there.
     Factory.SetGCDPresentation(a.frame, a.rec, pureGCD, a.isCharge and c and not m, wandGCD)
 
-    Factory.SetChargeText(a.frame, a.rec, sid, a.isCharge)
+    -- the count shows while the game gives it more than one charge, a proc's
+    -- extra one included, as the action bar does
+    Factory.SetChargeText(a.frame, a.rec, sid, a.isCharge or (PlainCap(a) or 0) > 1)
     -- charges-available flag for hide-duration-with-charges (shadow-derived)
     a.frame._adChargesAvail = (a.isCharge and c and not m) or nil
     Factory.ApplyDurationVis(a.frame, a.rec)
@@ -857,9 +928,11 @@ local function NoteCdEvent(spellID, baseSpellID, startCat)
     Events.Coalesce("adcd_cdmoved", FeedCdMoved)
 end
 
+-- A one-charge spell gets its charge back from a proc too (Crash Lightning's
+-- Storm Unleashed), with no cooldown update for it: every spell with charges reads.
 local function FeedCharges()
     for _, a in pairs(attached) do
-        if a.isCharge then Feed(a) end
+        if a.hasCharges then Feed(a) end
     end
 end
 
@@ -1141,6 +1214,15 @@ function Driver.IsPassiveItem(itemID)
     return true
 end
 
+-- Whether an item is worn: true or false, nil on a secret read.
+function Driver.Worn(itemID)
+    local IE = (C_Item and C_Item.IsEquippedItem) or IsEquippedItem
+    if not IE then return nil end
+    local on = IE(itemID)
+    if issecretvalue and issecretvalue(on) then return nil end
+    return on == true
+end
+
 -- onCd is always plain here: from plain numbers or the widget's IsShown.
 local function FinishItemState(a, onCd)
     local rec = a.rec
@@ -1259,6 +1341,15 @@ local function FeedItem(a)
             else
                 a.frame._adItemEmpty = (cnt == 0)
             end
+        end
+    end
+    -- an item worn in a slot: on or off, a plain read (a secret keeps the last)
+    if rec.kind == "item" then
+        if iid and not several and NS.Schema.Wearable(iid) then
+            local on = Driver.Worn(iid)
+            if on ~= nil then a.frame._adUnworn = (not on) or nil end
+        else
+            a.frame._adUnworn = nil
         end
     end
     if rec.kind == "trinket" then
@@ -1656,8 +1747,21 @@ local function EnsureEvents()
                 -- Before the feed, the shadows still hold the state the cast
                 -- came from: a cast while a charge was coming back spent the
                 -- last of two (the cooldown events only queue their feeds).
-                if a.isCharge and a.maxCharges == 2 then
-                    a.icdToZero = a.sCharge:IsShown() == true
+                -- Three or more: our own count says (a.chg, nil = not known).
+                if a.isCharge then
+                    if a.chg then a.chg = math.max(a.chg - 1, 0) end
+                    if a.maxCharges == 2 then
+                        a.icdToZero = a.sCharge:IsShown() == true
+                    elseif a.chg then
+                        a.icdToZero = a.chg == 0
+                    else
+                        a.icdToZero = nil
+                    end
+                    a.castAt, a.bothSeen = GetTime(), nil
+                end
+                if a.isCharge and Store.Resolve(a.rec, "states", "skipShortLocks") ~= false then
+                    a.lockUntil = GetTime() + LOCK_GRACE
+                    ArmLockEnd(a)
                 end
                 Feed(a)
             end
@@ -1742,10 +1846,9 @@ local function EnsureEvents()
         -- maxCharges > 1: single-charge spells return a charges table too.
         for _, a in pairs(attached) do
             local sid = EffOf(a)
-            local info = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
-            a.isCharge = (info and (info.maxCharges or 0) > 1) == true
+            local info = LearnCharges(a, sid)
             a.maxCharges = info and info.maxCharges or nil
-            a.chargeSid = sid
+            a.chargeSid, a.chg = sid, nil
         end
         -- the feed re-resolves each spell and moves its range check with it
         Events.Coalesce("adcd_feedall", FeedAll)
@@ -1918,12 +2021,17 @@ function Driver.Attach(rec, f)
         -- shadows are shown under UIParent: a hidden parent freezes IsShown and
         -- swallows both. OnCooldownDone backs up the expiry.
         local function bump() QueueState(a) end
+        local function ended() QueueFeed(a) end
         a.sCD:SetScript("OnShow", bump)
-        a.sCD:SetScript("OnHide", bump)
-        a.sCD:SetScript("OnCooldownDone", bump)
+        a.sCD:SetScript("OnHide", ended)
+        a.sCD:SetScript("OnCooldownDone", ended)
         a.sCharge:SetScript("OnCooldownDone", function()
             local live = attached[rec.id]
-            if live then Feed(live) end   -- next charge re-feeds or lands full
+            if not live then return end
+            -- a charge came back
+            local cap = PlainCap(live)
+            if live.chg and cap then live.chg = math.min(live.chg + 1, cap) end
+            Feed(live)   -- next charge re-feeds or lands full
         end)
     else
         a.rec, a.frame = rec, f
@@ -1931,10 +2039,9 @@ function Driver.Attach(rec, f)
     -- a (re)attach re-reads the settings and paints the usability in full;
     -- the feed re-reads the charges from the current rank or override
     a.cfgGen = nil
-    a.chargeSid = nil
+    a.chargeSid, a.chg = nil, nil
     local sid = EffOf(a)
-    local info = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
-    a.isCharge = (info and (info.maxCharges or 0) > 1) == true
+    local info = LearnCharges(a, sid)
     a.maxCharges = info and info.maxCharges or nil
     EnsureEvents()
     Feed(a)
@@ -1997,6 +2104,23 @@ function Driver.Refeed(id)
     if NS.SpecialIcon then NS.SpecialIcon.Refeed(id) end
     if NS.DriverGroupBuff then NS.DriverGroupBuff.Refeed(id) end
     if NS.DriverStance then NS.DriverStance.Refeed(id) end
+end
+
+-- /adstate's spell line: what this driver last decided, next to the game's reads now.
+function Driver.StateLine(id)
+    local a = attached[id]
+    if not a then return nil end
+    local function P(v)
+        if issecretvalue and issecretvalue(v) then return "secret" end
+        return tostring(v)
+    end
+    local sid = a.effSid
+    local info = sid and C_Spell.GetSpellCharges and C_Spell.GetSpellCharges(sid)
+    local cd = sid and C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(sid)
+    local usable = sid and C_Spell.IsSpellUsable and C_Spell.IsSpellUsable(sid)
+    return ("  diag spell %s: charges %s (max %s) | game: max %s, now %s | cooldown shown %s, recharge shown %s | onGCD %s, enabled %s, usable %s"):format(
+        P(sid), P(a.isCharge), P(a.maxCharges), P(info and info.maxCharges), P(info and info.currentCharges),
+        P(a.sCD:IsShown()), P(a.sCharge:IsShown()), P(cd and cd.isOnGCD), P(cd and cd.isEnabled), P(usable))
 end
 
 -- A spell icon whose spell has charges (its current rank or override once
@@ -2097,7 +2221,7 @@ WatchFeed = function(w)
     w.eff = sid
     if w.chargeSid ~= sid then
         w.chargeSid = sid
-        w.isCharge = ChargesOf(sid)
+        LearnCharges(w, sid)
     end
     local info = C_Spell.GetSpellCooldown and C_Spell.GetSpellCooldown(sid)
     local onGcd = info and info.isOnGCD
@@ -2135,7 +2259,7 @@ end
 
 local function WatchFeedCharges()
     for _, w in pairs(watches) do
-        if w.isCharge then WatchFeed(w) end
+        if w.hasCharges then WatchFeed(w) end
     end
 end
 

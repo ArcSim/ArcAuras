@@ -607,9 +607,10 @@ end
 -- (a spell icon's "On this icon" shape on driver.overlay, the engine's button,
 -- so it works in combat) and a spell's cooldown while its timer is idle.
 -- Offered only with the game's aura container for the aura.
+-- pair: the two side by side (the On the icon sub-tab), else stacked in the right column.
 CO.AURA_UNITS = { "target", "focus", "mouseover", "player", "pet" }
 CO.AURA_UNIT_WORDS = { target = "Target", focus = "Focus", mouseover = "Mouseover", player = "Player", pet = "Pet" }
-function CO.SourceRows(pg, Rec, vis, owner)
+function CO.SourceRows(pg, Rec, vis, owner, pair)
     local AT, Store, O = NS.AT, NS.Store, NS.Options
     local function Ov()
         local r = Rec()
@@ -630,7 +631,7 @@ function CO.SourceRows(pg, Rec, vis, owner)
         return auraVis() and ov ~= nil and ov.on == true
     end
     if O.BuildYield then O.BuildYield() end
-    AT.Section(pg, "Aura on this icon", { visibleFn = auraVis, side = "R" })
+    AT.Section(pg, "Aura on this icon", { visibleFn = auraVis, side = pair and "L" or "R" })
     AT.RowToggle(pg, "Show an aura",
         function() local ov = Ov() return ov ~= nil and ov.on == true end,
         function(v)
@@ -1354,17 +1355,1011 @@ function CO.RuleRows(pg, Rec, vis, owner, isBar, opts)
     Stamp(add, "ruleAdd", "+ Add rule")
 end
 
--- The icon editor's hook: trackVis / trigVis are the Tracking and Triggers
--- tabs' gates for the open icon.
-function Options.CustomIconRows(pg, ctx, trackVis, trigVis, owner)
+-- A Custom Icon's Tracking tab in four sub-tabs (the icon editor's panes):
+-- Rules, each rule one sentence that opens as When / Only if / Then; Timer
+-- and active; Icon; On the icon. Custom Bars keep TrackRows and RuleRows.
+
+-- Each trigger as the start of a sentence; %s: its spells, item or condition.
+CO.WHEN_WORDS = {
+    cast = "When you cast %s", cast_except = "When you cast any spell but %s",
+    cd_start = "When the cooldown of %s starts", cd_end = "When the cooldown of %s ends",
+    spell_update = "When the game updates %s", usable_on = "When %s becomes usable",
+    usable_off = "When %s stops being usable", proc_on = "When the proc glow of %s starts",
+    proc_off = "When the proc glow of %s ends",
+    dodge = "When you dodge", parry = "When you parry", block = "When you block", miss = "When an attack misses you",
+    hit = "When you are hit", crit = "When you take a critical hit", absorb = "When you absorb an attack",
+    resist = "When you resist a spell", immune = "When you are immune",
+    avoided = "When you evade, deflect or reflect",
+    pet_dodge = "When your pet dodges", pet_parry = "When your pet parries", pet_block = "When your pet blocks",
+    pet_hit = "When your pet is hit", pet_crit = "When your pet takes a critical hit",
+    extra_attacks = "When you gain extra attacks", reactive = "When a reactive ability lights up",
+    health_low = "When your health is low", mana_low = "When your mana is low",
+    combo_points = "When your combo points change", interrupted = "When your cast is interrupted",
+    energize = "When you gain a resource", healed = "When you are healed", heal_crit = "When you take a critical heal",
+    combat_start = "When you enter combat", combat_end = "When you leave combat",
+    target_changed = "When your target changes", target_died = "When your target dies",
+    totem_placed = "When a totem is placed", totem_gone = "When a totem is gone",
+    ended = "When this timer ends", chain = "When the timer of %s ends",
+    target_dodge = "When your attack is dodged", target_parry = "When your attack is parried",
+    target_block = "When your attack is blocked", target_miss = "When your attack misses",
+    target_hit = "When you hit the target", target_crit = "When you crit the target",
+    cond_on = "When %s turns on", cond_off = "When %s turns off",
+}
+-- what a %s reads with nothing picked yet
+CO.WHEN_EMPTY = { chain = "another item", cond_on = "a condition", cond_off = "a condition" }
+
+local function Lit(s) return "|cff" .. NS.AT.Hex(NS.AT.COL.arc) .. s .. "|r" end
+local function SpellWord(id)
+    local nm = CO.SpellName(id)
+    return (nm ~= "") and nm or tostring(id)
+end
+
+-- a rule's spells by name: one, two, or the first and how many more
+function CO.SpellList(r)
+    local ids = CO.RuleSpells(r)
+    if #ids == 0 then return nil end
+    if #ids == 1 then return SpellWord(ids[1]) end
+    if #ids == 2 then return SpellWord(ids[1]) .. ", " .. SpellWord(ids[2]) end
+    return Tr("%s + %d more"):format(SpellWord(ids[1]), #ids - 1)
+end
+
+-- what the trigger's %s names: the spells, the other item, the condition
+function CO.WhenSubject(r)
+    if r.when == "chain" then
+        local it = r.srcId and NS.Store.Get(r.srcId)
+        return it and tostring(it.name) or nil
+    end
+    if r.when == "cond_on" or r.when == "cond_off" then
+        local C = NS.Conditions
+        for _, d in ipairs((C and C.VOCAB) or {}) do
+            if d.key == r.cond then return Tr(d.text) end
+        end
+        return nil
+    end
+    return CO.SpellList(r)
+end
+
+-- the conditions a rule waits on, each a few words
+function CO.GuardWords(r)
+    local out = {}
+    if r.timer == "idle" then out[#out + 1] = Tr("if the timer is not running")
+    elseif r.timer == "running" then out[#out + 1] = Tr("if the timer is running") end
+    if r.combat == "in" then out[#out + 1] = Tr("in combat")
+    elseif r.combat == "out" then out[#out + 1] = Tr("out of combat") end
+    if r.talent then
+        local nm = Options.TalentPickName and Options.TalentPickName(r.talent, r.talentEntry)
+        nm = (nm and nm ~= "") and nm or Tr("Talent %s"):format(r.talent)
+        out[#out + 1] = (r.talentNot and Tr("without %s") or Tr("with %s")):format(Lit(nm))
+    end
+    if r.spec then
+        local _, nm = GetSpecializationInfoByID and GetSpecializationInfoByID(r.spec)
+        out[#out + 1] = Tr("as %s"):format(Lit(type(nm) == "string" and nm or tostring(r.spec)))
+    end
+    if r.spellReady then out[#out + 1] = Tr("while %s is ready"):format(Lit(SpellWord(r.spellReady))) end
+    if r.stacksMin then out[#out + 1] = Tr("at %d or more stacks"):format(r.stacksMin) end
+    if r.stacksMax then out[#out + 1] = Tr("at %d or fewer stacks"):format(r.stacksMax) end
+    if r.withinRule then
+        local secs = ("%g"):format(tonumber(r.withinSecs) or 1)
+        out[#out + 1] = (r.withinNot and Tr("not within %s s of rule %d") or Tr("within %s s of rule %d"))
+            :format(secs, r.withinRule)
+    end
+    return out
+end
+
+-- what it does: its verb (lit) and the rest
+function CO.ThenWords(r, rec)
+    local act = r.act or "start"
+    local n = tonumber(r.n)
+    if act == "start" then
+        local secs = tonumber(r.secs) or (rec and tonumber(rec.driver.duration))
+        local rest = secs and Tr("for %s s"):format(("%g"):format(secs)) or ""
+        if r.mode == "extend" then
+            rest = rest .. Tr(", or add the time if it runs")
+        elseif r.mode == "idle" and r.timer ~= "idle" then
+            rest = rest .. Tr(", unless it runs")
+        end
+        return Tr("start the timer"), rest
+    end
+    if act == "stop" then return Tr("stop the timer"), "" end
+    if act == "add" then
+        n = n or 1
+        return (n == 1 and Tr("add %d stack") or Tr("add %d stacks")):format(n),
+            (r.restartToo and Tr("and restart the timer") or "")
+    end
+    if act == "remove" then
+        n = n or 1
+        return (n == 1 and Tr("remove %d stack") or Tr("remove %d stacks")):format(n), ""
+    end
+    if act == "set" then return Tr("set the stacks to %d"):format(n or 0), "" end
+    if act == "reset" then return Tr("reset the timer and stacks"), "" end
+    if act == "sound" then return Tr("play a sound"), "" end
+    if act == "speak" then
+        return Tr("speak"), (r.text and r.text ~= "") and ("\"" .. r.text .. "\"") or ""
+    end
+    return Tr(NS.Schema.CUSTOM_ACTION_LABELS[act] or act), ""
+end
+
+-- The rule as one sentence: "When you cast Ghost Wolf, if the timer is not
+-- running: start the timer for 20 s."
+function CO.RuleSentence(r, rec)
+    local fmt = CO.WHEN_WORDS[r.when]
+    local when
+    if not fmt then
+        when = Tr(NS.Schema.CUSTOM_TRIGGER_LABELS[r.when] or tostring(r.when))
+    elseif fmt:find("%%s") then
+        local subj = CO.WhenSubject(r)
+        when = Tr(fmt):format(subj and Lit(subj) or Tr(CO.WHEN_EMPTY[r.when] or "a spell"))
+    else
+        when = Tr(fmt)
+    end
+    if r.slot and (r.when == "totem_placed" or r.when == "totem_gone") then
+        when = when .. " " .. Tr("(slot %d)"):format(r.slot)
+    end
+    local guards = CO.GuardWords(r)
+    local verb, rest = CO.ThenWords(r, rec)
+    local s = when
+    if #guards > 0 then s = s .. ", " .. table.concat(guards, ", ") end
+    s = s .. ": " .. Lit(verb)
+    if rest ~= "" then s = s .. ((rest:sub(1, 1) == ",") and "" or " ") .. rest end
+    return s .. "."
+end
+
+-- Which rule is open in the editor, per icon, and the conditions added to a
+-- rule but not set yet: both for this session only.
+CO.open = {}
+CO.added = {}
+
+-- A small sunken text box (the theme's RowInput field) for the rule boxes.
+function CO.MiniBox(parent, get, set, hint)
+    local AT, COL = NS.AT, NS.AT.COL
+    local box = CreateFrame("EditBox", nil, parent, "BackdropTemplate")
+    box:SetHeight(18)
+    AT.Skin(box, COL.well)
+    box:SetFont(AT.FONT, 11, "")
+    box:SetTextInsets(6, 6, 0, 0)
+    box:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+    box:SetAutoFocus(false)
+    local hintFS = box:CreateFontString(nil, "OVERLAY")
+    hintFS:SetFont(AT.FONT, 11, "")
+    hintFS:SetPoint("LEFT", 6, 0)
+    hintFS:SetPoint("RIGHT", -6, 0)
+    hintFS:SetJustifyH("LEFT")
+    hintFS:SetWordWrap(false)
+    hintFS:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
+    local function Hint()
+        hintFS:SetText(hint and Tr(hint) or "")
+        hintFS:SetShown((box:GetText() or "") == "")
+    end
+    box:SetScript("OnTextChanged", Hint)
+    local function commit()
+        set(box:GetText() or "")
+        AT.BoxText(box, get() or "")
+        Hint()
+    end
+    box:SetScript("OnEnterPressed", function() box:ClearFocus() end)
+    box:SetScript("OnEscapePressed", function() AT.BoxText(box, get() or "") box:ClearFocus() end)
+    box:SetScript("OnEditFocusGained", function() box:SetBackdropBorderColor(COL.focus[1], COL.focus[2], COL.focus[3], 1) end)
+    box:SetScript("OnEditFocusLost", function()
+        commit()
+        box:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1)
+    end)
+    box.Refresh = function()
+        if not box:HasFocus() then AT.BoxText(box, get() or "") end
+        Hint()
+    end
+    box.Refresh()
+    return box
+end
+
+-- The Rules pane: one box, a line per rule, the open rule's three boxes
+-- under its line, + Add rule at the end.
+CO.BLOCK_GAP, CO.EDIT_INSET, CO.MINI_H, CO.BLOCK_HEAD = 10, 30, 26, 22
+CO.BLOCK_SHARE = { 1.3, 1, 1.2 }
+function CO.RuleSentences(pg, Rec, vis, owner)
+    local AT, S = NS.AT, NS.Schema
+    local COL = AT.COL
+    local function CU() return NS.DriverCustom end
+    local function Rules()
+        local r, E = Rec(), CU()
+        return (r and E) and (E.Rules(r) or {}) or {}
+    end
+    local function Rule(i) return Rules()[i] end
+    local function Edit(fn)
+        local r, E = Rec(), CU()
+        if r and E then fn(E, r) end
+        AT.LayoutPage(pg)
+    end
+    local function OpenIdx()
+        local r = Rec()
+        return r and CO.open[r.id] or nil
+    end
+    local function SetOpen(i)
+        local r = Rec()
+        if r then CO.open[r.id] = i end
+        AT.CloseDropdown()
+        AT.LayoutPage(pg)
+    end
+    -- the page's width before its first layout, from the page itself
+    local function RowW(row)
+        local w = row:GetWidth() or 0
+        if w < 60 then
+            w = (pg:GetWidth() or 0) - 8
+            if w < 60 then
+                pg._sizeUnresolved = true
+                w = 760
+            end
+        end
+        return w
+    end
+
+    AT.Section(pg, "What starts and stops it", { visibleFn = vis })
+    AT.RowDesc(pg, "No rules yet: it shows as active until a rule starts its timer or counts stacks.", 20,
+        function() return vis() and #Rules() == 0 end)
+
+    for i = 1, S.CUSTOM_MAX_RULES do
+        if Options.BuildYield then Options.BuildYield() end
+        local rv = function() return vis() and Rule(i) ~= nil end
+        local function Set(field, value) Edit(function(E, r) E.SetRule(r, i, field, value) end) end
+        local function Toggle()
+            if OpenIdx() == i then SetOpen(nil) else SetOpen(i) end
+        end
+
+        -- the line: number, sentence, Edit / Done, the moves, Remove
+        local line = AT.AddRow(pg, 30, rv)
+        local badge = CreateFrame("Frame", nil, line, "BackdropTemplate")
+        badge:SetSize(20, 20)
+        badge:SetPoint("LEFT", 12, 0)
+        AT.Skin(badge, COL.btn, COL.line2)
+        local num = badge:CreateFontString(nil, "OVERLAY")
+        num:SetFont(AT.FONT, 11, "")
+        num:SetPoint("CENTER", 0, 0)
+        num:SetTextColor(COL.title[1], COL.title[2], COL.title[3])
+        num:SetText(tostring(i))
+        local words = line:CreateFontString(nil, "OVERLAY")
+        words:SetFont(AT.FONT, 12, "")
+        words:SetJustifyH("LEFT")
+        words:SetWordWrap(true)
+        words:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+        words:SetPoint("LEFT", badge, "RIGHT", 8, 0)
+        local rm = AT.MakeQuietButton(line, "Remove", 70)
+        local ed = AT.MakeSmallButton(line, "Edit", 56)
+        local dn = AT.MakeQuietButton(line, "Move down", 86)
+        local up = AT.MakeQuietButton(line, "Move up", 74)
+        rm:SetScript("OnClick", function()
+            AT.CloseDropdown()
+            local r = Rec()
+            if r and CO.open[r.id] == i then CO.open[r.id] = nil end
+            Edit(function(E, rec) E.RemoveRule(rec, i) end)
+        end)
+        ed:SetScript("OnClick", Toggle)
+        up:SetScript("OnClick", function()
+            Edit(function(E, r) E.MoveRule(r, i, -1) end)
+            local r = Rec()
+            if r and CO.open[r.id] == i then SetOpen(i - 1) end
+        end)
+        dn:SetScript("OnClick", function()
+            Edit(function(E, r) E.MoveRule(r, i, 1) end)
+            local r = Rec()
+            if r and CO.open[r.id] == i then SetOpen(i + 1) end
+        end)
+        line:EnableMouse(true)
+        line:SetScript("OnMouseUp", Toggle)
+        AT.Tooltip(line, "Rule", "Click it, or Edit, to change it.")
+        line._adWords = words
+        line._sync = function()
+            local r = Rule(i)
+            if not r then return end
+            words:SetText(CO.RuleSentence(r, Rec()))
+            ed:SetLabel((OpenIdx() == i) and "Done" or "Edit", 56)
+            local n = #Rules()
+            up:SetShown(i > 1)
+            dn:SetShown(i < n)
+            rm:ClearAllPoints()
+            rm:SetPoint("RIGHT", -12, 0)
+            local left = rm
+            for _, b in ipairs({ ed, dn, up }) do
+                if b:IsShown() then
+                    b:ClearAllPoints()
+                    b:SetPoint("RIGHT", left, "LEFT", -6, 0)
+                    left = b
+                end
+            end
+            words:ClearAllPoints()
+            words:SetPoint("LEFT", badge, "RIGHT", 8, 0)
+            words:SetPoint("RIGHT", left, "LEFT", -10, 0)
+            -- a long sentence wraps and the line grows with it
+            local room = RowW(line) - 12 - 20 - 8 - 10 - 12
+            for _, b in ipairs({ rm, ed, dn, up }) do
+                if b:IsShown() then room = room - (b:GetWidth() or 0) - 6 end
+            end
+            words:SetWidth(math.max(80, room))
+            local want = math.max(30, math.floor((words:GetStringHeight() or 14) + 14.5))
+            if line._h ~= want then line._h = want line:SetHeight(want) end
+        end
+
+        -- the open rule's three boxes
+        local edVis = function() return rv() and OpenIdx() == i end
+        local editor = AT.AddRow(pg, 120, edVis)
+        line._adEditor = editor
+        local blocks = {}
+        local function Block(title)
+            local b = CreateFrame("Frame", nil, editor, "BackdropTemplate")
+            AT.Skin(b, COL.well, COL.line2)
+            local hd = CreateFrame("Frame", nil, b, "BackdropTemplate")
+            hd:SetPoint("TOPLEFT", 1, -1)
+            hd:SetPoint("TOPRIGHT", -1, -1)
+            hd:SetHeight(CO.BLOCK_HEAD)
+            AT.Skin(hd, COL.btn)
+            local t = hd:CreateFontString(nil, "OVERLAY")
+            t:SetFont(AT.FONT, 10, "")
+            t:SetPoint("LEFT", 8, 0)
+            t:SetTextColor(COL.title[1], COL.title[2], COL.title[3])
+            t:SetText(Tr(title):upper())
+            b._title, b.rows = t, {}
+            blocks[#blocks + 1] = b
+            return b
+        end
+        -- a row in a box: label, then the control filling the rest; vis(r)
+        local function Mini(b, label, lw, vis2, make)
+            -- the panel builds in slices: each box row is one
+            if Options.BuildYield then Options.BuildYield() end
+            local m = CreateFrame("Frame", nil, b)
+            m:SetHeight(CO.MINI_H)
+            local fs = m:CreateFontString(nil, "OVERLAY")
+            fs:SetFont(AT.FONT, 11, "")
+            fs:SetPoint("LEFT", 8, 0)
+            fs:SetJustifyH("LEFT")
+            fs:SetWordWrap(false)
+            fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+            if label then fs:SetText(Tr(label)) end
+            m._label, m._lw, m._vis = fs, lw, vis2
+            m._ctrl = make(m)
+            b.rows[#b.rows + 1] = m
+            return m
+        end
+        local function DD(itemsFn, get, set)
+            return function(m)
+                local dd = AT.MakeDropdown(owner, m, 100, itemsFn, get, set)
+                m._fill = dd
+                m._refresh = dd.Refresh
+                return dd
+            end
+        end
+        local function Box(get, set, hint)
+            return function(m)
+                local box = CO.MiniBox(m, get, set, hint)
+                m._fill = box
+                m._refresh = box.Refresh
+                return box
+            end
+        end
+        local function Check(get, set)
+            return function(m)
+                local cb = AT.MakeCheckbox(m)
+                cb:SetScript("OnClick", function() set(not get()) cb:SetOn(get()) end)
+                m._refresh = function() cb:SetOn(get()) end
+                return cb
+            end
+        end
+        local function Is(field, ...)
+            local want = { ... }
+            return function(r)
+                for _, w in ipairs(want) do
+                    if r[field] == w then return true end
+                end
+                return false
+            end
+        end
+        local function Always() return true end
+
+        -- WHEN
+        local groups = S.CUSTOM_TRIGGER_GROUPS
+        local function GroupOf(r)
+            local E = CU()
+            return (r and E and E.GROUP_OF[r.when]) or "spell"
+        end
+        local function GroupList(key)
+            for _, g in ipairs(groups) do
+                if g.key == key then return g.list end
+            end
+            if key == "target" then return S.CUSTOM_TARGET_TRIGGERS end
+            return groups[1].list
+        end
+        local wb = Block("When")
+        Mini(wb, "Group", 46, Always, DD(function()
+            local out = {}
+            local E = CU()
+            local target = E and E.CUSTOM_TARGET_FEEDBACK
+            for _, g in ipairs(groups) do
+                out[#out + 1] = { value = g.key, text = g.label }
+                if target and g.key == "pet" then
+                    out[#out + 1] = { value = "target", text = "Your target" }
+                    target = false
+                end
+            end
+            if target then out[#out + 1] = { value = "target", text = "Your target" } end
+            return out
+        end, function() return GroupOf(Rule(i)) end, function(v)
+            local r = Rule(i)
+            if r and GroupOf(r) ~= v then Set("when", GroupList(v)[1]) end
+        end))
+        local whenM = Mini(wb, "When", 46, Always, DD(function()
+            local out = {}
+            for _, k in ipairs(GroupList(GroupOf(Rule(i)))) do
+                out[#out + 1] = { value = k, text = S.CUSTOM_TRIGGER_LABELS[k] or k }
+            end
+            return out
+        end, function() local r = Rule(i) return r and r.when or "cast" end, function(v) Set("when", v) end))
+        AT.Tooltip(whenM._ctrl, "When", function()
+            local r = Rule(i)
+            if r and r.when == "spell_update" then
+                return "Fires each time the game updates this spell's cooldown, and for some buffs as they come and go."
+            end
+            return "What makes this rule fire."
+        end)
+        local spellM = Mini(wb, "Spells", 46, function(r)
+            local E = CU()
+            return E ~= nil and E.SPELL_TRIGGERS[r.when] == true
+        end, Box(function()
+            local t = {}
+            for _, v in ipairs(CO.RuleSpells(Rule(i))) do t[#t + 1] = tostring(v) end
+            return table.concat(t, ", ")
+        end, function(v)
+            local ids, seen = {}, {}
+            for part in tostring(v or ""):gmatch("[^,]+") do
+                if Trim(part) ~= "" then
+                    local id = CO.ParseSpell(part)
+                    -- an entry that names no spell changes nothing
+                    if not id then return end
+                    if not seen[id] and #ids < (S.CUSTOM_RULE_MAX_SPELLS or 13) then
+                        seen[id] = true
+                        ids[#ids + 1] = id
+                    end
+                end
+            end
+            Edit(function(E, r)
+                E.SetRule(r, i, "spellID", ids[1])
+                E.SetRule(r, i, "spellIDs", (#ids > 1) and ids or nil)
+            end)
+        end, "e.g. 6572"))
+        -- the spells' names, dim inside the box's right end
+        local spellName = spellM._ctrl:CreateFontString(nil, "OVERLAY")
+        spellName:SetFont(AT.FONT, 11, "")
+        spellName:SetPoint("RIGHT", -6, 0)
+        spellName:SetJustifyH("RIGHT")
+        spellName:SetWordWrap(false)
+        spellName:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+        local spellRefresh = spellM._refresh
+        spellM._refresh = function()
+            spellRefresh()
+            local r = Rule(i)
+            spellName:SetText((r and not spellM._ctrl:HasFocus() and CO.SpellList(r)) or "")
+        end
+        AT.Tooltip(spellM._ctrl, "Spells", "The spells it watches, comma separated: IDs, links or names. Any rank.")
+        Mini(wb, "Pet's casts too", 110, Is("when", "cast"), Check(function()
+            local r = Rule(i)
+            return r ~= nil and r.pet == true
+        end, function(v) Set("pet", v or nil) end))
+        Mini(wb, "On cooldown too", 110, Is("when", "usable_on", "usable_off"), Check(function()
+            local r = Rule(i)
+            return r ~= nil and r.ignoreCooldown == true
+        end, function(v) Set("ignoreCooldown", v or nil) end))
+        Mini(wb, "Slot", 46, Is("when", "totem_placed", "totem_gone"), DD(function()
+            local out = { { value = 0, text = "Any slot" } }
+            for _, it in ipairs(Options.TotemSlotItems()) do out[#out + 1] = it end
+            return out
+        end, function() local r = Rule(i) return (r and r.slot) or 0 end,
+            function(v) Set("slot", (v ~= 0) and v or nil) end))
+        Mini(wb, "Item", 46, Is("when", "chain"), DD(function()
+            local r = Rec()
+            return CO.ChainItems(r and r.id)
+        end, function() local r = Rule(i) return (r and r.srcId) or 0 end,
+            function(v) Set("srcId", (v ~= 0) and v or nil) end))
+        Mini(wb, "Condition", 64, Is("when", "cond_on", "cond_off"), DD(function() return CO.CondItems(Rule(i)) end,
+            function() local r = Rule(i) return (r and r.cond) or "" end,
+            function(v) Set("cond", (type(v) == "string" and v ~= "") and v or nil) end))
+
+        -- ONLY IF: the conditions that are set, then + Add a condition
+        local function key() local r = Rec() return (r and r.id or 0) .. ":" .. i end
+        local function Added(g) local a = CO.added[key()] return a ~= nil and a[g] == true end
+        local function Drop(g)
+            local a = CO.added[key()]
+            if a then a[g] = nil end
+        end
+        local GUARDS = {
+            { key = "timer", label = "Timer", items = { { value = "any", text = "Running or not" },
+                { value = "running", text = "Running" }, { value = "idle", text = "Not running" } }, neutral = "any" },
+            { key = "combat", label = "Combat", items = { { value = "any", text = "In or out" },
+                { value = "in", text = "In combat" }, { value = "out", text = "Out of combat" } }, neutral = "any" },
+            { key = "talent", label = "Talent" },
+            { key = "spec", label = "Spec", retail = true },
+            { key = "spellReady", label = "Spell ready", box = true, hint = "Spell ID" },
+            { key = "stacksMin", label = "Stacks at least", box = true, num = true },
+            { key = "stacksMax", label = "Stacks at most", box = true, num = true },
+            { key = "withinRule", label = "After rule" },
+        }
+        local function GuardOn(g, r) return r[g.key] ~= nil or Added(g.key) end
+        local function GuardOK(g) return not (g.retail and NS.IsForever == true) end
+        local ob = Block("Only if")
+        local GLW = 92
+        for _, g in ipairs(GUARDS) do
+            local gv = function(r) return GuardOK(g) and GuardOn(g, r) end
+            if g.items then
+                Mini(ob, g.label, GLW, gv, DD(function() return g.items end,
+                    function() local r = Rule(i) return (r and r[g.key]) or g.neutral end,
+                    function(v)
+                        if v == g.neutral then Drop(g.key) end
+                        Set(g.key, (v ~= g.neutral) and v or nil)
+                    end))
+            elseif g.key == "talent" then
+                Mini(ob, g.label, GLW, gv, function(m)
+                    local b = AT.MakeSmallButton(m, "Choose talent", 100)
+                    m._fill = b
+                    b:SetScript("OnClick", function()
+                        local rec, E = Rec(), CU()
+                        if not (rec and E and Options.OpenTalentPicker) then return end
+                        Options.OpenTalentPicker(function()
+                            local function R() return (E.Rules(rec) or {})[i] end
+                            local function W(field, value)
+                                E.SetRule(rec, i, field, value)
+                                AT.LayoutPage(pg)
+                            end
+                            return {
+                                talentTarget = true,
+                                State = function(node)
+                                    local r = R()
+                                    if not (r and r.talent == node) then return nil end
+                                    return r.talentNot and "not" or "req", r.talentEntry
+                                end,
+                                Set = function(node, state, entry)
+                                    local r = R()
+                                    if not r then return end
+                                    if state == nil then
+                                        if r.talent == node then W("talent", nil) Drop("talent") end
+                                        return
+                                    end
+                                    if r.talent ~= node then W("talent", node) end
+                                    W("talentEntry", entry)
+                                    W("talentNot", (state == "not") or nil)
+                                end,
+                                List = function()
+                                    local r = R()
+                                    if not (r and r.talent) then return {} end
+                                    return { { nodeID = r.talent, excluded = r.talentNot == true } }
+                                end,
+                                Clear = function()
+                                    local r = R()
+                                    if r and r.talent then W("talent", nil) end
+                                    Drop("talent")
+                                end,
+                            }
+                        end)
+                    end)
+                    m._refresh = function()
+                        local r = Rule(i)
+                        local nm = r and r.talent and Options.TalentPickName and Options.TalentPickName(r.talent, r.talentEntry)
+                        b:SetLabel((nm and nm ~= "") and nm or "Choose talent", 100)
+                    end
+                    AT.Tooltip(b, "Talent", "Opens the talent tree: click a talent for this rule, again for Not taken.")
+                    return b
+                end)
+            elseif g.key == "spec" then
+                Mini(ob, g.label, GLW, gv, DD(function()
+                    local r = Rule(i)
+                    return CO.SpecItems(r and r.spec)
+                end, function() local r = Rule(i) return (r and r.spec) or 0 end,
+                    function(v)
+                        if v == 0 then Drop("spec") end
+                        Set("spec", (v ~= 0) and v or nil)
+                    end))
+            elseif g.key == "withinRule" then
+                Mini(ob, g.label, GLW, gv, DD(function()
+                    local out = { { value = 0, text = "Any time" } }
+                    for k = 1, #Rules() do
+                        if k ~= i then out[#out + 1] = { value = k, text = Tr("Rule %d"):format(k) } end
+                    end
+                    for k = 1, #Rules() do
+                        if k ~= i then out[#out + 1] = { value = -k, text = Tr("Not after rule %d"):format(k) } end
+                    end
+                    return out
+                end, function()
+                    local r = Rule(i)
+                    if not (r and r.withinRule) then return 0 end
+                    return r.withinNot and -r.withinRule or r.withinRule
+                end, function(v)
+                    if v == 0 then Drop("withinRule") end
+                    Set("withinRule", (v ~= 0) and math.abs(v) or nil)
+                    if v ~= 0 then Set("withinNot", (v < 0) or nil) end
+                end))
+                Mini(ob, "Within (s)", GLW, function(r) return GuardOK(g) and r.withinRule ~= nil end, Box(function()
+                    local r = Rule(i)
+                    return ("%g"):format(tonumber(r and r.withinSecs) or 1)
+                end, function(v)
+                    local n = tonumber(v)
+                    if n and n > 0 then Set("withinSecs", math.max(0.1, math.min(600, n))) end
+                end))
+            elseif g.box then
+                Mini(ob, g.label, GLW, gv, Box(function()
+                    local r = Rule(i)
+                    return (r and r[g.key]) and tostring(r[g.key]) or ""
+                end, function(v)
+                    if v == "" then
+                        Drop(g.key)
+                        Set(g.key, nil)
+                        return
+                    end
+                    if g.num then
+                        local n = tonumber(v)
+                        if n and n >= 0 then Set(g.key, math.floor(math.min(999, n))) end
+                    else
+                        local id = CO.ParseSpell(v)
+                        if id then Set(g.key, id) end
+                    end
+                end, g.hint or "Any"))
+            end
+        end
+        Mini(ob, nil, 0, Always, function(m)
+            local dd = AT.MakeDropdown(owner, m, 100, function()
+                local out = { { value = "", text = "+ Add a condition" } }
+                local r = Rule(i)
+                for _, g in ipairs(GUARDS) do
+                    if r and GuardOK(g) and not GuardOn(g, r) then out[#out + 1] = { value = g.key, text = g.label } end
+                end
+                return out
+            end, function() return "" end, function(v)
+                if v == "" then return end
+                CO.added[key()] = CO.added[key()] or {}
+                CO.added[key()][v] = true
+                AT.LayoutPage(pg)
+            end)
+            dd:SetBackdropBorderColor(CO.ADD_EDGE[1], CO.ADD_EDGE[2], CO.ADD_EDGE[3], 1)
+            dd:SetScript("OnLeave", function() dd:SetBackdropBorderColor(CO.ADD_EDGE[1], CO.ADD_EDGE[2], CO.ADD_EDGE[3], 1) end)
+            m._fill = dd
+            m._refresh = function()
+                dd.Refresh()
+                dd:SetBackdropBorderColor(CO.ADD_EDGE[1], CO.ADD_EDGE[2], CO.ADD_EDGE[3], 1)
+            end
+            return dd
+        end)
+
+        -- THEN
+        local tb = Block("Then")
+        Mini(tb, "Do", 64, Always, DD(Items(S.CUSTOM_ACTIONS, S.CUSTOM_ACTION_LABELS),
+            function() local r = Rule(i) return (r and r.act) or "start" end, function(v) Set("act", v) end))
+        local function Timed(r)
+            local rec = Rec()
+            local timed = rec ~= nil and rec.driver.stackTimers == true
+            return r.act == "start" or r.act == nil or (r.act == "add" and (r.restartToo == true or timed))
+                or (r.act == "set" and timed)
+        end
+        Mini(tb, "Seconds", 64, Timed, Box(function()
+            local r = Rule(i)
+            local n = tonumber(r and r.secs)
+            return n and ("%g"):format(n) or ""
+        end, function(v)
+            local n = tonumber(v)
+            if v == "" then Set("secs", nil) return end
+            if n and n >= 0 then Set("secs", (n > 0) and math.min(S.CUSTOM_MAX_SECONDS or 7200, n) or nil) end
+        end, "Default"))
+        Mini(tb, "If it runs", 64, function(r) return r.act == "start" or r.act == nil end, DD(function()
+            return { { value = "restart", text = "Restart it" }, { value = "extend", text = "Add the seconds" },
+                { value = "idle", text = "Leave it" } }
+        end, function() local r = Rule(i) return (r and r.mode) or "restart" end,
+            function(v) Set("mode", (v ~= "restart") and v or nil) end))
+        Mini(tb, "How many", 64, Is("act", "add", "remove", "set"), Box(function()
+            local r = Rule(i)
+            return tostring(tonumber(r and r.n) or ((r and r.act == "set") and 0 or 1))
+        end, function(v)
+            local r = Rule(i)
+            local n = tonumber(v)
+            if not (r and n) then return end
+            n = math.floor(math.min(999, n))
+            if n >= 1 then Set("n", n) elseif n == 0 and r.act == "set" then Set("n", nil) end
+        end))
+        Mini(tb, "Restart the timer too", 130, Is("act", "add"), Check(function()
+            local r = Rule(i)
+            return r ~= nil and r.restartToo == true
+        end, function(v) Set("restartToo", v or nil) end))
+        Mini(tb, "Sound", 64, Is("act", "sound"), function(m)
+            local dd = AT.MakeDropdown(owner, m, 100, function()
+                if NS.Sounds then return NS.Sounds.Items() end
+                return { { value = "", text = "None" } }
+            end, function() local r = Rule(i) return (r and r.sound) or "" end,
+                function(v) Set("sound", (type(v) == "string" and v ~= "") and v or nil) end)
+            local play = AT.MakeSmallButton(m, "Play", 44)
+            play:SetScript("OnClick", function()
+                AT.CloseDropdown()
+                local r, E = Rule(i), CU()
+                if r and r.sound and E and NS.Sounds then NS.Sounds.Preview(r.sound, E.Channel(Rec())) end
+            end)
+            m._fill, m._tail = dd, play
+            m._refresh = dd.Refresh
+            return dd
+        end)
+        Mini(tb, "Text", 64, Is("act", "speak"), function(m)
+            local box = CO.MiniBox(m, function() local r = Rule(i) return (r and r.text) or "" end, function(v)
+                v = Trim(v)
+                Set("text", (v ~= "") and CO.Cut(v, 200) or nil)
+            end, "What to say")
+            local sp = AT.MakeSmallButton(m, "Speak", 52)
+            sp:SetScript("OnClick", function()
+                AT.CloseDropdown()
+                local r, E = Rule(i), CU()
+                if r and E then E.Speak(r.text) end
+            end)
+            m._fill, m._tail = box, sp
+            m._refresh = box.Refresh
+            return box
+        end)
+
+        -- lay the three boxes: widths by share, each as tall as its rows
+        editor._adBlocks = blocks
+        editor._sync = function()
+            local r = Rule(i)
+            if not r then return end
+            local w = RowW(editor) - CO.EDIT_INSET - 12 - CO.BLOCK_GAP * 2
+            local total = 0
+            for _, s in ipairs(CO.BLOCK_SHARE) do total = total + s end
+            local x, tallest = CO.EDIT_INSET + 12, 0
+            for bi, b in ipairs(blocks) do
+                local bw = math.floor(w * CO.BLOCK_SHARE[bi] / total)
+                b:ClearAllPoints()
+                b:SetPoint("TOPLEFT", editor, "TOPLEFT", x, -4)
+                b:SetWidth(bw)
+                x = x + bw + CO.BLOCK_GAP
+                local y = -(CO.BLOCK_HEAD + 5)
+                for _, m in ipairs(b.rows) do
+                    local on = m._vis(r) == true
+                    m:SetShown(on)
+                    if on then
+                        if m._refresh then m._refresh() end
+                        m:ClearAllPoints()
+                        m:SetPoint("TOPLEFT", b, "TOPLEFT", 0, y)
+                        m:SetPoint("TOPRIGHT", b, "TOPRIGHT", 0, y)
+                        local cx = (m._lw > 0) and (8 + m._lw + 6) or 8
+                        m._label:SetWidth(math.max(1, m._lw))
+                        m._label:SetShown(m._lw > 0)
+                        local tail = m._tail and ((m._tail:GetWidth() or 0) + 4) or 0
+                        local cw = math.max(40, bw - cx - 8 - tail)
+                        local c = m._fill or m._ctrl
+                        c:ClearAllPoints()
+                        c:SetPoint("LEFT", m, "LEFT", cx, 0)
+                        if m._fill then c:SetWidth(cw) end
+                        if m._tail then
+                            m._tail:ClearAllPoints()
+                            m._tail:SetPoint("LEFT", c, "RIGHT", 4, 0)
+                        end
+                        y = y - CO.MINI_H
+                    end
+                end
+                local bh = -y + 6
+                b:SetHeight(bh)
+                if bh > tallest then tallest = bh end
+            end
+            local want = tallest + 10
+            if editor._h ~= want then editor._h = want editor:SetHeight(want) end
+        end
+    end
+    -- + Add rule in the panel's add green: a green edge and words on no fill
+    local addRow = AT.AddRow(pg, 32, function() return vis() and #Rules() < S.CUSTOM_MAX_RULES end)
+    local addB = AT.MakeSmallButton(addRow, "+ Add rule", 100)
+    addB:SetPoint("LEFT", 12, 0)
+    local function PaintAdd(hot)
+        local e = hot and CO.ADD_GREEN or CO.ADD_EDGE
+        addB:SetBackdropColor(COL.btn[1], COL.btn[2], COL.btn[3], hot and 1 or 0)
+        addB:SetBackdropBorderColor(e[1], e[2], e[3], 1)
+        addB.fs:SetTextColor(CO.ADD_GREEN[1], CO.ADD_GREEN[2], CO.ADD_GREEN[3])
+    end
+    PaintAdd(false)
+    addB:SetScript("OnEnter", function() PaintAdd(true) end)
+    addB:SetScript("OnLeave", function() PaintAdd(false) end)
+    addB:SetScript("OnClick", function()
+        AT.CloseDropdown()
+        local r = Rec()
+        Edit(function(E, rec) E.AddRule(rec) end)
+        -- the new rule opens, ready to fill in
+        if r then SetOpen(#Rules()) end
+    end)
+    AT.Tooltip(addB, "Add rule", "A new rule: when something happens, what it does.")
+end
+-- the Effects tab's add green (+ Add a trigger)
+CO.ADD_GREEN, CO.ADD_EDGE = { 0.482, 0.847, 0.561 }, { 0.243, 0.478, 0.267 }
+
+-- The words for what Effects will list, from Active while and what is on the icon.
+function CO.ActiveReadout(r)
+    local ET = Options.EditorTabs
+    if not (r and ET and ET.ActiveWords) then return "" end
+    if ET.NeverInactive(r) then return Tr("Always active: it never goes Not active, On cooldown or Ready.") end
+    local names = {}
+    -- the warnings are glows of their own, not states the timer makes
+    for _, st in ipairs(ET.StatesFor(r) or {}) do
+        if st.key ~= "warn" then names[#names + 1] = Tr(ET.StateWord(r, st)) end
+    end
+    return Tr("Effects lists: %s."):format(table.concat(names, ", "))
+end
+
+-- Timer and active: Active while (with what it makes) beside the timer and its stacks.
+function CO.TimerPane(pg, Rec, vis, owner)
+    local AT, S = NS.AT, NS.Schema
+    local function Set(field, value)
+        local r, E = Rec(), NS.DriverCustom
+        if r and E then E.SetDriver(r, field, value) end
+        if Options.RefreshAll then Options.RefreshAll() else AT.LayoutPage(pg) end
+    end
+    AT.Section(pg, "Active while", { visibleFn = vis, side = "L" })
+    local swRow = AT.RowDropdown(pg, owner, "Active while",
+        function()
+            local r = Rec()
+            return (r and r.driver.showWhile) or "timer"
+        end,
+        function(v) Set("showWhile", (v ~= "timer") and v or nil) end,
+        Items(S.CUSTOM_SHOW_WHILE, S.CUSTOM_ACTIVE_WHILE_LABELS or S.CUSTOM_SHOW_WHILE_LABELS), vis)
+    CO.activeRow = swRow
+    AT.Tooltip(swRow, "Active while", "What makes the icon active. Effects sets a look for each state this makes.")
+    -- one line: the states Effects lists, as the setting makes them
+    local note = AT.AddRow(pg, 22, vis)
+    local nfs = note:CreateFontString(nil, "OVERLAY")
+    nfs:SetFont(AT.FONT, 11, "")
+    nfs:SetPoint("TOPLEFT", 10, -3)
+    nfs:SetJustifyH("LEFT")
+    nfs:SetJustifyV("TOP")
+    nfs:SetWordWrap(true)
+    nfs:SetTextColor(AT.COL.title[1], AT.COL.title[2], AT.COL.title[3])
+    note._adText = nfs
+    note._sync = function()
+        nfs:SetText(CO.ActiveReadout(Rec()))
+        local w = note:GetWidth() or 0
+        if w < 60 then
+            w = ((pg:GetWidth() or 0) / 2) - 12
+            if w < 60 then pg._sizeUnresolved = true return end
+        end
+        nfs:SetWidth(w - 20)
+        local want = math.max(22, math.floor((nfs:GetStringHeight() or 12) + 8))
+        if note._h ~= want then note._h = want note:SetHeight(want) end
+    end
+    CO.activeNote = note
+    AT.RowActions(pg, {
+        { label = "Set each state's look on Effects", w = 220,
+          onClick = function() if Options.OpenEffectsTab then Options.OpenEffectsTab() end end },
+    }, "left", vis)
+
+    AT.Section(pg, "Timer and stacks", { visibleFn = vis, side = "R" })
+    AT.RowInput(pg, "Default seconds",
+        function()
+            local r = Rec()
+            local d = r and tonumber(r.driver.duration)
+            return d and ("%g"):format(d) or ""
+        end,
+        function(v)
+            local n = tonumber(v)
+            if v == "" then Set("duration", nil) return end
+            if n and n > 0 then Set("duration", math.min(S.CUSTOM_MAX_SECONDS or 7200, n)) end
+        end,
+        vis, "How long the timer runs, and each stack when stacks run out on their own, when a rule gives no seconds. Enter applies it.",
+        "Set per rule")
+    local ET = Options.EditorTabs
+    local fold = ET and ET.NewFold and ET.NewFold(pg, "custom.stacks", nil, Rec,
+        { title = "Stacks", noCount = true, tip = "Its stack options. Click to show or hide them." })
+    local function F(v) return fold and fold:Add(vis, v, function() return false end) or v end
+    AT.RowInput(pg, "Max stacks",
+        function()
+            local r = Rec()
+            local m = r and tonumber(r.driver.maxStacks)
+            return m and tostring(m) or ""
+        end,
+        function(v)
+            local n = tonumber(v)
+            if v == "" then Set("maxStacks", nil) return end
+            if n and n >= 1 then Set("maxStacks", math.floor(math.min(999, n))) end
+        end,
+        F(vis), "Stacks never pass this. Empty = no cap. Enter applies it.", "No cap")
+    AT.RowToggle(pg, "Each stack runs out on its own",
+        function() local r = Rec() return r ~= nil and r.driver.stackTimers == true end,
+        function(v) Set("stackTimers", v or nil) end,
+        F(vis), "Every stack added runs its own timer (the rule's seconds, else Default seconds) and drops off when it ends.")
+    AT.RowInput(pg, "Full pool while idle",
+        function()
+            local r = Rec()
+            local m = r and tonumber(r.driver.idleCount)
+            return m and tostring(m) or ""
+        end,
+        function(v)
+            local n = tonumber(v)
+            if v == "" then Set("idleCount", nil) return end
+            if n and n >= 1 then Set("idleCount", math.floor(math.min(999, n))) end
+        end,
+        F(vis), "While the timer is idle at 0 stacks, the count shows this many: a pool reads full before its first use. Empty = off.",
+        "Off")
+    AT.RowToggle(pg, "Clear stacks when the timer ends",
+        function() local r = Rec() return r ~= nil and r.driver.clearOnEnd == true end,
+        function(v) Set("clearOnEnd", v or nil) end,
+        F(vis), "When the timer runs out, the stacks go back to 0 with it.")
+end
+
+-- Icon: the art it wears and when it loads.
+function CO.IconPane(pg, Rec, vis)
+    local AT = NS.AT
+    local Store = NS.Store
+    AT.Section(pg, "Icon", { visibleFn = vis })
+    local artRow = AT.RowInput(pg, "Art from spell ID",
+        function()
+            local r = Rec()
+            return (r and r.driver.spellID) and tostring(r.driver.spellID) or ""
+        end,
+        function(v)
+            local id = CO.ParseSpell(v)
+            if v ~= "" and not id then return end
+            local r, E = Rec(), NS.DriverCustom
+            if r and E then E.SetDriver(r, "spellID", id) end
+            AT.LayoutPage(pg)
+        end,
+        vis, "The spell whose icon it wears; Appearance > Icon > Art > Custom icon wins over it. A spell ID, a link, or the name of a spell you know.",
+        "Question mark until set")
+    local nameFS = artRow:CreateFontString(nil, "OVERLAY")
+    nameFS:SetFont(AT.FONT, 11, "")
+    nameFS:SetPoint("LEFT", artRow._colCtrl, "RIGHT", 8, 0)
+    nameFS:SetPoint("RIGHT", artRow, "RIGHT", -10, 0)
+    nameFS:SetJustifyH("LEFT")
+    nameFS:SetWordWrap(false)
+    nameFS:SetTextColor(AT.COL.dim[1], AT.COL.dim[2], AT.COL.dim[3])
+    local artSync = artRow._sync
+    artRow._sync = function()
+        artSync()
+        local r = Rec()
+        nameFS:SetText(r and CO.SpellName(r.driver.spellID) or "")
+    end
+    AT.RowToggle(pg, "Art follows the spell that starts it",
+        function() local r = Rec() return r ~= nil and r.driver.artFollow == true end,
+        function(v)
+            local r, E = Rec(), NS.DriverCustom
+            if r and E then E.SetDriver(r, "artFollow", v or nil) end
+            AT.LayoutPage(pg)
+        end,
+        vis, "It wears the spell whose cast started its timer: one Fire Trap icon for whichever fire trap you laid.")
+    local function HasSpell()
+        local r = Rec()
+        return vis() and r ~= nil and r.driver.spellID ~= nil
+    end
+    AT.RowToggle(pg, "Only load once learned",
+        function() local r = Rec() return r ~= nil and r.driver.onlyKnown == true end,
+        function(v)
+            local r = Rec()
+            if not r then return end
+            r.driver.onlyKnown = v and true or nil
+            Store.Dirty("load")
+            AT.LayoutPage(pg)
+        end,
+        HasSpell, "Doesn't load until your character knows the spell above (any rank), and loads by itself the moment you learn it.")
+    AT.RowToggle(pg, "Only this rank",
+        function() local r = Rec() return r ~= nil and r.driver.knownExact == true end,
+        function(v)
+            local r = Rec()
+            if not r then return end
+            r.driver.knownExact = v and true or nil
+            Store.Dirty("load")
+        end,
+        function()
+            local r = Rec()
+            return HasSpell() and r.driver.onlyKnown == true and NS.IsForever == true
+        end,
+        "Waits for this exact rank (the spell ID above), not just any rank of the spell.")
+end
+
+-- The icon editor's hook: panes = the Tracking tab's four sub-tab gates
+-- (rules, timer, icon, onIcon) for the open icon.
+function Options.CustomIconRows(pg, ctx, panes, owner)
     local function Rec()
         local r = ctx()
         return (r and r.type == "icon" and r.kind == "timer") and r or nil
     end
-    local tv = function() return trackVis() and Rec() ~= nil end
-    local gv = function() return trigVis() and Rec() ~= nil end
-    CO.TrackRows(pg, Rec, tv, owner, false)
-    CO.RuleRows(pg, Rec, gv, owner, false)
+    local function G(f) return function() return f() and Rec() ~= nil end end
+    CO.RuleSentences(pg, Rec, G(panes.rules), owner)
+    if Options.BuildYield then Options.BuildYield() end
+    CO.TimerPane(pg, Rec, G(panes.timer), owner)
+    if Options.BuildYield then Options.BuildYield() end
+    CO.IconPane(pg, Rec, G(panes.icon))
+    if Options.BuildYield then Options.BuildYield() end
+    CO.SourceRows(pg, Rec, G(panes.onIcon), owner, true)
     NS.AT.Section(pg, nil)
 end
 

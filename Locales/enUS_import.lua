@@ -1870,6 +1870,7 @@ L["Flash Step Speed (override)"] = true
 L["Flash length (s)"] = true
 L["Flash when a tick lands"] = true
 L["Flat"] = true
+L["Flip"] = true
 L["Flip the picture left to right"] = true
 L["Flip the picture upside down"] = true
 L["Flips Ping without holding, in combat too. Click, then press a key; right-click clears it."] = true

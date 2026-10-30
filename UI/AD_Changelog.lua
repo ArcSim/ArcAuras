@@ -31,6 +31,8 @@ CL.versions = {
             { header = "Bug Fixes", items = {
                 { title = "Custom Icons",
                     desc = "Effects names the active state after Active while." },
+                { title = "Flip on a draining texture",
+                    desc = "The Flip rows now show while a texture is set to drain." },
             } },
         },
     },
@@ -1313,6 +1315,8 @@ CL.retailVersions = {
                     desc = "The icon keeps its own picture (Blink with Shimmer talented)." },
                 { title = "Custom Icons",
                     desc = "Effects names the active state after Active while." },
+                { title = "Flip on a draining texture",
+                    desc = "The Flip rows now show while a texture is set to drain." },
             } },
         },
     },

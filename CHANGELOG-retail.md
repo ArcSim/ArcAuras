@@ -22,6 +22,7 @@ Arc Pings and Kick Assist modules, Custom Icons in one place, items that show wh
 - **Proc charges** - Crash Lightning and Stormstrike show ready, with the action bar's charge count, when a proc gives a charge.
 - **Ignore spell overrides** - The icon keeps its own picture (Blink with Shimmer talented).
 - **Custom Icons** - Effects names the active state after Active while.
+- **Flip on a draining texture** - The Flip rows now show while a texture is set to drain.
 
 ## 3.1.2
 

@@ -13477,7 +13477,13 @@ local function BuildBarPane()
     BarSub(tpVis, "Dim Copy", "texlook", { "bgShow", "bgInactive", "bgAlpha", "bgTint", "bgColor", "bgDesat", "bgDesatAmount" })
     SubPush("Appearance", "Picture")
     local function WholePicture(r) return Schema.TexMode(r) == "show" end
-    local tpShapeVis = BarBlock("Turn and Zoom", "texlook", "Appearance", { "rotation", "flipH", "flipV", "zoom" },
+    -- a fill flips too (its copy is cut to the fill); a ring never does
+    local function Flippable(r)
+        local m = Schema.TexMode(r)
+        return m == "show" or m == "fill"
+    end
+    BarBlock("Flip", "texlook", "Appearance", { "flipH", "flipV" }, Flippable, "Shape")
+    local tpShapeVis = BarBlock("Turn and Zoom", "texlook", "Appearance", { "rotation", "zoom" },
         WholePicture, "Shape")
     BarSub(tpShapeVis, "Crop", "texlook", { "cropL", "cropR", "cropT", "cropB" })
     BarSub(tpShapeVis, "Repeat", "texlook", { "tileX", "tileY" })

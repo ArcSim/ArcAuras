@@ -1870,6 +1870,7 @@ L["Flash Step Speed (override)"] = "Скорость шага вспышки (п
 L["Flash length (s)"] = "Длительность вспышки (с)"
 L["Flash when a tick lands"] = "Вспышка при тике"
 L["Flat"] = "Плоский"
+L["Flip"] = "Отражение"
 L["Flip the picture left to right"] = "Отразить картинку по горизонтали"
 L["Flip the picture upside down"] = "Отразить картинку по вертикали"
 L["Flips Ping without holding, in combat too. Click, then press a key; right-click clears it."] = "Переключает «Пинг без удержания», в том числе в бою. Щелкните, затем нажмите клавишу; правый щелчок очищает."

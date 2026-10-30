@@ -1868,6 +1868,7 @@ Flash Step Speed (override)
 Flash length (s)
 Flash when a tick lands
 Flat
+Flip
 Flip the picture left to right
 Flip the picture upside down
 Flips Ping without holding, in combat too. Click, then press a key; right-click clears it.

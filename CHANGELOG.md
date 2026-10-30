@@ -17,6 +17,7 @@ The Arc Pings module, Custom Icons in one place, and items that show while equip
 ### Bug Fixes
 
 - **Custom Icons** - Effects names the active state after Active while.
+- **Flip on a draining texture** - The Flip rows now show while a texture is set to drain.
 
 ## 3.1.2
 

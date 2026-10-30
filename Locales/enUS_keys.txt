@@ -413,6 +413,7 @@ A quarter turn: the bar becomes tall and thin, and its icon, texture and gradien
 A reactive ability lit up
 A reminder exported on its own joins this group. A group keeps one reminder per spell, item or weapon hand, so duplicates stay out.
 A returning icon
+A ring
 A ring of your spells and items: hold its key, point at one and let go to cast it.
 A ring, like a cooldown
 A set duration
@@ -453,6 +454,7 @@ A spell's custom text
 A spend every half second, a proc at a third and two thirds of the deck, then a new deck.
 A spot mid-screen where your cooldowns pulse as they come back.
 A stance, form or aura from your stance bar. The icon lights up while you are in it.
+A straight bar
 A string to share this skin.
 A swipe over each icon while it is on cooldown.
 A tick where each proc of this deck landed. A new deck clears them.
@@ -3197,6 +3199,7 @@ Own look
 PACK INFO
 PASTE A STRING
 PICK AN AURA - click to fill
+PICK AN AURA - click to show them
 Pack direction
 Pack info
 Pain
@@ -3722,6 +3725,7 @@ Right-click: move layouts
 Righteous Fury
 Ring runs
 Ring starts at (degrees from the top)
+Ring thickness
 Riptides since last proc
 Rockbiter Weapon
 Rockbiter, Flametongue, Frostbrand and Windfury, in the order you learn them.
@@ -4544,9 +4548,11 @@ The windup as it fills, and a faint outline of its spot while you reload.
 Their own class and spec checks
 Their own class checks
 Then
+Thick
 Thick line
 Thick outline
 Thickness
+Thin
 Thin line
 Third
 Third ammo threshold (at or below)
@@ -4752,8 +4758,8 @@ Type a spell or pick a button.
 Type a spell: your class has no usual one for this preset.
 Type order
 Type the aura's NAME and click a spell ID, or type IDs separated by commas or spaces. The first sets the icon's art and name.
-Type the aura's NAME and click one of its spell IDs, or type the numeric ID and press Enter. A bar takes one ID. Settings are kept.
-Type the aura's NAME and click one of its spell IDs, or type the numeric ID. A bar takes one ID, the rank you cast.
+Type the aura's NAME and click one of its spell IDs, or type IDs separated by commas or spaces and press Enter. Settings are kept.
+Type the aura's NAME and click one of its spell IDs, or type IDs separated by commas or spaces. The first names the bar.
 Type the aura's name and click one to add its ID, or type IDs separated by commas or spaces. Any of them counts.
 Type the aura's name and click one to add its ID, or type IDs separated by commas or spaces. Any of them lights the glow.
 Type the buff's NAME to see the spell IDs that carry it, then click one (every rank comes along). Add the group version's too.

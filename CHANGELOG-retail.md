@@ -1,5 +1,24 @@
 # Arc Auras
 
+## 3.1.4
+
+Ring bars, the aura picker for bars, and an Add window that always fits.
+
+### New Features
+
+- **Ring bars** - Aura and cooldown bars can be a ring that drains around, with its own thickness, start and border.
+- **Aura picker for bars** - Aura bars get the same Cooldown Manager squares as aura icons when you make them.
+
+### Improvements
+
+- **Aura picker** - Folds after you pick an aura; click its title to open it again.
+- **Aura bars with several IDs** - The Tracking tab shows and edits every ID the bar tracks.
+
+### Bug Fixes
+
+- **Add window** - The form no longer runs out of the window under a long aura list.
+- **Texture rings** - A texture shown as a ring now goes all the way around.
+
 ## 3.1.3
 
 Arc Pings and Kick Assist modules, Custom Icons in one place, items that show while equipped, and charge spell fixes.

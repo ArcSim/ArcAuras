@@ -153,31 +153,67 @@ function AP.Height(parts, cols, note)
     return math.max(AP.PITCH, h) - AP.GAP
 end
 
+-- The form a picker fills: the aura icon's, or an aura bar's. shut: its key
+-- in addState.pickShut (folded after a pick).
+AP.ICON_KEYS = { id = "auraID", name = "auraName", type = "auraType", unit = "auraUnit", caster = "auraCaster",
+    shut = "icon" }
+AP.BAR_KEYS = { id = "barAuraID", name = "barAuraName", type = "barAuraType", unit = "barAuraUnit",
+    caster = "barAuraCaster", shut = "bar" }
+-- the fewest rows the squares keep when the window is short of room
+AP.MIN_ROWS = 2
+
 -- A pick into the aura form: its IDs as a list, its side, the unit that side
 -- lives on (a debuff on your target, a buff on you) and who casts it (you,
--- unless a template says anyone). A template names the icon after itself.
-function AP.Fill(addState, e)
-    addState.auraID = table.concat(e.ids, ", ")
-    -- the icon's stored name stays the template's English words
-    addState.auraName = e.template and (e.en or e.name) or nil
+-- unless a template says anyone). A template names the item after itself.
+function AP.Fill(addState, e, keys)
+    keys = keys or AP.ICON_KEYS
+    addState[keys.id] = table.concat(e.ids, ", ")
+    -- the stored name stays the template's English words
+    addState[keys.name] = e.template and (e.en or e.name) or nil
     local t = (e.auraType == "debuff") and "debuff" or "buff"
-    addState.auraType = t
-    addState.auraUnit = (t == "debuff") and "target" or "player"
-    addState.auraCaster = e.caster or "mine"
+    addState[keys.type] = t
+    addState[keys.unit] = (t == "debuff") and "target" or "player"
+    addState[keys.caster] = e.caster or "mine"
+end
+
+-- folded: a pick shuts the squares to their title line; a click on it, a
+-- typed name or the window opening again shows them
+function AP.Shut(addState, keys)
+    return addState.pickShut ~= nil and addState.pickShut[keys.shut] == true
+end
+function AP.SetShut(addState, keys, on)
+    addState.pickShut = addState.pickShut or {}
+    addState.pickShut[keys.shut] = on or nil
 end
 
 -- The row: vis says when it shows, getText reads the name box, onFill runs
--- after a pick (the window re-lays out and judges Create). Returns its
--- refresh, for the name box's keystrokes.
-function Options.AuraPickerRow(pg, owner, addState, vis, getText, onFill)
+-- after a pick (the window re-lays out and judges Create). keys: the form it
+-- fills (AP.ICON_KEYS by default); room(): the most height its squares may
+-- take, or nil. Returns its refresh, for the name box's keystrokes, and the row.
+function Options.AuraPickerRow(pg, owner, addState, vis, getText, onFill, keys, room)
     local AT = NS.AT
     local COL = AT.COL
+    keys = keys or AP.ICON_KEYS
     local row = AT.AddRow(pg, AP.TOP + AP.PITCH, vis)
-    local label = row:CreateFontString(nil, "OVERLAY")
+    -- the title line folds and opens the squares
+    local fold = CreateFrame("Button", nil, row)
+    fold:SetPoint("TOPLEFT", 4, 0)
+    fold:SetPoint("TOPRIGHT", -12, 0)
+    fold:SetHeight(AP.TOP)
+    local chev = AT.MakeChevron(fold)
+    chev:SetPoint("LEFT", 2, -1)
+    chev:SetColor(COL.chev)
+    local label = fold:CreateFontString(nil, "OVERLAY")
     label:SetFont(AT.FONT, 9, "")
-    label:SetPoint("TOPLEFT", 10, -2)
+    label:SetPoint("LEFT", chev, "RIGHT", 2, 1)
     label:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
-    label:SetText(Tr("PICK AN AURA - click to fill"))
+    fold:SetScript("OnEnter", function() label:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3]) end)
+    fold:SetScript("OnLeave", function() label:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3]) end)
+    fold:SetScript("OnClick", function()
+        AP.SetShut(addState, keys, not AP.Shut(addState, keys))
+        AT.LayoutPage(pg)
+    end)
+    row._fold, row._label, row._chev = fold, label, chev
     row._scroll, row._grid = AT.MakeScroll(row)
     row._scroll:SetPoint("TOPLEFT", 8, -AP.TOP)
     row._scroll:SetPoint("BOTTOMRIGHT", -12, AP.GAP)
@@ -257,27 +293,47 @@ function Options.AuraPickerRow(pg, owner, addState, vis, getText, onFill)
         b:SetScript("OnClick", function()
             local e = b._e
             if not e then return end
-            AP.Fill(addState, e)
+            AP.Fill(addState, e, keys)
+            -- picked: the squares fold so the form below stays in the window
+            AP.SetShut(addState, keys, true)
             if onFill then onFill() end
         end)
         cells[i] = b
         return b
     end
+    local function Height(want, inLayout)
+        if row._h == want then return false end
+        row._h = want
+        row:SetHeight(want)
+        -- the rows below move with it; that pass syncs back here
+        if not inLayout then AT.LayoutPage(pg) return true end
+        return false
+    end
     local function Update(inLayout)
         if not vis() then return end
+        local shut = AP.Shut(addState, keys)
+        chev:SetDown(not shut)
+        label:SetText(Tr(shut and "PICK AN AURA - click to show them" or "PICK AN AURA - click to fill"))
+        row._scroll:SetShown(not shut)
+        if shut then
+            row._empty:Hide()
+            Height(AP.TOP + AP.GAP, inLayout)
+            return
+        end
         local fresh = row._fresh
         row._fresh = nil
         local parts, why = AP.Lists(fresh)
         local noteText = AP.Note(parts, why)
         local cols = math.max(1, math.floor((owner:GetWidth() - 64 + AP.GAP) / AP.PITCH))
         local full = AP.Height(parts, cols, noteText)
-        local want = AP.TOP + math.min(full, AP.ROWS * AP.PITCH - AP.GAP) + AP.GAP
-        if row._h ~= want then
-            row._h = want
-            row:SetHeight(want)
-            -- the rows below move with it; that pass syncs back here
-            if not inLayout then AT.LayoutPage(pg) return end
+        -- the window may hand it less room: whole rows, never under MIN_ROWS
+        local cap = AP.ROWS * AP.PITCH - AP.GAP
+        local rm = room and room()
+        if rm then
+            local rows = math.max(AP.MIN_ROWS, math.min(AP.ROWS, math.floor((rm + AP.GAP) / AP.PITCH)))
+            cap = rows * AP.PITCH - AP.GAP
         end
+        if Height(AP.TOP + math.min(full, cap) + AP.GAP, inLayout) then return end
         local query, pickID = AP.Query(getText())
         local y, n = 0, 0
         local noteShown = false
@@ -330,5 +386,9 @@ function Options.AuraPickerRow(pg, owner, addState, vis, getText, onFill)
         row._empty:SetShown(n == 0 and not noteShown)
     end
     row._sync = function() Update(true) end
-    return function() Update(false) end
+    return function()
+        -- a typed name searches the squares: they open for it
+        if AP.Query(getText()) and AP.Shut(addState, keys) then AP.SetShut(addState, keys, false) end
+        Update(false)
+    end, row
 end

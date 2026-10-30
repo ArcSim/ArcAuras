@@ -513,9 +513,9 @@ function TP.DressBar(bar, rec, over)
         if ring then
             t:SetTexCoord(art.l, art.r, art.t, art.b)
             if t.SetRadialProgressBarStartOffset then
-                local off = TP.RingOffset(rec)
-                t:SetRadialProgressBarStartOffset(off)
-                t:SetRadialProgressBarEndOffset(off)
+                -- the end keeps the game's default, the whole turn (it measures
+                -- from the start: the start's value there drew half a ring)
+                t:SetRadialProgressBarStartOffset(TP.RingOffset(rec))
                 t:SetRadialProgressBarReverse(R(rec, "texlook", "ringDir") == "ccw")
                 t:SetRadialProgressBarFeather(0)
             end

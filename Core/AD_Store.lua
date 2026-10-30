@@ -1845,6 +1845,36 @@ function Store.SetBarStanding(rec, stand)
     Store.SetOverride(rec, "fill", "rotateTexture", Store.Resolve(rec, "fill", "rotateTexture") ~= true)
 end
 
+-- A bar becomes a ring or a straight bar again (fill.shape). A ring starts
+-- square at RING_SIZE with its time in the middle; back to a bar, a square
+-- size and the centred time return to the bar's defaults. written: the
+-- editor has stored the shape already.
+Store.RING_SIZE = 100
+function Store.SetBarShape(rec, shape, written)
+    -- several bars at once: each its own size and text
+    if rec and rec._adMulti then
+        for _, id in ipairs(rec._adIds or {}) do Store.SetBarShape(DB.records[id], shape, written) end
+        return
+    end
+    if not rec or rec.type ~= "bar" or not Schema.RING_KINDS[rec.barKind] then return end
+    local ring = shape == "ring"
+    if not written then Store.SetOverride(rec, "fill", "shape", ring and "ring" or "bar") end
+    local w = Store.Resolve(rec, "size", "width")
+    local h = Store.Resolve(rec, "size", "height")
+    if ring then
+        if w ~= h then
+            Store.SetOverride(rec, "size", "width", Store.RING_SIZE)
+            Store.SetOverride(rec, "size", "height", Store.RING_SIZE)
+        end
+        Store.SetOverride(rec, "text", "durAnchor", "CENTER")
+    else
+        if w == h then Store.ResetSection(rec, "size", { "width", "height" }) end
+        if Store.Resolve(rec, "text", "durAnchor") == "CENTER" then
+            Store.ResetSection(rec, "text", { "durAnchor" })
+        end
+    end
+end
+
 -- Mouse tiers: an icon frame's mouse behavior is the icon's own tri-state, then
 -- its group's, its layout's, then the two addon settings. "inherit" (the
 -- default everywhere) defers to the tier above.

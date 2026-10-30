@@ -22,8 +22,10 @@ D.STATE_TITLE = "How it looks in each state"
 -- row each editor shows for each kind with this page and fails on any other
 -- gap: a new look reaches the page through Options.LookBlock (with its sub-tab),
 -- or it is named here with why.
--- Per item, never a default: an icon's nudge inside its cell.
-D.PER_ITEM = { icon = { position = { offsetX = true, offsetY = true } } }
+-- Per item, never a default: an icon's nudge inside its cell; a bar's shape (a
+-- ring is sized and set up when it is picked, Store.SetBarShape).
+D.PER_ITEM = { icon = { position = { offsetX = true, offsetY = true } },
+    bar = { fill = { shape = true, ringThick = true, ringStart = true, ringDir = true } } }
 -- The editor tabs whose rows are each item's own (what it tracks, its rules,
 -- where it loads, a Reminder group's reminders).
 D.PER_ITEM_TABS = { Tracking = true, Triggers = true, ["Load Conditions"] = true, Reminders = true }

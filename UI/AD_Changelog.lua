@@ -13,6 +13,30 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.1.4",
+        intro = "Ring bars, the aura picker for bars, and an Add window that always fits.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Ring bars",
+                    desc = "Aura and cooldown bars can be a ring that drains around, with its own thickness, start and border." },
+                { title = "Aura picker for bars",
+                    desc = "Aura bars get the same Cooldown Manager squares as aura icons when you make them." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Aura picker",
+                    desc = "Folds after you pick an aura; click its title to open it again." },
+                { title = "Aura bars with several IDs",
+                    desc = "The Tracking tab shows and edits every ID the bar tracks." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Add window",
+                    desc = "The form no longer runs out of the window under a long aura list." },
+                { title = "Texture rings",
+                    desc = "A texture shown as a ring now goes all the way around." },
+            } },
+        },
+    },
+    {
         version = "3.1.3",
         intro = "The Arc Pings module, Custom Icons in one place, and items that show while equipped.",
         sections = {
@@ -1286,6 +1310,30 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.1.4",
+        intro = "Ring bars, the aura picker for bars, and an Add window that always fits.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Ring bars",
+                    desc = "Aura and cooldown bars can be a ring that drains around, with its own thickness, start and border." },
+                { title = "Aura picker for bars",
+                    desc = "Aura bars get the same Cooldown Manager squares as aura icons when you make them." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Aura picker",
+                    desc = "Folds after you pick an aura; click its title to open it again." },
+                { title = "Aura bars with several IDs",
+                    desc = "The Tracking tab shows and edits every ID the bar tracks." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Add window",
+                    desc = "The form no longer runs out of the window under a long aura list." },
+                { title = "Texture rings",
+                    desc = "A texture shown as a ring now goes all the way around." },
+            } },
+        },
+    },
     {
         version = "3.1.3",
         intro = "Arc Pings and Kick Assist modules, Custom Icons in one place, items that show while equipped, and charge spell fixes.",

@@ -328,6 +328,84 @@ local function BuildShell(holder)
     return f
 end
 
+-- Ring bars (fill.shape "ring", Schema.BarRing): the fill is a ring picture
+-- the game fills radially (StatusBar Radial mode) from the same timer; the
+-- background is that picture dimmed. No border, ticks, bands or sheen.
+Bars.RING_ART = {
+    thin = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Rings\\AD_Ring_thin",
+    medium = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Rings\\AD_Ring_medium",
+    thick = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Rings\\AD_Ring_thick",
+}
+function Bars.RingOn(rec)
+    local RM = Enum and Enum.StatusBarRenderMode
+    return RM ~= nil and RM.Radial ~= nil and NS.Schema.BarRing(rec)
+end
+function Bars.RingArt(rec)
+    return Bars.RING_ART[R(rec, "fill", "ringThick")] or Bars.RING_ART.medium
+end
+-- A ring's border: a band of the border colour from its inner edge less the
+-- thickness to its outer edge plus it, with the ring's own band cut out, so
+-- only its two edges show. Three masks: the disc (outside), the hole (inside,
+-- its rect pulled in so its circle shrinks by the thickness), the cut (the
+-- ring). RING_INNER: inner / outer radius, as ring_bars.lua draws them.
+Bars.RING_DIR = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Rings\\"
+Bars.RING_DISC = Bars.RING_DIR .. "AD_RingDisc"
+Bars.RING_INNER = { thin = 0.86 * 127 / 128, medium = 0.72 * 127 / 128, thick = 0.54 * 127 / 128 }
+function Bars.RingEdge(frame)
+    local t = frame:CreateTexture(nil, "BACKGROUND", nil, -1)
+    t:SetTexture(WHITE)
+    t._adMasks = {}
+    for i = 1, 3 do
+        local m = frame:CreateMaskTexture()
+        t:AddMaskTexture(m)
+        t._adMasks[i] = m
+    end
+    return t
+end
+-- outer: the bar's rect; fill: the ring's (pulled in by the thickness b)
+function Bars.PlaceRingEdge(t, outer, fill, rec, b, c, on)
+    if not (t and on) then
+        if t then t:Hide() end
+        return
+    end
+    local key = R(rec, "fill", "ringThick")
+    if not Bars.RING_ART[key] then key = "medium" end
+    local m = t._adMasks
+    m[1]:SetTexture(Bars.RING_DISC, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
+    m[1]:ClearAllPoints()
+    m[1]:SetAllPoints(outer)
+    local d = b / Bars.RING_INNER[key]
+    m[2]:SetTexture(Bars.RING_DIR .. "AD_RingHole_" .. key, "CLAMPTOWHITE", "CLAMPTOWHITE")
+    m[2]:ClearAllPoints()
+    m[2]:SetPoint("TOPLEFT", fill, "TOPLEFT", d, -d)
+    m[2]:SetPoint("BOTTOMRIGHT", fill, "BOTTOMRIGHT", -d, d)
+    m[3]:SetTexture(Bars.RING_DIR .. "AD_RingCut_" .. key, "CLAMPTOWHITE", "CLAMPTOWHITE")
+    m[3]:ClearAllPoints()
+    m[3]:SetAllPoints(fill)
+    t:ClearAllPoints()
+    t:SetAllPoints(outer)
+    t:SetVertexColor(c[1], c[2], c[3], c[4] or 1)
+    t:Show()
+end
+-- The render mode, and on a ring where it starts and which way it runs:
+-- degrees clockwise from the top; the texture's offset counts from the bottom.
+-- The end offset keeps the game's default, the whole turn: it measures from
+-- the start, so the start's own value there drew half a ring.
+function Bars.DressRing(bar, tex, rec, on)
+    local RM = Enum and Enum.StatusBarRenderMode
+    if not (bar.SetRenderMode and RM) then return end
+    bar:SetRenderMode(on and RM.Radial or RM.Linear)
+    if on and tex and tex.SetRadialProgressBarStartOffset then
+        local off = (((tonumber(R(rec, "fill", "ringStart")) or 0) + 180) % 360) / 360
+        tex:SetRadialProgressBarStartOffset(off)
+        tex:SetRadialProgressBarReverse(R(rec, "fill", "ringDir") == "ccw")
+        tex:SetRadialProgressBarFeather(0)
+    elseif not on and bar._adRing and tex and tex.ClearRadialProgressBar then
+        tex:ClearRadialProgressBar()
+    end
+    bar._adRing = on or nil
+end
+
 local function BarColorOf(rec)
     local c = R(rec, "fill", "color") or { 0.247, 0.788, 0.949, 1 }
     return c[1], c[2], c[3], c[4] or 1
@@ -723,6 +801,8 @@ local function TextBands(entry)
     local rec = entry.rec
     if R(rec, "thresholds", "threshEnabled") ~= true
         or R(rec, "thresholds", "threshText") ~= true then return nil end
+    -- an aura ring has no thresholds (AuraPlan), its text none either
+    if entry.kind == "aura" and Bars.RingOn(rec) then return nil end
     local ref
     if entry.kind == "aura" then
         ref = R(rec, "thresholds", "threshRef") or 30
@@ -985,6 +1065,7 @@ local function ApplyChromeOwnership(entry)
     local own = entry.chromeOwned == true
     sh.bg:SetShown(not own)
     for _, k in ipairs(EDGE_KEYS) do sh.edges[k]:SetShown(not own) end
+    if sh.ringEdge then sh.ringEdge:SetShown(not own and entry.ringEdge ~= nil) end
     for i = 1, entry.tickCount or 0 do
         if sh.ticks[i] then sh.ticks[i]:SetShown(not own) end
     end
@@ -1116,14 +1197,21 @@ local function ApplyStyle(entry)
     -- stand down, since every cell carries them (LayoutPips).
     local pipsOn = CellStyle(entry) ~= nil
     entry.pipsOn = pipsOn
+    local ring = Bars.RingOn(rec)
+    entry.ring = ring
 
     -- The background defaults to the fill's texture, dimmed, so the empty
-    -- part of the bar shows the pattern faintly.
+    -- part of the bar shows the pattern faintly; a ring's is its picture.
     local bgShow = R(rec, "look", "bgShow") ~= false and not pipsOn
     local bgC = R(rec, "look", "bgColor") or { 0.039, 0.067, 0.125, 1 }
     local bgKey = R(rec, "look", "bgTexture")
-    local bgPath = ResolveBarTexture((bgKey == nil or bgKey == "") and R(rec, "fill", "texture") or bgKey)
+    local bgPath = ring and Bars.RingArt(rec)
+        or ResolveBarTexture((bgKey == nil or bgKey == "") and R(rec, "fill", "texture") or bgKey)
     shell.bg:SetTexture(bgPath)
+    -- a ring's background is the ring itself, inside its border like the fill
+    -- (on the whole frame it covered the outer edge and missed the inner one)
+    shell.bg:ClearAllPoints()
+    shell.bg:SetAllPoints(ring and shell.fill or shell)
     -- The opacity slider is the only alpha: the colour picker cannot show the
     -- colour's own, so a hidden one would cap the slider below 100.
     local bgA = R(rec, "look", "bgAlpha") or 1
@@ -1144,8 +1232,9 @@ local function ApplyStyle(entry)
     -- Border style: Flat is the 1px strips (default); any other is an edge
     -- file drawn as a backdrop at the thickness, on the border rung: over
     -- every fill layer, under the glows and the texts.
-    local edgeFile = ResolveBorder(R(rec, "look", "borderStyle"))
-    local strips = borderOn and not edgeFile
+    -- A ring's border is its own ring edge (flat, the thickness, the colour).
+    local edgeFile = not ring and ResolveBorder(R(rec, "look", "borderStyle")) or nil
+    local strips = borderOn and not edgeFile and not ring
     -- The resolved strip colour, kept for the button-owned copies: a colour set
     -- with SetColorTexture does not read back through GetVertexColor.
     entry.edgeRGBA = { bc[1], bc[2], bc[3], strips and (bc[4] or 1) or 0 }
@@ -1179,20 +1268,27 @@ local function ApplyStyle(entry)
     -- The fill sits inside the border plus fillInset; in pips style the fill
     -- (the pip host) spans the whole frame.
     local inset = (borderOn and px or 0)
-        + (pipsOn and 0 or Px(shell) * (R(rec, "fill", "fillInset") or 0))
+        + ((pipsOn or ring) and 0 or Px(shell) * (R(rec, "fill", "fillInset") or 0))
     shell.fill:ClearAllPoints()
     shell.fill:SetPoint("TOPLEFT", shell, "TOPLEFT", inset, -inset)
     shell.fill:SetPoint("BOTTOMRIGHT", shell, "BOTTOMRIGHT", -inset, inset)
     -- kept for a swing bar's off-hand track, which splits this rect
     entry.fillInset = inset
-    shell.fill:SetOrientation(R(rec, "fill", "orientation") or "HORIZONTAL")
-    shell.fill:SetReverseFill(R(rec, "fill", "reverseFill") == true)
+    -- a ring's border, kept for the button-owned copy too
+    entry.ringEdge = ring and borderOn and { px = px, rgba = { bc[1], bc[2], bc[3], bc[4] or 1 } } or nil
+    if entry.ringEdge and not shell.ringEdge then shell.ringEdge = Bars.RingEdge(shell) end
+    if shell.ringEdge then
+        Bars.PlaceRingEdge(shell.ringEdge, shell, shell.fill, rec, px, bc, entry.ringEdge ~= nil)
+    end
+    shell.fill:SetOrientation(ring and "HORIZONTAL" or R(rec, "fill", "orientation") or "HORIZONTAL")
+    shell.fill:SetReverseFill(not ring and R(rec, "fill", "reverseFill") == true)
 
     -- A texture swap creates a new texture object: refresh the cached ref and
     -- re-apply sampling and the sheen anchor. While an aura composition has
     -- colour layers the base fill goes flat and its shade layer carries the
     -- texture for all of them, so no seam shows two shades.
-    local texPath = entry.auraSplit and WHITE or ResolveBarTexture(R(rec, "fill", "texture"))
+    local texPath = (ring and Bars.RingArt(rec))
+        or (entry.auraSplit and WHITE or ResolveBarTexture(R(rec, "fill", "texture")))
     if entry.texApplied ~= texPath then
         entry.texApplied = texPath
         shell.fill:SetStatusBarTexture(texPath)
@@ -1201,10 +1297,11 @@ local function ApplyStyle(entry)
         if t.SetTexelSnappingBias then t:SetTexelSnappingBias(0) end
         shell.fillTex = t
     end
+    Bars.DressRing(shell.fill, shell.fillTex, rec, ring)
     shell.sheen:ClearAllPoints()
     shell.sheen:SetAllPoints(shell.fillTex)
     ApplySheen(shell.sheen, rec)
-    shell.fill:SetRotatesTexture(R(rec, "fill", "rotateTexture") == true)
+    shell.fill:SetRotatesTexture(not ring and R(rec, "fill", "rotateTexture") == true)
 
     -- Fill colour goes through SetStatusBarColor, reasserted here and after
     -- every refresh write; the curve ticker owns it while it runs.
@@ -1214,7 +1311,7 @@ local function ApplyStyle(entry)
     if entry.kind == "aura" and AuraRestyle then AuraRestyle(entry) end
     -- an aura bar's sheen rides its engine-drawn fill (AuraStyleSlot); a
     -- pips bar has no continuous fill to shade
-    shell.sheen:SetShown(R(rec, "fill", "useGradient") ~= false and entry.kind ~= "aura" and not pipsOn)
+    shell.sheen:SetShown(R(rec, "fill", "useGradient") ~= false and entry.kind ~= "aura" and not pipsOn and not ring)
 
     ApplyBarIcon(entry)
     ApplyTexts(entry)
@@ -2473,7 +2570,8 @@ local function LayoutTicks(entry)
     -- a pips bar draws cells. Other counted bars draw "Every point" marks
     -- from the live maximum.
     local fracs, from, markCols
-    if not (entry.mode == "stack" and entry.kind == "cooldown") and not entry.pipsOn then
+    -- a ring has no straight edge to mark
+    if not (entry.mode == "stack" and entry.kind == "cooldown") and not entry.pipsOn and not Bars.RingOn(rec) then
         local unitMax, integerUnit, costs = TickUnit(entry)
         fracs, from = TickFractions(rec, unitMax, integerUnit, costs)
     end
@@ -5032,7 +5130,7 @@ function Bars.PrimeTexture(e, on)
         t:SetAllPoints(sh)
         e.primeTex = t
     end
-    t:SetTexture(ResolveBarTexture(R(e.rec, "fill", "texture")))
+    t:SetTexture(Bars.RingOn(e.rec) and Bars.RingArt(e.rec) or ResolveBarTexture(R(e.rec, "fill", "texture")))
     t:SetAlpha(Bars.PRIME_ALPHA)
     t:Show()
 end
@@ -5179,7 +5277,8 @@ local function AuraPlan(entry)
             parts[#parts + 1] = string.format("%s:%d:%d:%.4f:%.4f", L.kind, L.minA, L.maxA, L.x0, L.x1)
         end
     else
-        local bands = DurationBands(rec, R(rec, "thresholds", "threshRef") or 30)
+        -- a ring has no straight length for the colour bands to sit along
+        local bands = not Bars.RingOn(rec) and DurationBands(rec, R(rec, "thresholds", "threshRef") or 30) or nil
         layers = DurationLayerPlan(bands, drain,
             R(rec, "fill", "color") or { 0.247, 0.788, 0.949, 1 }) or {}
         parts[#parts + 1] = "D" .. (drain and "d" or "f")
@@ -5206,6 +5305,11 @@ local function AuraPlan(entry)
     -- fresh composition instead of restyling the old one.
     parts[#parts + 1] = ((R(rec, "fill", "orientation") or "HORIZONTAL") == "VERTICAL" and "V" or "H")
         .. ((R(rec, "fill", "reverseFill") == true) and "r" or "")
+    -- a ring's render mode and picture are set at init with its start and way
+    if Bars.RingOn(rec) then
+        parts[#parts + 1] = "R" .. Bars.RingArt(rec) .. ":" .. (tonumber(R(rec, "fill", "ringStart")) or 0)
+            .. ":" .. (R(rec, "fill", "ringDir") or "cw")
+    end
     local split = #layers > 0
     local shade = split and texPath ~= WHITE
     if shade then layers[#layers + 1] = { kind = "shade" } end
@@ -5306,13 +5410,15 @@ local function AuraStyleSlot(entry, s)
     local L = (s.i > 0) and entry.auraPlan and entry.auraPlan[s.i] or nil
     local kind = L and L.kind or "base"
     local bar = s.bar
-    bar:SetOrientation(R(rec, "fill", "orientation") or "HORIZONTAL")
-    bar:SetReverseFill(R(rec, "fill", "reverseFill") == true)
-    bar:SetRotatesTexture(R(rec, "fill", "rotateTexture") == true)
+    local ring = Bars.RingOn(rec)
+    bar:SetOrientation(ring and "HORIZONTAL" or R(rec, "fill", "orientation") or "HORIZONTAL")
+    bar:SetReverseFill(not ring and R(rec, "fill", "reverseFill") == true)
+    bar:SetRotatesTexture(not ring and R(rec, "fill", "rotateTexture") == true)
     -- Colour/texture split: with colour layers the base and every layer go
     -- flat and the shade carries the texture, MOD-blended over them, so no
     -- seam shows two shades; otherwise the base carries the user's texture.
-    local texPath = ResolveBarTexture(R(rec, "fill", "texture"))
+    -- A ring has no layers: its base carries the ring picture.
+    local texPath = ring and Bars.RingArt(rec) or ResolveBarTexture(R(rec, "fill", "texture"))
     local want = (kind == "shade" or (kind == "base" and not entry.auraSplit)) and texPath or WHITE
     if s.texApplied ~= want then
         s.texApplied = want
@@ -5333,6 +5439,7 @@ local function AuraStyleSlot(entry, s)
         end
         if s.tex.SetBlendMode then s.tex:SetBlendMode(kind == "shade" and "MOD" or "BLEND") end
     end
+    if kind == "base" then Bars.DressRing(bar, s.tex, rec, ring) end
     if kind == "shade" then
         bar:SetStatusBarColor(1, 1, 1, 1)
     elseif kind == "base" then
@@ -5343,7 +5450,7 @@ local function AuraStyleSlot(entry, s)
     end
     if s.sheen then
         ApplySheen(s.sheen, rec)
-        s.sheen:SetShown(R(rec, "fill", "useGradient") ~= false)
+        s.sheen:SetShown(R(rec, "fill", "useGradient") ~= false and not ring)
     end
     if s.dur then AuraStyleText(s.dur, entry, TEXT_DEF_BY_KEY.dur) end
     if s.stk then AuraStyleText(s.stk, entry, TEXT_DEF_BY_KEY.stk) end
@@ -5375,6 +5482,8 @@ local function AuraOwnChromeBuild(entry, b, s)
     oc.bgHost:SetFrameLevel(lvl)
     oc.bg = oc.bgHost:CreateTexture(nil, "BACKGROUND")
     oc.bg:SetAllPoints(sh)
+    -- a ring's border (a ring builds a new composition, so this one stays one)
+    if Bars.RingOn(entry.rec) then oc.ringEdge = Bars.RingEdge(oc.bgHost) end
     -- border strips + the border-style backdrop, on the border rung (under
     -- the glows); the strips take the shell's own corner anchors
     -- (BuildShell's), their thickness follows in the sync
@@ -5446,6 +5555,13 @@ AuraOwnChromeSync = function(entry)
     local rectOK = not Bars.RectHidden(sh.fill)
     oc.bg:SetTexture(sh.bg:GetTexture())
     oc.bg:SetVertexColor(sh.bg:GetVertexColor())
+    -- a ring's background sits on the ring, inside its border (ApplyStyle)
+    oc.bg:ClearAllPoints()
+    oc.bg:SetAllPoints(entry.ring and sh.fill or sh)
+    if oc.ringEdge then
+        local re = entry.ringEdge
+        Bars.PlaceRingEdge(oc.ringEdge, sh, sh.fill, rec, re and re.px or 1, re and re.rgba or { 0, 0, 0, 1 }, re ~= nil)
+    end
     for _, k in ipairs(EDGE_KEYS) do
         local srcE, t = sh.edges[k], oc.edges[k]
         local e = entry.edgeRGBA or { 0, 0, 0, 1 }
@@ -5753,11 +5869,17 @@ local function AuraBarEnsure(entry)
         -- A path: this client's SetStatusBarTexture takes an asset, and a
         -- texture object leaves no fill. The object is read back here, in the
         -- init window (the one allowed read); exact-edge sampling for seams.
-        bar:SetStatusBarTexture(WHITE)
+        -- A ring's picture and render mode go on before the binding.
+        local ringArt = (i == 0 and Bars.RingOn(rec)) and Bars.RingArt(rec) or nil
+        bar:SetStatusBarTexture(ringArt or WHITE)
         local t = bar:GetStatusBarTexture()
         if t.SetSnapToPixelGrid then t:SetSnapToPixelGrid(false) end
         if t.SetTexelSnappingBias then t:SetTexelSnappingBias(0) end
         s.tex = t
+        if ringArt then
+            s.texApplied = ringArt
+            Bars.DressRing(bar, t, rec, true)
+        end
 
         if kind == "track" or kind == "step" then
             local m = bar:CreateMaskTexture()
@@ -6513,7 +6635,8 @@ end
 -- the duration band colour a plain remaining fraction falls in (the timer
 -- rule: the smallest band the value fits under wins)
 function PV.DurationColor(e, frac, ref)
-    local bands = DurationBands(e.rec, ref)
+    -- a live aura ring has no colour bands (AuraPlan); a cooldown ring keeps its curve
+    local bands = not (e.kind == "aura" and e.ring) and DurationBands(e.rec, ref) or nil
     if bands then
         for _, b in ipairs(bands) do
             if frac <= b.f then return b.color, true end
@@ -6994,7 +7117,7 @@ function PV.Build(rec, holder, screen)
     ApplyStyle(e)
     -- the live aura sheen rides the engine fill; the preview uses the shell's
     if e.kind == "aura" then
-        e.shell.sheen:SetShown(R(rec, "fill", "useGradient") ~= false)
+        e.shell.sheen:SetShown(R(rec, "fill", "useGradient") ~= false and not e.ring)
     end
     if e.kind == "cooldown" then
         CooldownChargeState(e)

@@ -3111,6 +3111,16 @@ function Schema.CdSolid(rec)
     return type(rec) == "table" and rec.barKind == "cooldown" and (rec.barMode or "duration") == "duration"
         and S ~= nil and S.Resolve ~= nil and S.Resolve(rec, "fill", "fillMode") == "solid"
 end
+-- The bars that can be a ring (fill.shape): aura and cooldown bars in duration mode.
+Schema.RING_KINDS = { cooldown = true, aura = true }
+function Schema.BarRing(rec)
+    local S = NS.Store
+    return type(rec) == "table" and Schema.RING_KINDS[rec.barKind] == true
+        and (rec.barMode or "duration") == "duration"
+        and S ~= nil and S.Resolve ~= nil and S.Resolve(rec, "fill", "shape") == "ring"
+end
+-- a straight bar's rows (border, orientation, gradient, padding): gone on a ring
+function Schema.NotRing(rec) return not Schema.BarRing(rec) end
 -- Every kind but range bars, whose plate is always full in its band's colour: no
 -- fill colour, fill direction or tick marks there.
 local BK_NOTRANGE = { cooldown = true, aura = true, timer = true, stack = true, swing = true,
@@ -3367,9 +3377,29 @@ Schema.bar = {
         -- Cooldown stack bars draw charge slots, never the fill, so they lack
         -- orientation and reverse; aura stack bars keep them. onSet runs after
         -- the editor writes: Horizontal lays a standing bar down.
+        -- A ring: the game fills a ring picture radially (StatusBar Radial mode)
+        -- with the same timer; the straight bar's border, orientation,
+        -- gradient, padding and texture rows go (Schema.NotRing). onSet sizes
+        -- it square and centres its time (Store.SetBarShape).
+        shape = { inherit = false, d = "bar", t = "enum", values = { "bar", "ring" },
+            labels = { bar = "A straight bar", ring = "A ring" }, kinds = Schema.RING_KINDS,
+            modes = { duration = true }, label = "Shape",
+            showIf = function() return Enum ~= nil and Enum.StatusBarRenderMode ~= nil end,
+            onSet = function(rec, v)
+                if NS.Store and NS.Store.SetBarShape then NS.Store.SetBarShape(rec, v, true) end
+            end },
+        ringThick = { inherit = false, d = "medium", t = "enum", values = { "thin", "medium", "thick" },
+            labels = { thin = "Thin", medium = "Medium", thick = "Thick" }, kinds = Schema.RING_KINDS,
+            modes = { duration = true }, label = "Ring thickness", dep = { field = "shape", value = "ring" } },
+        ringStart = { inherit = false, d = 0, t = "int", min = 0, max = 359, kinds = Schema.RING_KINDS,
+            modes = { duration = true }, label = "Ring starts at (degrees from the top)",
+            dep = { field = "shape", value = "ring" } },
+        ringDir = { inherit = false, d = "cw", t = "enum", values = { "cw", "ccw" },
+            labels = { cw = "Clockwise", ccw = "Counterclockwise" }, kinds = Schema.RING_KINDS,
+            modes = { duration = true }, label = "Ring runs", dep = { field = "shape", value = "ring" } },
         orientation = { inherit = false, d = "HORIZONTAL", t = "enum", values = { "HORIZONTAL", "VERTICAL" }, label = "Orientation",
             labels = { HORIZONTAL = "Horizontal", VERTICAL = "Vertical" },
-            kindModes = { cooldown = { duration = true } },
+            kindModes = { cooldown = { duration = true } }, showIf = Schema.NotRing,
             onSet = function(rec, v)
                 if v ~= "VERTICAL" and NS.Store and NS.Store.SetBarStanding then
                     NS.Store.SetBarStanding(rec, false)
@@ -3377,7 +3407,7 @@ Schema.bar = {
             end },
         reverseFill = { d = false, t = "bool", label = "Reverse fill", kinds = BK_TINT,
             kindModes = { cooldown = { duration = true } },
-            showIf = function(rec) return not Schema.CdSolid(rec) end },
+            showIf = function(rec) return not Schema.CdSolid(rec) and not Schema.BarRing(rec) end },
         -- Cooldowns drain toward ready; swing bars fill (dk: per-kind
         -- defaults). Duration mode only: a stack fill is a count, not a timer.
         -- "solid", cooldown bars only: a still full block while on cooldown,
@@ -3519,17 +3549,17 @@ Schema.bar = {
         -- cooldown fill never moves, so it has nothing to smooth.
         smoothing   = { d = true, t = "bool", kinds = BK_SMOOTH, label = "Smooth fill",
             showIf = function(rec) return not Schema.CdSolid(rec) end },
-        useGradient = { d = true, t = "bool", label = "Gradient fill" },
+        useGradient = { d = true, t = "bool", label = "Gradient fill", showIf = Schema.NotRing },
         -- VERTICAL fades toward the bottom, HORIZONTAL toward the far end.
         gradientDir = { d = "VERTICAL", t = "enum", values = { "VERTICAL", "HORIZONTAL" },
-            label = "Gradient direction", dep = { field = "useGradient" } },
+            label = "Gradient direction", dep = { field = "useGradient" }, showIf = Schema.NotRing },
         gradientColor = { d = { 0, 0, 0, 0.45 }, t = "color", alpha = true, label = "Gradient end color",
-            dep = { field = "useGradient" } },
-        fillInset   = { d = 0, t = "int", min = 0, max = 12, label = "Fill padding" },
+            dep = { field = "useGradient" }, showIf = Schema.NotRing },
+        fillInset   = { d = 0, t = "int", min = 0, max = 12, label = "Fill padding", showIf = Schema.NotRing },
         -- A built-in key, or a LibSharedMedia key when an LSM addon is loaded
         -- (never bundled). Hidden: the bar editor draws its own dropdown.
         texture = { d = "", t = "text", hidden = true, media = "statusbar", label = "Bar texture" },
-        rotateTexture = { d = false, t = "bool", label = "Rotate texture" },
+        rotateTexture = { d = false, t = "bool", label = "Rotate texture", showIf = Schema.NotRing },
     } },
     -- One section, two editor blocks: Background and Border.
     look = { push = true, inherit = true, kinds = BK_DRAWN, fields = {
@@ -3543,6 +3573,7 @@ Schema.bar = {
         -- picker cannot show it). 0.9 keeps the look bars had when the colour
         -- above carried it.
         bgAlpha         = { d = 0.9, t = "num", min = 0, max = 1, label = "Background opacity", dep = { field = "bgShow" } },
+        -- A ring's border is a ring edge on both its sides (always flat).
         borderEnabled   = { d = true, t = "bool", label = "Border" },
         -- "" = flat pixel strips, else a Blizzard or LSM backdrop edge at the
         -- thickness. Hidden: the editor draws its own dropdown.

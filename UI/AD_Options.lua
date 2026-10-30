@@ -862,6 +862,11 @@ function Options.ParseSpellIDs(text)
     end
     return out
 end
+-- typed IDs as the aura shape the unit rules read
+function Options.AuraProbe(text)
+    local ids = Options.ParseSpellIDs(text)
+    return { spellID = ids[1], spellIDs = (#ids > 1) and ids or nil }
+end
 -- A one-ID icon keeps the plain shape: spellIDs is set only for two or more.
 function Options.SetAuraSpellIDs(d, ids)
     d.spellID = ids[1]
@@ -12171,12 +12176,15 @@ local function BuildBarPane()
         local r = SelBar()
         return trackVis() and r ~= nil and r.barKind == "aura"
     end
+    -- every ID lights the bar (a Cooldown Manager pick carries several); the
+    -- first names it
     local function CommitBarAura(v)
         local r = SelBar()
         if not r then return end
-        local sid = tonumber(v)
+        local ids = Options.ParseSpellIDs(v)
+        local sid = ids[1]
         if sid then
-            r.driver.spellID = sid
+            Options.SetAuraSpellIDs(r.driver, ids)
             local nm = C_Spell.GetSpellName and C_Spell.GetSpellName(sid) -- raw-id: the typed ID names the record
             if nm then r.name = nm end
             Store.Dirty("tree")
@@ -12187,11 +12195,11 @@ local function BuildBarPane()
     local rowBarAuraID = AT.RowInput(pg, "Aura name or spell ID",
         function()
             local r = SelBar()
-            return r and r.driver.spellID and tostring(r.driver.spellID) or ""
+            return r and table.concat(Store.AuraIDList(r.driver), ", ") or ""
         end,
         CommitBarAura,
         barAuraVis,
-        "Type the aura's NAME and click one of its spell IDs, or type the numeric ID and press Enter. A bar takes one ID. Settings are kept.")
+        "Type the aura's NAME and click one of its spell IDs, or type IDs separated by commas or spaces and press Enter. Settings are kept.")
     local RefreshBarEdSug = Options.AuraSuggestPanel(pg, barAuraVis,
         function()
             local eb = rowBarAuraID._colCtrl
@@ -12812,9 +12820,10 @@ local function BuildBarPane()
         return vis
     end
     -- A titled sub-group inside a block: its rows share the block's visibility
-    -- and join its push list; call it after the block's bespoke rows.
-    local function BarSub(vis, title, section, fields)
-        AT.Section(pg, title, { visibleFn = vis })
+    -- and join its push list; call it after the block's bespoke rows. when(rec):
+    -- a narrower gate for its title (its rows answer through their own showIf).
+    local function BarSub(vis, title, section, fields, when)
+        AT.Section(pg, title, { visibleFn = when and function() return vis() and when(SelBar()) end or vis })
         SectionRows(pg, "bar", section, SelBar, vis, fields)
         local def = DEF_OF[vis]
         Options.LookBlock("bar", Options.blockTab[vis], title, section, fields, def and def.sub,
@@ -12956,6 +12965,9 @@ local function BuildBarPane()
     })
     BarSub(cellVis, "Icons", "stacklook", { "iconArt", "iconDim", "iconColorUnlit" })
     BarSub(cellVis, "Segments", "stacklook", { "segGap" })
+    -- aura and cooldown duration bars: a straight bar or a ring (it decides
+    -- the frame, so it leads); per bar, never a default
+    BarBlock("Shape", "fill", "Appearance", { "shape", "ringThick", "ringStart", "ringDir" }, nil, SF, true)
     -- bar style only: the bar's own size
     local sizeVis = BarBlock("Bar Size", "size", "Appearance", {
         "width", "height", "scale", "opacity",
@@ -12984,7 +12996,7 @@ local function BuildBarPane()
         local orientVis = function()
             if not sizeVis() then return false end
             local r = SelBar()
-            return r ~= nil and not (r.barKind == "cooldown" and r.barMode == "stack")
+            return r ~= nil and not (r.barKind == "cooldown" and r.barMode == "stack") and Schema.NotRing(r)
         end
         AT.Section(pg, "Orientation", { visibleFn = orientVis })
         SectionRows(pg, "bar", "fill", SelBar, orientVis, { "orientation", "reverseFill" })
@@ -13081,7 +13093,9 @@ local function BuildBarPane()
             for _, it in ipairs(BarTextureItems()) do items[#items + 1] = it end
             return items
         end,
-        bgVis, "look", "bgTexture", "Same as fill", FillTextureGet)
+        -- a ring's background is its ring picture
+        function() return bgVis() and Schema.NotRing(SelBar()) end,
+        "look", "bgTexture", "Same as fill", FillTextureGet)
     DEF_OF[bgVis].extra = { "bgTexture" }
     Options.BuildYield()
     Options.LookBlock("bar", "Appearance", "Background", "look", { "bgTexture" }, SF)
@@ -13120,7 +13134,8 @@ local function BuildBarPane()
             end
             return items
         end,
-        borderVis)
+        -- a ring's border is always flat
+        function() return borderVis() and Schema.NotRing(SelBar()) end)
     DEF_OF[borderVis].extra = { "borderStyle" }
     Options.BuildYield()
     Options.LookBlock("bar", "Appearance", "Border", "look", { "borderStyle" }, SF)
@@ -13164,7 +13179,9 @@ local function BuildBarPane()
     -- and Texture blocks stay in its editor
     Options.LookBlock("bar", "Appearance", "Fill", "fill", FILL_FIELDS, FC, { when = NotPips })
     Options.BuildYield()
-    TexRow("Bar texture", FillTextureGet, FillTextureSet, BarTextureItems, fillVis, "fill", "texture")
+    -- a ring's fill is its ring picture (Shape, Ring thickness)
+    TexRow("Bar texture", FillTextureGet, FillTextureSet, BarTextureItems,
+        function() return fillVis() and Schema.NotRing(SelBar()) end, "fill", "texture")
     DEF_OF[fillVis].extra = { "texture" }
     Options.BuildYield()
     Options.LookBlock("bar", "Appearance", "Fill", "fill", { "texture" }, FC)
@@ -13225,7 +13242,7 @@ local function BuildBarPane()
     end })
     DEF_OF[texVis].extra = { "texture" }
     Options.BuildYield()
-    BarSub(fillVis, "Gradient", "fill", { "useGradient", "gradientDir", "gradientColor" })
+    BarSub(fillVis, "Gradient", "fill", { "useGradient", "gradientDir", "gradientColor" }, Schema.NotRing)
     -- every kind's Defaults and looks keep Gradient (a resource bar edits it
     -- in its Color block): a wider gate, no more rows
     Options.LookBlock("bar", "Appearance", "Gradient", "fill", {}, FC, { when = NotPips })
@@ -13256,11 +13273,13 @@ local function BuildBarPane()
     })
     -- Time bands, stack colors, power and health bands and a swing bar's
     -- ability colours, each block gated on kind and mode by the schema.
+    -- an aura bar's bands sit along its length, so an aura ring has none; a
+    -- cooldown ring keeps them (the whole fill takes the colour)
     BarBlock("Thresholds", "thresholds", "Appearance", {
         "threshEnabled", "threshAsSeconds", "threshCdSeconds", "threshRef",
         "thresh2Value", "thresh2Color", "thresh3Value", "thresh3Color",
         "thresh4Value", "thresh4Color", "threshCount", "threshText",
-    }, nil, FC)
+    }, function(r) return not (r.barKind == "aura" and Schema.BarRing(r)) end, FC)
     -- aura stack bars only here: a resource bar's banding is Point Colors
     -- above (pips style), and a continuous fill has no per-point cells
     local scVis = BarBlock("Stack Colors", "stackcolors", "Appearance", {
@@ -13408,10 +13427,11 @@ local function BuildBarPane()
     -- Appearance > Ticks: tick marks for every counted bar ("Every point" draws
     -- one per unit from the live maximum), laid out once per size or setting
     -- change.
+    -- a ring has no straight edge to mark
     local tickVis = BarBlock("Ticks", "ticks", "Appearance", {
         "ticksShow", "tickMode", "tickPercent", "tickValues", "tickAsPercent",
         "tickScale",
-    }, NotPips)
+    }, function(r) return NotPips(r) and Schema.NotRing(r) end)
     -- A swing bar's ticks before the swing lands, in the same box right after
     -- the custom ticks, so both kinds of tick are found in one place. They
     -- are fill fields: a def of their own puts them in the push bar's fill
@@ -14140,6 +14160,36 @@ local function BuildAddWindow()
     pg:SetPoint("BOTTOMRIGHT", -10, 12)
     pg:Show()
     addWin._pg = pg
+    -- Nothing spills out of the window. After each layout the page is
+    -- measured: open aura squares give back what it runs over (whole rows, two
+    -- at least), then the window grows by what is still over, and it is its
+    -- own size again once the page fits. ADD_H: its size; PAGE_PAD: the page's
+    -- insets above.
+    local ADD_H, PAGE_PAD = 560, 52
+    local fitting = false
+    hooksecurefunc(AT, "LayoutPage", function(p)
+        if p ~= pg or fitting then return end
+        fitting = true
+        local AP = Options.AuraPicker
+        local a, b = addWin._auraPickRow, addWin._barAuraPickRow
+        local pick = (a and a:IsShown() and a) or (b and b:IsShown() and b) or nil
+        local content = pg._contentH or 0
+        local room
+        if pick and AP then
+            room = (ADD_H - PAGE_PAD) - (content - (pick._h or 0)) - (AP.TOP + AP.GAP)
+        end
+        if room ~= addWin._pickRoom then
+            addWin._pickRoom = room
+            AT.LayoutPage(pg)
+            content = pg._contentH or 0
+        end
+        local h = math.max(ADD_H, math.ceil(content + PAGE_PAD))
+        if math.abs((addWin:GetHeight() or ADD_H) - h) > 0.5 then
+            addWin:SetHeight(h)
+            AT.LayoutPage(pg)
+        end
+        fitting = false
+    end)
 
     local TABS = { "Icon", "Bar", "Group" }
     -- a Text element's tab (UI\AD_TextOptions.lua)
@@ -14280,13 +14330,15 @@ local function BuildAddWindow()
         function() return isIcon("aura")() and not addState.remGroupId end)
     -- the ready-made auras and your Cooldown Manager's as squares
     -- (UI\AD_AuraPicker.lua): a click fills the rows below, Create commits
+    -- room: what the window can give the squares (FitAddWindow below)
+    local function PickRoom() return addWin._pickRoom end
     if Options.AuraPickerRow then
-        addWin._auraPick = Options.AuraPickerRow(pg, addWin, addState, isIcon("aura"),
+        addWin._auraPick, addWin._auraPickRow = Options.AuraPickerRow(pg, addWin, addState, isIcon("aura"),
             function() return addState.auraID end,
             function()
                 AT.LayoutPage(pg)
                 if UpdateCreate then UpdateCreate() end
-            end)
+            end, Options.AuraPicker.ICON_KEYS, PickRoom)
     end
     local rowAuraIDs = AT.RowInput(pg, "Aura name or spell IDs",
         function() return addState.auraID or "" end,
@@ -14506,6 +14558,21 @@ local function BuildAddWindow()
             return addState.cat == "Bar" and (bk == "cooldown" or bk == "aura" or bk == "timer")
         end,
         function() AT.LayoutPage(pg) end)
+    -- an aura or cooldown duration bar can be a ring (fill.shape)
+    AT.RowDropdown(pg, addWin, "Shape",
+        function() return addState.barShape or "bar" end,
+        function(v) addState.barShape = v end,
+        function()
+            return {
+                { value = "bar", text = "A straight bar" },
+                { value = "ring", text = "A ring" },
+            }
+        end,
+        function()
+            local bk = addState.barKind or "cooldown"
+            return addState.cat == "Bar" and Schema.RING_KINDS[bk] == true and addState.barMode ~= "stack"
+                and Enum ~= nil and Enum.StatusBarRenderMode ~= nil
+        end)
     -- a Custom Bar's name and art (UI\AD_CustomOptions.lua)
     if Options.CustomAddRows then Options.CustomAddRows(pg, addWin, addState, "Bar") end
     -- The spellbook autocomplete is for cooldowns only: the catalog holds
@@ -14522,21 +14589,34 @@ local function BuildAddWindow()
         end,
         barUsesSpell, "The tracked cooldown spell.", "e.g. Stormstrike or 17364", true)
     local barIsAura = function() return addState.cat == "Bar" and addState.barKind == "aura" end
+    -- the same squares as an aura icon's: a click fills the bar's aura rows
+    if Options.AuraPickerRow then
+        addWin._barAuraPick, addWin._barAuraPickRow = Options.AuraPickerRow(pg, addWin, addState, barIsAura,
+            function() return addState.barAuraID end,
+            function()
+                AT.LayoutPage(pg)
+                if rowBarMax and rowBarMax._sync then rowBarMax._sync() end
+                if UpdateCreate then UpdateCreate() end
+            end, Options.AuraPicker.BAR_KEYS, PickRoom)
+    end
     local rowBarAura = AT.RowInput(pg, "Aura name or spell ID",
         function() return addState.barAuraID or "" end,
         function(v)
-            addState.barAuraID = v
+            -- typed IDs name the bar after their first spell again
+            addState.barAuraID, addState.barAuraName = v, nil
+            if addWin._barAuraPick then addWin._barAuraPick() end
             if RefreshBarAuraSug then RefreshBarAuraSug(false) end
             if rowBarMax and rowBarMax._sync then rowBarMax._sync() end
             if UpdateCreate then UpdateCreate() end
         end,
         barIsAura,
-        "Type the aura's NAME and click one of its spell IDs, or type the numeric ID. A bar takes one ID, the rank you cast.", "e.g. Serpent Sting or 13549", true)
+        "Type the aura's NAME and click one of its spell IDs, or type IDs separated by commas or spaces. The first names the bar.", "e.g. Serpent Sting or 13549", true)
     RefreshBarAuraSug = AuraSuggest(barIsAura,
         function() return addState.barAuraID end,
         function(v)
-            addState.barAuraID = v
+            addState.barAuraID, addState.barAuraName = v, nil
             if rowBarAura._colCtrl then rowBarAura._colCtrl:SetText(v) end
+            if addWin._barAuraPick then addWin._barAuraPick() end
             if rowBarMax and rowBarMax._sync then rowBarMax._sync() end
         end, false)
     -- a closed window stops the scan (nothing runs unless someone types)
@@ -14557,7 +14637,7 @@ local function BuildAddWindow()
         function(v)
             addState.barAuraType = v
             local u = BarAuraUnit()
-            if not Options.AuraUnitAllowed({ spellID = tonumber(addState.barAuraID) }, u, BarAuraT()) then
+            if not Options.AuraUnitAllowed(Options.AuraProbe(addState.barAuraID), u, BarAuraT()) then
                 u = "target"
             end
             addState.barAuraUnit = u
@@ -14569,7 +14649,7 @@ local function BuildAddWindow()
         BarAuraUnit,
         function(v) addState.barAuraUnit = v end,
         function()
-            return Options.AuraUnitItems({ spellID = tonumber(addState.barAuraID) }, BarAuraT(), BarAuraUnit())
+            return Options.AuraUnitItems(Options.AuraProbe(addState.barAuraID), BarAuraT(), BarAuraUnit())
         end,
         barIsAura)
     AT.RowDropdown(pg, addWin, "Cast by",
@@ -14594,7 +14674,7 @@ local function BuildAddWindow()
         end,
         "The bar is full at this many stacks. Empty: the maximum the game reports, shown in the field. Type a number only if it is wrong.",
         function()
-            local n = Options.DetectMaxStacks(addState.barAuraID)
+            local n = Options.DetectMaxStacks(Options.ParseSpellIDs(addState.barAuraID)[1])
             return n and AT.Tr("game says %s"):format(n) or "unknown - type the maximum"
         end, true)
     AT.RowDropdown(pg, addWin, "Swing type",
@@ -14858,14 +14938,14 @@ local function BuildAddWindow()
         elseif addState.cat == "Bar" then
             local bk = addState.barKind or "cooldown"
             if bk == "aura" then
-                if not tonumber(addState.barAuraID) then return false end
+                if not Options.ParseSpellIDs(addState.barAuraID)[1] then return false end
                 if addState.barMode == "stack" then
                     local typed = addState.barMaxStacks or ""
                     if typed ~= "" then
                         local ms = tonumber(typed)
                         return ms ~= nil and ms >= 1
                     end
-                    return Options.DetectMaxStacks(addState.barAuraID) ~= nil
+                    return Options.DetectMaxStacks(Options.ParseSpellIDs(addState.barAuraID)[1]) ~= nil
                 end
                 return true
             elseif bk == "cooldown" then
@@ -15100,8 +15180,10 @@ local function BuildAddWindow()
                 driver, name = Options.TotemBarDriver(addState)
                 mode = nil
             elseif bk == "aura" then
-                -- the field holds the ID by now (a picked name fills it in)
-                local sid = tonumber(addState.barAuraID)
+                -- the field holds the IDs by now (a picked name or square fills
+                -- them in); every one lights the bar, the first names it
+                local ids = Options.ParseSpellIDs(addState.barAuraID)
+                local sid = ids[1]
                 if not sid then return end
                 local t = (addState.barAuraType == "debuff") and "debuff" or "buff"
                 -- A debuff bar starts as "cast by me", so another Warrior's
@@ -15110,13 +15192,16 @@ local function BuildAddWindow()
                 driver = { spellID = sid, auraType = t,
                     unit = addState.barAuraUnit or ((t == "debuff") and "target" or "player"),
                     caster = (caster == "mine" or caster == "others") and caster or nil }
+                Options.SetAuraSpellIDs(driver, ids)
                 if mode == "stack" then
                     -- the typed maximum; an empty or bad entry gets the
                     -- runtime's fallback (5) and the Tracking tab to fix it
                     local ms = tonumber(addState.barMaxStacks)
                     if ms and ms >= 1 then driver.maxStacks = math.floor(ms) end
                 end
-                name = (C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or ("Aura " .. sid) -- raw-id: the Add window's typed aura
+                -- a template's square names the bar after itself
+                name = addState.barAuraName
+                    or (C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or ("Aura " .. sid) -- raw-id: the Add window's typed aura
             else
                 bk = "cooldown"
                 local sid = ResolveSpellInput(addState.barSpell)
@@ -15125,6 +15210,9 @@ local function BuildAddWindow()
                 name = (C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or ("Spell " .. sid) -- raw-id: the Add window's typed spell
             end
             local rec = Store.NewBar(layoutId, bk, driver, name, mode)
+            if rec and addState.barShape == "ring" and Schema.RING_KINDS[bk] and mode ~= "stack" then
+                Store.SetBarShape(rec, "ring")
+            end
             if rec then
                 addWin:Hide()
                 ExpandedSet()[layoutId] = true
@@ -15198,6 +15286,8 @@ function Options.OpenAdd(layoutId, destGroupId, forceFree)
     addState.forceFree = forceFree and true or false
     addState.remGroupId = nil
     addState.groupOnly = destGroupId ~= nil
+    -- the aura squares open again
+    addState.pickShut = nil
     if destGroupId then
         -- adding into a group = adding an icon; aura groups preselect aura
         addState.cat = "Icon"

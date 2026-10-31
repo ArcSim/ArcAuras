@@ -319,9 +319,9 @@ function GB.BuildSet(a, kind)
         st:SetSize(1, 1)
         st:SetPoint("TOP", UIParent, "TOP", 0, -80)
         st:SetFlattensRenderLayers(true)
-        -- set before any button exists
-        st:SetIsFrameBuffer(true)
+        -- hidden until its set is in use: the picture comes then (GB.SyncLayers)
         st:SetAlpha(0)
+        st:Hide()
         local art = st:CreateTexture(nil, "ARTWORK")
         art:SetAllPoints()
         local layer = { stage = st, art = art, slots = {} }
@@ -545,9 +545,24 @@ function GB.SyncLayers(a)
     if type(ea) ~= "number" or not Plain(ea) then ea = 1 end
     local shown = GB.inCombat and a.frame:IsVisible()
     local n = GroupSize(raid)
-    for kind, set in pairs(sets) do
+    local F = NS.Factory
+    -- a set not in use gives its pictures back first, so the one in use finds the room
+    local order = {}
+    for _, set in pairs(sets) do
+        if set ~= active then order[#order + 1] = set end
+    end
+    order[#order + 1] = active
+    for _, set in ipairs(order) do
         local on = set == active
+        -- the set in use holds a picture for every layer, or none: a set missing
+        -- some would show the wrong count
+        local need = 0
         for _, layer in ipairs(set.layers) do
+            if not F.HoldsPicture(layer.stage) then need = need + 1 end
+        end
+        local held = on and F.BufferRoom(need)
+        for _, layer in ipairs(set.layers) do
+            F.HoldPicture(layer.stage, held)
             local any = false
             for _, slot in ipairs(layer.slots) do
                 local here = on and Present(slot.unit, raid, n)
@@ -556,7 +571,9 @@ function GB.SyncLayers(a)
                     for _, t in ipairs(slot.pre) do t:SetShown(not here) end
                 end
             end
-            layer.stage:SetAlpha((on and shown and any) and ea or 0)
+            local vis = held and shown and any
+            layer.stage:SetShown(vis)
+            layer.stage:SetAlpha(vis and ea or 0)
         end
     end
 end
@@ -713,7 +730,10 @@ function GB.Detach(id)
     GB.attached[id] = nil
     local sets = GB.sets[id]
     for _, set in pairs(sets or {}) do
-        for _, layer in ipairs(set.layers) do layer.stage:SetAlpha(0) end
+        for _, layer in ipairs(set.layers) do
+            layer.stage:SetAlpha(0)
+            NS.Factory.HoldPicture(layer.stage, false)
+        end
         if not InCombatLockdown() then AimSet(set, a.rec, true) end
     end
     if next(GB.attached) or not GB.live then return end

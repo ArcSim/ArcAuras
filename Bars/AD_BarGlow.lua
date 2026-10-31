@@ -542,8 +542,8 @@ function G.MakeLane(st, k, kind, shape, unit, harmful, look, gm)
         if not DA.EraserAvailable() then return nil end
         local stage = CreateFrame("Frame", nil, UIParent)
         stage:SetFlattensRenderLayers(true)
-        -- set before the container is born inside it
-        stage:SetIsFrameBuffer(true)
+        -- hidden until the lane is on: the picture comes then (G.Hold)
+        stage:Hide()
         stage:SetAlpha(0)
         stage:EnableMouse(false)
         stage:SetPoint("TOPLEFT", st.anchor, "TOPLEFT", 0, 0)
@@ -567,7 +567,10 @@ function G.MakeLane(st, k, kind, shape, unit, harmful, look, gm)
     end
     local c = DA.CreateIconContainer(unit, parent)
     if not c then
-        if lane.stage then lane.stage:SetIsFrameBuffer(false) end
+        if lane.stage then
+            lane.stage:Hide()
+            NS.Factory.GiveBuffer(lane.stage)
+        end
         return nil
     end
     c:SetAlpha(kind == "up" and 0 or 1)
@@ -592,13 +595,27 @@ function G.MakeLane(st, k, kind, shape, unit, harmful, look, gm)
 end
 
 -- parked for good (its unit or aura type changed): a new lane takes its place
+-- A staged lane holds its picture while on and shows only while it holds one;
+-- off, it gives it back hidden. A refused one stays out until its next turn on.
+function G.Hold(lane)
+    local s = lane.stage
+    if not s then return end
+    NS.Factory.HoldPicture(s, lane.on == true)
+    s:SetShown(NS.Factory.HoldsPicture(s))
+end
+
 function G.Retire(st, lane)
     lane.on, lane.retired = false, true
     st[lane.kind][lane.slot] = nil
     st.retired[#st.retired + 1] = lane
     G.Refilter(lane, true)
     lane.container:SetAlpha(0)
-    if lane.stage then lane.stage:SetAlpha(0) end
+    if lane.stage then
+        lane.stage:SetAlpha(0)
+        -- never shown again: hidden, it gives its picture back
+        lane.stage:Hide()
+        NS.Factory.GiveBuffer(lane.stage)
+    end
 end
 
 -- One glow slot's aura lane of `kind`: made, kept in step with the settings
@@ -609,6 +626,7 @@ function G.SlotLane(st, e, k, kind, look)
         if lane and lane.on then
             lane.on = false
             G.Refilter(lane, true)
+            G.Hold(lane)
         end
         return
     end
@@ -628,6 +646,7 @@ function G.SlotLane(st, e, k, kind, look)
         end
     end
     lane.look, lane.gm, lane.on, lane.combat = look, gm, true, look.combat
+    G.Hold(lane)
     G.Refilter(lane, false)
     local b = lane.frame
     -- born on UIParent: the bar's layout scale, so the glow counts in its units
@@ -656,6 +675,7 @@ function G.SlotZero(st, e, on)
         if lane and lane.on then
             lane.on = false
             G.Refilter(lane, true)
+            G.Hold(lane)
         end
         return
     end
@@ -674,6 +694,7 @@ function G.SlotZero(st, e, on)
         end
     end
     lane.on = true
+    G.Hold(lane)
     G.Refilter(lane, false)
     local b = lane.frame
     -- born on UIParent: the bar's layout scale, so the "0" counts in its units
@@ -1029,6 +1050,7 @@ function G.Release(e)
             lane.alpha, lane.calpha = 0, 0
             lane.container:SetAlpha(0)
             if lane.stage then lane.stage:SetAlpha(0) end
+            G.Hold(lane)
         end
     end
     for k, host in pairs(st.cd) do

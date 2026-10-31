@@ -769,8 +769,8 @@ function CR.MakeLane(st, s, kind, shape, unit, harmful, look)
         if not DA.EraserAvailable() then return nil end
         local stage = CreateFrame("Frame", nil, UIParent)
         stage:SetFlattensRenderLayers(true)
-        -- set before the container is born inside it
-        stage:SetIsFrameBuffer(true)
+        -- hidden until the lane is on: the picture comes then (CR.Hold)
+        stage:Hide()
         stage:SetAlpha(0)
         stage:EnableMouse(false)
         stage:SetPoint("TOPLEFT", st.rect, "TOPLEFT", 0, 0)
@@ -783,7 +783,10 @@ function CR.MakeLane(st, s, kind, shape, unit, harmful, look)
     end
     local c = DA.CreateIconContainer(unit, parent)
     if not c then
-        if lane.stage then lane.stage:SetIsFrameBuffer(false) end
+        if lane.stage then
+            lane.stage:Hide()
+            NS.Factory.GiveBuffer(lane.stage)
+        end
         return nil
     end
     c:SetAlpha(kind == "miss" and 1 or 0)
@@ -808,13 +811,27 @@ function CR.MakeLane(st, s, kind, shape, unit, harmful, look)
 end
 
 -- parked for good (its unit or aura type changed): a new lane takes its place
+-- A staged lane holds its picture while on and shows only while it holds one;
+-- off, it gives it back hidden. A refused one stays out until its next turn on.
+function CR.Hold(lane)
+    local s = lane.stage
+    if not s then return end
+    NS.Factory.HoldPicture(s, lane.on == true)
+    s:SetShown(NS.Factory.HoldsPicture(s))
+end
+
 function CR.Retire(st, lane)
     lane.on, lane.retired = false, true
     st[lane.kind][lane.slot] = nil
     st.retired[#st.retired + 1] = lane
     CR.Refilter(lane, true)
     lane.container:SetAlpha(0)
-    if lane.stage then lane.stage:SetAlpha(0) end
+    if lane.stage then
+        lane.stage:SetAlpha(0)
+        -- never shown again: hidden, it gives its picture back
+        lane.stage:Hide()
+        NS.Factory.GiveBuffer(lane.stage)
+    end
 end
 
 -- Slot s's aura lane of `kind`: made, kept in step with its row and the
@@ -825,6 +842,7 @@ function CR.SlotLane(st, e, s, kind, rr)
         if lane and lane.on then
             lane.on = false
             CR.Refilter(lane, true)
+            CR.Hold(lane)
         end
         return
     end
@@ -845,6 +863,7 @@ function CR.SlotLane(st, e, s, kind, rr)
     end
     -- dark: a row for another power keeps its lane, filtered and unseen
     lane.look, lane.shape, lane.on, lane.row, lane.dark = look, shape, true, rr.idx, rr.dark == true
+    CR.Hold(lane)
     CR.Refilter(lane, false)
     if kind == "miss" then CR.PaintMiss(lane) end
     local b = lane.frame
@@ -1011,6 +1030,7 @@ function CR.Release(e)
                 lane.alpha = 0
                 lane.container:SetAlpha(0)
                 if lane.stage then lane.stage:SetAlpha(0) end
+                CR.Hold(lane)
             end
         end
     end

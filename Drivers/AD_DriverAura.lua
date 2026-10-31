@@ -1012,13 +1012,38 @@ local function GateCuts(entry)
     return g ~= nil and (g.whole or g.copy) == true
 end
 
+-- A stage whose buttons carry the piece shows only while it holds its picture;
+-- hidden, the look it would hold stays home. A refused one keeps its aura out.
+local function Present(entry)
+    local st = entry.stage
+    if not st then return end
+    local ok = entry.fbOn == true or not entry.inked
+    if not ok and entry.staged then
+        entry.inkHome = true
+        StageLook(entry, false)
+    end
+    st:SetShown(ok)
+end
+
+-- Held only while the look rides the stage (an attached icon), so the cost is
+-- the icons in view; a parked one's buttons are still born with their piece.
 local function BufferFor(entry, want)
     local st = entry.stage
-    if (want or GateCuts(entry)) and not entry.fbOn and not StageLocked(st) then
-        st:SetIsFrameBuffer(true)
-        entry.fbOn = true
+    if (want or GateCuts(entry)) and entry.staged and not entry.fbOn and not StageLocked(st) then
+        entry.fbOn = Factory.TakeBuffer(st)
     end
-    entry.erase = want and entry.fbOn == true
+    entry.erase = want and (entry.fbOn == true or not entry.staged)
+    Present(entry)
+end
+
+-- A stage leaving the screen gives its picture back, hidden first.
+local function ReleaseBuffer(entry)
+    local st = entry.stage
+    if not (st and entry.fbOn) or entry.staged or StageLocked(st) then return end
+    st:Hide()
+    Factory.GiveBuffer(st)
+    entry.fbOn = false
+    Present(entry)
 end
 
 -- The charges state's cut over the whole look (Factory.ApplyChargeGate): only
@@ -1054,11 +1079,12 @@ local function SyncEraser(entry)
 end
 
 local function DropBuffer(entry)
-    if entry.fbOn and not entry.erase and not GateCuts(entry)
+    if entry.fbOn and not entry.erase and not entry.inked and not GateCuts(entry)
         and entry.stage and not StageLocked(entry.stage) then
-        entry.stage:SetIsFrameBuffer(false)
+        Factory.GiveBuffer(entry.stage)
         entry.fbOn = false
     end
+    Present(entry)
 end
 
 -- Slots
@@ -1190,6 +1216,10 @@ local function EnsureSlots(iconId, rec, startParked)
                         local opts = AuraButtonOpts(e)
                         opts.glowElsewhere = GlowMoved(e)
                         Factory.StyleAuraButton(b, r, HolderPx(e), opts)
+                        if opts.erase then
+                            e.inked = true
+                            if e.stage and not e.fbOn then e.stage:Hide() end
+                        end
                     end
                     b:EnableMouse(false)
                 end,
@@ -1579,10 +1609,14 @@ local function RestyleEntry(entry)
     end
     -- both sets, so a switch between them finds its buttons ready
     local other = entry.share and ((entry.subs == entry.share) and entry.own or entry.share) or nil
+    -- a button left unstyled keeps what it carried
+    if opts.erase then entry.inked = true end
+    local inkLeft = false
     for _, list in ipairs({ entry.subs, other }) do
         for _, sub in ipairs(list) do
             local b = sub.frame
             if b then
+                if not (sub.dom or IsAccessible(b)) then inkLeft = true end
                 if IsAccessible(b) then
                     if not (sub.inStage or sub.dom) then FollowScale(sub.container, entry.holder) end
                     AnchorButton(b, entry.holder, SubLift(entry, sub))
@@ -1612,7 +1646,14 @@ local function RestyleEntry(entry)
             end
         end
     end
-    if not locked then DropBuffer(entry) end
+    if not (opts.erase or inkLeft) then entry.inked = nil end
+    if not locked then DropBuffer(entry) else Present(entry) end
+    -- a look sent home for its buttons' piece rides the stage again once they are clean
+    if entry.inkHome and not entry.inked and not entry.off and entry.stage and AnchorStage(entry) then
+        entry.inkHome = nil
+        StageLook(entry, true)
+        SyncEraser(entry)
+    end
 end
 
 -- A hidden holder hides the missing look it lent the stage; shown again, it takes its fade back.
@@ -1812,6 +1853,7 @@ function Driver.AttachOverlay(rec, f)
             g.container:SetAlpha(0)
         end
         if entry.stage then entry.stage:SetAlpha(0) end
+        ReleaseBuffer(entry)
     end
     -- no aura over it: a charges state's cut keeps a stage of its own
     if rec.kind == "spell" then SyncGate(rec, f) end
@@ -1840,6 +1882,7 @@ function Driver.Detach(id)
     StageLook(entry, false)
     SyncChargeGate(entry)
     if entry.stage then entry.stage:SetAlpha(0) end
+    ReleaseBuffer(entry)
     if entry.holder then Factory.StopAuraGlow(entry.holder) end
 end
 
@@ -1851,14 +1894,16 @@ function Driver.Refeed(id)
 end
 
 -- Load-window prebuild, called by AD_Init right after Store.Init: every saved
--- aura icon's slots are made parked at ADDON_LOADED, legal even on a reload
--- into combat or an instance, and a qualifying icon's slots in its group's
--- shared containers with them. The first Attach unparks them.
+-- aura icon that can load on this character gets its slots made parked at
+-- ADDON_LOADED, legal even on a reload into combat or an instance, and a
+-- qualifying icon's slots in its group's shared containers with them. The
+-- first Attach unparks them. Other characters' and classes' icons wait for an
+-- attach of their own.
 function Driver.PreBuild()
     if not IS_121 then return end
     if not (Store and Store.EachRecord) then return end
     Store.EachRecord(function(id, rec)
-        if rec.type == "icon" and ShapeFor(rec) then
+        if rec.type == "icon" and ShapeFor(rec) and not Store.NeverLoadsHere(rec) then
             EnsureSlots(id, rec, true)
             local entry = entries[id]
             if entry and #entry.subs > 0 and not entry.share and ShareOK(rec) then

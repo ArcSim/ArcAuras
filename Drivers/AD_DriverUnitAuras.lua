@@ -1086,7 +1086,7 @@ function UA.PreBuild()
     if not UA.Available() then return end
     for _, layout in ipairs(Store.Layouts()) do
         for _, g in ipairs((Store.ChildrenOf(layout))) do
-            if Store.ShowsAll(g) then
+            if Store.ShowsAll(g) and not Store.NeverLoadsHere(g) then
                 local rt = UA.Build(g)
                 if rt then
                     local cfg = UA.Config(g)

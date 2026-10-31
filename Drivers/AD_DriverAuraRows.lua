@@ -157,14 +157,16 @@ function AR.Make(unit, staged, lane)
         st = CreateFrame("Frame", nil, UIParent, AR.OPT_IN)
         st:SetSize(1, 1)
         st:SetFlattensRenderLayers(true)
-        -- set before any button exists
-        st:SetIsFrameBuffer(true)
+        -- hidden until placed: its picture comes with its first show (AR.Mirror)
         st:Hide()
     end
     local c = CreateFrame("AuraContainer", nil, st or UIParent, "CustomAuraContainerTemplate")
     if not c or type(c.AddAuraGroup) ~= "function" then
         if c then c:Hide() end
-        if st then st:Hide() end
+        if st then
+            st:Hide()
+            NS.Factory.GiveBuffer(st)
+        end
         return nil
     end
     local G, DA = NS.DriverAuraGroups, NS.DriverAura
@@ -230,7 +232,7 @@ function AR.Give(p)
     p.c:SetScale(1)
     p.c._adFollowK = nil
     if p.stage then
-        p.stage:Hide()
+        NS.Factory.HoldPicture(p.stage, false)
         p.stage:ClearAllPoints()
         AR.StopGlows(p)
     end
@@ -809,8 +811,10 @@ function AR.Mirror(g, rt, gf)
     local on = AR.placed[g.id] ~= nil and Store.IsLoaded(g) and gf ~= nil and gf:IsShown()
     for _, p in pairs(rt.pieces) do
         if p.stage then
-            -- the stage carries the fade and level; its piece rides it, a level up
-            G.MirrorOnto(p.stage, gf, on)
+            -- the stage carries the fade and level; its piece rides it, a level up.
+            -- Placed, it keeps its picture while hidden; refused, it stays out.
+            local held = NS.Factory.HoldsPicture(p.stage) or (on and NS.Factory.HoldPicture(p.stage, true))
+            G.MirrorOnto(p.stage, gf, on and held)
             p.c:SetShown(on)
             p.c:SetFrameStrata(p.stage:GetFrameStrata())
             local lvl = p.stage:GetFrameLevel()
@@ -1334,7 +1338,9 @@ function AR.PreBuild()
     local DA = NS.DriverAura
     for _, layout in ipairs(Store.Layouts()) do
         for _, g in ipairs((Store.ChildrenOf(layout))) do
-            if AR.On(g) and AR.TimeLeft(g) then
+            if Store.NeverLoadsHere(g) then
+                -- another character's or class's group: nothing to make here
+            elseif AR.On(g) and AR.TimeLeft(g) then
                 -- Time left: a flow per unit and Cast by, nothing per icon
                 for _, f in ipairs(AR.FlowList(g, AR.Grid(g, AR.PreMembers(g)), (AR.Pack(g)))) do
                     need[f.unit] = need[f.unit] + 1

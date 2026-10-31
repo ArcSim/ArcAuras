@@ -838,7 +838,10 @@ function TX.ParkAura(sub)
     end
     sub.container:Hide()
     -- the missing words would stay up otherwise
-    if sub.stage then sub.stage:Hide() end
+    if sub.stage then
+        sub.stage:Hide()
+        NS.Factory.GiveBuffer(sub.stage)
+    end
 end
 
 -- The box in plain numbers: the record's size, never a read of the shell.
@@ -943,12 +946,13 @@ function TX.EnsureAura(e)
     -- engine-drawn text through it
     local parent, stage, missFS = shell, nil, nil
     if mode == "missing" then
+        if not NS.Factory.BufferRoom() then return false end
         -- words and container share one stage
         stage = CreateFrame("Frame", nil, shell)
         stage:SetAllPoints(shell)
         stage:SetFrameLevel(shell.overlay:GetFrameLevel() + 2)
         stage:SetFlattensRenderLayers(true)
-        stage:SetIsFrameBuffer(true)
+        NS.Factory.TakeBuffer(stage)
         missFS = stage:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
         missFS:SetWordWrap(false)
         missFS:SetAllPoints(shell)
@@ -956,7 +960,10 @@ function TX.EnsureAura(e)
     end
     local c = CreateFrame("AuraContainer", nil, parent, "CustomAuraContainerTemplate")
     if not c or type(c.AddAuraSlot) ~= "function" then
-        if stage then stage:Hide() end
+        if stage then
+            stage:Hide()
+            NS.Factory.GiveBuffer(stage)
+        end
         return false
     end
     c:SetSize(1, 1)

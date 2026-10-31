@@ -28,6 +28,39 @@ NS.AMMO_SLOT = AMMO_SLOT
 local GLOW_LEVEL = 7
 NS.GLOW_LEVEL = GLOW_LEVEL
 
+-- Frames of ours drawn as one picture each cost the client a picture of their
+-- own, so only this many hold one at once. Past it a frame is refused and its
+-- feature stays off (the caller's not-built path) instead of sinking the game.
+Factory.BUFFER_CAP = 128
+Factory.buffers = 0
+-- room for n more, asked before a caller builds anything
+function Factory.BufferRoom(n)
+    return Factory.buffers + (n or 1) <= Factory.BUFFER_CAP
+end
+function Factory.TakeBuffer(f)
+    if f._adBuf then return true end
+    if Factory.buffers >= Factory.BUFFER_CAP then return false end
+    f:SetIsFrameBuffer(true)
+    f._adBuf = true
+    Factory.buffers = Factory.buffers + 1
+    return true
+end
+function Factory.GiveBuffer(f)
+    if not (f and f._adBuf) then return end
+    f:SetIsFrameBuffer(false)
+    f._adBuf = nil
+    Factory.buffers = Factory.buffers - 1
+end
+-- Such a frame holds its picture while its feature is in use and shows only
+-- while it holds one. on: take it (false when refused); off: hide, give it back.
+function Factory.HoldPicture(f, on)
+    if on and Factory.TakeBuffer(f) then return true end
+    f:Hide()
+    Factory.GiveBuffer(f)
+    return false
+end
+function Factory.HoldsPicture(f) return f ~= nil and f._adBuf == true end
+
 local frames = {}    -- [iconId] = frame
 Factory.frames = frames
 

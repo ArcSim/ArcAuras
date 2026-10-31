@@ -222,14 +222,15 @@ local function BuildLayer(rec, part, ids)
     st:SetSize(1, 1)
     st:SetPoint("TOP", UIParent, "TOP", 0, -80)
     st:SetFlattensRenderLayers(true)
-    -- set before any button exists
-    st:SetIsFrameBuffer(true)
+    -- hidden until in use: the picture comes then (TR.Ensure)
+    st:Hide()
     -- its glows draw in it (Factory.GlowBlend)
     st._adFlat = true
     st:SetAlpha(0)
     local c = DA.CreateIconContainer("player", st)
     if not c then
         st:Hide()
+        NS.Factory.GiveBuffer(st)
         return nil
     end
     local layer = { stage = st, part = part, container = c,
@@ -484,9 +485,15 @@ function TR.Sync(a)
     local ea = f:GetEffectiveAlpha()
     if type(ea) ~= "number" or not Plain(ea) then ea = 1 end
     local shown = a.active == true and TR.IDs(a.rec) ~= nil and f:IsVisible() == true
-    if L.art then L.art.stage:SetAlpha((shown and wantArt) and ea or 0) end
+    local F = NS.Factory
+    if L.art then
+        local on = shown and wantArt and F.HoldsPicture(L.art.stage)
+        L.art.stage:SetShown(on)
+        L.art.stage:SetAlpha(on and ea or 0)
+    end
     if L.top then
-        local on = shown and wantTop
+        local on = shown and wantTop and F.HoldsPicture(L.top.stage)
+        L.top.stage:SetShown(on)
         L.top.stage:SetAlpha(on and ea or 0)
         SetGlow(L.top, on)
     end
@@ -510,7 +517,11 @@ function TR.Ensure(a)
             layer = BuildLayer(rec, part, ids)
             L[part] = layer
         end
-        if layer then AimLayer(layer, (want[part] and ids) or nil) end
+        if layer then
+            -- in use while wanted: its picture held for the totem's next drop, in combat too
+            NS.Factory.HoldPicture(layer.stage, want[part] == true and ids ~= nil)
+            AimLayer(layer, (want[part] and ids) or nil)
+        end
     end
     TR.Paint(a)
     TR.Sync(a)
@@ -526,6 +537,7 @@ local function Park(id)
             layer.stage:SetAlpha(0)
             SetGlow(layer, false)
             AimLayer(layer, nil)
+            NS.Factory.HoldPicture(layer.stage, false)
         end
     end
 end

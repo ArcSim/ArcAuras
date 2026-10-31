@@ -18,6 +18,8 @@ Ring bars, the aura picker for bars, and an Add window that always fits.
 
 - **Add window** - The form no longer runs out of the window under a long aura list.
 - **Texture rings** - A texture shown as a ring now goes all the way around.
+- **Big setups** - Keeping layouts for many characters no longer slows the game to a crawl: each character only builds what it can load.
+- **Graphics memory** - Icons, glows and bars that are not on screen no longer hold on to graphics memory.
 
 ## 3.1.3
 

@@ -3558,6 +3558,26 @@ function Store.IsLoaded(rec)
     return true
 end
 
+-- True when `rec` cannot load on this character this session: it, its group or
+-- its layout is set to Never load, or kept to other characters or classes.
+-- Spec, talents and the rest change within a session, so they never count, and
+-- an identity the client cannot tell yet counts as a match.
+function Store.NeverLoadsHere(rec)
+    local me, tag = CharKey(), ClassTag()
+    local named = me ~= "?" and me:sub(-2) ~= "-?"
+    local g = rec and rec.groupId and DB.records[rec.groupId]
+    local lay = rec and DB.records[(g and g.layoutId) or rec.layoutId]
+    for _, r in ipairs({ rec, g or false, lay or false }) do
+        local c = r and r.c
+        if c then
+            if c.never == true then return true end
+            if c.classes and tag and not c.classes[tag] then return true end
+            if c.chars and named and not c.chars[me] then return true end
+        end
+    end
+    return false
+end
+
 -- Talent conditions
 
 -- A node's state on a record: "req" (must have), "not" (must not have) or nil,

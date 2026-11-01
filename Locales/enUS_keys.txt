@@ -511,6 +511,8 @@ Actions
 Active
 Active Reminders
 Active alpha
+Active border
+Active border color
 Active glow
 Active glow X offset
 Active glow Y offset
@@ -572,6 +574,7 @@ Added, switched off
 Adds IDs to game tooltips everywhere: spell, aura, item, icon, quest, talent and Cooldown Manager IDs.
 Adds a spell that is not on your bars, by its ID. Give it its own key below to ping it.
 Adds spell, item, icon and Cooldown Manager IDs to game tooltips.
+Adds the finder's window: search every Forever item, see where it drops on your map, star favorites and get pop-ups for new finds.
 Adds the spell to your ping spells, or switches it off and keeps its settings.
 Adds your off-hand's swing to this main-hand bar. Pick its look on the Appearance tab.
 After a mana spell
@@ -1903,6 +1906,8 @@ Font outline
 Font size
 For
 For a charge spell that also locks for a while after each cast: show its charges and recharge, not that lock.
+Forever Item Finder is installed and shares your finds.
+Forever Item Finder is installed: it shares your finds.
 Forget center
 Forget default
 Forgets the selection and goes back to the layout.
@@ -1947,6 +1952,7 @@ From the middle of your screen
 From your action bars
 Frost Trap
 Frostbrand Weapon
+Full Item Finder
 Full Opacity When
 Full at (stacks)
 Full charges color
@@ -2419,6 +2425,7 @@ Item
 Item 
 Item %d
 Item Category 
+Item Finds
 Item ID
 Item IDs
 Item Icon
@@ -3805,6 +3812,7 @@ Seconds left
 Seconds need the aura's length: click to set it.
 Seconds need the full length, which the game does not tell addons.
 Seconds this trigger's pulse runs, from 0.1 up to 600.
+See every find and where it drops at forever-item-finder.pages.dev.
 Segment colors
 Segment count (0 = auto)
 Segment spacing
@@ -3856,13 +3864,16 @@ Shaman by Emity
 Shaman in my group
 Shape
 Share it on the Arc UI Discord with a screenshot.
+Share item finds
 Share of the aura left
+Share the new Forever items you find with other players, and see everyone's on the finder website.
 Share your setup: tick what goes in, then make its string.
 Shared
 Shared Media
 Shared across characters
 Shared by every spoken line in Arc Auras. The volume and the tick are WoW's own text to speech settings.
 Shared media
+Shares the new Forever items you loot with other players, without your name, and keeps theirs.
 Shield color
 Shield equipped
 Shield look
@@ -4223,6 +4234,7 @@ Swipe inset
 Swipe inset H
 Swipe inset W
 Swipe only when no charges
+Switched back on: sharing starts again after a reload.
 Switches every spell set to ping each time you press its key. Spells on a key of their own ignore it.
 Switches it on with the same look.
 Switches the module on with this character's Arc UI setup.
@@ -4244,6 +4256,7 @@ Tab Kick (mouseover or focus, else tab)
 Tab Kick (tab to nearest)
 Taken
 Taken: click for Not taken instead.
+Takes effect after a reload.
 Takes its spot back
 Takes the spell off your ping spells, with its settings.
 Takes this anchor off the list.
@@ -4268,6 +4281,7 @@ Target Range Rule
 Target cast bar
 Target frame
 Target in range
+Target is dead
 Target is friendly
 Target is hostile
 Target of target
@@ -4329,6 +4343,7 @@ The Cooldown Manager's cooldown IDs for spells, auras and trinkets, one line per
 The Cooldown Manager's soft shadow frame around the icon art.
 The ID block shows only when Shift is held as the tooltip opens.
 The ID of what the tooltip shows: a spell, aura, item, toy, mount, currency, achievement or quest.
+The Item Finder window
 The Light's Potential potion: 30 seconds from the drink, each drink restarts it; dying clears it.
 The Not active look, with no timer running.
 The On cooldown look: the timer idle and its cooldown spell cooling down.
@@ -5115,6 +5130,7 @@ While the aura is up
 While the aura is up the game shows it over the icon: its time, and gone the moment it drops. Works in combat.
 While the aura is up, its border takes the game's color for its type: Magic, Curse, Disease or Poison. Others keep the border color.
 While the aura is up, only once little time is left, only while the aura is missing, or always. Works in combat.
+While the aura is up, the border takes its own color. A skin's border takes it too.
 While the button is held
 While the timer is idle at 0 stacks, the count shows this many: a pool reads full before its first use. Empty = off.
 While the timer runs

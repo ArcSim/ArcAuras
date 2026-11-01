@@ -2353,8 +2353,24 @@ local function PostPasses()
     if screenEditing then HideEditChrome() end
 end
 
+-- The pixel grid the full pass rounded every size and corner to; a screen
+-- event that leaves it as it was redraws nothing (a graphics restart sends
+-- them with the screen unchanged).
+local function Plain(v)
+    return type(v) == "number" and not (issecretvalue and issecretvalue(v))
+end
+local function GridSig()
+    local w, h = GetPhysicalScreenSize()
+    local s = UIParent:GetEffectiveScale()
+    local uw, uh = UIParent:GetWidth(), UIParent:GetHeight()
+    if not (Plain(w) and Plain(h) and Plain(s) and Plain(uw) and Plain(uh)) then return nil end
+    return ("%d:%d:%.6f:%.4f:%.4f"):format(w, h, s, uw, uh)
+end
+local placedOn
+
 function Engine.Rebuild()
     want.full, want.ids, want.why = false, {}, nil
+    placedOn = GridSig()
     -- One fresh world read for the whole rebuild: placement asks the
     -- conditions (dynamic drop-outs) before their pass runs at the end.
     if NS.Conditions then NS.Conditions.Refresh() end
@@ -2609,8 +2625,10 @@ end
 
 -- A new resolution or UI scale moves the physical pixel grid: every size and
 -- corner was rounded to the old one, so the whole layout is placed again,
--- each from the screen spot it is pinned to.
+-- each from the screen spot it is pinned to. The same grid: nothing to redo.
 function Engine.OnScreenChanged()
+    local sig = GridSig()
+    if sig and sig == placedOn then return end
     Engine.QueueRebuild()
 end
 

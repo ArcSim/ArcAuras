@@ -3,8 +3,10 @@ package-as: ArcAuras
 
 # The ArcUI stand-in ships beside it, so installing Arc Auras always loads the
 # old Arc UI Forever save (ArcUI.lua) for the move, and replaces the old addon.
+# The share-only item finder (Forever only, loaded on demand) ships beside it too.
 move-folders:
   ArcAuras/Bridge/ArcUI: ArcUI
+  ArcAuras/Finds: ArcAuras_Finds
 
 manual-changelog:
   filename: CHANGELOG.md

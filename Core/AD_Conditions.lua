@@ -263,6 +263,15 @@ local function NotAttacking()
     return not Plain("targetDead", UnitIsDead and UnitIsDead("target"))
 end
 
+-- A corpse or a ghost targeted (UnitIsDeadOrGhost has no secrecy annotation).
+-- The last answer lets the target's health events queue a pass only on a flip.
+local targetDeadSeen = false
+function Conditions.TargetDead()
+    local d = HasTarget() and Plain("targetDeadOrGhost", UnitIsDeadOrGhost and UnitIsDeadOrGhost("target")) or false
+    targetDeadSeen = d
+    return d
+end
+
 -- Forever's Auto Shot and wands only fire while you stand still.
 local function MovingShooting()
     return Shooting() and Plain("moving", IsPlayerMoving and IsPlayerMoving())
@@ -442,6 +451,8 @@ local PET_BAR_EV = { "UNIT_PET", "PET_BAR_UPDATE", "PET_UI_UPDATE" }
 local DEMON_EV = { "UNIT_PET", "PET_BAR_UPDATE", "SPELLS_CHANGED" }
 local PET_TARGET_EV = { "UNIT_PET", "UNIT_HEALTH", "UNIT_TARGET" }
 local ATTACK_EV = { "PLAYER_TARGET_CHANGED", "UNIT_FACTION", "PLAYER_TARGET_DIED" }
+-- the target's health brings a revive while it stays targeted
+local TARGET_DEAD_EV = { "PLAYER_TARGET_CHANGED", "PLAYER_TARGET_DIED", "UNIT_HEALTH" }
 local MOVE_EV = { "PLAYER_STARTED_MOVING", "PLAYER_STOPPED_MOVING" }
 local REPAIR_EV = { "UPDATE_INVENTORY_ALERTS", "UPDATE_INVENTORY_DURABILITY" }
 local AMMO_EV = { "UNIT_INVENTORY_CHANGED", "BAG_UPDATE_DELAYED", "PLAYER_EQUIPMENT_CHANGED" }
@@ -561,6 +572,8 @@ local VOCAB = {
             return HasTarget()
                 and Plain("targetFriendly", UnitIsFriend and UnitIsFriend("player", "target"))
         end },
+    { key = "targetDead", cat = "target", text = "Target is dead", ev = TARGET_DEAD_EV,
+        evUnit = { UNIT_HEALTH = "target" }, read = function() return Conditions.TargetDead() end },
     { key = "hasFocus", cat = "target", text = "Have a focus", ev = { "PLAYER_FOCUS_CHANGED" },
         read = function() return Plain("hasFocus", UnitExists and UnitExists("focus")) end },
     { key = "solo", cat = "group", text = "Solo", ev = GROUP_EV,
@@ -1015,6 +1028,8 @@ end
 -- Events, armed only for the conditions live records use
 
 local armed, invalid = {}, {}
+-- the units each armed unit event was registered for
+local armedUnits = {}
 local inUse, polled, pollLast = {}, {}, {}
 local pollTicker
 -- The spells live records' target range rules read.
@@ -1044,15 +1059,23 @@ local UNIT_ARG = {
 }
 
 -- the same as unit lists: the game delivers only those units' events
-local UNITS_OF = { player = { "player" }, pet = { "pet" }, either = { "player", "target" } }
+local UNITS_OF = { player = { "player" }, pet = { "pet" }, target = { "target" }, either = { "player", "target" } }
 
 local function OnEvent(event, unit)
     -- a secret token is never one of ours
     if IsSecret(unit) then return end
-    local want = UNIT_ARG[event]
-    if want == "player" and unit ~= "player" then return end
-    if want == "pet" and unit ~= "pet" then return end
-    if want == "either" and unit ~= "player" and unit ~= "target" then return end
+    local ok = armedUnits[event]
+    if ok then
+        if not ok[unit] then return end
+    elseif UNIT_ARG[event] == "player" and unit ~= "player" then
+        -- a plain registration hears every unit
+        return
+    end
+    -- every hit on the target fires its health: only a death or a revive counts
+    if event == "UNIT_HEALTH" and unit == "target" then
+        local was = targetDeadSeen
+        if Conditions.TargetDead() == was then return end
+    end
     Conditions.Queue()
     -- A taxi or vehicle can settle a moment after the control events.
     if event == "PLAYER_CONTROL_LOST" or event == "PLAYER_CONTROL_GAINED" then
@@ -1075,30 +1098,54 @@ end
 local function Arm()
     local want, toggle = {}, false
     wipe(polled)
+    -- each event with the unit lists its rows hear it for (a row's own evUnit, else UNIT_ARG's)
+    local function Want(e, u)
+        local set = want[e] or {}
+        want[e] = set
+        u = u or UNIT_ARG[e]
+        if u then set[u] = true end
+    end
     for key in pairs(inUse) do
         local d = BY_KEY[key]
         if d.ev then
-            for _, e in ipairs(d.ev) do want[e] = true end
+            for _, e in ipairs(d.ev) do Want(e, d.evUnit and d.evUnit[e]) end
         end
         if d.poll then polled[key] = true end
         if d.toggle then toggle = true end
     end
     if setUse then
-        for _, e in ipairs(SET_EV) do want[e] = true end
+        for _, e in ipairs(SET_EV) do Want(e) end
     end
-    for e in pairs(want) do
-        if not armed[e] and EventValid(e) then
+    for e, set in pairs(want) do
+        if armed[e] ~= nil or EventValid(e) then
             -- unit events only (a UNIT_ name): PLAYER_SPECIALIZATION_CHANGED
             -- keeps its plain registration
-            local units = e:find("^UNIT_") and UNITS_OF[UNIT_ARG[e]] or nil
-            Events.On(e, "adcond", OnEvent, units)
-            armed[e] = true
+            local units, toks
+            if e:find("^UNIT_") and next(set) ~= nil then
+                units, toks = {}, {}
+                for u in pairs(set) do
+                    for _, tok in ipairs(UNITS_OF[u] or {}) do
+                        if not toks[tok] then
+                            toks[tok] = true
+                            units[#units + 1] = tok
+                        end
+                    end
+                end
+                table.sort(units)
+            end
+            local sig = units and table.concat(units, " ") or ""
+            if armed[e] ~= sig then
+                Events.On(e, "adcond", OnEvent, units)
+                armed[e] = sig
+                armedUnits[e] = toks
+            end
         end
     end
     for e in pairs(armed) do
         if not want[e] then
             Events.Off(e, "adcond")
             armed[e] = nil
+            armedUnits[e] = nil
         end
     end
     -- Flying, swimming, indoors and outdoors have no event, so they poll.

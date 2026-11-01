@@ -1,0 +1,28 @@
+## Interface: 16001
+## AllowLoadGameType: camelot
+## Title: Arc Auras: Item Finds
+## Notes: Shares the new WoW Forever items you find with other players, with the full item finder if you pick it. Part of Arc Auras; set it up on its Modules page.
+## Author: Arc
+## Version: @project-version@
+## IconTexture: Interface\AddOns\ArcAuras_Finds\Media\FIF_Icon
+## Dependencies: ArcAuras
+## LoadOnDemand: 1
+## SavedVariables: ArcAurasFindsDB
+
+Data\Items.lua
+Data\MapOverlays.lua
+Core.lua
+FindsCore.lua
+Data.lua
+Finds.lua
+Proto.lua
+Bans.lua
+Sync.lua
+Detect.lua
+Theme.lua
+Popup.lua
+UI.lua
+WorldPins.lua
+FavPins.lua
+Tooltip.lua
+Minimap.lua

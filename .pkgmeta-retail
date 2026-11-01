@@ -19,6 +19,7 @@ ignore:
   - README.md
   - ArcDisplay.toc
   - Bridge
+  - Finds
   - "*.bak"
   - Textures/ArcUI_Icon_400x400.tga
   - Textures/ArcUI_Icon_Dial_256.tga

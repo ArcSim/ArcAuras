@@ -1,5 +1,22 @@
 # Arc Auras
 
+## 3.1.5
+
+Stealth and dead-target looks, an active border, and performance and bug fixes.
+
+### New Features
+
+- **Own looks: Stealthed and Target is dead** - A look can wait on being stealthed, or on your target being dead (a finisher greyed on a corpse).
+- **Active border** - The border takes its own color while the aura is up, a skin's border too.
+
+### Improvements
+
+- **Performance** - Arc Auras does less work in the background.
+
+### Bug Fixes
+
+- **Bug fixes** - General fixes, including issues around cutscenes.
+
 ## 3.1.4
 
 Ring bars, the aura picker for bars, and an Add window that always fits.

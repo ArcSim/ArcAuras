@@ -430,7 +430,7 @@ Schema.PIN_LABELS = { own = "Its own spot", frame = "A named frame", action = "A
 -- only Missing; its "missing" glow is the Missing glows, which a look can only
 -- turn off. The conditions are ones the game lets us read in combat.
 Schema.OWN_LOOK_CONDITIONS = { "inCombat", "outOfCombat", "hasTarget", "noTarget", "targetHostile",
-    "solo", "raid", "instance", "encounter", "mounted" }
+    "targetDead", "solo", "raid", "instance", "encounter", "mounted", "stealthed" }
 Schema.OWN_LOOK_MAX = 30
 do
     local function St(glow, a, g, t) return { a = a ~= false, g = g ~= false, t = t ~= false, glow = glow } end
@@ -1837,6 +1837,12 @@ Schema.icon = {
         activeDesaturate = { d = false, t = "bool", label = "Desaturate while active" },
         activeTintEnabled = { d = false, t = "bool", label = "Active tint" },
         activeTintColor = { d = { 1, 1, 1, 1 }, t = "color", label = "Active tint color", dep = { field = "activeTintEnabled" } },
+        -- The live look's border, or a skin's, on the game's button: set at its
+        -- styling, so it holds in combat with nothing read.
+        activeBorderOn = { d = false, t = "bool", label = "Active border",
+            desc = "While the aura is up, the border takes its own color. A skin's border takes it too." },
+        activeBorderColor = { d = { 1, 0.82, 0, 1 }, t = "color", alpha = true, label = "Active border color",
+            dep = { field = "activeBorderOn" } },
         -- Engine-driven like the glow's time gate (DriverAura.TimeGateFrac):
         -- not in a Dynamic group, nor on a "you, then your target" icon.
         activeTimeOnly = { d = false, t = "bool", kinds = AU, showIf = TimeGateShows,

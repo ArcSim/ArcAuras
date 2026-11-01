@@ -10224,6 +10224,8 @@ local function BuildIconEditor(parent)
     })
     SkinNote(borderDef, "Its Masque skin draws the border and the shadow.")
     SkinNote(borderDef, "The Cooldown Manager look draws the border and the shadow.", true)
+    -- its colour while the aura is up, a skin's border included
+    More(borderDef, "auraActive", { "activeBorderOn", "activeBorderColor" })
     -- The Cooldown Manager's soft shadow frame.
     Sub(borderDef, "Shadow", "appearance", { "shadowEnabled", "shadowSize" })
     -- the Cooldown Manager's dark overlay on a spell out of range

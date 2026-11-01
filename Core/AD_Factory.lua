@@ -1319,8 +1319,9 @@ end
 -- The skin's layers round the picture: the ones its stack puts under the
 -- picture on `back` (the picture's own frame), the rest on `top` (a frame over
 -- it), each side in the skin's order. No plan or hide: all hidden. alpha: each
--- picture's own (a host that dims as a whole passes 1). Returns the pictures shown.
-function Factory.SkinLayers(plan, back, top, anchor, art, w, h, alpha, hide)
+-- picture's own (a host that dims as a whole passes 1). edge: a colour for the
+-- skin's border (its Normal layer) instead of its own. Returns the pictures shown.
+function Factory.SkinLayers(plan, back, top, anchor, art, w, h, alpha, hide, edge)
     local shown = {}
     local sides = { back = {}, top = {} }
     if plan and not hide then
@@ -1348,7 +1349,7 @@ function Factory.SkinLayers(plan, back, top, anchor, art, w, h, alpha, hide)
                 host[key] = t
             end
             local def = (it.name == "Backdrop" and SKIN_BACKDROP) or (it.name == "Normal" and SKIN_NORMAL) or nil
-            SkinPaint(t, it.e, plan.colors[it.name], def)
+            SkinPaint(t, it.e, (it.name == "Normal" and edge) or plan.colors[it.name], def)
             t:SetDrawLayer(layer, base + i - 1)
             SkinPlace(t, it.e, plan, anchor, art, w, h)
             t:SetAlpha(alpha or 1)
@@ -1495,9 +1496,9 @@ end
 -- whole pixels with a 1px floor, the offset with none. A secret scale would
 -- throw inside PixelUtil, so UIParent's stands in. A scaled preview snaps on
 -- its _adPxRef's grid, as the live icon does, floored at one own pixel.
-local function PaintBorderEdges(edges, anchor, rec, alpha, geometryOnly, grey)
+local function PaintBorderEdges(edges, anchor, rec, alpha, geometryOnly, grey, live)
     local R = function(section, field) return Store.Resolve(rec, section, field) end
-    local c = Factory.BorderColor(rec, grey)
+    local c = Factory.BorderColor(rec, grey, live)
     local th = R("appearance", "borderThickness") or 2
     local off = R("appearance", "borderInset") or -3
     if PixelUtil and PixelUtil.GetNearestPixelSize then
@@ -1559,14 +1560,24 @@ end
 -- Exported: a group buff's combat layers wear the icon's border.
 Factory.PaintBorderEdges = PaintBorderEdges
 
+-- The border's colour while the aura is up when the icon sets one, else nil.
+function Factory.ActiveBorderColor(rec)
+    if Store.Resolve(rec, "auraActive", "activeBorderOn") ~= true then return nil end
+    return Store.Resolve(rec, "auraActive", "activeBorderColor") or { 1, 0.82, 0, 1 }
+end
+
 -- The border's colour: its own or the player's class colour (the alpha its
--- own), turned grey while the art is (grey) when it follows the art.
-function Factory.BorderColor(rec, grey)
-    local c = Store.Resolve(rec, "appearance", "borderColor") or { 0, 0, 0, 1 }
-    if Store.Resolve(rec, "appearance", "borderClassColor") == true and UnitClass then
-        local _, tag = UnitClass("player")
-        local cc = tag and RAID_CLASS_COLORS and RAID_CLASS_COLORS[tag]
-        if cc then c = { cc.r, cc.g, cc.b, c[4] or 1 } end
+-- own), turned grey while the art is (grey) when it follows the art. live:
+-- a look drawn while the aura is up, which takes the Active border color.
+function Factory.BorderColor(rec, grey, live)
+    local c = live and Factory.ActiveBorderColor(rec) or nil
+    if not c then
+        c = Store.Resolve(rec, "appearance", "borderColor") or { 0, 0, 0, 1 }
+        if Store.Resolve(rec, "appearance", "borderClassColor") == true and UnitClass then
+            local _, tag = UnitClass("player")
+            local cc = tag and RAID_CLASS_COLORS and RAID_CLASS_COLORS[tag]
+            if cc then c = { cc.r, cc.g, cc.b, c[4] or 1 } end
+        end
     end
     if grey and Store.Resolve(rec, "appearance", "borderFollowsGrey") == true then
         local l = 0.299 * c[1] + 0.587 * c[2] + 0.114 * c[3]
@@ -1583,9 +1594,32 @@ function Factory.BorderGrey(f, rec, grey)
     f._adBorderGrey = grey
     local edges = f.borderEdges
     if not (edges and Store.Resolve(rec, "appearance", "borderFollowsGrey") == true) then return end
-    local c = Factory.BorderColor(rec, grey)
+    local c = Factory.BorderColor(rec, grey, f._adBorderLive)
     for _, k in ipairs(BORDER_KEYS) do edges[k]:SetVertexColor(c[1], c[2], c[3], c[4] or 1) end
     if edges._adRing then edges._adRing:SetVertexColor(c[1], c[2], c[3], c[4] or 1) end
+end
+
+-- The holder's border (or its skin's) in the Active border color while the
+-- holder itself wears the Active look: a totem's time or a set duration.
+function Factory.BorderLive(f, rec, live)
+    live = (live and Factory.ActiveBorderColor(rec) ~= nil) or false
+    if (f._adBorderLive or false) == live then return end
+    f._adBorderLive = live or nil
+    local c = Factory.BorderColor(rec, f._adBorderGrey, live)
+    local edges = f.borderEdges
+    if edges then
+        for _, k in ipairs(BORDER_KEYS) do edges[k]:SetVertexColor(c[1], c[2], c[3], c[4] or 1) end
+        if edges._adRing then edges._adRing:SetVertexColor(c[1], c[2], c[3], c[4] or 1) end
+    end
+    local plan = f._adSkinPlan
+    if plan and plan.normal then
+        for _, host in ipairs({ f.icon and f.icon:GetParent() or false, f._adSkinTop or false }) do
+            local t = host and host._adSkinNormal
+            if t and t:IsShown() then
+                SkinPaint(t, plan.normal, live and Factory.ActiveBorderColor(rec) or plan.colors.Normal, SKIN_NORMAL)
+            end
+        end
+    end
 end
 
 -- The live aura button's own border, on the engine button so it shows and
@@ -1606,7 +1640,7 @@ local function ApplyAuraButtonBorder(b, rec, show, alpha)
             end
             b._adBtnEdges = edges
         end
-        PaintBorderEdges(edges, b, rec, alpha, nil, Store.Resolve(rec, "auraActive", "activeDesaturate") == true)
+        PaintBorderEdges(edges, b, rec, alpha, nil, Store.Resolve(rec, "auraActive", "activeDesaturate") == true, true)
     elseif edges then
         for _, t in pairs(edges) do t:Hide() end
     end
@@ -1895,7 +1929,7 @@ function Factory.ApplyBorder(f, rec, bump, forceHide)
         if type(lvl) == "number" then
             f._adBorderHost:SetFrameLevel(lvl + (bump or 1))
         end
-        local inner = PaintBorderEdges(edges, f, rec, 1, nil, f._adBorderGrey)
+        local inner = PaintBorderEdges(edges, f, rec, 1, nil, f._adBorderGrey, f._adBorderLive)
         if inner > 0 then f._adBorderInner = inner end
     elseif edges then
         for _, t in pairs(edges) do t:Hide() end
@@ -2459,7 +2493,7 @@ function Factory.ApplyStyle(f, rec)
     end
     local back = f.icon:GetParent()
     Factory.SkinLayers(plan, back, top or back, f, f.icon, fwS or 36, fhS or 36,
-        f._adShownAlpha or f._adStateAlpha or 1, forceHide)
+        f._adShownAlpha or f._adStateAlpha or 1, forceHide, f._adBorderLive and Factory.ActiveBorderColor(rec) or nil)
 
     local hasSwipe = NS.Schema.Applies(nil, NS.Schema.icon.swipe, rec.kind)
     if hasSwipe then
@@ -3076,13 +3110,13 @@ local function ApplyBeforeCopy(b, rec, on, alpha, w, h, padPx)
     -- a Masque skin's picture and layers, cut to the gate's fill with the rest
     local plan = Factory.SkinPlan(rec)
     Factory.SkinArt(art, rec, plan, c, w or 36, h or 36)
-    local skinned = Factory.SkinLayers(plan, c, c, c, art, w or 36, h or 36, alpha)
+    local skinned = Factory.SkinLayers(plan, c, c, c, art, w or 36, h or 36, alpha, nil, Factory.ActiveBorderColor(rec))
     art:SetDesaturated(R("auraActive", "activeDesaturate") == true)
     local tint = R("auraActive", "activeTintEnabled") == true and (R("auraActive", "activeTintColor") or { 1, 1, 1, 1 })
         or { 1, 1, 1, 1 }
     art:SetVertexColor(tint[1], tint[2], tint[3], alpha)
     if R("appearance", "borderEnabled") then
-        PaintBorderEdges(c._adEdges, b, rec, alpha)
+        PaintBorderEdges(c._adEdges, b, rec, alpha, nil, nil, true)
     else
         for _, t in pairs(c._adEdges) do t:Hide() end
     end
@@ -3108,7 +3142,7 @@ function Factory.PaintBeforeLook(b, rec)
             or { 1, 1, 1, 1 }
         ic:SetVertexColor(c[1], c[2], c[3], a)
     end
-    if b._adBtnEdges and R("appearance", "borderEnabled") then PaintBorderEdges(b._adBtnEdges, b, rec, a) end
+    if b._adBtnEdges and R("appearance", "borderEnabled") then PaintBorderEdges(b._adBtnEdges, b, rec, a, nil, nil, true) end
     if b._adShadow then b._adShadow:SetAlpha(a) end
 end
 
@@ -3236,7 +3270,8 @@ end
 -- A count state's copy of the look on its own frame c, over the cut: the art
 -- (tex), its border, shadow and a skin's layers at the state's opacity, grey
 -- and tint, every texture cut to the window `mask`. anchor = the look's box.
-local function PaintCountCopy(c, rec, look, anchor, tex, w, h, padPx, mask)
+-- live: drawn while the aura is up (on its button), in the Active border color.
+local function PaintCountCopy(c, rec, look, anchor, tex, w, h, padPx, mask, live)
     local R = function(s, k) return Store.Resolve(rec, s, k) end
     if not c._adArt then
         c._adArt = c:CreateTexture(nil, "ARTWORK")
@@ -3261,12 +3296,13 @@ local function PaintCountCopy(c, rec, look, anchor, tex, w, h, padPx, mask)
     ShapeTex(art, Factory.MaskOf(rec))
     local plan = Factory.SkinPlan(rec)
     Factory.SkinArt(art, rec, plan, c, w or 36, h or 36)
-    local skinned = Factory.SkinLayers(plan, c, c, c, art, w or 36, h or 36, a)
+    local skinned = Factory.SkinLayers(plan, c, c, c, art, w or 36, h or 36, a, nil,
+        live and Factory.ActiveBorderColor(rec) or nil)
     art:SetDesaturated(look.grey == true)
     local t = look.tint or { 1, 1, 1, 1 }
     art:SetVertexColor(t[1], t[2], t[3], a)
     if R("appearance", "borderEnabled") then
-        PaintBorderEdges(c._adEdges, anchor, rec, a, nil, look.grey == true)
+        PaintBorderEdges(c._adEdges, anchor, rec, a, nil, look.grey == true, live)
     else
         for _, e in pairs(c._adEdges) do e:Hide() end
     end
@@ -3374,7 +3410,7 @@ local function ApplyCountGate(b, g, w, h, reach, rec, padPx, erase, alphaMul)
             b._adCountCopy = c
         end
         if base then c:SetFrameLevel(base + Factory.BUTTON_STACK_LOW.copy) end
-        PaintCountCopy(c, rec, g.look, b, Factory.AuraLiveTexture(rec), w, h, padPx or 0, Factory.CountMask(c, fill, G))
+        PaintCountCopy(c, rec, g.look, b, Factory.AuraLiveTexture(rec), w, h, padPx or 0, Factory.CountMask(c, fill, G), true)
     elseif c then
         c:Hide()
     end
@@ -3744,7 +3780,7 @@ function Factory.StyleAuraButton(b, rec, px, opts)
     -- The live icon's own border; the holder carries the ghost copy.
     ApplyAuraButtonBorder(b, rec, R("appearance", "borderEnabled") and not forceHide and not dispelOn, aA)
     -- a skin's layers: the back ones on the button under the art, the rest on its border's layer
-    Factory.SkinLayers(plan, b, b._adEdgeHost or b, b, ic or b, bw0, bh0, artA, forceHide)
+    Factory.SkinLayers(plan, b, b._adEdgeHost or b, b, ic or b, bw0, bh0, artA, forceHide, Factory.ActiveBorderColor(rec))
     -- Labels kept to the aura's time ride the button, which the game shows
     -- exactly while the aura is up; the holder's copies stand down (SetState).
     b._adLabelFS = b._adLabelFS or {}
@@ -5556,6 +5592,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
             end
         end
     end
+    Factory.BorderLive(f, rec, f._adPhaseUp == true)
     if f._adPhaseUp then
         PaintPhase(f, rec)
         if rec.kind ~= "aura" then StateTail(f, rec, onCooldown) end

@@ -3565,6 +3565,7 @@ end
 function Store.NeverLoadsHere(rec)
     local me, tag = CharKey(), ClassTag()
     local named = me ~= "?" and me:sub(-2) ~= "-?"
+    local fac = NS.Conditions and NS.Conditions.PlayerFaction and NS.Conditions.PlayerFaction()
     local g = rec and rec.groupId and DB.records[rec.groupId]
     local lay = rec and DB.records[(g and g.layoutId) or rec.layoutId]
     for _, r in ipairs({ rec, g or false, lay or false }) do
@@ -3573,6 +3574,9 @@ function Store.NeverLoadsHere(rec)
             if c.never == true then return true end
             if c.classes and tag and not c.classes[tag] then return true end
             if c.chars and named and not c.chars[me] then return true end
+            -- the class's own specs swap in a session; another class's never do
+            if c.specs and tag and Store.SpecsElsewhere(c.specs, tag) then return true end
+            if c.factions and fac and not c.factions[fac] then return true end
         end
     end
     return false
@@ -3819,13 +3823,43 @@ function Store.ClassSpecMatrix()
                 { classID = classID, tag = tag, name = name, specs = specs }
         end
     end
+    -- a client that could not answer yet is asked again next time
+    if #classMatrix == 0 then
+        local empty = classMatrix
+        classMatrix = nil
+        return empty
+    end
     return classMatrix
+end
+
+-- True when a spec set names only other classes' specs (retail): a gate that
+-- can never pass on this class. A spec the client cannot place keeps it
+-- loadable, and so does an empty set.
+local specClass
+function Store.SpecsElsewhere(specs, tag)
+    if Specless() or type(specs) ~= "table" or not tag then return false end
+    if not specClass then
+        local m = Store.ClassSpecMatrix()
+        if #m == 0 then return false end
+        specClass = {}
+        for _, cls in ipairs(m) do
+            for _, s in ipairs(cls.specs) do specClass[s.id] = cls.tag end
+        end
+    end
+    local any = false
+    for sid, on in pairs(specs) do
+        if on then
+            local cls = specClass[sid]
+            if not cls or cls == tag then return false end
+            any = true
+        end
+    end
+    return any
 end
 
 -- The classes a record's own load conditions hold it to, sorted, and whether
 -- they hold it at all (false = every class). A spec set counts as its specs'
 -- classes where specs gate (retail); with both, the classes both allow.
-local specClass
 function Store.ClassesOf(rec)
     local c = rec and rec.c
     if not c then return {}, false end

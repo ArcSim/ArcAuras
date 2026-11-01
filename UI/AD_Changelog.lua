@@ -13,6 +13,30 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.1.5",
+        intro = "Item finds with the full Item Finder, stealth and dead-target looks, an active border, and performance and bug fixes.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Item Finds",
+                    desc = "On WoW Forever, Arc Auras now shares the new items you find with other players, without your name, and you can see everyone's finds on the finder website. Switch it off on the Modules page." },
+                { title = "Full Item Finder",
+                    desc = "Pick it on the Item Finds page to get the item finder's own window inside Arc Auras: search every Forever item, see where it drops on your map, star favorites and get pop-ups for new finds." },
+                { title = "Own looks: Stealthed and Target is dead",
+                    desc = "A look can wait on being stealthed, or on your target being dead (a finisher greyed on a corpse)." },
+                { title = "Active border",
+                    desc = "The border takes its own color while the aura is up, a skin's border too." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Performance",
+                    desc = "Arc Auras does less work in the background." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Bug fixes",
+                    desc = "General fixes, including issues around cutscenes." },
+            } },
+        },
+    },
+    {
         version = "3.1.4",
         intro = "Ring bars, the aura picker for bars, and an Add window that always fits.",
         sections = {
@@ -1314,6 +1338,26 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.1.5",
+        intro = "Stealth and dead-target looks, an active border, and performance and bug fixes.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Own looks: Stealthed and Target is dead",
+                    desc = "A look can wait on being stealthed, or on your target being dead (a finisher greyed on a corpse)." },
+                { title = "Active border",
+                    desc = "The border takes its own color while the aura is up, a skin's border too." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Performance",
+                    desc = "Arc Auras does less work in the background." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Bug fixes",
+                    desc = "General fixes, including issues around cutscenes." },
+            } },
+        },
+    },
     {
         version = "3.1.4",
         intro = "Ring bars, the aura picker for bars, and an Add window that always fits.",

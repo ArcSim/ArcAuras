@@ -1,5 +1,24 @@
 # Arc Auras
 
+## 3.1.5
+
+Item finds with the full Item Finder, stealth and dead-target looks, an active border, and performance and bug fixes.
+
+### New Features
+
+- **Item Finds** - On WoW Forever, Arc Auras now shares the new items you find with other players, without your name, and you can see everyone's finds on the finder website. Switch it off on the Modules page.
+- **Full Item Finder** - Pick it on the Item Finds page to get the item finder's own window inside Arc Auras: search every Forever item, see where it drops on your map, star favorites and get pop-ups for new finds.
+- **Own looks: Stealthed and Target is dead** - A look can wait on being stealthed, or on your target being dead (a finisher greyed on a corpse).
+- **Active border** - The border takes its own color while the aura is up, a skin's border too.
+
+### Improvements
+
+- **Performance** - Arc Auras does less work in the background.
+
+### Bug Fixes
+
+- **Bug fixes** - General fixes, including issues around cutscenes.
+
 ## 3.1.4
 
 Ring bars, the aura picker for bars, and an Add window that always fits.

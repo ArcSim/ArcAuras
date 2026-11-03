@@ -14,13 +14,24 @@ local function FullWidth(fs)
     return fs.GetUnboundedStringWidth and fs:GetUnboundedStringWidth() or fs:GetStringWidth()
 end
 
-local W, H = U(900), U(676)
+-- the found bar under the title takes U(14) of the height; the body keeps its size
+local W, H = U(900), U(690)
 local BORDER = 3
 local win
 local tab = "feed"
 local selected            -- item id shown on the right
 local dirty = true
 -- dg: the dungeon or raid picked once Source is Dungeon or Raid ("" = any)
+-- 6544 -> "6,544"
+local function Thousands(n)
+    local s = tostring(n)
+    while true do
+        local r, k = s:gsub("^(%d+)(%d%d%d)", "%1,%2")
+        s = r
+        if k == 0 then return s end
+    end
+end
+
 local state = { q = "", minL = nil, maxL = nil, qs = {}, slots = {}, clss = {}, srcs = {}, src = 0, dg = "", kind = "all", cat = "all" }
 
 local function Settings() return ns.settings end
@@ -275,6 +286,7 @@ end
 -- a row against the database's filters (st: state): search reads the name and a find's place, the rest is
 -- D.FilterPasses
 local function PassOthers(st, id, kind, q, req, cls, sub, inv, ac, name, e, mask)
+    if st.place and not ns.PlacePins.InPlace(st.place, id, kind, e) then return false end
     if st.q ~= "" then
         local hay = (name or ""):lower()
         if e then hay = hay .. " " .. FindLine(e):lower() end
@@ -518,6 +530,7 @@ local function RetailSpot(m, x, y)
     end
     return best, bx, by
 end
+UI.ClientSpot = RetailSpot
 
 -- the developer's copy draws Forever's own maps on a test run (DevMaps\DevMaps.lua); they go by their own keys so
 -- they never meet the client's map of the same number
@@ -692,11 +705,8 @@ end
 -- who found it
 local ITEM_STATUS = { h = "Changed by a hotfix", c = "Changed from Classic", o = "Old Classic item" }
 local DROPPED = { l = true, o = true, w = true, r = true, c = true }
-local function StatusFacts(e, id, row, hidden, sources)
-    local kind = (e and e.k == "c" and "c") or (row and row.kind)
-    local item = hidden and "Hidden by Blizzard" or ITEM_STATUS[kind] or "New item"
-    -- a worked-out name is never passed off as the real one
-    if hidden and row.name ~= "" then item = item .. ", name not confirmed" end
+-- how to get an item and, for a drop, its rate: the first known source, else where a player found it
+local function HowToGet(e, sources)
     local how, rate
     local s = sources[1]
     if s then
@@ -721,6 +731,19 @@ local function StatusFacts(e, id, row, hidden, sources)
         how = "Found in " .. f.z
         rate = DROPPED[f.t] and "Unknown" or nil
     end
+    return how, rate
+end
+-- the same words for the game's own item tooltips (GameTips.lua)
+function UI.HowToGet(id)
+    return HowToGet(ns.Finds.Get(id), D.Sources(id))
+end
+
+local function StatusFacts(e, id, row, hidden, sources)
+    local kind = (e and e.k == "c" and "c") or (row and row.kind)
+    local item = hidden and "Hidden by Blizzard" or ITEM_STATUS[kind] or "New item"
+    -- a worked-out name is never passed off as the real one
+    if hidden and row.name ~= "" then item = item .. ", name not confirmed" end
+    local how, rate = HowToGet(e, sources)
     local found
     if e then
         local who = e.by or ((e.mine and ns.settings.credit ~= "anon") and UnitName("player")) or "Anonymous"
@@ -1186,6 +1209,8 @@ end
 -- second value: true when the lines are the game's own
 local function TipLines(id)
     wipe(tipOut)
+    -- a test run's client (retail) holds its own version of an old item: the box shows Forever's, from the data
+    if not ns.isForever and T.DataTip and T.DataTip(tipCollect, id) then return tipOut, false end
     if C_Item.GetItemInfo(id) and C_TooltipInfo and C_TooltipInfo.GetItemByID then
         local data = C_TooltipInfo.GetItemByID(id)
         for i, l in ipairs(data and data.lines or {}) do
@@ -1227,8 +1252,10 @@ local function ShowDetail(id)
     d.q = q
     d.icon:SetTexture(ItemIcon(id))
     d.iconBorder:SetColor(T.QualityHex(q))
-    -- the head's inner width, less the icon and its gap, then Link in chat and the star with their gaps
-    d.name:SetWidth(W - U(20) - U(10) - U(30) - U(8) - U(6) - U(22) - U(6) - U(22) - U(10))
+    -- the head's inner width, less the icon and its gap, then Link in chat and the star with their gaps, and on a
+    -- changed item the changes button with its gap
+    local hasChanges = D.HasChanges(id)
+    d.name:SetWidth(W - U(20) - U(10) - U(30) - U(8) - U(6) - U(22) - U(6) - U(22) - U(10) - (hasChanges and (U(22) + U(6)) or 0))
     local fav = UI.IsFavorite(id)
     d.fav.bg:SetColorTexture(T.RGB(fav and "3A2C1A" or "17120C"))
     d.fav.edge:SetColor(fav and C.title or C.frame)
@@ -1247,6 +1274,15 @@ local function ShowDetail(id)
     d.iconFrame:SetPoint("TOPLEFT", U(10), -(U(8) + (rowH - U(30)) / 2))
     local lines, fromGame = TipLines(id)
     d.tipGame = fromGame
+    -- what changed from Classic, marked on the item's lines while its button (or Settings) shows it
+    local showing = hasChanges and UI.ChangesShown(id) or false
+    if showing and T.MarkChanges then T.MarkChanges(lines, id, row) end
+    local cb = d.changes
+    cb:SetShown(hasChanges)
+    cb.on = showing
+    cb.bg:SetColorTexture(T.RGB(showing and C.chipOn or C.chipOff))
+    cb.edge:SetColor(showing and C.title or C.frame)
+    cb.mark:SetColor(showing and C.title or C.gold)
     local function Layout(bodyW)
         local y = 0
         for i, l in ipairs(lines) do
@@ -1258,25 +1294,43 @@ local function ShowDetail(id)
                 fs.right:SetJustifyH("RIGHT")
                 d.tipLines[i] = fs
             end
-            fs.right:SetText(l[2])
-            fs.right:SetTextColor(l[6], l[7], l[8])
-            local rightW = l[2] ~= "" and (FullWidth(fs.right) + U(8)) or 0
-            -- emptied first, so a wrapped height is measured anew at this width, never kept from the last layout
-            fs.left:SetText("")
-            fs.left:SetWidth(bodyW - rightW)
-            fs.left:SetText(l[1])
-            fs.left:SetTextColor(l[3], l[4], l[5])
-            fs.left:ClearAllPoints()
-            fs.left:SetPoint("TOPLEFT", 0, -y)
-            fs.right:ClearAllPoints()
-            fs.right:SetPoint("TOPRIGHT", 0, -y)
-            fs.left:Show()
-            fs.right:SetShown(l[2] ~= "")
-            y = y + math.max(U(17), fs.left:GetStringHeight())
+            if (l.segs or l.rsegs) and T.LayChangeLine then
+                -- a line marked with what changed is drawn in pieces: new value, old value, strike (Tooltip.lua)
+                fs.left:Hide()
+                fs.right:Hide()
+                local h, stack = T.LayChangeLine(fs, l, bodyW, y, d.tipBody)
+                fs.stacked = stack
+                y = y + h
+            else
+                if T.HideChangePieces then T.HideChangePieces(fs) end
+                fs.right:SetText(l[2])
+                fs.right:SetTextColor(l[6], l[7], l[8])
+                local rightW = l[2] ~= "" and (FullWidth(fs.right) + U(8)) or 0
+                -- a double line whose two sides do not fit beside each other puts its right side on a row of its own
+                -- under the left, so the left never wraps beneath it
+                fs.left:SetText(l[1])
+                local stack = rightW > 0 and FullWidth(fs.left) + rightW > bodyW
+                if stack then rightW = 0 end
+                -- emptied first, so a wrapped height is measured anew at this width, never kept from the last layout
+                fs.left:SetText("")
+                fs.left:SetWidth(bodyW - rightW)
+                fs.left:SetText(l[1])
+                fs.left:SetTextColor(l[3], l[4], l[5])
+                fs.left:ClearAllPoints()
+                fs.left:SetPoint("TOPLEFT", 0, -y)
+                local h = math.max(U(17), fs.left:GetStringHeight())
+                fs.right:ClearAllPoints()
+                fs.right:SetPoint("TOPRIGHT", 0, -(stack and (y + h) or y))
+                fs.left:Show()
+                fs.right:SetShown(l[2] ~= "")
+                fs.stacked = stack
+                y = y + h + (stack and U(17) or 0)
+            end
         end
         for i = #lines + 1, #d.tipLines do
             d.tipLines[i].left:Hide()
             d.tipLines[i].right:Hide()
+            if T.HideChangePieces then T.HideChangePieces(d.tipLines[i]) end
         end
         return y
     end
@@ -1473,6 +1527,24 @@ local function ShowDetail(id)
 end
 UI.ShowDetail = ShowDetail
 
+-- what changed from Classic: the item box's button shows it for the item shown, or Settings shows it on every changed
+-- item and the button hides it for that one; a pick lasts the session, and moving the setting clears every pick
+local changesPick = {}
+function UI.ChangesShown(id)
+    if changesPick[id] ~= nil then return changesPick[id] end
+    return Settings().showChanges and true or false
+end
+function UI.ToggleChanges()
+    if not selected or not D.HasChanges(selected) then return end
+    changesPick[selected] = not UI.ChangesShown(selected)
+    ShowDetail(selected)
+end
+function UI.SetShowChanges(on)
+    Settings().showChanges = on and true or false
+    wipe(changesPick)
+    if selected and detail.frame then ShowDetail(selected) end
+end
+
 -- the Mark on Map button marks the item (WorldPins.lua; FavPins.lua draws it like a favorite) until it is pressed
 -- again or another item is marked; the player opens the map. The addon neither opens that map nor drops a map pin:
 -- Blizzard's map code run from an addon, or a pin the addon set, is the addon's, and the game then refuses to share
@@ -1494,6 +1566,30 @@ function UI.ShowOnWorldMap()
         ns.WorldPins.Mark(selected)
     end
     SetWorldBtn()
+end
+
+-- a delta, the sign for change, drawn from three thin bars as the theme draws its marks: base, left and right sides
+local function DeltaMark(parent, size)
+    local f = CreateFrame("Frame", nil, parent)
+    f:SetSize(size, size)
+    local h = size * 0.866
+    local bars = {}
+    for i, p in ipairs({ { 0, -h / 2, 0 }, { -size / 4, 0, 60 }, { size / 4, 0, -60 } }) do
+        local t = f:CreateTexture(nil, "OVERLAY")
+        t:SetTexture("Interface\\Buttons\\WHITE8X8")
+        t:SetSize(size, 1.5)
+        t:SetPoint("CENTER", p[1], p[2])
+        t:SetRotation(math.rad(p[3]))
+        bars[i] = t
+    end
+    f.bars = bars
+    function f:SetColor(hex)
+        local r, g, b = T.RGB(hex)
+        for _, t in ipairs(bars) do t:SetVertexColor(r, g, b, 1) end
+        f.hex = hex
+    end
+    f:SetColor(C.gold)
+    return f
 end
 
 local function BuildDetail(parent)
@@ -1547,6 +1643,22 @@ local function BuildDetail(parent)
     detail.link = SmallButton("Link in chat")
     detail.link:SetPoint("RIGHT", fav, "LEFT", -U(6), 0)
     T.ChatMark(detail.link, U(14)):SetPoint("CENTER")
+    -- what changed from Classic, left of Link in chat; shown only on an item with changes (ShowDetail)
+    local changes = SmallButton("Show what changed from Classic")
+    changes:SetPoint("RIGHT", detail.link, "LEFT", -U(6), 0)
+    changes.mark = DeltaMark(changes, U(13))
+    changes.mark:SetPoint("CENTER")
+    changes:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(self.on and "Hide what changed" or "Show what changed from Classic", 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    changes:SetScript("OnClick", function(self)
+        UI.ToggleChanges()
+        self:GetScript("OnEnter")(self)
+    end)
+    changes:Hide()
+    detail.changes = changes
     detail.name = T.Text(head, 15, "FFFFFF")
     detail.name:SetPoint("LEFT", iconFrame, "RIGHT", U(8), 0)
     detail.name:SetWordWrap(true)
@@ -1855,7 +1967,7 @@ local function FilterBox(parent, st, base, withSearch, chipDefs, onChange)
             pending = true
             C_Timer.After(0.25, function() pending = false onChange() end)
         end)
-        fb.search = search
+        fb.search, fb.searchLabel = search, searchLabel
     end
 
     local levelLabel = T.Text(parent, 13, C.title)
@@ -1950,6 +2062,19 @@ local function FilterBox(parent, st, base, withSearch, chipDefs, onChange)
         st.src = sum
         SyncDungeon()
     end)
+    -- which zone: the zones with listed items (PlacePins.lua's place data); a zone clicked on the World Map shows here too
+    local zone = T.Dropdown(parent, U(176), ns.PlacePins.ZoneOptions(), function() return st.place and st.place.zone or "" end,
+        function(v)
+            st.place = v ~= "" and ns.PlacePins.ZonePick(v) or nil
+            onChange()
+        end)
+    -- at the search row's right end (the rows under it are full once Source shows a dungeon), level with the box
+    if fb.search then
+        local mid = -(base + U(12)) - fb.searchLabel:GetStringHeight() / 2
+        zone:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -U(10), mid + U(12))
+        fb.search:SetPoint("RIGHT", zone, "LEFT", -U(6), 0)
+    end
+    fb.zone = zone
     fb.source:SetPoint("LEFT", fb.class, "RIGHT", U(6), 0)
     dungeon:SetPoint("LEFT", fb.source, "RIGHT", U(6), 0)
     SyncDungeon()
@@ -2012,13 +2137,43 @@ local function Build()
     title:SetPoint("CENTER")
     title:SetText("Forever Item Finder")
     plaque:SetSize(title:GetStringWidth() + U(56), U(28))
+    -- every new Forever item under the title: gold is found (in the beta or in Forever), the rest is still to find
+    -- (UI.TotalCounts); the words count the gold; hover for the two numbers
+    local total = CreateFrame("Frame", nil, win)
+    total:SetPoint("TOP", plaque, "BOTTOM", 0, -U(4))
+    total:SetHeight(U(14))
+    total.bar = CreateFrame("Frame", nil, total)
+    total.bar:SetSize(U(170), U(14))
+    total.bar:SetPoint("LEFT")
+    T.Panel(total.bar, C.input, C.inputLine)
+    -- the window's own softer gold, not the title's bright yellow
+    total.found = T.Solid(total.bar, "ARTWORK", C.gold)
+    total.found:SetPoint("TOPLEFT", 1, -1)
+    total.found:SetPoint("BOTTOMLEFT", 1, 1)
+    -- the found share in the middle, white with a shadow so it reads on the gold and on the dark alike
+    total.pct = T.Text(total.bar, 10, "FFFFFF", "OVERLAY")
+    total.pct:SetPoint("CENTER")
+    total.pct:SetShadowOffset(1, -1)
+    total.text = T.Text(total, 11, C.dim)
+    total.text:SetPoint("LEFT", total.bar, "RIGHT", U(8), 0)
+    total:EnableMouse(true)
+    total:SetScript("OnEnter", function(self)
+        local t = UI.TotalCounts()
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+        GameTooltip:AddLine(Thousands(t.found) .. " of " .. Thousands(t.total) .. " new Forever items found", T.RGB(C.title))
+        GameTooltip:AddLine("Found: " .. Thousands(t.found) .. ", seen in the beta or in Forever", T.RGB(C.ink))
+        GameTooltip:AddLine("Still to find: " .. Thousands(t.still + t.hidden) .. " (" .. Thousands(t.hidden) .. " not released yet)", T.RGB(C.ink))
+        GameTooltip:Show()
+    end)
+    total:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    UI.totalBar = total
     local close = CloseButton(win)
     close:SetPoint("TOPRIGHT", -(BORDER + U(10)), -(BORDER + U(8)))
     close:SetScript("OnClick", function() win:Hide() end)
 
     -- the inset body
     local body = CreateFrame("Frame", nil, win)
-    body:SetPoint("TOPLEFT", BORDER + U(12), -(BORDER + U(40)))
+    body:SetPoint("TOPLEFT", BORDER + U(12), -(BORDER + U(54)))
     body:SetPoint("BOTTOMRIGHT", -(BORDER + U(12)), BORDER + U(10) + U(30))
     T.Panel(body, C.inset, C.insetLine)
     UI.body = body
@@ -2157,6 +2312,7 @@ function UI.BuildDatabase(body)
     local fb = FilterBox(filters, state, 0, true, { { "all", "All" }, { "n", "New" }, { "c", "Changed" }, { "o", "Classic" },
         { "u", "Not Found" }, { "f", "", true } }, function() UI.Refresh() end)
     UI.search, UI.qualityFilter, UI.sourceFilter, UI.dungeonFilter, UI.chips = fb.search, fb.quality, fb.source, fb.dungeon, fb.chips
+    UI.zoneFilter = fb.zone
     UI.slotFilter, UI.classFilter = fb.slot, fb.class
 
     local cats = CreateFrame("Frame", nil, pane)
@@ -2206,8 +2362,25 @@ function UI.BuildDatabase(body)
     UI.dbList = T.List(pane, U(46), function(list) return MakeRow(list, true) end, BindRow)
     UI.dbList:SetPoint("TOPLEFT", cats, "TOPRIGHT")
     UI.dbList:SetPoint("BOTTOMRIGHT", -1, 0)
+    -- a place clicked on the World Map (UI.ShowPlace): a strip over the list names it, Show all takes it off
+    local strip = CreateFrame("Frame", nil, pane)
+    strip:SetPoint("TOPLEFT", cats, "TOPRIGHT")
+    strip:SetPoint("RIGHT", -1, 0)
+    strip:SetHeight(U(32))
+    T.Panel(strip, C.head, C.insetLine)
+    strip.text = T.Text(strip, 13, C.ink)
+    strip.text:SetPoint("LEFT", U(10), 0)
+    strip.all = T.Button(strip, "Show all", nil, U(24))
+    strip.all:SetPoint("RIGHT", -U(6), 0)
+    strip.all:SetScript("OnClick", function()
+        state.place = nil
+        if UI.zoneFilter then UI.zoneFilter:Refresh() end
+        UI.Refresh()
+    end)
+    strip:Hide()
+    UI.placeStrip, UI.dbCats = strip, cats
     UI.dbEmpty = T.Text(pane, 14, C.dim)
-    UI.dbEmpty:SetPoint("TOPLEFT", cats, "TOPRIGHT", U(12), -U(16))
+    UI.dbEmpty:SetPoint("TOPLEFT", UI.dbList, "TOPLEFT", U(12), -U(16))
     UI.dbEmpty:SetText("No items match.")
 end
 
@@ -2499,7 +2672,50 @@ function UI.BuildSettings(body)
     set.favLook = Row("Look", fy, { { "icon", "Item icon" }, { "dot", "Dot" } }, "favLook")
     favMap:SetHeight(fy + U(26) + U(12))
     set.favMap = favMap
-    set.controls = { credit, set.favPins, set.favLook }
+
+    -- place counts on the World Map (PlacePins.lua); Show is the same pick as the map's own box
+    local places = T.Section(pane, "Places on the Map")
+    places:SetPoint("TOPLEFT", share, "BOTTOMLEFT", 0, -U(12))
+    places:SetWidth(rightW)
+    local py = places.top + U(10)
+    local countsLabel = T.Text(places, 13, C.ink)
+    countsLabel:SetPoint("TOPLEFT", U(10), -(py + U(4)))
+    countsLabel:SetText("Counts")
+    set.placePins = T.Dropdown(places, U(170), { { "on", "On the World Map" }, { "off", "Off" } },
+        function() return s.placePins end, function(v)
+            s.placePins = v
+            if ns.PlacePins then ns.PlacePins.Refresh() end
+        end)
+    set.placePins:SetPoint("TOPLEFT", U(84), -py)
+    py = py + U(34)
+    local showLabel = T.Text(places, 13, C.ink)
+    showLabel:SetPoint("TOPLEFT", U(10), -(py + U(4)))
+    showLabel:SetText("Show")
+    set.placeShow = ns.PlacePins.NewShowBox(places, U(170), true)
+    set.placeShow:SetPoint("TOPLEFT", U(84), -py)
+    places:SetHeight(py + U(26) + U(12))
+    set.places = places
+    set.controls = { credit, set.favPins, set.favLook, set.placePins, set.placeShow }
+
+    -- the item box's changes from Classic on every changed item, not only behind its button
+    local items = T.Section(pane, "Items")
+    items:SetPoint("TOPLEFT", set.places or set.share, "BOTTOMLEFT", 0, -U(12))
+    items:SetWidth(rightW)
+    local always = T.Check(items, "Always show item changes", 13)
+    always:SetPoint("TOPLEFT", U(8), -(items.top + U(8)))
+    always:SetChecked(s.showChanges)
+    always:SetScript("OnClick", function(self) UI.SetShowChanges(self:GetChecked()) end)
+    -- lines on the game's own item tooltips (GameTips.lua)
+    local iy = items.top + U(8) + U(24) + U(8)
+    local tipsLabel = T.Text(items, 13, C.ink)
+    tipsLabel:SetPoint("TOPLEFT", U(10), -(iy + U(4)))
+    tipsLabel:SetText("Tooltips")
+    set.itemTips = T.Dropdown(items, U(190), { { "off", "Off" }, { "changes", "New and changed items" }, { "all", "Every item we list" } },
+        function() return s.itemTips end, function(v) s.itemTips = v end)
+    set.itemTips:SetPoint("TOPLEFT", U(84), -iy)
+    items:SetHeight(iy + U(26) + U(12))
+    set.items, set.showChanges = items, always
+    set.controls[#set.controls + 1] = set.itemTips
 
     -- the developer's build only (Dev.lua): pull every find this server's copies hold into the save
     if ns.DEV then
@@ -2579,6 +2795,7 @@ end
 function UI.Refresh()
     if not win or not win:IsShown() then dirty = true return end
     dirty = false
+    UI.RefreshTotal()
     local feedOn, dbOn, optOn, setOn = tab == "feed", tab == "db", tab == "options", tab == "settings"
     local mined = UI.NewDatamined()
     local feedN, feedNew = FeedCount()
@@ -2634,6 +2851,7 @@ end
 -- detail side redraws only for the item it shows
 local function RefreshFinds(touched)
     if not win or not win:IsShown() then dirty = true return end
+    UI.RefreshTotal()
     local feedN, feedNew = FeedCount()
     UI.tabs.feed:Set("Live Feed (" .. feedN .. ")", tab == "feed", feedNew > 0 and (feedNew .. " NEW") or nil)
     if tab == "feed" then
@@ -2677,9 +2895,21 @@ function UI.DbListSet(refs)
         end
     end
     list.refs = refs
+    -- the strip only for a place the World Map opened: one picked in the Zone filter is named there already
+    local strip, on = UI.placeStrip, state.place ~= nil and not state.place.picked
+    if strip and strip:IsShown() ~= on then
+        strip:SetShown(on)
+        list:ClearAllPoints()
+        if on then list:SetPoint("TOPLEFT", strip, "BOTTOMLEFT") else list:SetPoint("TOPLEFT", UI.dbCats, "TOPRIGHT") end
+        list:SetPoint("BOTTOMRIGHT", -1, 0)
+    end
+    if on then
+        local n = #refs
+        strip.text:SetText("|cff" .. C.title .. state.place.name .. "|r: " .. n .. " " .. state.place.noun .. (n == 1 and "item" or "items"))
+    end
     -- the scroll stays put unless the filters changed
     local sig = table.concat({ state.q, tostring(state.minL), tostring(state.maxL), SetSig(state.qs), SetSig(state.slots), SetSig(state.clss),
-        state.src, state.dg, state.kind, state.cat }, "|")
+        state.src, state.dg, state.kind, state.cat, state.place and state.place.name or "" }, "|")
     if list.sig ~= sig then list.offset = 0 list.sig = sig end
     list:Refresh()
 end
@@ -2732,13 +2962,97 @@ function UI.Show(which)
     UI.Refresh()
 end
 
+-- the found bar's numbers over every new Forever item (new and hidden rows, plus finds of items the data lacks):
+-- found = seen in the beta (a known place or a beta drop) or found in Forever; still = new items nobody has seen;
+-- hidden = items Blizzard has not released; live = finds in Forever. Counted once; each new find then moves one item
+-- across (a network catch-up brings hundreds, so no recount per find)
+local totals
+local function CountsFind(t, e)
+    if not e or e.pend or e.demo or t.foundIds[e.id] then return end
+    local row = D.Seed(e.id)
+    if row and row.kind ~= "n" and row.kind ~= "x" then return end
+    if not row and e.k ~= "n" then return end
+    t.foundIds[e.id] = true
+    t.live = t.live + 1
+    if not row then
+        t.total, t.found = t.total + 1, t.found + 1
+    elseif D.IsNotFound(e.id) then
+        t.found = t.found + 1
+        if row.kind == "x" then t.hidden = t.hidden - 1 else t.still = t.still - 1 end
+    end
+end
+function UI.TotalCounts()
+    if totals then return totals end
+    local t = { total = 0, found = 0, still = 0, hidden = 0, live = 0, foundIds = {} }
+    D.ForEachRow(function(_, _, kind, _, _, _, _, _, _, _, _, notFound)
+        if kind ~= "n" and kind ~= "x" then return end
+        t.total = t.total + 1
+        if not notFound then
+            t.found = t.found + 1
+        elseif kind == "x" then
+            t.hidden = t.hidden + 1
+        else
+            t.still = t.still + 1
+        end
+    end)
+    for _, e in pairs(ns.db and ns.db.finds or {}) do CountsFind(t, e) end
+    totals = t
+    return t
+end
+-- a cleared list starts over; any other change moves at most that one item
+ns.Listen("FindsChanged", function(e)
+    if not totals then return end
+    if not e then totals = nil else CountsFind(totals, e) end
+end)
+
+function UI.RefreshTotal()
+    local bar = UI.totalBar
+    if not bar then return end
+    local t = UI.TotalCounts()
+    local inner = bar.bar:GetWidth() - 2
+    local fw = t.total > 0 and inner * t.found / t.total or 0
+    bar.found:SetWidth(math.max(fw, 0.01))
+    bar.found:SetShown(fw >= 0.5)
+    bar.pct:SetText((t.total > 0 and math.floor(t.found / t.total * 100 + 0.5) or 0) .. "%")
+    bar.text:SetText(Thousands(t.found) .. " of " .. Thousands(t.total) .. " found")
+    bar:SetWidth(bar.bar:GetWidth() + U(8) + bar.text:GetStringWidth())
+end
+
 function UI.Toggle()
     if win and win:IsShown() then win:Hide() else UI.Show() end
+end
+
+-- the Item Database on a place clicked on the World Map (PlacePins.lua): its items of the kinds the map counted,
+-- under a strip naming it; the kind chips go to All so they hide nothing the place holds
+function UI.ShowPlace(place)
+    state.place = place
+    state.kind = "all"
+    UI.Show("db")
+    if UI.zoneFilter then UI.zoneFilter:Refresh() end
 end
 
 function UI.Select(id)
     selected = id
     UI.Show("feed")
+end
+
+-- the Item Database on one item; false for an item the database does not list
+function UI.OpenItem(id)
+    if not (ns.Finds.Get(id) or D.Seed(id)) then return false end
+    selected = id
+    UI.Show("db")
+    return true
+end
+
+-- Alt+click on an item wherever the game hands out modified clicks (bags, the bank, chat links, loot) opens it in the
+-- Item Database; Alt with Shift or Ctrl stays the game's
+if HandleModifiedItemClick and hooksecurefunc then
+    hooksecurefunc("HandleModifiedItemClick", function(link)
+        if not IsAltKeyDown() or IsShiftKeyDown() or IsControlKeyDown() then return end
+        if type(link) ~= "string" or ns.Secret(link) then return end
+        local id = tonumber(link:match("item:(%d+)"))
+        if id then UI.OpenItem(id) end
+    end)
 end
 
 -- a link the game cannot open: shown selected, ready to copy

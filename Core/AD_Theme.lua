@@ -8,7 +8,7 @@ local AT = {}
 -- Other addons carry copies of this file, generated from it by the
 -- arc-theme-sync tool, which compares this number to find stale copies.
 -- Bump it on every change and never edit a copy.
-AT.VERSION = 35
+AT.VERSION = 36
 
 -- The addon this copy loads in: a palette's font file sits in its folder.
 local THEME_ADDON = ...
@@ -500,18 +500,138 @@ function AT.Skin(f, bg, borderCol)
     f:SetBackdropBorderColor(b[1], b[2], b[3], 1)
 end
 
+-- A window's edges sit this share of a pixel past the grid, never on it: a
+-- child exactly half a pixel off then rounds the same way wherever the window
+-- is, instead of flipping with float error as the window moves.
+AT.GRID_BIAS = 1 / 64
+-- Clamp slack on a clamped window's right and top, in units: room for the
+-- bias past those screen edges, so the client's clamp never nudges a window
+-- off the grid. Placement itself never uses more than the bias.
+AT.CLAMP_SLACK = 1
+
+-- v (a length in a frame's units) in whole physical pixels
+function AT.PixelSize(f, v)
+    local px = AT.Px(f)
+    if px <= 0 then return v end
+    return math.floor(v / px + 0.5) * px
+end
+
+local function GiveSlack(p)
+    if p._atSlack or not (p.IsClampedToScreen and p:IsClampedToScreen()) then return end
+    local l, r, t, b = p:GetClampRectInsets()
+    p:SetClampRectInsets(l or 0, (r or 0) - AT.CLAMP_SLACK, (t or 0) - AT.CLAMP_SLACK, b or 0)
+    p._atSlack = AT.CLAMP_SLACK
+end
+
+-- The whole pixel count nearest v that a clamp range [lo, hi] allows; a
+-- window too big for the range keeps its hi end (the top) or lo end (the left).
+local function Fit(n, lo, hi, keepHi)
+    local nlo, nhi = math.ceil(lo - 0.001), math.floor(hi + 0.001)
+    if nlo > nhi then return keepHi and nhi or nlo end
+    if n < nlo then return nlo elseif n > nhi then return nhi end
+    return n
+end
+
+-- A window's top-left corner on the biased grid, in physical pixels from the
+-- screen's bottom-left. A clamped window stays on the screen by its clamp
+-- rect; only the bias may pass the right and top edges.
+local function GridCorner(p, l, t, px)
+    local B = AT.GRID_BIAS
+    local nl, nt = math.floor(l - B + 0.5), math.floor(t - B + 0.5)
+    local sw, sh = GetPhysicalScreenSize()
+    if p.IsClampedToScreen and p:IsClampedToScreen() and sw and sh and sw > 0 and sh > 0 then
+        local il, ir, it, ib = p:GetClampRectInsets()
+        local slack = p._atSlack or 0
+        il, ir = (il or 0) / px, ((ir or 0) + slack) / px
+        it, ib = ((it or 0) + slack) / px, (ib or 0) / px
+        local w, h = p:GetWidth() / px, p:GetHeight() / px
+        nl = Fit(nl, -il - B, sw - w - ir, false)
+        nt = Fit(nt, h - ib - B, sh - it, true)
+    end
+    return nl + B, nt + B
+end
+
+local function PlaceCorner(p, gl, gt, px)
+    p:ClearAllPoints()
+    p:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", gl * px, gt * px)
+end
+
 -- Pins a window's rect to the physical pixel grid, so everything inside has
--- an aligned origin and hairlines stay whole at rest.
+-- an aligned origin and hairlines stay whole at rest. Show, drag, release,
+-- fold and resize all place through here, so none of them moves a pixel.
 function AT.SnapWindow(p)
     local px = AT.Px(p)
     local l, t = p:GetLeft(), p:GetTop()
     if not (l and t) or px <= 0 then return end
-    local function S(v) return math.floor(v / px + 0.5) * px end
-    local w, h = p:GetWidth(), p:GetHeight()
-    p:ClearAllPoints()
-    p:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", S(l), S(t))
-    p:SetSize(S(w), S(h))
+    GiveSlack(p)
+    p:SetSize(AT.PixelSize(p, p:GetWidth()), AT.PixelSize(p, p:GetHeight()))
+    local gl, gt = GridCorner(p, l / px, t / px, px)
+    PlaceCorner(p, gl, gt, px)
 end
+
+-- Dragging a window. The client's own mover puts its corner wherever the
+-- cursor lands, between pixels, and each child then rounds to the grid on its
+-- own, so text and edges jump apart mid-drag. This steps the corner a whole
+-- pixel at a time instead, so the window crosses the grid as one piece. The
+-- one driver runs only while a drag is held.
+local mover = CreateFrame("Frame")
+mover:Hide()
+local drag = {}
+
+local function DragTo(p)
+    local px = AT.Px(p)
+    local _, sh = GetPhysicalScreenSize()
+    if px <= 0 or not (sh and sh > 0) then return end
+    -- the cursor counts 768 to the screen's height, whatever the scale
+    local cx, cy = GetCursorPosition()
+    local k = sh / 768
+    local gl, gt = GridCorner(p, drag.l + (cx - drag.cx) * k, drag.t + (cy - drag.cy) * k, px)
+    if gl == drag.gl and gt == drag.gt then return end
+    drag.gl, drag.gt = gl, gt
+    PlaceCorner(p, gl, gt, px)
+end
+
+-- OnDragStart(self, button) and OnDragStop(self) take these as they are.
+function AT.StartDrag(p, button)
+    local px = AT.Px(p)
+    local l, t = p:GetLeft(), p:GetTop()
+    if not (l and t) or px <= 0 then
+        -- no rect to read yet: the client's mover, placed on the grid on release
+        drag.native = p
+        p:StartMoving()
+        return
+    end
+    GiveSlack(p)
+    local cx, cy = GetCursorPosition()
+    drag.p, drag.l, drag.t, drag.cx, drag.cy = p, l / px, t / px, cx, cy
+    drag.gl, drag.gt, drag.button = nil, nil, button or "LeftButton"
+    mover:Show()
+end
+
+function AT.StopDrag(p)
+    if not p then return end
+    if drag.native == p then
+        drag.native = nil
+        p:StopMovingOrSizing()
+    elseif drag.p == p then
+        if p:IsShown() then DragTo(p) end
+        drag.p = nil
+        mover:Hide()
+    end
+    if p:IsShown() then AT.SnapWindow(p) end
+end
+
+mover:SetScript("OnUpdate", function()
+    local p = drag.p
+    if not p then mover:Hide() return end
+    -- a drag the client never closed: the window hid, or the button came up
+    -- somewhere OnDragStop does not fire
+    if not (p:IsShown() and IsMouseButtonDown(drag.button)) then
+        AT.StopDrag(p)
+        return
+    end
+    DragTo(p)
+end)
 local Skin = AT.Skin
 
 -- One dropdown pullout open at a time, panel-wide. Windows close it on
@@ -1053,11 +1173,8 @@ function AT.CreateWindow(globalName, opts)
     end)
     p:SetFrameStrata("DIALOG"); p:SetToplevel(true); p:SetClampedToScreen(true)
     p:SetMovable(true); p:EnableMouse(true); p:RegisterForDrag("LeftButton")
-    p:SetScript("OnDragStart", p.StartMoving)
-    p:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        AT.SnapWindow(self)
-    end)
+    p:SetScript("OnDragStart", AT.StartDrag)
+    p:SetScript("OnDragStop", AT.StopDrag)
     p:SetScript("OnMouseDown", AT.CloseDropdown)
     p:SetScript("OnHide", AT.CloseDropdown)
     p:SetScript("OnShow", function(self) AT.SnapWindow(self) end)
@@ -1128,7 +1245,9 @@ function AT.CreateWindow(globalName, opts)
                 local h = sizing.h - (ny - sizing.y) / es
                 if w < minW then w = minW elseif w > maxW then w = maxW end
                 if h < minH then h = minH elseif h > maxH then h = maxH end
-                p:SetSize(w, h)
+                -- whole pixels, so the edges and what hangs off them step
+                -- together, as a drag does
+                p:SetSize(AT.PixelSize(p, w), AT.PixelSize(p, h))
             end)
         end)
         grip:SetScript("OnMouseUp", function()

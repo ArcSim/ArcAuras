@@ -13,6 +13,28 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.1.6",
+        intro = "Pick what you import from the Cooldown Manager, item tooltips in Item Finds, and fixes for totem icons and glows.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Pick what you import from the Cooldown Manager",
+                    desc = "From Cooldown Manager now opens a window where you tick the spells and buffs you want, and choose Aura or Totem only for each Tracked Buff." },
+                { title = "Item Finds: item tooltips",
+                    desc = "On WoW Forever, hover an item to see whether it is new or changed, and how to get it. Alt+click an item to open it in the item finder, and see how many items each zone and dungeon holds on the map." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Smooth window dragging",
+                    desc = "Text and borders no longer jitter while you drag or resize a window. Thanks Laxx for the assist!" },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Totem icons",
+                    desc = "Call Dreadstalkers shows the Dreadstalkers again, not the Charhound, and Summon Demonic Tyrant extends it." },
+                { title = "Glows",
+                    desc = "Unticking a glow no longer locks its options; you can tick it back on." },
+            } },
+        },
+    },
+    {
         version = "3.1.5",
         intro = "Item finds with the full Item Finder, stealth and dead-target looks, an active border, and performance and bug fixes.",
         sections = {
@@ -1338,6 +1360,26 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.1.6",
+        intro = "Pick what you import from the Cooldown Manager, and fixes for totem icons and glows.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Pick what you import from the Cooldown Manager",
+                    desc = "From Cooldown Manager now opens a window where you tick the spells and buffs you want, and choose Aura or Totem only for each Tracked Buff." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Smooth window dragging",
+                    desc = "Text and borders no longer jitter while you drag or resize a window. Thanks Laxx for the assist!" },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Totem icons",
+                    desc = "Call Dreadstalkers shows the Dreadstalkers again, not the Charhound, and Summon Demonic Tyrant extends it." },
+                { title = "Glows",
+                    desc = "Unticking a glow no longer locks its options; you can tick it back on." },
+            } },
+        },
+    },
     {
         version = "3.1.5",
         intro = "Stealth and dead-target looks, an active border, and performance and bug fixes.",

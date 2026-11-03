@@ -814,36 +814,125 @@ function M.Check()
     return nil
 end
 
+-- The plan in the column's order (M.STACK).
+function M.Stacked(plan)
+    local rank = {}
+    for i, cat in ipairs(M.STACK) do rank[cat] = i end
+    table.sort(plan, function(a, b) return (rank[a.viewer.cat] or 9) < (rank[b.viewer.cat] or 9) end)
+    return plan
+end
+
+-- The pick window's list (UI\AD_CDMPick.lua): each bar in the column's
+-- order with the entries a build would make, or nil and why.
+function M.PickList()
+    local snap = M.Read()
+    if not snap.complete then return nil, "read", snap.why end
+    local plan = M.Stacked(M.Plan(snap, M.Merge(snap)))
+    if #plan == 0 then return nil, "empty" end
+    return plan, snap
+end
+
+-- picks[cooldownID]: true builds the entry, "totem" builds a Tracked Buff as a
+-- totem icon, nil leaves it out. The parts keep what is picked; the totem
+-- picks come back as a part of their own.
+function M.TakePicks(plan, picks)
+    local kept, totem = {}, nil
+    for _, part in ipairs(plan) do
+        local pieces, ids = {}, {}
+        for i, id in ipairs(part.ids) do
+            local p, want = part.pieces[i], picks[id]
+            if want == "totem" and p.kind == "aura" then
+                totem = totem or { viewer = part.viewer, pieces = {}, ids = {}, totems = true }
+                totem.pieces[#totem.pieces + 1] = p
+                totem.ids[#totem.ids + 1] = id
+            elseif want then
+                pieces[#pieces + 1] = p
+                ids[#ids + 1] = id
+            end
+        end
+        if #pieces > 0 then kept[#kept + 1] = { viewer = part.viewer, pieces = pieces, ids = ids } end
+    end
+    return kept, totem
+end
+
+-- A Tracked Buff picked "Totem only": a totem icon following the entry's
+-- spells, no aura watched (an aura group takes aura icons only).
+M.TOTEMS = "Totems"
+function M.NewTotemFor(p, groupId)
+    local a = p.aura
+    local d = { slot = 1, spellID = a.spellID, spellIDs = a.spellIDs and M.Copy(a.spellIDs) or nil }
+    return NS.Store.NewIcon("totem", d, groupId, nil, p.name or M.NameOf(a.spellID) or ("Totem " .. a.spellID))
+end
+
 -- "From my Cooldown Manager": a new layout with a group per bar holding the
 -- spells it shows now, in its order, placed and sized like it; look: every
--- icon in the Cooldown Manager look. Returns the layout and the count built,
--- or nil and why ("read" with its reason, "empty").
-function M.Build(look)
+-- icon in the Cooldown Manager look; picks (M.TakePicks): only those, the
+-- "totem" ones in a Totems group just above Tracked Buffs. Returns the layout
+-- and the count built, or nil and why ("read" with its reason, "empty").
+function M.Build(look, picks)
     local S = NS.Store
     if not (S and S.NewLayout and S.NewGroup and S.NewIcon and S.SetOverride) then return nil, "store" end
     local snap = M.Read()
     if not snap.complete then return nil, "read", snap.why end
-    local plan = M.Plan(snap, M.Merge(snap))
+    local plan = M.Stacked(M.Plan(snap, M.Merge(snap)))
     if #plan == 0 then return nil, "empty" end
-    local rank = {}
-    for i, cat in ipairs(M.STACK) do rank[cat] = i end
-    table.sort(plan, function(a, b) return (rank[a.viewer.cat] or 9) < (rank[b.viewer.cat] or 9) end)
+    local totem
+    if picks then
+        plan, totem = M.TakePicks(plan, picks)
+        if #plan == 0 and not totem then return nil, "empty" end
+        -- with no Tracked Buffs left the Totems take the column's top
+        if totem and not (plan[1] and plan[1].viewer.cat == "TrackedBuff") then
+            table.insert(plan, 1, totem)
+            totem = nil
+        end
+    end
     local lay = S.NewLayout("Cooldown Manager")
     -- found again by this mark, never by its name: a rename or another
     -- language keeps it
     lay.cdmMirror = true
     lay.pos = { x = 0, y = 0 }
     local gap = M.STACK_GAP
-    local top
+    local top, firstTop
     local made = 0
+    -- one bar's group at y: its icons, or the totem picks as totem icons
+    local function Group(part, geo, y)
+        local v = part.viewer
+        local kind = part.totems and "cooldown" or v.groupKind
+        local g = S.NewGroup(lay.id, part.totems and M.TOTEMS or v.name, kind)
+        if not g then return end
+        g.pos = { x = 0, y = y }
+        M.Arrange(g, geo, kind)
+        if geo.combatOnly then M.CombatOnly(g) end
+        for _, p in ipairs(part.pieces) do
+            local rec = part.totems and M.NewTotemFor(p, g.id) or M.NewIconFor(p, g.id)
+            if rec then
+                made = made + 1
+                if p.kind == "spell" then M.RangeLook(rec) end
+                -- on each icon, so every switch that shows it reads on
+                if look then S.SetOverride(rec, "appearance", "cdmLook", true) end
+                -- Hide When Inactive: an aura leaves the packed row while missing;
+                -- without it, it keeps its spot (Dynamic reads off unless set)
+                if p.kind == "aura" and not part.totems then
+                    S.SetOverride(rec, "auraMissing", "showWhileMissing", not geo.hideInactive)
+                end
+            end
+        end
+    end
+    -- totem picks in a row of their own: the bar's size, one row
+    local function TotemGeo(part)
+        local geo = M.UseLook(M.Geometry(part.viewer, part.ids), look)
+        geo.cols, geo.rows = #part.pieces, 1
+        return geo
+    end
     for _, part in ipairs(plan) do
         local v = part.viewer
-        local geo = M.UseLook(M.Geometry(v, part.ids), look)
+        local geo = part.totems and TotemGeo(part) or M.UseLook(M.Geometry(v, part.ids), look)
         local ph = M.PartHeight(part, geo)
         -- the first part's first row sits at the column's top
         if not top then
             local first = v.bars and geo.height or geo.useSize
             top = M.STACK_TOP + math.floor(first / 2 + 0.5)
+            firstTop = top
         end
         local x, y = 0, math.floor(top - ph / 2 + 0.5)
         top = top - ph - gap
@@ -851,28 +940,14 @@ function M.Build(look)
             geo.up = false
             made = made + M.BuildBars(lay, part, geo, x, math.floor(y + ph / 2 - geo.height / 2 + 0.5))
         else
-            local kind = v.groupKind
-            local g = S.NewGroup(lay.id, v.name, kind)
-            if g then
-                g.pos = { x = x, y = y }
-                M.Arrange(g, geo, kind)
-                if geo.combatOnly then M.CombatOnly(g) end
-                for _, p in ipairs(part.pieces) do
-                    local rec = M.NewIconFor(p, g.id)
-                    if rec then
-                        made = made + 1
-                        if p.kind == "spell" then M.RangeLook(rec) end
-                        -- on each icon, so every switch that shows it reads on
-                        if look then S.SetOverride(rec, "appearance", "cdmLook", true) end
-                        -- Hide When Inactive: an aura leaves the packed row while missing;
-                        -- without it, it keeps its spot (Dynamic reads off unless set)
-                        if p.kind == "aura" then
-                            S.SetOverride(rec, "auraMissing", "showWhileMissing", not geo.hideInactive)
-                        end
-                    end
-                end
-            end
+            Group(part, geo, y)
         end
+    end
+    -- Tracked Buffs keeps its place; the Totems sit just above it
+    if totem then
+        local geo = TotemGeo(totem)
+        local ph = M.PartHeight(totem, geo)
+        Group(totem, geo, math.floor(firstTop + gap + ph / 2 + 0.5))
     end
     return lay, made
 end

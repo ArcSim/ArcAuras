@@ -181,9 +181,12 @@ end
 -- searched in place through an 8-character-per-line index built on first use
 local blocks = { sources = D.sources or "", npcs = D.npcs or "", objects = D.objects or "", quests = D.quests or "", dungeons = D.dungeons or "",
     tips = D.tips or "", effects = D.effects or "", hidden = D.hidden or "", dungeonItems = D.dungeonItems or "", sets = D.sets or "",
-    boxes = D.boxes or "" }
+    boxes = D.boxes or "", changes = D.changes or "" }
 D.sources, D.npcs, D.objects, D.quests, D.dungeons, D.tips, D.effects, D.hidden, D.dungeonItems, D.sets = nil, nil, nil, nil, nil, nil, nil, nil, nil, nil
-D.boxes = nil
+D.boxes, D.changes = nil, nil
+-- the changes block ships its own index; kept with the place blocks' so one lookup serves both
+if D.changesIndex and D.placeIndex then D.placeIndex.changes = D.changesIndex end
+D.changesIndex = nil
 local blockIndex = {}
 
 local function BlockLine(name, id)
@@ -640,6 +643,72 @@ function D.Effects(id)
     return #out > 0 and out or nil
 end
 
+-- what a changed item changed from Classic Era (classic_compare.js changeLines, which documents the fields): q / ilvl /
+-- req Classic's; bind, unique, slots, armor { forever, classic }; dmg { forever, classic } lo-hi-delay; stats { type,
+-- forever, classic }; effects { how ~ / + / -, trig, text, named, was = Classic's other words, spans { at, len, old } }.
+-- Forever's text of a changed or new effect ships once, as "@n": the item's n-th line of D.Effects
+local PAIR = { b = "bind", n = "slots", a = "armor" }
+local LEVEL = { q = "q", i = "ilvl", r = "req" }
+function D.Changes(id)
+    local line = BlockLine("changes", id)
+    if not line then return end
+    local out = {}
+    for field in line:gmatch("|([^|]*)") do
+        local tag, v = field:sub(1, 1), field:sub(2)
+        if LEVEL[tag] then
+            out[LEVEL[tag]] = tonumber(v)
+        elseif PAIR[tag] then
+            local f, c = v:match("^(%-?%d*)%.(%-?%d*)$")
+            out[PAIR[tag]] = { tonumber(f), tonumber(c) }
+        elseif tag == "u" then
+            local f, c = v:match("^(%a*)%.(%a*)$")
+            out.unique = { f or "", c or "" }
+        elseif tag == "d" then
+            local a1, a2, a3, b1, b2, b3 = v:match("^(%d+)%-(%d+)%-(%d+)%.(%d+)%-(%d+)%-(%d+)$")
+            if a1 then
+                out.dmg = { { tonumber(a1), tonumber(a2), tonumber(a3) }, { tonumber(b1), tonumber(b2), tonumber(b3) } }
+            end
+        elseif tag == "s" then
+            out.stats = {}
+            for t, f, c in v:gmatch("(%d+)%.(%-?%d*)%.(%-?%d*)") do out.stats[#out.stats + 1] = { tonumber(t), tonumber(f), tonumber(c) } end
+        elseif tag == "e" then
+            out.effects = {}
+            local own
+            for entry in v:gmatch("[^\t]+") do
+                local how = entry:sub(1, 1)
+                local last = out.effects[#out.effects]
+                if how == "=" then
+                    local was = entry:sub(2)
+                    if last and was:sub(1, 1) == "#" then
+                        last.spans = {}
+                        for at, len, old in was:sub(2):gmatch("(%d+)%.(%d+)%.([^;]*)") do
+                            last.spans[#last.spans + 1] = { tonumber(at), tonumber(len), old }
+                        end
+                    elseif last then
+                        last.was = was
+                    end
+                else
+                    local text = entry:sub(3)
+                    local named = text:sub(1, 1) == "*"
+                    if named then text = text:sub(2) end
+                    local n = tonumber(text:match("^@(%d+)$"))
+                    if n then
+                        own = own or D.Effects(id) or {}
+                        text = own[n] and own[n].text or ""
+                    end
+                    out.effects[#out.effects + 1] = { how = how, trig = tonumber(entry:sub(2, 2)), text = text, named = named, was = "" }
+                end
+            end
+        end
+    end
+    return out
+end
+
+-- whether the item box has changes from Classic to show for an item
+function D.HasChanges(id)
+    return BlockLine("changes", id) ~= nil
+end
+
 -- what is known of an item Blizzard has not released (seed kind x): its set's name and the name of an item wearing
 -- the same model, either may be missing
 function D.Hidden(id)
@@ -755,6 +824,7 @@ D.CATEGORIES = {
     { cls = 11, name = "Quiver", subs = {} },
     { cls = 9, name = "Recipe", subs = { { 0, "Book" }, { 1, "Leatherworking" }, { 2, "Tailoring" }, { 3, "Engineering" },
         { 4, "Blacksmithing" }, { 5, "Cooking" }, { 6, "Alchemy" }, { 7, "First Aid" }, { 8, "Enchanting" }, { 9, "Fishing" } } },
+    { cls = 12, name = "Quest", subs = {} },
     { cls = 15, name = "Miscellaneous", subs = {} },
 }
 

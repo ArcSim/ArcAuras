@@ -5,13 +5,15 @@ local P = ns.Proto
 -- the engine: no WoW calls, everything through env, so tests can run many copies
 -- env: now(), random(lo, hi), after(seconds, fn), send(dist, target, msg) -> "ok" / "wait" / "fail" / "gone" (offline),
 --      canSend(), me, finds (Finds API), accept(info, sender, done(ok)), onRecorded(e, status, info),
---      stamp() (the clock finds are stamped with), bookmark() / setBookmark(t) (how far this server is caught up)
+--      stamp() (the clock finds are stamped with), bookmark() / setBookmark(t) (how far this server is caught up),
+--      groups() (optional: the guild and group routes a live find also takes, e.g. { "GUILD", "PARTY" })
 local Engine = {}
 Engine.__index = Engine
 ns.SyncEngine = Engine
 
 local CHANNEL_GAP = 2.0       -- seconds between channel messages from one copy
 local WHISPER_GAP = 0.3
+local GROUP_GAP = 1.0         -- seconds between guild and group messages from one copy
 local SERVE_LIMIT = 100       -- finds one catch-up page carries
 local WHISPER_ROOM = SERVE_LIMIT * 2
 local PAGE_GAP = 3            -- seconds before asking for the next page
@@ -27,7 +29,7 @@ local RESEND_WAIT = 30        -- seconds before they go, so a newcomer's catch-u
 local ANNOUNCE_SPREAD = 3     -- seconds a find may wait before this copy announces it
 
 function Engine.New(env)
-    local e = setmetatable({ env = env, chanQ = {}, whisQ = {}, pumping = false, nextChan = 0, nextWhis = 0,
+    local e = setmetatable({ env = env, chanQ = {}, whisQ = {}, grpQ = {}, pumping = false, nextChan = 0, nextWhis = 0, nextGrp = 0,
         senders = {}, muted = {}, serving = {}, announced = {}, helloSent = false, lastHeard = nil, helped = {},
         round = { claims = {}, bestCount = -1 }, pageAfter = 0, sent = {} }, Engine)
     return e
@@ -65,7 +67,7 @@ function Engine:Pump()
     local env = self.env
     local function Step()
         self.pumping = false
-        if #self.chanQ == 0 and #self.whisQ == 0 then return end
+        if #self.chanQ == 0 and #self.whisQ == 0 and #self.grpQ == 0 then return end
         if not env.canSend() then
             self.pumping = true
             env.after(5, Step)
@@ -103,7 +105,16 @@ function Engine:Pump()
             end
             wait = math.min(wait, math.max(0.05, self.nextChan - now))
         end
-        if #self.chanQ > 0 or #self.whisQ > 0 then
+        if #self.grpQ > 0 then
+            if now >= self.nextGrp then
+                local m = self.grpQ[1]
+                local r = env.send(m.dist, nil, m.msg)
+                if r ~= "wait" then table.remove(self.grpQ, 1) end
+                self.nextGrp = now + (r == "wait" and 5 or GROUP_GAP)
+            end
+            wait = math.min(wait, math.max(0.05, self.nextGrp - now))
+        end
+        if #self.chanQ > 0 or #self.whisQ > 0 or #self.grpQ > 0 then
             self.pumping = true
             env.after(wait, Step)
         end
@@ -116,6 +127,12 @@ function Engine:QueueChannel(msg)
     -- one copy never floods the channel: old queued lines give way
     if #self.chanQ >= 30 then table.remove(self.chanQ, 1) end
     table.insert(self.chanQ, msg)
+    self:Pump()
+end
+
+function Engine:QueueGroup(dist, msg)
+    if #self.grpQ >= 30 then table.remove(self.grpQ, 1) end
+    table.insert(self.grpQ, { dist = dist, msg = msg })
     self:Pump()
 end
 
@@ -146,16 +163,21 @@ function Engine:Announce(rec)
             end
             return
         end
-        self:SendFind(rec)
+        self:SendFind(rec, true)
     end)
 end
 
--- a find on the channel, counted: the copies hearing it mute a sender past SENDER_MAX finds in a window
-function Engine:SendFind(rec)
+-- a find on the channel, counted: the copies hearing it mute a sender past SENDER_MAX finds in a window. A live find
+-- also goes to the player's guild and group, so they get it wherever the channel does not reach
+function Engine:SendFind(rec, live)
     local now, sent = self.env.now(), self.sent
     while sent[1] and now - sent[1] > SENDER_WINDOW do table.remove(sent, 1) end
     sent[#sent + 1] = now
-    self:QueueChannel(P.EncodeFind(rec))
+    local msg = P.EncodeFind(rec)
+    self:QueueChannel(msg)
+    if live and self.env.groups then
+        for _, dist in ipairs(self.env.groups()) do self:QueueGroup(dist, msg) end
+    end
 end
 
 -- another copy spoke. A hello comes from a copy that just logged in or pressed Refresh, and right after this copy's
@@ -291,11 +313,21 @@ function Engine:Receive(msg, dist, sender)
     -- a banned player is not heard at all
     if env.banned and env.banned(sender) then return end
     local kind = P.Kind(msg)
+    -- the guild and the group carry live finds only; asks, claims and pages stay on the channel and whispers
+    if dist ~= "CHANNEL" and dist ~= "WHISPER" and kind ~= "F" then return end
     local b = Bucket(self, sender)
     if kind == "F" then
         local info = P.DecodeFind(msg)
         if not info then return Bad(self, b, sender, msg) end
         self:Heard()
+        -- a find heard on the channel, the guild or the group is a first-hand report; a whispered one is a catch-up
+        -- copy. The same report on two of them counts and records once
+        local firstHand = dist ~= "WHISPER"
+        if firstHand then
+            b.heard = b.heard or {}
+            if b.heard[msg] then return end
+            b.heard[msg] = true
+        end
         -- pages from a copy that served this one lately are expected; only live announcements count against a sender
         local served = self.helped[sender]
         if not (dist == "WHISPER" and served and env.now() - served < SENDER_WINDOW) then
@@ -309,8 +341,6 @@ function Engine:Receive(msg, dist, sender)
         -- the server names the sender and nothing else in a message can be trusted: a credit stands only when it names
         -- the sender (a finder reporting or serving its own find)
         if info.by and info.by ~= sender:match("^[^-]+") then info.by = nil end
-        -- a find heard on the channel is a first-hand report; a whispered one is a catch-up copy
-        local firstHand = dist == "CHANNEL"
         env.accept(info, sender, function(ok)
             if not ok then return end
             info.fromNet = true
@@ -640,8 +670,23 @@ local function Accept(info, _, done)
     end)
 end
 
+-- a find goes out while sharing is on, even with no channel: the guild and group routes still carry it
 function S.Announce(rec)
-    if engine and S.state == "on" then engine:Announce(rec) end
+    if engine and S.state ~= "paused" then engine:Announce(rec) end
+end
+
+-- the routes a live find also takes: the player's guild and the group they are in
+local function Groups()
+    local out = {}
+    if IsInGuild and IsInGuild() then out[#out + 1] = "GUILD" end
+    if LE_PARTY_CATEGORY_INSTANCE and IsInGroup and IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+        out[#out + 1] = "INSTANCE_CHAT"
+    elseif IsInRaid and IsInRaid() then
+        out[#out + 1] = "RAID"
+    elseif IsInGroup and IsInGroup() then
+        out[#out + 1] = "PARTY"
+    end
+    return out
 end
 
 -- sharing stops for the rest of the session: out of the channel, nothing more sent (a copy switched off mid-session)
@@ -687,6 +732,7 @@ ns.Listen("DBReady", function()
         after = function(s, fn) C_Timer.After(s, fn) end,
         send = Send,
         canSend = CanSend,
+        groups = Groups,
         me = Me(),
         finds = ns.Finds,
         accept = Accept,
@@ -731,10 +777,11 @@ ns.On("PLAYER_ENTERING_WORLD", function(isLogin, isReload)
     end)
 end)
 
+local ROUTES = { CHANNEL = true, WHISPER = true, GUILD = true, PARTY = true, RAID = true, INSTANCE_CHAT = true }
 ns.On("CHAT_MSG_ADDON", function(prefix, msg, dist, sender)
     if ns.Secret(prefix) or ns.Secret(msg) or ns.Secret(dist) or ns.Secret(sender) then return end
     if prefix ~= P.PREFIX or not engine then return end
-    if dist ~= "CHANNEL" and dist ~= "WHISPER" then return end
+    if not ROUTES[dist] then return end
     engine:Receive(msg, dist, sender)
 end)
 

@@ -1,5 +1,22 @@
 # Arc Auras
 
+## 3.1.6
+
+Pick what you import from the Cooldown Manager, and fixes for totem icons and glows.
+
+### New Features
+
+- **Pick what you import from the Cooldown Manager** - From Cooldown Manager now opens a window where you tick the spells and buffs you want, and choose Aura or Totem only for each Tracked Buff.
+
+### Improvements
+
+- **Smooth window dragging** - Text and borders no longer jitter while you drag or resize a window. Thanks Laxx for the assist!
+
+### Bug Fixes
+
+- **Totem icons** - Call Dreadstalkers shows the Dreadstalkers again, not the Charhound, and Summon Demonic Tyrant extends it.
+- **Glows** - Unticking a glow no longer locks its options; you can tick it back on.
+
 ## 3.1.5
 
 Stealth and dead-target looks, an active border, and performance and bug fixes.

@@ -126,6 +126,18 @@ end
 local TRIGGERS = { [0] = { "ITEM_SPELL_TRIGGER_ONUSE", "Use:" }, [1] = { "ITEM_SPELL_TRIGGER_ONEQUIP", "Equip:" },
     [2] = { "ITEM_SPELL_TRIGGER_ONPROC", "Chance on hit:" } }
 
+-- a stat's line as the game words it, and true when it is a white line (the rest are green Equip lines); nil for a stat
+-- the game shows no line for
+local function StatLine(t, v)
+    local w, line = WHITE[t], LINE[t]
+    if w then return ("%s%d %s"):format(v < 0 and "" or "+", v, G(w[1], w[2])), true end
+    if not line then return end
+    local up = v >= 0
+    local fmt = G("TOOLTIP_ITEM_STAT_" .. line[1] .. (up and "_INCREASE" or "_DECREASE"), up and line[2] or line[3])
+    local a = math.abs(v)
+    return Fill(fmt, line[4] and a / line[4] or a), line[5] and true or false
+end
+
 local function Requirements(tip, row, more)
     local classes = {}
     if row.ac and row.ac ~= 4095 and row.ac > 0 then
@@ -238,16 +250,8 @@ function Body(tip, id, row, data, nested)
     for i, s in ipairs(data.stats) do stats[i] = s end
     table.sort(stats, function(a, b) return (STAT_RANK[a[1]] or 100 + a[1]) < (STAT_RANK[b[1]] or 100 + b[1]) end)
     for _, s in ipairs(stats) do
-        local w, line = WHITE[s[1]], LINE[s[1]]
-        if w then
-            white(("%s%d %s"):format(s[2] < 0 and "" or "+", s[2], G(w[1], w[2])))
-        elseif line then
-            local up = s[2] >= 0
-            local fmt = G("TOOLTIP_ITEM_STAT_" .. line[1] .. (up and "_INCREASE" or "_DECREASE"), up and line[2] or line[3])
-            local v = math.abs(s[2])
-            local text = Fill(fmt, line[4] and v / line[4] or v)
-            if line[5] then white(text) else equip[#equip + 1] = text end
-        end
+        local text, isWhite = StatLine(s[1], s[2])
+        if text and isWhite then white(text) elseif text then equip[#equip + 1] = text end
     end
     for _, text in ipairs(equip) do tip:AddLine(text, GREEN[1], GREEN[2], GREEN[3], true) end
     -- a recipe lists what it needs before what it teaches; every other item after its effects
@@ -303,6 +307,432 @@ function T.DataTip(tip, id)
     tip:AddLine("Datamined, may change", GREY[1], GREY[2], GREY[3])
     tip.dataTipFor = id
     return true
+end
+
+-- what changed from Classic, on the item box's lines (UI.lua TipLines), as board E4 draws it: the new value where the
+-- game puts it, green when it got better, red when worse, the changed tag's orange when that cannot be told; Classic's
+-- value right after it, smaller, struck through, in the panel's faint grey; a value Forever dropped struck whole.
+-- A marked line carries segs (and rsegs for its right side): { text, kind } with kind nil (the line's own colour),
+-- "up", "down", "flat", "old" or "gone"; T.LayChangeLine draws them. Quality and a missing item level are lines of our
+-- own on top, removed values and changes whose line was not found at the bottom.
+local QUALITY_NAME = { [0] = "Poor", "Common", "Uncommon", "Rare", "Epic", "Legendary", "Artifact", "Heirloom" }
+local function QualityName(q)
+    return G("ITEM_QUALITY" .. q .. "_DESC", QUALITY_NAME[q] or tostring(q))
+end
+local function BindText(b)
+    return ({ G("ITEM_BIND_ON_PICKUP", "Binds when picked up"), G("ITEM_BIND_ON_EQUIP", "Binds when equipped"),
+        G("ITEM_BIND_ON_USE", "Binds when used"), G("ITEM_BIND_QUEST", "Quest Item") })[b or 0]
+end
+local function UniqueText(u)
+    if u == "u" then return G("ITEM_UNIQUE", "Unique") end
+    if u == "e" then return G("ITEM_UNIQUE_EQUIPPABLE", "Unique-Equipped") end
+end
+-- lines compare without colour codes, case, doubled spaces or a closing full stop
+local function Norm(s)
+    s = (s or ""):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):lower():gsub("%s+", " ")
+    return (s:gsub("^ ", ""):gsub("[ %.]+$", ""))
+end
+local function DpsText(d)
+    return ("%.1f"):format(math.ceil((d[1] + d[2]) / 2 / (d[3] / 1000) * 10 - 0.5) / 10)
+end
+-- a stat line's number with its sign and percent ("+10", "1.5%"), never the full stop after it
+local function FirstNumber(s)
+    local n, at = s:match("([%+%-]?%d+)()")
+    if not n then return end
+    local frac = s:match("^%.%d+", at) or ""
+    return n .. frac .. (s:match("^%%", at + #frac) or "")
+end
+-- the middle of every number in a value ("375 to 425" -> 400)
+local function Amount(text)
+    local sum, n = 0, 0
+    for v in tostring(text):gmatch("%-?%d+%.?%d*") do sum, n = sum + tonumber(v), n + 1 end
+    return n > 0 and sum / n or nil
+end
+local function Dir(new, old, lowerBetter)
+    if not new or not old or new == old then return "flat" end
+    if lowerBetter then return new < old and "up" or "down" end
+    return new > old and "up" or "down"
+end
+-- an effect's number: a cooldown, cast time or "once every" gap is better lower; a duration, chance or range cannot be
+-- judged; any other amount (damage, healing, restores, a stat) is better higher
+local function EffectDir(text, at, len, newText, oldText)
+    local after = text:sub(at + len, at + len + 24):lower()
+    local before = text:sub(math.max(1, at - 12), at - 1):lower()
+    if after:match("^%s*%a*%s*cooldown") or after:match("^%s*sec%s+cast") or before:match("every%s*$") then
+        return Dir(Amount(newText), Amount(oldText), true)
+    end
+    if after:match("^%s*sec") or after:match("^%s*min") or after:match("^%s*hour") or after:match("^%s*day") or
+        after:match("^%%%s*chance") or after:match("^%s*yard") then
+        return "flat"
+    end
+    return Dir(Amount(newText), Amount(oldText))
+end
+-- segments with the empty ones left out
+local function Segs(...)
+    local out = {}
+    for i = 1, select("#", ...) do
+        local sg = select(i, ...)
+        if sg and sg[1] ~= "" then out[#out + 1] = sg end
+    end
+    return out
+end
+-- before, the new value in its direction's look, Classic's value, after; the whole text is the value when it is not in it
+local function Valued(text, value, dir, old)
+    local s, e
+    if value then s, e = text:find(value, 1, true) end
+    if not s then return Segs({ text, dir }, old and { old, "old" }) end
+    return Segs({ text:sub(1, s - 1) }, { value, dir }, old and { old, "old" }, { text:sub(e + 1) })
+end
+
+-- second value: how many changes found no line of their own and fell to the bottom (a removed value and the item level
+-- Forever's tooltip lacks are meant to; t_item_changes sweeps every changed item for the rest)
+function T.MarkChanges(lines, id, row)
+    local ch = D.Changes(id)
+    if not ch then return false, 0 end
+    local used, head, tail, missed = {}, {}, {}, 0
+    local WHITE_RGB = { 1, 1, 1 }
+    -- prefix: the line starts with these words ("16 Slot" of "16 Slot Bag"), a whole word ("1 - 2" is not "1 - 25")
+    local function Find(want, prefix)
+        want = Norm(want)
+        for i, l in ipairs(lines) do
+            local have = Norm(l[1])
+            if not used[i] and (have == want or (prefix and have:sub(1, #want) == want and have:sub(#want + 1, #want + 1) == " ")) then
+                return i
+            end
+        end
+    end
+    -- a line of our own, in the colour its kind has in a tooltip (white, item level's gold, an effect's green)
+    local function Own(list, text, segs, rgb)
+        rgb = rgb or WHITE_RGB
+        local l = { text, "", rgb[1], rgb[2], rgb[3], 1, 1, 1, segs = segs }
+        list[#list + 1] = l
+        return l
+    end
+    -- the game's line with its value marked, else a line of our own at the bottom
+    local function Line(text, value, dir, old, prefix, rgb)
+        local i = Find(text, prefix)
+        if i then
+            used[i] = true
+            lines[i].segs = Valued(lines[i][1], value, dir, old)
+        else
+            missed = missed + 1
+            Own(tail, text, Valued(text, value, dir, old), rgb)
+        end
+    end
+    -- a value Forever dropped: struck whole, red for a loss, or the colour of what dropping it means
+    local function Removed(text, dir, rgb) Own(tail, text, { { text, "gone", dir or "down" } }, rgb) end
+    -- a value the item has on one side only; numeric: only the number is the value
+    local function Pair(f, c, text, numeric, dir, onlyNew, onlyOld)
+        local ft, ct = f and text(f), c and text(c)
+        if ft and ct then Line(ft, numeric and tostring(f) or ft, dir, numeric and tostring(c) or ct)
+        elseif ft then Line(ft, numeric and tostring(f) or ft, onlyNew)
+        elseif ct then Removed(ct, onlyOld) end
+    end
+
+    if ch.q and row then
+        local label = G("QUALITY", "Quality") .. ": "
+        Own(head, label .. QualityName(row.q), Segs({ label }, { QualityName(row.q), Dir(row.q, ch.q) }, { QualityName(ch.q), "old" }))
+    end
+    if ch.ilvl and row then
+        local text = (G("ITEM_LEVEL", "Item Level %d")):format(row.ilvl)
+        local i = Find(text)
+        local segs = Valued(text, tostring(row.ilvl), Dir(row.ilvl, ch.ilvl), tostring(ch.ilvl))
+        if i then
+            used[i] = true
+            lines[i].segs = Valued(lines[i][1], tostring(row.ilvl), Dir(row.ilvl, ch.ilvl), tostring(ch.ilvl))
+        else
+            Own(head, text, segs, GOLD)
+        end
+    end
+    local levelFmt = G("ITEM_MIN_LEVEL", "Requires Level %d")
+    if ch.req and row then
+        local f, c = row.req > 0 and row.req or nil, ch.req > 0 and ch.req or nil
+        Pair(f, c, function(v) return levelFmt:format(v) end, true, Dir(f, c, true), "down", "up")
+    end
+    if ch.bind then Pair(BindText(ch.bind[1]) and ch.bind[1], BindText(ch.bind[2]) and ch.bind[2], BindText, false, "flat", "flat", "flat") end
+    if ch.unique then
+        Pair(UniqueText(ch.unique[1]) and ch.unique[1], UniqueText(ch.unique[2]) and ch.unique[2], UniqueText, false, "flat", "flat", "flat")
+    end
+    if ch.slots then
+        local text = (G("CONTAINER_SLOTS", "%d Slot %s")):format(ch.slots[1], ""):gsub("%s+$", "")
+        Line(text, tostring(ch.slots[1]), Dir(ch.slots[1], ch.slots[2]), tostring(ch.slots[2]), true)
+    end
+    if ch.armor then
+        Line((G("ARMOR_TEMPLATE", "%s Armor")):format(ch.armor[1]), tostring(ch.armor[1]), Dir(ch.armor[1], ch.armor[2]), tostring(ch.armor[2]))
+    end
+    if ch.dmg then
+        local f, c = ch.dmg[1], ch.dmg[2]
+        local fr, cr = ("%d - %d"):format(f[1], f[2]), ("%d - %d"):format(c[1], c[2])
+        local fs, cs = ("%.2f"):format(f[3] / 1000), ("%.2f"):format(c[3] / 1000)
+        local i = Find(fr, true)
+        local l = i and lines[i]
+        if l then
+            used[i] = true
+        else
+            missed = missed + 1
+            l = Own(tail, (G("DAMAGE_TEMPLATE", "%s - %s Damage")):format(f[1], f[2]))
+            l[2] = ("%s %s"):format(G("SPEED", "Speed"), fs)
+        end
+        if fr ~= cr then l.segs = Valued(l[1], fr, Dir(f[1] + f[2], c[1] + c[2]), cr) end
+        -- speed: neither faster nor slower is better on its own
+        if fs ~= cs then l.rsegs = Valued(l[2], fs, "flat", cs) end
+        -- damage per second follows damage and speed: Classic's from Classic's numbers; one that did not move stays plain
+        local fd, cd = DpsText(f), DpsText(c)
+        if fd ~= cd then Line((G("DPS_TEMPLATE", "(%s damage per second)")):format(fd), fd, Dir(tonumber(fd), tonumber(cd)), cd) end
+    end
+    for _, s in ipairs(ch.stats or {}) do
+        local ct = s[3] and StatLine(s[1], s[3])
+        if s[2] then
+            local ft, isWhite = StatLine(s[1], s[2])
+            local rgb = not isWhite and GREEN or nil
+            if ft and ct then
+                Line(ft, FirstNumber(ft), Dir(s[2], s[3]), FirstNumber(ct) or tostring(s[3]), nil, rgb)
+            elseif ft then
+                Line(ft, FirstNumber(ft), "up", nil, nil, rgb)
+            end
+        elseif ct then
+            local _, isWhite = StatLine(s[1], s[3])
+            Removed(ct, "down", not isWhite and GREEN or nil)
+        end
+    end
+    -- an effect: every changed number in its direction with Classic's right after it, when only numbers moved and our
+    -- words are in the line; else the effect's words in orange, Classic's other words small and struck after them
+    local function MarkEffect(l, e, word)
+        local text = l[1]
+        local at = e.spans and text:find(e.text, 1, true)
+        if at then
+            local segs, cursor = {}, 1
+            for _, sp in ipairs(e.spans) do
+                local a = at - 1 + sp[1]
+                local new = text:sub(a, a + sp[2] - 1)
+                segs[#segs + 1] = { text:sub(cursor, a - 1) }
+                segs[#segs + 1] = { new, EffectDir(text, a, sp[2], new, sp[3]) }
+                segs[#segs + 1] = { sp[3], "old" }
+                cursor = a + sp[2]
+            end
+            segs[#segs + 1] = { text:sub(cursor) }
+            local kept = {}
+            for _, sg in ipairs(segs) do if sg[1] ~= "" then kept[#kept + 1] = sg end end
+            l.segs = kept
+            return
+        end
+        local old = e.how ~= "+" and e.was ~= "" and e.was or nil
+        if not old and e.how ~= "+" and e.spans then
+            local olds = {}
+            for k, sp in ipairs(e.spans) do olds[k] = sp[3] end
+            old = table.concat(olds, ", ")
+        end
+        local start = word .. " "
+        if text:sub(1, #start) == start then
+            l.segs = Segs({ start }, { text:sub(#start + 1), "flat" }, old and { old, "old" })
+        else
+            l.segs = Segs({ text, "flat" }, old and { old, "old" })
+        end
+    end
+    -- the line with the same words first; a line known only by its spell's name, or worded otherwise, is the one Use or
+    -- Chance on hit line of the tooltip (Equip lines also carry stats, so they are never guessed)
+    local pending = {}
+    for _, e in ipairs(ch.effects or {}) do
+        local word = TRIGGERS[e.trig] and G(TRIGGERS[e.trig][1], TRIGGERS[e.trig][2])
+        if word then
+            local text = word .. " " .. e.text
+            if e.how == "-" then
+                Removed(text, "down", GREEN)
+            else
+                local i = not e.named and Find(text)
+                if i then
+                    used[i] = true
+                    MarkEffect(lines[i], e, word)
+                else
+                    pending[#pending + 1] = { e, word, text }
+                end
+            end
+        end
+    end
+    for _, p in ipairs(pending) do
+        local e, word, text = p[1], p[2], p[3]
+        local only
+        if e.trig ~= 1 then
+            local start = Norm(word) .. " "
+            for i, l in ipairs(lines) do
+                if not used[i] and Norm(l[1]):sub(1, #start) == start then
+                    if only then only = false break end
+                    only = i
+                end
+            end
+        end
+        if only then
+            used[only] = true
+            MarkEffect(lines[only], e, word)
+        else
+            missed = missed + 1
+            MarkEffect(Own(tail, text, nil, GREEN), e, word)
+        end
+    end
+
+    for i = #head, 1, -1 do table.insert(lines, 1, head[i]) end
+    for _, l in ipairs(tail) do lines[#lines + 1] = l end
+    return true, missed
+end
+
+-- the look of each kind: board E4's green and red, the changed tag's orange, and the faint grey of an old value
+local LOOK = { up = "1EFF00", down = "FF5A36", flat = T.TAG.c.fg, old = T.C.faint }
+-- the board's sizes: lines 13, an old value 11 with 4 before it; rows of 17
+local BIG, SMALL, OLD_GAP, ROW, SIDE_GAP = 13, 11, 4, 17, 8
+local U = T.U
+
+-- a length on whole physical pixels of this frame (PixelUtil's own rounding); as given where the client has none
+local function Snap(v, scale)
+    if PixelUtil and PixelUtil.GetNearestPixelSize then return PixelUtil.GetNearestPixelSize(v, scale) end
+    return v
+end
+local function OnePixel(scale)
+    if PixelUtil and PixelUtil.GetNearestPixelSize then return PixelUtil.GetNearestPixelSize(0, scale, 1) end
+    return 1
+end
+
+-- one measuring string per size, on the lines' own frame
+local measure = {}
+local function Width(parent, text, small)
+    local key = small and SMALL or BIG
+    local m = measure[key]
+    if not m then
+        m = T.Text(parent, key, "FFFFFF")
+        m:Hide()
+        measure[key] = m
+    end
+    m:SetText(text)
+    return m.GetUnboundedStringWidth and m:GetUnboundedStringWidth() or m:GetStringWidth()
+end
+
+-- a piece of a marked line: a font string, and the 1-pixel strike across it when it is an old or dropped value
+local function Piece(holder, parent, n)
+    holder.pieces = holder.pieces or {}
+    local p = holder.pieces[n]
+    if not p then
+        p = { fs = T.Text(parent, BIG, "FFFFFF"), strike = parent:CreateTexture(nil, "OVERLAY") }
+        p.strike:SetTexture("Interface\\Buttons\\WHITE8X8")
+        holder.pieces[n] = p
+    end
+    return p
+end
+
+function T.HideChangePieces(holder)
+    for _, p in ipairs(holder.pieces or {}) do
+        p.fs:Hide()
+        p.strike:Hide()
+    end
+end
+
+-- draws a marked line's segments into the box at height y, bodyW wide: pieces left to right on whole pixels, a row
+-- ending at a space of plain or struck words, a new value kept on one row with Classic's value after it, so every strike
+-- lies on its own row's words and never across a wrap. The right side (Speed) sits on the first row when it fits, else
+-- on a row of its own under the left. Returns the height used and whether the right side took its own row.
+function T.LayChangeLine(holder, l, bodyW, y, parent)
+    local scale = parent.GetEffectiveScale and parent:GetEffectiveScale() or 1
+    local px = OnePixel(scale)
+    local n, x, row = 0, 0, 0
+    local function Put(text, kind, small, atX, atRow, rgb, strikeKind)
+        n = n + 1
+        local p = Piece(holder, parent, n)
+        local fs = p.fs
+        fs:SetFont(T.FONT, U(small and SMALL or BIG), "")
+        fs:SetText(text)
+        local hex = LOOK[kind == "gone" and strikeKind or kind]
+        if hex then fs:SetTextColor(T.RGB(hex)) else fs:SetTextColor(rgb[1], rgb[2], rgb[3]) end
+        local w = Snap(Width(parent, text, small), scale)
+        -- an old value sits on the row's text bottom, as the board's smaller inline text does
+        local top = Snap(y + atRow * U(ROW) + (small and (U(BIG) - U(SMALL)) or 0), scale)
+        fs:ClearAllPoints()
+        fs:SetPoint("TOPLEFT", parent, "TOPLEFT", Snap(atX, scale), -top)
+        fs:Show()
+        if kind == "old" or kind == "gone" then
+            p.strike:SetColorTexture(T.RGB(hex))
+            p.strike:ClearAllPoints()
+            p.strike:SetPoint("TOPLEFT", parent, "TOPLEFT", Snap(atX, scale), -(top + Snap(U(small and SMALL or BIG) / 2, scale)))
+            p.strike:SetSize(w, px)
+            p.strike:Show()
+        else
+            p.strike:Hide()
+        end
+        return w
+    end
+    local rgb = { l[3], l[4], l[5] }
+    local segs = l.segs or { { l[1] } }
+    for k, sg in ipairs(segs) do
+        local text, kind = sg[1], sg[2]
+        local small = kind == "old"
+        local gap = small and Snap(U(OLD_GAP), scale) or 0
+        if kind == "up" or kind == "down" or kind == "flat" then
+            -- a value is one piece; it starts a row of its own when it and the old value after it do not fit here
+            local w = Width(parent, text, false)
+            local nextSeg = segs[k + 1]
+            local tail = nextSeg and nextSeg[2] == "old" and (Snap(U(OLD_GAP), scale) + Width(parent, nextSeg[1]:match("^%S+") or nextSeg[1], true)) or 0
+            if x > 0 and x + w + tail > bodyW then
+                x, row = 0, row + 1
+                text = text:gsub("^%s+", "")
+            end
+            if w <= bodyW or x > 0 then
+                x = x + Put(text, kind, false, x, row, rgb)
+            else
+                -- longer than a row: its words flow like plain words, each row's run one piece in the value's colour
+                local run = ""
+                for tok in text:gmatch("%s*%S+%s*") do
+                    local try = run .. tok
+                    if run ~= "" and x + Width(parent, try, false) > bodyW then
+                        x = x + Put(run, kind, false, x, row, rgb)
+                        x, row, run = 0, row + 1, tok:gsub("^%s+", "")
+                    else
+                        run = try
+                    end
+                end
+                if run ~= "" then x = x + Put(run, kind, false, x, row, rgb) end
+            end
+        else
+            -- plain, old or dropped words: runs per row, broken at spaces; each run is one piece (an old or dropped
+            -- run carries its own strike)
+            local run = ""
+            for tok in text:gmatch("%s*%S+%s*") do
+                local try = run .. tok
+                if x + gap + Width(parent, try, small) > bodyW and (run ~= "" or x > 0) then
+                    if run ~= "" then x = x + gap + Put(run, kind, small, x + gap, row, rgb, sg[3]) end
+                    x, row, gap, run = 0, row + 1, 0, tok:gsub("^%s+", "")
+                else
+                    run = try
+                end
+            end
+            if run ~= "" then x = x + gap + Put(run, kind, small, x + gap, row, rgb, sg[3]) end
+        end
+    end
+    local rows = row + 1
+    local stacked = false
+    holder.leftPieces = n
+    local rsegs = l.rsegs or (l[2] ~= "" and { { l[2] } }) or nil
+    if rsegs then
+        local rrgb = { l[6], l[7], l[8] }
+        -- the right side's width, its pieces laid from its left edge
+        local widths, total = {}, 0
+        for k, sg in ipairs(rsegs) do
+            widths[k] = Snap(Width(parent, sg[1], sg[2] == "old"), scale) + (sg[2] == "old" and Snap(U(OLD_GAP), scale) or 0)
+            total = total + widths[k]
+        end
+        local rx = bodyW - total
+        local rrow = 0
+        if rows > 1 or x + U(SIDE_GAP) > rx then
+            stacked, rrow, rows = true, rows, rows + 1
+        end
+        for k, sg in ipairs(rsegs) do
+            local small = sg[2] == "old"
+            local gap = small and Snap(U(OLD_GAP), scale) or 0
+            Put(sg[1], sg[2], small, rx + gap, rrow, rrgb, sg[3])
+            rx = rx + widths[k]
+        end
+    end
+    for i = n + 1, #(holder.pieces or {}) do
+        holder.pieces[i].fs:Hide()
+        holder.pieces[i].strike:Hide()
+    end
+    return rows * U(ROW), stacked
 end
 
 ns.On("GET_ITEM_INFO_RECEIVED", function(id) T.ItemArrived(id) end)

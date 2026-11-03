@@ -61,18 +61,20 @@ function T.ItemTip(owner, id)
     end
     itemTip:SetOwner(owner, "ANCHOR_RIGHT")
     itemTip.itemID, itemTip.dataTipFor = id, nil
-    -- an item the game cannot draw yet gets the datamined tooltip (Tooltip.lua) until the server sends it
-    if not C_Item.GetItemInfo(id) and T.DataTip and T.DataTip(itemTip, id) then
+    -- an item the game cannot draw yet gets the datamined tooltip (Tooltip.lua) until the server sends it; a test run
+    -- outside Forever always does, since that client's copy of an old item is not Forever's
+    if (not ns.isForever or not C_Item.GetItemInfo(id)) and T.DataTip and T.DataTip(itemTip, id) then
         if C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(id) end
         itemTip:Show()
-        return
+        return itemTip
     end
     itemTip:SetItemByID(id)
     itemTip:Show()
+    return itemTip
 end
 -- the datamined tooltip up for an item the server just sent: the game's own takes over
 function T.ItemArrived(id)
-    if itemTip and itemTip:IsShown() and itemTip.dataTipFor == id and C_Item.GetItemInfo(id) then
+    if ns.isForever and itemTip and itemTip:IsShown() and itemTip.dataTipFor == id and C_Item.GetItemInfo(id) then
         T.ItemTip(itemTip:GetOwner(), id)
     end
 end

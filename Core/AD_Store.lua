@@ -15,7 +15,9 @@
 --           (the layout tier: looks its icons, groups and bars follow)
 --   group:  layoutId, groupKind="cooldown"|"aura"|"reminder", pos={x,y},
 --           members={iconId,...} (a reminder group's are reminder ids and
---           its aura reminders' icon ids)
+--           its aura reminders' icon ids); stacks = { { ids = {iconId,...}
+--           by priority, at = the member holding the cell, name, none }, ... }
+--           or nil (Store.CleanStacks)
 --   icon:   kind, driver={...}, and groupId + gpos={row,col} in a group,
 --           or layoutId + pos={x,y} when free; ownLooks = { { state, when,
 --           alpha, grey, tint, tintColor, glow }, ... } (Core\AD_OwnLooks.lua)
@@ -1291,6 +1293,13 @@ function Store.Normalize()
         if NS.BarSkins then NS.BarSkins.CleanRec(rec) end
         Store.CleanTypeLooks(rec)
         Store.CleanOwnLooks(rec)
+    end
+    -- icon stacks, once every member list and member is clean; only a group
+    -- has them
+    for _, rec in pairs(DB.records) do
+        if rec.stacks ~= nil then
+            if rec.type == "group" then Store.CleanStacks(rec) else rec.stacks = nil end
+        end
     end
     -- a custom item's saved runtime state goes with its record
     if type(DB.runtime) == "table" then
@@ -5506,6 +5515,232 @@ local function removeFrom(list, id)
     end
 end
 
+-- Icon stacks: several icons of one group share one cell and the first one
+-- "up" in the player's order shows. group.stacks = { { ids = { id, ... } in
+-- priority order, at = the member whose gpos is the stack's cell, name = text
+-- | nil (the members' names joined), none = "missing" | nil (what shows when
+-- nothing is up: the first one's Missing look, else nothing) }, ... }. Every
+-- member stays a normal icon of the group with its own record.
+
+local function StackIndex(list, id)
+    for i, v in ipairs(list) do
+        if v == id then return i end
+    end
+end
+
+-- the setters take a group record or its id
+local function GroupArg(g)
+    if type(g) ~= "table" then g = DB.records[g] end
+    return (g and g.type == "group") and g or nil
+end
+
+local function CleanStackName(v)
+    if type(v) == "number" then v = tostring(v) end
+    if type(v) ~= "string" then return nil end
+    v = v:gsub("%c", " "):gsub("^%s+", ""):gsub("%s+$", "")
+    if v == "" then return nil end
+    return Store.CutText(v, 60)
+end
+
+-- A static grid only: a Dynamic aura group packs its icons, one showing every
+-- aura on a unit draws none of them, and a reminder group has no cells.
+function Store.CanStackGroup(group)
+    if not (group and group.type == "group") then return false end
+    if group.groupKind == "cooldown" then return true end
+    if group.groupKind ~= "aura" or Store.ShowsAll(group) then return false end
+    return Store.Resolve(group, "arrangement", "dynamicLayout") ~= true
+end
+
+-- an aura or spell icon; "On this icon" already layers an aura over the
+-- spell, so an icon using it stays out
+local function Stackable(rec)
+    if not (rec and rec.type == "icon" and (rec.kind == "aura" or rec.kind == "spell")) then return false end
+    local ov = type(rec.driver) == "table" and rec.driver.overlay
+    return not (type(ov) == "table" and ov.on == true)
+end
+
+function Store.CanStackRec(rec)
+    if not Stackable(rec) then return false end
+    return Store.CanStackGroup(rec.groupId and DB.records[rec.groupId])
+end
+
+-- the stack holding `rec` in its group, the group and the stack's index, or nil
+function Store.StackOf(rec)
+    local g = rec and rec.type == "icon" and rec.groupId and DB.records[rec.groupId]
+    if not (g and type(g.stacks) == "table") then return nil end
+    for i, st in ipairs(g.stacks) do
+        if type(st) == "table" and type(st.ids) == "table" and StackIndex(st.ids, rec.id) then return st, g, i end
+    end
+    return nil
+end
+
+-- the name a stack shows: its own, else its members' names joined
+function Store.StackName(st)
+    if type(st) ~= "table" then return "" end
+    if st.name ~= nil then return st.name end
+    local names = {}
+    for _, id in ipairs(type(st.ids) == "table" and st.ids or {}) do
+        local r = DB.records[id]
+        names[#names + 1] = tostring(r and r.name or "?")
+    end
+    return table.concat(names, " + ")
+end
+
+-- Keeps a group's stacks to the rules: icons listed in its members that can
+-- stack there, each in one stack at most, two or more per stack, `at` one of
+-- them (else the first); no stacks leaves no field. `leaver` (optional): a
+-- record taken out of every stack; when it held a stack's cell, the next
+-- member takes that cell, so the stack stays where it was.
+function Store.CleanStacks(group, leaver)
+    if type(group) ~= "table" or group.stacks == nil then return end
+    local list = group.stacks
+    if type(list) ~= "table" or not Store.CanStackGroup(group) then
+        group.stacks = nil
+        return
+    end
+    local listed = {}
+    for _, mid in ipairs(type(group.members) == "table" and group.members or {}) do listed[mid] = true end
+    local gone = leaver and leaver.id
+    local out, used = {}, {}
+    for _, st in ipairs(list) do
+        if type(st) == "table" and type(st.ids) == "table" then
+            local ids, here = {}, {}
+            for _, id in ipairs(st.ids) do
+                if id ~= gone and listed[id] and not used[id] and not here[id] and Stackable(DB.records[id]) then
+                    here[id] = true
+                    ids[#ids + 1] = id
+                end
+            end
+            -- the cell goes on even when one icon is left, so it stays put
+            if gone ~= nil and st.at == gone and ids[1] then
+                local gp = leaver.gpos
+                DB.records[ids[1]].gpos = (type(gp) == "table") and { row = gp.row, col = gp.col } or nil
+            end
+            if #ids >= 2 then
+                for _, id in ipairs(ids) do used[id] = true end
+                local at = st.at
+                if not here[at] then at = ids[1] end
+                local name, none = CleanStackName(st.name), (st.none == "missing") and "missing" or nil
+                -- the same table, so a hold on it stays good; unknown keys go
+                for k in pairs(st) do st[k] = nil end
+                st.ids, st.at, st.name, st.none = ids, at, name, none -- raw-id: record ids, never a spell
+                out[#out + 1] = st
+            end
+        end
+    end
+    group.stacks = (#out > 0) and out or nil
+end
+
+-- a group's stacks re-pointed through an id map (copies, imports, updates);
+-- an id with no number in the map drops out. Store.CleanStacks tidies after.
+local function RemapStacks(rec, map)
+    if type(rec.stacks) ~= "table" then return end
+    for _, st in ipairs(rec.stacks) do
+        if type(st) == "table" and type(st.ids) == "table" then
+            local ids = {}
+            for _, old in ipairs(st.ids) do
+                local nid = map[old]
+                if type(nid) == "number" then ids[#ids + 1] = nid end
+            end
+            st.ids = ids -- raw-id: record ids, never a spell
+            local at = map[st.at]
+            st.at = (type(at) == "number") and at or nil
+        end
+    end
+end
+
+-- Stacks the dropped icon onto the target: a new stack in the target's cell,
+-- or the dropped icon added last to the target's stack. It leaves any other
+-- stack first. Both must be stackable icons of `group`. Returns the stack, or
+-- nil for a pair that cannot stack.
+function Store.MakeStack(group, targetId, droppedId)
+    group = GroupArg(group)
+    if not (group and Store.CanStackGroup(group)) or targetId == droppedId then return nil end
+    local listed = type(group.members) == "table" and group.members or {}
+    for _, id in ipairs({ targetId, droppedId }) do
+        local r = DB.records[id]
+        if not (r and r.groupId == group.id and StackIndex(listed, id) and Stackable(r)) then return nil end
+    end
+    local st = Store.StackOf(DB.records[targetId])
+    if st and StackIndex(st.ids, droppedId) then return st end
+    if Store.StackOf(DB.records[droppedId]) then Store.CleanStacks(group, DB.records[droppedId]) end
+    st = Store.StackOf(DB.records[targetId])
+    if st then
+        st.ids[#st.ids + 1] = droppedId
+    else
+        st = { ids = { targetId, droppedId }, at = targetId } -- raw-id: record ids, never a spell
+        if type(group.stacks) ~= "table" then group.stacks = {} end
+        group.stacks[#group.stacks + 1] = st
+    end
+    Store.Dirty("tree")
+    return st
+end
+
+-- one icon back to a separate icon of its group, in the first free cell
+function Store.Unstack(id)
+    local rec = DB.records[id]
+    local st, g = Store.StackOf(rec)
+    if not st then return false end
+    Store.CleanStacks(g, rec)
+    rec.gpos = nil
+    Store.Dirty("tree")
+    return true
+end
+
+-- the whole stack back to separate icons: the cell owner keeps the cell, the
+-- others take the first free cells
+function Store.SplitStack(group, index)
+    group = GroupArg(group)
+    local list = group and group.stacks
+    local st = type(list) == "table" and list[index]
+    if type(st) ~= "table" then return false end
+    for _, id in ipairs(type(st.ids) == "table" and st.ids or {}) do
+        local r = DB.records[id]
+        if r and id ~= st.at then r.gpos = nil end
+    end
+    table.remove(list, index)
+    if #list == 0 then group.stacks = nil end
+    Store.Dirty("tree")
+    return true
+end
+
+-- a member up (delta < 0) or down the priority order, held at the ends
+function Store.MoveInStack(group, index, id, delta)
+    group = GroupArg(group)
+    local st = group and type(group.stacks) == "table" and group.stacks[index]
+    local ids = type(st) == "table" and type(st.ids) == "table" and st.ids
+    local k = ids and StackIndex(ids, id)
+    delta = tonumber(delta)
+    if not (k and delta) then return false end
+    delta = (delta < 0) and math.ceil(delta) or math.floor(delta)
+    local to = math.max(1, math.min(#ids, k + delta))
+    if to == k then return false end
+    table.remove(ids, k)
+    table.insert(ids, to, id)
+    Store.Dirty("tree")
+    return true
+end
+
+-- a stack's name (nil, "" or blank: its members' names) or "none" ("missing"
+-- or nil); any other key is refused
+function Store.SetStackField(group, index, key, value)
+    group = GroupArg(group)
+    local st = group and type(group.stacks) == "table" and group.stacks[index]
+    if type(st) ~= "table" then return false end
+    if key == "name" then
+        value = CleanStackName(value)
+    elseif key == "none" then
+        value = (value == "missing") and "missing" or nil
+    else
+        return false
+    end
+    if st[key] ~= value then
+        st[key] = value
+        Store.Dirty("tree", group.id)
+    end
+    return true
+end
+
 -- A pack item the player deletes stays deleted when the pack updates: its uid
 -- goes on its layout's packGone, with the uid of the container it sat in (a
 -- string that still carries that container but not the item has dropped it,
@@ -5554,7 +5789,10 @@ function Store.Delete(id, packDrop)
     elseif rec.type == "icon" or rec.type == "reminder" then
         if rec.groupId then
             local group = Store.Get(rec.groupId)
-            if group then removeFrom(group.members, id) end
+            if group then
+                removeFrom(group.members, id)
+                Store.CleanStacks(group, rec)
+            end
         elseif rec.layoutId then
             local layout = Store.Get(rec.layoutId)
             if layout then removeFrom(layout.members, id) end
@@ -5586,7 +5824,11 @@ function Store.MoveIcon(iconId, destGroupId, layoutId, pos, cell)
     local keep = Store.DynReadings(rec)
     if rec.groupId then
         local g = Store.Get(rec.groupId)
-        if g then removeFrom(g.members, iconId) end
+        if g then
+            removeFrom(g.members, iconId)
+            -- leaving the group leaves its stack; a move inside it moves the stack
+            if g.id ~= destGroupId then Store.CleanStacks(g, rec) end
+        end
     elseif rec.layoutId then
         local l = Store.Get(rec.layoutId)
         if l then removeFrom(l.members, iconId) end
@@ -5789,6 +6031,11 @@ local function CloneIcons(group, gc, map, made)
             DB.records[ic.id] = ic
         end
     end
+    -- its stacks hold the copies
+    if gc.stacks ~= nil then
+        RemapStacks(gc, map)
+        Store.CleanStacks(gc)
+    end
 end
 
 -- Copy and paste in one step: a layout with everything in it, a group with its
@@ -5865,7 +6112,10 @@ function Store.PlaceInLayout(id, layoutId, beforeId)
     if rec.type ~= "group" and rec.type ~= "bar" and rec.type ~= "icon" then return false end
     if rec.type == "icon" and rec.groupId then
         local g = Store.Get(rec.groupId)
-        if g then removeFrom(g.members, id) end
+        if g then
+            removeFrom(g.members, id)
+            Store.CleanStacks(g, rec)
+        end
         rec.groupId, rec.gpos = nil, nil
         local p = rec.pos
         rec.pos = {
@@ -6001,6 +6251,39 @@ function Store.CopyMany(ids, target)
             end
         end
         if ok == false then refused[#refused + 1] = id end
+    end
+    -- A stack travels only whole: when every icon of it was copied on its own
+    -- into one group, the copies stack there too (a copied group brought its
+    -- stacks along).
+    local srcs, seenSrc = {}, {}
+    for _, id in ipairs(ids or {}) do
+        local rec = DB.records[id]
+        local gid = rec and rec.type == "icon" and map[id] and rec.groupId
+        if gid and not set[gid] and not seenSrc[gid] then
+            seenSrc[gid] = true
+            srcs[#srcs + 1] = DB.records[gid]
+        end
+    end
+    for _, g in ipairs(srcs) do
+        for _, st in ipairs(type(g.stacks) == "table" and g.stacks or {}) do
+            local whole = type(st) == "table" and type(st.ids) == "table" and #st.ids >= 2
+            local cids, home = {}, nil
+            for _, sid in ipairs(whole and st.ids or {}) do
+                local c = map[sid] and DB.records[map[sid]]
+                if not (c and c.groupId and (home == nil or c.groupId == home)) then
+                    whole = false
+                    break
+                end
+                home = c.groupId
+                cids[#cids + 1] = c.id
+            end
+            local hg = whole and DB.records[home]
+            if hg then
+                if type(hg.stacks) ~= "table" then hg.stacks = {} end
+                hg.stacks[#hg.stacks + 1] = { ids = cids, at = map[st.at], name = st.name, none = st.none } -- raw-id: record ids
+                Store.CleanStacks(hg)
+            end
+        end
     end
     for _, r in ipairs(made) do
         RemapAnchors(r, map, true)
@@ -6409,6 +6692,8 @@ function Store.Export(ids, keep)
                 if seen[mid] then m[#m + 1] = mid end
             end
             rec.members = m
+            -- and only the stacks of those members (a stack short of two goes)
+            if rec.type == "group" then Store.CleanStacks(rec) end
         end
         if rec.type ~= "layout" then
             -- its layout is not in the string: its looks travel baked in
@@ -6581,6 +6866,8 @@ function Store.Import(text, targetLayoutId, opts)
             end
             rec.members = m
         end
+        -- stacks the same way; Normalize below keeps them to the rules
+        if rec.stacks ~= nil then RemapStacks(rec, map) end
         if rec.groupId ~= nil then rec.groupId = map[rec.groupId] end
         if rec.layoutId ~= nil then rec.layoutId = map[rec.layoutId] end
         RemapAnchors(rec, map, false)
@@ -6846,6 +7133,20 @@ local function PartSlice(rec, part, uidOf)
             if u then m[#m + 1] = u end
         end
         out[".members"] = m
+        -- its stacks the same way: only the members both sides have, so the
+        -- player's own icons and stacks are no change
+        local sl = {}
+        for _, st in ipairs(type(rec.stacks) == "table" and rec.stacks or {}) do
+            local ids = {}
+            for _, id in ipairs(type(st) == "table" and type(st.ids) == "table" and st.ids or {}) do
+                local u = uidOf(id)
+                if u then ids[#ids + 1] = u end
+            end
+            if #ids >= 2 then
+                sl[#sl + 1] = { ids = ids, at = uidOf(st.at) or ids[1], name = st.name, none = st.none } -- raw-id: uids
+            end
+        end
+        if #sl > 0 then out[".stacks"] = sl end
     end
     return out
 end
@@ -7119,6 +7420,25 @@ local function ApplyPart(loc, view, part, map)
             if not set[id] then order[#order + 1] = id end
         end
         loc.members = order
+        -- the string's stacks, then the player's own (no item of the string's
+        -- group in them); a mixed one is the string's. Normalize tidies.
+        if loc.type == "group" and (loc.stacks ~= nil or view.stacks ~= nil) then
+            local carried = {}
+            for _, iid in ipairs(type(view.members) == "table" and view.members or {}) do
+                if type(map[iid]) == "number" then carried[map[iid]] = true end
+            end
+            local v = { stacks = CopyDeep(view.stacks) }
+            RemapStacks(v, map)
+            local list = type(v.stacks) == "table" and v.stacks or {}
+            for _, st in ipairs(type(loc.stacks) == "table" and loc.stacks or {}) do
+                local own = type(st) == "table" and type(st.ids) == "table"
+                for _, id in ipairs(own and st.ids or {}) do
+                    if carried[id] then own = false end
+                end
+                if own then list[#list + 1] = st end
+            end
+            loc.stacks = list
+        end
     end
 end
 
@@ -7176,6 +7496,8 @@ function Store.ApplyUpdate(plan, opts)
         -- a new container fills as its items arrive; matched ones join it
         -- only through Size & Position
         if type(rec.members) == "table" then rec.members = {} end
+        -- its stacks name the local ids; Normalize keeps what joined
+        if rec.stacks ~= nil then RemapStacks(rec, map) end
         rec.groupId = rec.groupId ~= nil and map[rec.groupId] or nil
         rec.layoutId = rec.layoutId ~= nil and map[rec.layoutId] or nil
         DB.records[rec.id] = rec

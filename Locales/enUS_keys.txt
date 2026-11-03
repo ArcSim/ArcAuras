@@ -140,6 +140,7 @@
 %d of %d picked spells ping. Auto-Ping is off.
 %d of %d shown.
 %d of %d spots, %s
+%d of %d to import
 %d of 5 set pieces equipped.
 %d of them are in Arc Auras already: importing again adds a second copy.
 %d of them do not load here: the eye in the sidebar shows them.
@@ -4708,6 +4709,7 @@ Top
 Top left
 Top right
 Top to bottom
+Totem 
 Totem / Guardian
 Totem / Guardian Duration
 Totem Bar
@@ -4722,6 +4724,7 @@ Totem from spell ID
 Totem gone
 Totem icon
 Totem icons
+Totem only
 Totem or aura up
 Totem slot
 Toy Item ID
@@ -5242,6 +5245,7 @@ Your Arcane Blast stacks: up to 4, each cast restarts their 8 seconds; any other
 Your Casts
 Your Cooldown
 Your Cooldown Manager could not be read just now. Try again in a moment.
+Your Cooldown Manager has no %s.
 Your Cooldown Manager layout is ready. Turn off the game's own Cooldown Manager now?\n\nSettings > Cooldown Manager turns it back on.
 Your Cooldown Manager lists no auras here.
 Your Cooldown Manager shows no spells yet.

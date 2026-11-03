@@ -115,6 +115,22 @@ end
 local function Tip(p)
     local r = p.rec
     if not r then return end
+    -- one item: the finder's own item tooltip, with where it comes from and the pin hint under the item's lines
+    if not (r.items and #r.items > 1) then
+        local tip = T.ItemTip(p, r.id)
+        if not tip then return end
+        local en, who = r.entry, r.who or (r.entry and r.entry.who)
+        local from
+        if en and en.rightText == nil then
+            from = en.left
+        elseif who and who.name then
+            from = who.name .. (who.lv and (" (" .. who.lv .. ")") or "")
+        end
+        if from then tip:AddLine(from, 1, 1, 1) end
+        if not p.mini then tip:AddLine("Ctrl+click to drop a map pin", T.RGB(C.dim)) end
+        tip:Show()
+        return
+    end
     GameTooltip:SetOwner(p, "ANCHOR_RIGHT")
     if r.items and #r.items > 1 then
         GameTooltip:AddLine(r.dungeon, T.RGB(C.title))
@@ -142,11 +158,11 @@ local function Tip(p)
     GameTooltip:Show()
 end
 
--- the window's pin with an icon face on top; Style shows one or the other. Only hover is the pin's: a click goes
--- through to the map under it
+-- the window's pin with an icon face on top; Style shows one or the other. Only hover is the pin's: a click is handed
+-- on to the map under it, as the map's own pins do
 local function NewPin(parent)
     local p = ns.UI.NewPin(parent)
-    p:SetMouseClickEnabled(false)
+    p:SetPropagateMouseClicks(true)
     local face = CreateFrame("Frame", nil, p)
     face:SetPoint("CENTER")
     face.icon = face:CreateTexture(nil, "ARTWORK")
@@ -157,7 +173,10 @@ local function NewPin(parent)
     p.count = T.Text(p, 11, "FFFFFF")
     p.count:SetPoint("CENTER")
     p:SetScript("OnEnter", Tip)
-    p:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    p:SetScript("OnLeave", function(self)
+        GameTooltip:Hide()
+        T.HideItemTip(self)
+    end)
     p:SetScript("OnMouseUp", nil)
     return p
 end
@@ -268,8 +287,8 @@ end
 local function NewBadge(parent)
     local b = CreateFrame("Frame", nil, parent)
     b:EnableMouse(true)
-    -- a click goes through, so the continent still opens the zone under it
-    b:SetMouseClickEnabled(false)
+    -- a click is handed on to the map, so the continent still opens the zone under it
+    b:SetPropagateMouseClicks(true)
     -- bare icons on the map, no frame around them
     b.faces = {}
     for i = 1, BADGE_ICONS do
@@ -278,6 +297,11 @@ local function NewBadge(parent)
         f.icon = f:CreateTexture(nil, "ARTWORK")
         f.icon:SetAllPoints()
         f.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+        -- each icon shows its item's tooltip; a click still goes on to the map
+        f:EnableMouse(true)
+        f:SetPropagateMouseClicks(true)
+        f:SetScript("OnEnter", function(self) T.ItemTip(self, self.id) end)
+        f:SetScript("OnLeave", function(self) T.HideItemTip(self) end)
         b.faces[i] = f
     end
     b.more = T.Text(b, 12, "FFFFFF")
@@ -295,6 +319,7 @@ local function FillBadge(b, z)
     local gap, k = U(2), math.min(#ids, BADGE_ICONS)
     for i, f in ipairs(b.faces) do
         f:SetShown(i <= k)
+        f.id = ids[i]
         if i <= k then
             f.icon:SetTexture(ns.UI.ItemIcon(ids[i]))
             f:ClearAllPoints()
@@ -312,9 +337,22 @@ local function FillBadge(b, z)
     b:SetSize(w, U(ICON))
 end
 
-local function LayBadges(canvas, mapID, scale, cw, ch)
+-- The map's own layers start at frame level 2000 with the explored-area art, fog and quest areas, which are opaque
+-- and would cover anything under them; the pins go on its dig-site layer, above that art and under its icons. Read
+-- from the map's level table, never by calling its code.
+local function PinLevel(wm, canvas)
+    local mgr = wm.pinFrameLevelsManager
+    local defs = mgr and mgr.definitions
+    local def = defs and defs.PIN_FRAME_LEVEL_DIG_SITE
+    if def and def.overrideType then def = defs[def.overrideType] end
+    return (def and def.startLevel) or (canvas:GetFrameLevel() + 2100)
+end
+F.PinLevel = PinLevel
+
+local function LayBadges(canvas, mapID, scale, cw, ch, level)
     local n = 0
-    if mapID and C_Map.GetMapRectOnMap then
+    -- while the place counts are on, each zone's count row carries these icons itself (PlacePins.lua)
+    if mapID and C_Map.GetMapRectOnMap and not (ns.PlacePins and ns.PlacePins.On()) then
         for _, z in ipairs(Zones()) do
             local info = #z.ids > 0 and z.info
             if info and info.parentMapID == mapID then
@@ -328,13 +366,14 @@ local function LayBadges(canvas, mapID, scale, cw, ch)
                     end
                     b.zone = info.name
                     FillBadge(b, z)
-                    b:SetFrameLevel(canvas:GetFrameLevel() + 1990)
+                    b:SetFrameLevel(level)
                     b:SetScale(1 / scale)
                     -- the first icon sits on the spot, the rest run to its right
                     local px = minX + z.x / 1000 * (maxX - minX)
                     local py = minY + z.y / 1000 * (maxY - minY)
                     b:ClearAllPoints()
                     b:SetPoint("LEFT", canvas, "TOPLEFT", px * cw - U(ICON) / 2, -py * ch)
+                    b.cx, b.cy = px * cw - U(ICON) / 2 + b:GetWidth() / 2, py * ch
                     b:Show()
                 end
             end
@@ -352,9 +391,9 @@ local function LayWorld()
     local n = 0
     local scale = mapID and wm:GetCanvasScale()
     if not scale or scale <= 0 then scale = 1 end
-    local cw, ch = 0, 0
-    if canvas then cw, ch = canvas:GetWidth() * scale, canvas:GetHeight() * scale end
-    LayBadges(canvas, mapID, scale, cw, ch)
+    local cw, ch, level = 0, 0, 0
+    if canvas then cw, ch, level = canvas:GetWidth() * scale, canvas:GetHeight() * scale, PinLevel(wm, canvas) end
+    LayBadges(canvas, mapID, scale, cw, ch, level)
     if list then
         -- thinned again only when the zoom crosses a step of a quarter: a zoom animation calls back on every frame, and
         -- between steps the same pins only move. The step rounds down, so the pins are never thinned finer than the zoom
@@ -389,15 +428,35 @@ local function LayWorld()
             end
             p.rec, p.m, p.x, p.y = r, r.m, r.x, r.y
             Style(p, r, size)
-            -- under the pins Show on World Map puts there
-            p:SetFrameLevel(canvas:GetFrameLevel() + 1990)
+            p:SetFrameLevel(level)
             p:SetScale(1 / scale)
             p:ClearAllPoints()
-            p:SetPoint("CENTER", canvas, "TOPLEFT", r.x / 1000 * cw, -r.y / 1000 * ch)
+            p.cx, p.cy = r.x / 1000 * cw, r.y / 1000 * ch
+            p:SetPoint("CENTER", canvas, "TOPLEFT", p.cx, -p.cy)
             p:Show()
         end
     end
     for i = n + 1, #worldPins do worldPins[i]:Hide() end
+    -- the place counts lay out after the favorites, around them
+    if ns.PlacePins then ns.PlacePins.Lay() end
+end
+
+-- the favorites' plates and pins on the shown map, where the place counts must not stand: centre and size, in the
+-- pins' own units
+-- the tracked items of each zone, names in order, for the place counts' rows: { m = client map, ids }
+function F.ZoneMarks()
+    if dirty then Build() end
+    return Zones()
+end
+
+function F.Obstacles()
+    local out = {}
+    for _, list in ipairs({ badges, worldPins }) do
+        for _, f in ipairs(list) do
+            if f:IsShown() and f.cx then out[#out + 1] = { x = f.cx, y = f.cy, w = f:GetWidth(), h = f:GetHeight() } end
+        end
+    end
+    return out
 end
 
 local function Hook()
@@ -543,8 +602,9 @@ function F.Covers(id)
         not (ns.db.favHidden and ns.db.favHidden[id])
 end
 
--- the World Map's own button under the game's two at its top right: a list of every item with marks on the map, a
--- tick box each. A favorite taken off the map stays a favorite (ns.db.favHidden); the Mark on Map item comes off.
+-- the World Map's own button under the game's two at its top right: what the place counts count (while they are on,
+-- PlacePins.lua), then a list of every item with marks on the map, a tick box each. A favorite taken off the map
+-- stays a favorite (ns.db.favHidden); the Mark on Map item comes off.
 local mapBtn, panel
 local ROW = U(22)
 
@@ -566,12 +626,35 @@ local function IsShownOnMap(item)
     return ns.WorldPins and ns.WorldPins.Marked() == item.id
 end
 
+local function CountsOn() return ns.PlacePins ~= nil and ns.PlacePins.On() end
+
 local function FillPanel()
     if not panel or not panel:IsShown() then return end
     local items = Listed()
-    local n = math.max(1, math.min(#items, 10))
-    panel:SetHeight(U(30) + n * ROW + U(8))
-    panel.list:SetData(items)
+    local top = 0
+    local counts = CountsOn()
+    panel.countsTitle:SetShown(counts)
+    for i, r in ipairs(panel.countRows) do
+        r:SetShown(counts)
+        if counts then
+            r:ClearAllPoints()
+            r:SetPoint("TOPLEFT", U(2), -(U(30) + (i - 1) * ROW))
+            r:SetPoint("TOPRIGHT", -U(2), -(U(30) + (i - 1) * ROW))
+            r.tick:SetShown(ns.PlacePins.IsShown(r.key))
+        end
+    end
+    if counts then top = U(30) + #panel.countRows * ROW + U(6) end
+    local marks = #items > 0
+    panel.marksTitle:SetShown(marks)
+    panel.list:SetShown(marks)
+    panel.marksTitle:ClearAllPoints()
+    panel.marksTitle:SetPoint("TOPLEFT", U(10), -(top + U(8)))
+    panel.list:ClearAllPoints()
+    panel.list:SetPoint("TOPLEFT", U(2), -(top + U(30)))
+    panel.list:SetPoint("BOTTOMRIGHT", -U(2), U(6))
+    local n = marks and math.max(1, math.min(#items, 10)) or 0
+    panel:SetHeight(marks and (top + U(30) + n * ROW + U(8)) or (top + U(4)))
+    if marks then panel.list:SetData(items) end
 end
 
 local function Toggle(item)
@@ -642,7 +725,7 @@ local function BuildMapButton(wm, container)
     mapBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_LEFT")
         GameTooltip:SetText("Forever Item Finder", 1, 1, 1)
-        GameTooltip:AddLine("Choose which marks show on the map", T.RGB(C.dim))
+        GameTooltip:AddLine("Choose what shows on the map", T.RGB(C.dim))
         GameTooltip:Show()
     end)
     mapBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -650,15 +733,38 @@ local function BuildMapButton(wm, container)
     panel = CreateFrame("Frame", nil, mapBtn)
     panel:SetWidth(U(250))
     panel:SetPoint("TOPRIGHT", mapBtn, "TOPLEFT", -U(4), 0)
-    panel:SetFrameLevel(mapBtn:GetFrameLevel() + 5)
+    -- the map's own icons sit thousands of levels up on its canvas; the panel goes over all of them
+    panel:SetFrameStrata("FULLSCREEN_DIALOG")
     panel:EnableMouse(true)
     T.Panel(panel, C.bg, C.gold)
-    local title = T.Text(panel, 13, C.title)
-    title:SetPoint("TOPLEFT", U(10), -U(8))
-    title:SetText("Marks on your map")
+    panel.countsTitle = T.Text(panel, 13, C.title)
+    panel.countsTitle:SetPoint("TOPLEFT", U(10), -U(8))
+    panel.countsTitle:SetText("Item counts")
+    panel.countRows = {}
+    for i, o in ipairs(ns.PlacePins and ns.PlacePins.ShowOptions() or {}) do
+        local r = CreateFrame("Button", nil, panel)
+        r:SetHeight(ROW)
+        T.Hover(r, C.sel, true)
+        r.box = CreateFrame("Frame", nil, r)
+        r.box:SetSize(U(12), U(12))
+        r.box:SetPoint("LEFT", U(8), 0)
+        T.Panel(r.box, C.input, C.inputLine)
+        r.tick = T.Solid(r.box, "ARTWORK", C.gold)
+        r.tick:SetPoint("TOPLEFT", U(3), -U(3))
+        r.tick:SetPoint("BOTTOMRIGHT", -U(3), U(3))
+        r.text = T.Text(r, 13, C.ink)
+        r.text:SetPoint("LEFT", r.box, "RIGHT", U(8), 0)
+        r.text:SetText(o[2])
+        r.key = o[1]
+        r:SetScript("OnClick", function(self)
+            ns.PlacePins.ToggleShow(self.key)
+            FillPanel()
+        end)
+        panel.countRows[i] = r
+    end
+    panel.marksTitle = T.Text(panel, 13, C.title)
+    panel.marksTitle:SetText("Marks on your map")
     panel.list = T.List(panel, ROW, MakeRow, BindRow)
-    panel.list:SetPoint("TOPLEFT", U(2), -U(30))
-    panel.list:SetPoint("BOTTOMRIGHT", -U(2), U(6))
     panel:Hide()
     mapBtn:SetScript("OnClick", function()
         panel:SetShown(not panel:IsShown())
@@ -676,7 +782,7 @@ local function SyncMapButton()
     local below = (wm.WorldMapTrackingOptionsButton and 1 or 0) + (wm.WorldMapTrackingPinButton and 1 or 0)
     mapBtn:ClearAllPoints()
     mapBtn:SetPoint("TOPRIGHT", container, "TOPRIGHT", -4, -2 - 32 * below)
-    local any = #Listed() > 0
+    local any = #Listed() > 0 or CountsOn()
     mapBtn:SetShown(any)
     if not any then panel:Hide() end
     FillPanel()
@@ -690,6 +796,12 @@ function F.Refresh()
     LayWorld()
     SetupMini()
     SyncMapButton()
+end
+
+-- read by the developer's probe (DevProbe.lua); nothing here changes them
+function F.State()
+    return { hooked = hooked, dirty = dirty, byMap = byMap, records = records, worldPins = worldPins, badges = badges,
+        tracked = Tracked() }
 end
 
 ns.Listen("FavoritesChanged", F.Refresh)

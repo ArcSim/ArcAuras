@@ -11,6 +11,7 @@
 
 Data\Items.lua
 Data\MapOverlays.lua
+Data\Places.lua
 Core.lua
 FindsCore.lua
 Data.lua
@@ -24,5 +25,7 @@ Popup.lua
 UI.lua
 WorldPins.lua
 FavPins.lua
+PlacePins.lua
 Tooltip.lua
+GameTips.lua
 Minimap.lua

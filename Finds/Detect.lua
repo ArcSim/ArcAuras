@@ -114,8 +114,9 @@ end
 -- kind of find this item is for this copy's data: "n", "c", "pend" (needs a second player), or nil (not a find)
 function Detect.Kind(id, game)
     if not ns.isForever then
-        -- a test run on another client: anything uncommon or better counts, except while the demo shows Forever's finds
-        if ns.db.demoOn then return nil end
+        -- a test run on another client sees that client's items, not Forever's: none are finds, so the window holds only
+        -- the shipped data. The developer's /fif retailfinds counts anything uncommon or better, to try the pop-ups
+        if ns.db.demoOn or not ns.db.retailFinds then return nil end
         return (game and (game.q or 0) >= 2) and "n" or nil
     end
     local what, a, b, c = D.Classify(id)
@@ -138,7 +139,7 @@ end
 
 -- a network find: false when this copy's own data says it is an old item
 function Detect.Judge(id, info)
-    if not ns.isForever then return true end
+    if not ns.isForever then return ns.db.retailFinds == true end
     local what, row = D.Classify(id)
     if what == "boring" or (what == "seed" and row.kind == "o") then
         -- an old item said to be changed shows only once two players report it

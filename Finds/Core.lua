@@ -45,10 +45,15 @@ local DEFAULTS = {
     soundKit = "loot",      -- a key of Popup.SOUNDS
     credit = "name",        -- name / anon
     winScale = 100,         -- the window's size, in percent
+    showChanges = false,    -- the item box shows what changed from Classic without its button
+    itemTips = "changes",   -- lines on the game's item tooltips: off / changes (new and changed items) / all
     -- favorites on the game's maps (FavPins.lua): both (World Map and minimap) / world / off; starring an item is
     -- already the player asking for it, so this starts on
     favPins = "both",
     favLook = "icon",       -- icon (the item's) / dot (the window's pin for its source)
+    -- place counts on the World Map (PlacePins.lua): on / off, and what they count: new, changed, Classic, marked
+    placePins = "off",
+    placeShow = { n = true, c = false, o = false, f = false },
 }
 ns.DEFAULTS = DEFAULTS
 
@@ -144,6 +149,9 @@ function Command(msg)
         ns.Signal("Demo", false)
     elseif msg == "demo clear" and ns.DEV then
         ns.Signal("Demo", true)
+    -- a test run outside Forever: count that client's own items as finds, to try the pop-ups (off by default)
+    elseif msg == "retailfinds" and ns.DEV and not ns.isForever then
+        ns.db.retailFinds = not ns.db.retailFinds or nil
     else
         ns.Signal("ToggleWindow")
     end

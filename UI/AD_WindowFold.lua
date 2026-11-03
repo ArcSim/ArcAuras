@@ -212,11 +212,8 @@ function Fold.Attach(win, bounds)
     AT.Skin(edge, COL.bg, COL.line2)
     edge:EnableMouse(true)
     edge:RegisterForDrag("LeftButton")
-    edge:SetScript("OnDragStart", function() win:StartMoving() end)
-    edge:SetScript("OnDragStop", function()
-        win:StopMovingOrSizing()
-        AT.SnapWindow(win)
-    end)
+    edge:SetScript("OnDragStart", function(_, button) AT.StartDrag(win, button) end)
+    edge:SetScript("OnDragStop", function() AT.StopDrag(win) end)
     edge:Hide()
     Fold.edge = edge
 

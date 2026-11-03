@@ -104,6 +104,12 @@ function MO.Pick()
         MO.Say(MO.SAY[why] or MO.SAY.read)
         return
     end
+    -- the pick window asks the look itself (UI\AD_CDMPick.lua)
+    local CP = NS.Options and NS.Options.CDMPick
+    if CP then
+        CP.Open()
+        return
+    end
     MO.AskLook(function(look)
         local rec, why2 = NS.CDMMirror.Build(look)
         if rec then
@@ -168,6 +174,7 @@ MO.entry = {
     draw = function(stage) MO.Draw(stage) end,
     pick = function() MO.Pick() end,
     avail = function() return NS.CDMMirror ~= nil and NS.CDMMirror.Available() end,
+    lit = function() return NS.Options and NS.Options.CDMPick and NS.Options.CDMPick.IsOpen() end,
     -- right after the templates, ahead of Empty and Import
     lead = true,
 }

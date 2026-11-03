@@ -2143,10 +2143,12 @@ function EF.Build(pg, ctx, vis, owner, under)
             if E.LookCanAdd(r, st) then out[#out + 1] = addD end
             return out
         end
+        -- a lone switch hides only while on (the tab is the switch then); off,
+        -- it shows so it can be ticked back on
         local keys = KeysOf(r, st, fx)
         for _, k in ipairs(keys) do
             local def = E.KeyDef(r, k)
-            if def then out[#out + 1] = Wrap(def, fx, #keys == 1) end
+            if def then out[#out + 1] = Wrap(def, fx, #keys == 1 and KeyOn(r, k)) end
         end
         for _, def in ipairs(E.FX_KIND_BLOCKS[fx] or {}) do
             if E.blockShows(r, def) then out[#out + 1] = Wrap(def, fx, false) end

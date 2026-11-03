@@ -1468,6 +1468,7 @@ Debuffs
 Debuffs on you or your pet cannot be hidden by spell.
 Debuffs start a new line
 Decimal seconds
+Decimals
 Decimals below (s)
 Decimals under (seconds)
 Deck %d / %d
@@ -2159,7 +2160,8 @@ Hear the words once.
 Hear this trigger's sound once, on the group's sound channel.
 Hear this trigger's text once, in the group's voice.
 Height
-Height (0 = auto)
+Height (0 = 36)
+Height (0 = the group's size)
 Here no procs used means: %s; all used: %s.
 Hero Talents
 Hero tree 
@@ -2190,6 +2192,7 @@ Hide these spells
 Hide when inactive
 Hide when ready
 Hide while editing
+Hides at zero
 Hides between casts; shows a sample cast while this window is open.
 Hides casts you cannot interrupt. In combat the game hides that from addons, so it cannot drive sounds or alerts.
 Hides it on screen while this window is open, so you can get at what sits under it. Closing the window shows it again.
@@ -3294,6 +3297,7 @@ Picture zoom (%)
 Pictures by stack count
 Piece
 Pieces
+Pin target
 Ping Key
 Ping Keys
 Ping key
@@ -3859,6 +3863,9 @@ Settings
 Several units
 Shadow
 Shadow Protection
+Shadow X
+Shadow Y
+Shadow color
 Shadow size
 Shaman Imbue
 Shaman by Emity
@@ -3977,6 +3984,7 @@ Shows Arc Pings above the window while it is unlocked or this page is open.
 Shows a drag handle on every layout. Drag it where you want, then lock.
 Shows as
 Shows it at full opacity
+Shows max
 Shows only the rows where your default differs from Arc's.
 Shows this window in English instead of your game's language. Takes effect after a /reload.
 Shows while the aura is missing
@@ -4609,9 +4617,9 @@ This string updates items you have
 This swing color
 This timer ended
 This type's border, color wash, label and glow use it.
-This type's height (0 = auto)
+This type's height (0 = the group's size)
 This type's scale
-This type's width (0 = auto)
+This type's width (0 = the group's size)
 This way of pinging needs a key: set one below.
 Threshold %d color
 Threshold %d value
@@ -5158,7 +5166,8 @@ Whose aura
 Whose casts
 Wide (3:2)
 Width
-Width (0 = auto)
+Width (0 = 36)
+Width (0 = the group's size)
 Windfury Totem
 Windfury Weapon
 Window layer

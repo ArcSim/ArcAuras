@@ -1,5 +1,20 @@
 # Arc Auras
 
+## 3.1.7
+
+Clearer option names, percent signs, and an Export selection fix.
+
+### Improvements
+
+- **Shorter option names** - Rows inside a text's box no longer repeat its name (Font, not Duration text font).
+- **Percent boxes** - Sliders that set a percent show the % sign.
+- **Clearer sizes** - An icon's Width and Height say what 0 does: the group's size, or 36 for an icon outside a group.
+
+### Bug Fixes
+
+- **Export selection** - Opens the Export tab with the string ready, whatever tab you had open.
+- **Defaults page** - The line about icons that keep their own value no longer gets cut off.
+
 ## 3.1.6
 
 Pick what you import from the Cooldown Manager, item tooltips in Item Finds, and fixes for totem icons and glows.

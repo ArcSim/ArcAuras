@@ -1470,6 +1470,7 @@ L["Debuffs"] = true
 L["Debuffs on you or your pet cannot be hidden by spell."] = true
 L["Debuffs start a new line"] = true
 L["Decimal seconds"] = true
+L["Decimals"] = true
 L["Decimals below (s)"] = true
 L["Decimals under (seconds)"] = true
 L["Deck %d / %d"] = true
@@ -2161,7 +2162,8 @@ L["Hear the words once."] = true
 L["Hear this trigger's sound once, on the group's sound channel."] = true
 L["Hear this trigger's text once, in the group's voice."] = true
 L["Height"] = true
-L["Height (0 = auto)"] = true
+L["Height (0 = 36)"] = true
+L["Height (0 = the group's size)"] = true
 L["Here no procs used means: %s; all used: %s."] = true
 L["Hero Talents"] = true
 L["Hero tree "] = true
@@ -2192,6 +2194,7 @@ L["Hide these spells"] = true
 L["Hide when inactive"] = true
 L["Hide when ready"] = true
 L["Hide while editing"] = true
+L["Hides at zero"] = true
 L["Hides between casts; shows a sample cast while this window is open."] = true
 L["Hides casts you cannot interrupt. In combat the game hides that from addons, so it cannot drive sounds or alerts."] = true
 L["Hides it on screen while this window is open, so you can get at what sits under it. Closing the window shows it again."] = true
@@ -3296,6 +3299,7 @@ L["Picture zoom (%)"] = true
 L["Pictures by stack count"] = true
 L["Piece"] = true
 L["Pieces"] = true
+L["Pin target"] = true
 L["Ping Key"] = true
 L["Ping Keys"] = true
 L["Ping key"] = true
@@ -3861,6 +3865,9 @@ L["Settings"] = true
 L["Several units"] = true
 L["Shadow"] = true
 L["Shadow Protection"] = true
+L["Shadow X"] = true
+L["Shadow Y"] = true
+L["Shadow color"] = true
 L["Shadow size"] = true
 L["Shaman Imbue"] = true
 L["Shaman by Emity"] = true
@@ -3979,6 +3986,7 @@ L["Shows Arc Pings above the window while it is unlocked or this page is open."]
 L["Shows a drag handle on every layout. Drag it where you want, then lock."] = true
 L["Shows as"] = true
 L["Shows it at full opacity"] = true
+L["Shows max"] = true
 L["Shows only the rows where your default differs from Arc's."] = true
 L["Shows this window in English instead of your game's language. Takes effect after a /reload."] = true
 L["Shows while the aura is missing"] = true
@@ -4611,9 +4619,9 @@ L["This string updates items you have"] = true
 L["This swing color"] = true
 L["This timer ended"] = true
 L["This type's border, color wash, label and glow use it."] = true
-L["This type's height (0 = auto)"] = true
+L["This type's height (0 = the group's size)"] = true
 L["This type's scale"] = true
-L["This type's width (0 = auto)"] = true
+L["This type's width (0 = the group's size)"] = true
 L["This way of pinging needs a key: set one below."] = true
 L["Threshold %d color"] = true
 L["Threshold %d value"] = true
@@ -5160,7 +5168,8 @@ L["Whose aura"] = true
 L["Whose casts"] = true
 L["Wide (3:2)"] = true
 L["Width"] = true
-L["Width (0 = auto)"] = true
+L["Width (0 = 36)"] = true
+L["Width (0 = the group's size)"] = true
 L["Windfury Totem"] = true
 L["Windfury Weapon"] = true
 L["Window layer"] = true

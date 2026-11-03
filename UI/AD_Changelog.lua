@@ -13,6 +13,26 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.1.7",
+        intro = "Clearer option names, percent signs, and an Export selection fix.",
+        sections = {
+            { header = "Improvements", items = {
+                { title = "Shorter option names",
+                    desc = "Rows inside a text's box no longer repeat its name (Font, not Duration text font)." },
+                { title = "Percent boxes",
+                    desc = "Sliders that set a percent show the % sign." },
+                { title = "Clearer sizes",
+                    desc = "An icon's Width and Height say what 0 does: the group's size, or 36 for an icon outside a group." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Export selection",
+                    desc = "Opens the Export tab with the string ready, whatever tab you had open." },
+                { title = "Defaults page",
+                    desc = "The line about icons that keep their own value no longer gets cut off." },
+            } },
+        },
+    },
+    {
         version = "3.1.6",
         intro = "Pick what you import from the Cooldown Manager, item tooltips in Item Finds, and fixes for totem icons and glows.",
         sections = {
@@ -1360,6 +1380,28 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.1.7",
+        intro = "Clearer option names, percent signs, a Reincarnation template for Shamans, and an Export selection fix.",
+        sections = {
+            { header = "Improvements", items = {
+                { title = "Shorter option names",
+                    desc = "Rows inside a text's box no longer repeat its name (Font, not Duration text font)." },
+                { title = "Percent boxes",
+                    desc = "Sliders that set a percent show the % sign." },
+                { title = "Clearer sizes",
+                    desc = "An icon's Width and Height say what 0 does: the group's size, or 36 for an icon outside a group." },
+                { title = "Reincarnation template",
+                    desc = "Shamans get a Reincarnation square in Add > Spell Cooldown that tracks the ID its cooldown really runs on, so the icon shows it right after you come back." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Export selection",
+                    desc = "Opens the Export tab with the string ready, whatever tab you had open." },
+                { title = "Defaults page",
+                    desc = "The line about icons that keep their own value no longer gets cut off." },
+            } },
+        },
+    },
     {
         version = "3.1.6",
         intro = "Pick what you import from the Cooldown Manager, and fixes for totem icons and glows.",

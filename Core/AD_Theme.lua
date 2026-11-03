@@ -8,7 +8,7 @@ local AT = {}
 -- Other addons carry copies of this file, generated from it by the
 -- arc-theme-sync tool, which compares this number to find stale copies.
 -- Bump it on every change and never edit a copy.
-AT.VERSION = 36
+AT.VERSION = 37
 
 -- The addon this copy loads in: a palette's font file sits in its folder.
 local THEME_ADDON = ...
@@ -2715,20 +2715,21 @@ end
 function AT.RowSlider(pg, label, get, set, minV, maxV, step, isPct, visibleFn)
     local row = AT.AddRow(pg, LAY.rowH, visibleFn)
     local lbl = AT.RowLabel(row, label)
-    -- isPct: true shows a 0-1 value as a percent; a format string ("%.2f")
-    -- shows the raw value with it and takes typed values as they are.
+    -- isPct: true shows a 0-1 value as a percent ("8%"); a format string
+    -- ("%.2f") shows the raw value with it and takes typed values as they are.
     local fmtStr = type(isPct) == "string" and isPct or nil
     if fmtStr then isPct = false end
     local s, refresh = AT.MakeSlider(row, LAY.sliderW, {
         lo = minV, hi = maxV, step = step, get = get, set = set,
         fmt = function(v)
             if fmtStr then return fmtStr:format(v)
-            elseif isPct then return ("%.0f"):format(v * 100)
+            elseif isPct then return ("%.0f%%"):format(v * 100)
             elseif step < 1 then return ("%.1f"):format(v)
             else return ("%d"):format(math.floor(v + 0.5)) end
         end,
+        -- a typed "8%" reads as 8
         parse = function(text)
-            local n = tonumber(text)
+            local n = tonumber((tostring(text or ""):gsub("%%", ""):match("^%s*(.-)%s*$")))
             if n and isPct then n = n / 100 end
             return n
         end,

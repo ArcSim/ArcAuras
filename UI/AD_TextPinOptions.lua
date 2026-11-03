@@ -36,7 +36,8 @@ function Options.TextPinRows(pg, ctx, vis, family, section, toKey, targetKey, ow
 
     local items = {}
     for _, k in ipairs(Schema.PIN_TO) do items[#items + 1] = { value = k, text = Schema.PIN_LABELS[k] } end
-    local ddRow = AT.RowDropdown(pg, owner, word .. " pinned to",
+    -- inside the text's own box the row needs no text name (the schema's short)
+    local ddRow = AT.RowDropdown(pg, owner, (defs[toKey] and defs[toKey].short) or (word .. " pinned to"),
         function() return Kind() end,
         function(v)
             local r = ctx()

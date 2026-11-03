@@ -953,12 +953,15 @@ end
 -- page, and Copy this page to another kind.
 function D.BuildFoot(family, pg, mine)
     AT.Section(pg, nil, { visibleFn = function() return mine() and #D.cur.tabs > 0 end })
+    -- two lines of the 11 px text fit the row, so a longer sentence wraps
+    -- instead of being cut and the page never shifts when it changes
     local row = AT.AddRow(pg, 26)
     local fs = row:CreateFontString(nil, "OVERLAY")
     fs:SetFont(AT.FONT, 11, "")
     fs:SetPoint("LEFT", 10, 0)
     fs:SetJustifyH("LEFT")
-    fs:SetWordWrap(false)
+    fs:SetWordWrap(true)
+    if fs.SetMaxLines then fs:SetMaxLines(2) end
     local resetPage = AT.MakeQuietButton(row, "Reset this page", 112)
     resetPage:SetPoint("RIGHT", -12, 0)
     local follow = AT.MakeSmallButton(row, "Make them follow", 124)

@@ -787,19 +787,9 @@ end
 -- The Import / Export page with exactly this selection ticked and its share
 -- string ready (a selected group takes its icons with it there).
 function M.Export()
-    local sel, open = {}, ui.ieOpen
-    for _, r in ipairs(M.Records()) do
-        sel[r.id] = true
-        local lid = r.layoutId
-        if not lid and r.groupId then
-            local g = Store.Get(r.groupId)
-            lid = g and g.layoutId
-        end
-        if lid then open[lid] = true end
-    end
-    ui.ieSel = sel
-    Options.Select("ie")
-    Options.ExportSelected()
+    local ids = {}
+    for _, r in ipairs(M.Records()) do ids[#ids + 1] = r.id end
+    Options.OpenExport(ids)
 end
 
 -- Opens the family's editor under the actions, over every selected record.

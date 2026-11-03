@@ -172,5 +172,92 @@ function IS.AddRows(pg, owner, addState, vis, onPick)
     return row
 end
 
--- AD_Options loads first and calls this while building the Add window
-if NS.Options then NS.Options.ItemSetAddRows = IS.AddRows end
+-- Ready-made spell icons by class (retail): a spell whose cooldown the game
+-- keeps on another ID than the spellbook's (Reincarnation runs on 21169, not 20608).
+IS.SPELLS = {
+    { key = "reincarnation", class = "SHAMAN", spellID = 21169 },
+}
+
+function IS.SpellList()
+    if NS.IsForever == true then return {} end
+    local _, class = UnitClass("player")
+    local out = {}
+    for _, t in ipairs(IS.SPELLS) do
+        if t.class == class then out[#out + 1] = t end
+    end
+    return out
+end
+
+-- One square per template under the Spell field: a click fills it; the pick stays cyan.
+function IS.SpellAddRows(pg, addState, vis, onPick)
+    local AT, COL = NS.AT, NS.AT.COL
+    local row = AT.AddRow(pg, IS.PITCH + 8 + IS.CAP, function() return vis() and #IS.SpellList() > 0 end)
+    local cap = row:CreateFontString(nil, "OVERLAY")
+    cap:SetFont(AT.FONT, 9, "")
+    cap:SetPoint("TOPLEFT", 10, -2)
+    cap:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
+    cap:SetText(AT.Tr("TEMPLATE - click one, then Create"))
+    row._cap = cap
+    local cells = {}
+    local function Cell(i)
+        if cells[i] then return cells[i] end
+        local b = CreateFrame("Button", nil, row, "BackdropTemplate")
+        b:SetSize(IS.CELL, IS.CELL)
+        b:SetPoint("LEFT", row, "LEFT", 10 + (i - 1) * IS.PITCH, -IS.CAP / 2)
+        AT.Skin(b, COL.well, COL.line)
+        b.tex = b:CreateTexture(nil, "ARTWORK")
+        b.tex:SetPoint("TOPLEFT", 2, -2)
+        b.tex:SetPoint("BOTTOMRIGHT", -2, 2)
+        b.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        function b.Edge(hot)
+            local t = b._t
+            local c = (t and tonumber(addState.spellID or "") == t.spellID and COL.arc) or (hot and COL.focus) or COL.line -- raw-id: the template's own spell
+            b:SetBackdropBorderColor(c[1], c[2], c[3], 1)
+        end
+        b:SetScript("OnEnter", function()
+            local t = b._t
+            if not t then return end
+            b.Edge(true)
+            GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
+            GameTooltip:SetSpellByID(t.spellID) -- raw-id: the template's own spell
+            GameTooltip:AddLine(AT.Tr("Spell ID: %s"):format(t.spellID), COL.arc[1], COL.arc[2], COL.arc[3])
+            GameTooltip:Show()
+        end)
+        b:SetScript("OnLeave", function()
+            b.Edge(false)
+            if GameTooltip:IsOwned(b) then GameTooltip:Hide() end
+        end)
+        b:SetScript("OnClick", function()
+            local t = b._t
+            if not t then return end
+            AT.CloseDropdown()
+            addState.spellID = tostring(t.spellID)
+            AT.LayoutPage(pg)
+            if onPick then onPick(addState.spellID) end
+        end)
+        cells[i] = b
+        return b
+    end
+    row._cells = cells
+    row._sync = function()
+        local list = IS.SpellList()
+        for i, t in ipairs(list) do
+            local b = Cell(i)
+            b._t, b._adTpl = t, t.key
+            b.tex:SetTexture((C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(t.spellID)) or 134400) -- raw-id: the template's own spell
+            b.Edge(false)
+            b:Show()
+        end
+        for i = #list + 1, #cells do
+            cells[i]._t, cells[i]._adTpl = nil, nil
+            cells[i]:Hide()
+        end
+    end
+    return row
+end
+
+-- AD_Options loads first and calls these while building the Add window
+if NS.Options then
+    NS.Options.ItemSetAddRows = IS.AddRows
+    NS.Options.SpellTemplateAddRows = IS.SpellAddRows
+end

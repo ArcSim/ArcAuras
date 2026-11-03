@@ -1821,8 +1821,10 @@ local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
             visible = function() return opts.showWhen() and inner() end
         end
         -- opts.labels: a block's own words for a shared field (a totem's
-        -- "Active alpha" is the states section's ready alpha)
-        local label = (opts and opts.labels and opts.labels[field]) or def.label or field
+        -- "Active alpha" is the states section's ready alpha); def.short: the
+        -- words inside the field's own titled box ("Font" under Duration text),
+        -- while the search keeps the full label
+        local label = (opts and opts.labels and opts.labels[field]) or def.short or def.label or field
         local row
         if def.t == "bool" and def.showPick then
             -- Two exclusive switches as one pick: Always (both off), While the
@@ -14321,6 +14323,14 @@ local function BuildAddWindow()
             if UpdateCreate then UpdateCreate() end
         end,
         isIcon("spell"), "Type a spell name or ID; click a suggestion to fill it.", "e.g. Stormstrike or 17364", true)
+    -- class templates (UI\AD_ItemSets.lua): a click fills the field
+    if Options.SpellTemplateAddRows then
+        Options.SpellTemplateAddRows(pg, addState, isIcon("spell"), function(v)
+            if rowSpell._colCtrl then rowSpell._colCtrl:SetText(v) end
+            if UpdateSuggestions then UpdateSuggestions() end
+            if UpdateCreate then UpdateCreate() end
+        end)
+    end
     -- the aura name search panel (Options.AuraSuggestPanel, above the Add
     -- window section); a pick re-judges Create
     local function AuraSuggest(visibleFn, getText, setText, multi)
@@ -18062,27 +18072,34 @@ function Options.ExportSelected()
     IE.PaintExport()
 end
 
--- the rail Exp button and the editors' Export buttons land here: tick that
--- one record (a layout with everything under it) and export it
+-- the rail Exp button, the editors' Export buttons and a selection's Export
+-- land here: tick those records (a layout with everything under it) and
+-- export them on the Export tab, whichever tab was open last
 function Options.OpenExport(id)
     ui.ieTab = "export"
     Options.Open()
     Options.Select("ie")
     IE.SetTab("export")
-    local rec = Store.Get(id)
-    if rec then
-        ui.ieSel = { [id] = true }
-        if rec.type == "layout" then
-            for _, c in ipairs(IE.Children(rec)) do ui.ieSel[c.id] = true end
-            ui.ieOpen[id] = true
-        else
-            local lid = rec.layoutId
-            if not lid and rec.groupId then
-                local g = Store.Get(rec.groupId)
-                lid = g and g.layoutId
+    local sel = {}
+    for _, rid in ipairs(type(id) == "table" and id or { id }) do
+        local rec = Store.Get(rid)
+        if rec then
+            sel[rid] = true
+            if rec.type == "layout" then
+                for _, c in ipairs(IE.Children(rec)) do sel[c.id] = true end
+                ui.ieOpen[rid] = true
+            else
+                local lid = rec.layoutId
+                if not lid and rec.groupId then
+                    local g = Store.Get(rec.groupId)
+                    lid = g and g.layoutId
+                end
+                if lid then ui.ieOpen[lid] = true end
             end
-            if lid then ui.ieOpen[lid] = true end
         end
+    end
+    if next(sel) then
+        ui.ieSel = sel
         IE.Refresh()
     end
     Options.ExportSelected()

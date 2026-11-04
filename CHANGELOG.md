@@ -1,5 +1,13 @@
 # Arc Auras
 
+## 3.1.8
+
+Pick which summon a totem icon follows.
+
+### Improvements
+
+- **Several from one cast** - When one cast summons more than one, totem tracking can follow the first or the last summoned, or sync with the Cooldown Manager's icon and hide it.
+
 ## 3.1.7
 
 Clearer option names, percent signs, and an Export selection fix.

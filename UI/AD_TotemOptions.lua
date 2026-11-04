@@ -162,6 +162,37 @@ function Options.TotemWhichByRow(pg, Rec, vis, owner)
         "Slots in use: First is the lowest totem slot, and the one left moves up. Order out: each keeps its icon until it ends.")
 end
 
+-- One cast putting several down (Call Dreadstalkers and its Charhound): which
+-- one it follows (driver.multiSlot, Drivers\AD_DriverTotem.lua DT.Multi).
+-- Holder: the table that keeps the pick (the driver, or a spell icon's
+-- overlay); hidden while a Which pick names the slot.
+Options.TOTEM_MULTI_ITEMS = {
+    { value = "first", text = "First summoned" },
+    { value = "last", text = "Last summoned" },
+    { value = "cdm", text = "Cooldown Manager sync" },
+}
+function Options.TotemMultiRow(pg, owner, Rec, Holder, vis)
+    local AT, Store = NS.AT, NS.Store
+    local DT = NS.DriverTotem
+    if not DT then return end
+    local row = AT.RowDropdown(pg, owner, "Several from one cast",
+        function() return DT.Multi(Holder()) end,
+        function(v)
+            local r, h = Rec(), Holder()
+            if not (r and h) then return end
+            h.multiSlot = (v == "last" or v == "cdm") and v or nil
+            DT.CdmRefresh()
+            Store.Dirty("style", r.id)
+        end,
+        function() return Options.TOTEM_MULTI_ITEMS end,
+        function()
+            local h = Holder()
+            return vis() and h ~= nil and DT.Which(h) == nil
+        end)
+    AT.Tooltip(row, "Several from one cast",
+        "When one cast summons more than one: the first or the last. Cooldown Manager sync follows its icon for the spell and hides it.")
+end
+
 function Options.TotemTimingRows(pg, Rec, vis, owner)
     local AT, Store = NS.AT, NS.Store
     local DT = NS.DriverTotem
@@ -307,6 +338,7 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
         spellVis)
     AT.Tooltip(inSlot, "Which one", Options.TOTEM_WHICH_TIP)
     Options.TotemWhichByRow(pg, Rec, spellVis, owner)
+    Options.TotemMultiRow(pg, owner, Rec, function() local r = Rec() return r and r.driver end, spellVis)
     -- when it lands after the cast: measured, waited for, or shown from the cast
     Options.TotemTimingRows(pg, Rec, function() return spellVis() and Rec().driver.spellID ~= nil end, owner)
 

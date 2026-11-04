@@ -143,6 +143,12 @@ function Options.TotemBarTrackRows(pg, ctx, trackVis, owner)
             return Vis() and r ~= nil and SpellOf(r.driver.spellID) ~= nil
         end, owner)
     end
+    if Options.TotemMultiRow then
+        Options.TotemMultiRow(pg, owner, Rec, function() local r = Rec() return r and r.driver end, function()
+            local r = Rec()
+            return Vis() and r ~= nil and SpellOf(r.driver.spellID) ~= nil
+        end)
+    end
     if Options.TotemTimingRows then
         Options.TotemTimingRows(pg, Rec, function()
             local r = Rec()

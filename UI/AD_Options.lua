@@ -9455,6 +9455,12 @@ local function BuildIconEditor(parent)
         end,
         auraVis,
         "While a totem or guardian from the first spell is out, the icon shows its time instead of the aura.")
+    if Options.TotemMultiRow then
+        Options.TotemMultiRow(pg, win, SelIcon, function() local r = SelIcon() return r and r.driver end, function()
+            local r = SelIcon()
+            return auraVis() and r ~= nil and r.driver.totem == true
+        end)
+    end
     -- A group buff: every rank and the group version on one icon; a member
     -- counts as having it with any of them on (Drivers\AD_DriverGroupBuff.lua).
     local gbVis = function()
@@ -9804,6 +9810,9 @@ local function BuildIconEditor(parent)
         ovTotemVis,
         "The spell that puts the totem down, any rank. Empty: this icon's spell.",
         function() return Options.OverlaySpellHint(SelIcon()) end)
+    if Options.TotemMultiRow then
+        Options.TotemMultiRow(pg, win, SelIcon, function() return Options.OverlayOf(SelIcon()) end, ovTotemVis)
+    end
     Options.BuildYield()
     AT.RowInput(pg, "Starts when you cast",
         function() return Options.OverlaySpellsText(SelIcon()) end,

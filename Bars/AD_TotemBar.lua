@@ -57,15 +57,21 @@ function TB.Track(e)
     local by = (only and DT.ByOrder(d)) and "order" or nil
     local wait = sid and tonumber(d.slotWait) or nil
     local fromCast = (sid and d.fromCast == true) or nil
+    local multi = sid and d.multiSlot or nil
     local p = e.tbPseudo
     if p and p.driver.spellID == sid and p.driver.slot == TB.Slot(e.rec) then -- raw-id: the same pick, not a match
         local pd = p.driver
         pd.spellIDs, pd.which, pd.whichBy, pd.slotWait, pd.fromCast = list, only, by, wait, fromCast
+        if pd.multiSlot ~= multi then
+            pd.multiSlot = multi
+            DT.CdmRefresh()
+        end
         return
     end
     -- re-pointed under the same key: no detach, so the slots are not re-read
     e.tbPseudo = { id = TB.KEY .. tostring(e.rec.id), driver = { spellID = sid, spellIDs = list,
-        slot = TB.Slot(e.rec), which = only, whichBy = by, slotWait = wait, fromCast = fromCast } }
+        slot = TB.Slot(e.rec), which = only, whichBy = by, slotWait = wait, fromCast = fromCast,
+        multiSlot = multi } }
     DT.Attach(e.tbPseudo)
 end
 

@@ -13,6 +13,16 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.1.8",
+        intro = "Pick which summon a totem icon follows.",
+        sections = {
+            { header = "Improvements", items = {
+                { title = "Several from one cast",
+                    desc = "When one cast summons more than one, totem tracking can follow the first or the last summoned, or sync with the Cooldown Manager's icon and hide it." },
+            } },
+        },
+    },
+    {
         version = "3.1.7",
         intro = "Clearer option names, percent signs, and an Export selection fix.",
         sections = {
@@ -1380,6 +1390,20 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.1.8",
+        intro = "Pick which summon a totem icon follows, and a Call Dreadstalkers fix.",
+        sections = {
+            { header = "Improvements", items = {
+                { title = "Several from one cast",
+                    desc = "When one cast summons more than one, totem tracking can follow the first or the last summoned, or sync with the Cooldown Manager's icon and hide it." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Call Dreadstalkers",
+                    desc = "The totem icon always follows the Dreadstalkers, never the Charhound summoned with them." },
+            } },
+        },
+    },
     {
         version = "3.1.7",
         intro = "Clearer option names, percent signs, a Reincarnation template for Shamans, and an Export selection fix.",

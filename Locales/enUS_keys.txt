@@ -1269,6 +1269,7 @@ Cooldown Manager icon (by spell)
 Cooldown Manager look
 Cooldown Manager path, bound
 Cooldown Manager path, no Doom Winds icon found
+Cooldown Manager sync
 Cooldown Manager unavailable
 Cooldown Manager:  
 Cooldown Reminder test
@@ -1862,6 +1863,7 @@ Fires the first trigger once, as it will in play, even where the conditions woul
 First
 First ammo threshold (at or below)
 First ammo threshold color
+First summoned
 First threshold (%)
 First threshold color
 Five-Second Rule
@@ -2527,6 +2529,7 @@ Label on the off-hand's edge
 Label position
 Label size
 Labels & Keybind
+Last summoned
 Lasts (seconds)
 Latency color
 Latency zone
@@ -3860,6 +3863,7 @@ Sets the rows of this page as the default of the kinds picked. It asks whether t
 Sets width and height together and crops the picture to fit.
 Sets your target as your focus and marks it. Drag it onto an action bar, or click it and then a bar slot.
 Settings
+Several from one cast
 Several units
 Shadow
 Shadow Protection
@@ -5023,6 +5027,7 @@ When it starts
 When it's missing
 When it's missing (falls off, or none is on)
 When little time is left
+When one cast summons more than one: the first or the last. Cooldown Manager sync follows its icon for the spell and hides it.
 When out of range
 When queued
 When queued: while it waits to go off with your next swing. After cast: from the cast until the swing it went off in lands.

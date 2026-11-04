@@ -1,5 +1,17 @@
 # Arc Auras
 
+## 3.1.8
+
+Pick which summon a totem icon follows, and a Call Dreadstalkers fix.
+
+### Improvements
+
+- **Several from one cast** - When one cast summons more than one, totem tracking can follow the first or the last summoned, or sync with the Cooldown Manager's icon and hide it.
+
+### Bug Fixes
+
+- **Call Dreadstalkers** - The totem icon always follows the Dreadstalkers, never the Charhound summoned with them.
+
 ## 3.1.7
 
 Clearer option names, percent signs, a Reincarnation template for Shamans, and an Export selection fix.

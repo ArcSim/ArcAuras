@@ -13,6 +13,16 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.1.9",
+        intro = "Steadier totem tracking.",
+        sections = {
+            { header = "Bug Fixes", items = {
+                { title = "Totem tracking",
+                    desc = "A totem whose cast the game reports a moment late still lands on the right icon." },
+            } },
+        },
+    },
+    {
         version = "3.1.8",
         intro = "Pick which summon a totem icon follows.",
         sections = {
@@ -1390,6 +1400,16 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.1.9",
+        intro = "A Call Dreadstalkers fix.",
+        sections = {
+            { header = "Bug Fixes", items = {
+                { title = "Call Dreadstalkers",
+                    desc = "When the Dreadstalkers leave, the totem icon no longer switches over to the Charhound's last seconds." },
+            } },
+        },
+    },
     {
         version = "3.1.8",
         intro = "Pick which summon a totem icon follows, and a Call Dreadstalkers fix.",

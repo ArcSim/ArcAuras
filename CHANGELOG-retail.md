@@ -1,5 +1,13 @@
 # Arc Auras
 
+## 3.1.9
+
+A Call Dreadstalkers fix.
+
+### Bug Fixes
+
+- **Call Dreadstalkers** - When the Dreadstalkers leave, the totem icon no longer switches over to the Charhound's last seconds.
+
 ## 3.1.8
 
 Pick which summon a totem icon follows, and a Call Dreadstalkers fix.

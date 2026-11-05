@@ -1,5 +1,13 @@
 # Arc Auras
 
+## 3.1.9
+
+Steadier totem tracking.
+
+### Bug Fixes
+
+- **Totem tracking** - A totem whose cast the game reports a moment late still lands on the right icon.
+
 ## 3.1.8
 
 Pick which summon a totem icon follows.

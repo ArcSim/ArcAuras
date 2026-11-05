@@ -30,8 +30,9 @@ DT.WAIT_MAX = 5
 -- the same totem: every new one lighting the slot moves litAt again.
 DT.SAME_LIT = 1
 -- Updates of one cast's slots land together: a fresh slot this close after a
--- lit one took a cast takes it back (DT.Reclaim).
-DT.SAME_BURST = 0.1
+-- lit one took a cast takes it back (DT.Reclaim). Frame times, so a slow
+-- frame splits one burst; two casts are a global cooldown apart.
+DT.SAME_BURST = 0.25
 -- the longer waits a player may pick (driver.slotWait), in seconds
 DT.WAITS = { 1, 1.5, 2, 3, 4, 5 }
 DT.QUEUE_MAX = 8
@@ -611,7 +612,8 @@ function DT.OnSlotUpdate(slot)
             DT.waiting[slot] = nil
             DT.Learn(c.name, slot)
         else
-            DT.waiting[slot] = now
+            -- a burst's other slot waits for no cast of its own
+            DT.waiting[slot] = not s.burstId and now or nil
         end
     else
         -- secret: the cast that landed within its wait names it, or the next one does
@@ -622,10 +624,41 @@ function DT.OnSlotUpdate(slot)
             DT.pending[slot] = nil
         else
             s.name, s.id, s.castId, s.pos = nil, nil, nil, nil
-            DT.pending[slot] = now
+            DT.pending[slot] = not s.burstId and now or nil
         end
     end
     DT.Changed()
+end
+
+-- A cast landing after its slots lit (list: DT.pending, secret, or DT.waiting,
+-- plain): the lowest slot within the wait takes it, the others of its burst
+-- keep it as s.burstId. Marked paired, so a lower slot lighting later in the
+-- same burst still takes it over (DT.TakeBurst). Returns true when one took it.
+function DT.LateCast(list, now, c, secret)
+    local low, lit
+    for slot, t in pairs(list) do
+        if now - t > DT.PAIR_WINDOW then
+            list[slot] = nil
+        elseif not low or slot < low then
+            low, lit = slot, t
+        end
+    end
+    if not low then return false end
+    for slot, t in pairs(list) do
+        if slot ~= low and math.abs(t - lit) <= DT.SAME_BURST then
+            list[slot] = nil
+            local o = DT.slot[slot]
+            if o then o.burstId = c.id end
+        end
+    end
+    list[low] = nil
+    local s = DT.slot[low]
+    if s then
+        if secret then s.name, s.id = c.name, c.id end
+        s.castId = c.id
+        s.paired, s.burstId = { cast = c, at = lit, secret = secret }, nil
+    end
+    return true
 end
 
 -- Only casts of known totems pair, so an unrelated spell landing in the same
@@ -634,24 +667,10 @@ function DT.OnCast(spellID)
     local name = DT.SpellName(spellID) -- raw-id: the cast the game reports
     if not DT.IsTotemName(name) then return end
     local now = GetTime()
-    for slot, t in pairs(DT.pending) do
-        DT.pending[slot] = nil
-        if now - t <= DT.PAIR_WINDOW then
-            local s = DT.slot[slot]
-            if s then s.name, s.id, s.castId = name, spellID, spellID end
-            DT.Changed()
-            return
-        end
-    end
-    -- a slot that lit named, still waiting for the cast that put it down
-    for slot, t in pairs(DT.waiting) do
-        DT.waiting[slot] = nil
-        if now - t <= DT.PAIR_WINDOW then
-            local s = DT.slot[slot]
-            if s then s.castId = spellID end
-            DT.Changed()
-            return
-        end
+    local c = { name = name, id = spellID, at = now }
+    if DT.LateCast(DT.pending, now, c, true) or DT.LateCast(DT.waiting, now, c, false) then
+        DT.Changed()
+        return
     end
     DT.Prune(now)
     local q = DT.queue

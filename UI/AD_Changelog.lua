@@ -13,6 +13,32 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.2.0",
+        intro = "Item Finds sharing fixed, dungeon entrances on the map, Call of the Elements totems on the right icons, and out-of-range looks that work on their own.",
+        sections = {
+            { header = "Improvements", items = {
+                { title = "Item Finds: dungeon entrances",
+                    desc = "Items found inside a dungeon now show the dungeon's entrance on the map." },
+                { title = "Item Finds: item data",
+                    desc = "Updated to the current WoW Forever build: one newly found item, eleven items that are now released, test copies and placeholder items gone, and fresher drop places." },
+                { title = "Item Finds: who drops it",
+                    desc = "Items with no known drop place yet name the creatures that drop them." },
+                { title = "Item Finds: seen items",
+                    desc = "An item someone has seen but not looted says \"Seen in game, no drop place yet\" instead of \"Not found in game yet\"." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Item Finds: sharing",
+                    desc = "Sharing finds with other players works now." },
+                { title = "Call of the Elements",
+                    desc = "Each totem icon follows its own totem when one cast drops several, in and out of combat, and no longer takes over another totem's timer once its own runs out." },
+                { title = "General on /1",
+                    desc = "The Item Finds channel no longer takes slot 1, so General is back on /1." },
+                { title = "Out of range",
+                    desc = "The out-of-range shadow, grey-out, opacity, glow and own looks now show without the out-of-range tint switched on." },
+            } },
+        },
+    },
+    {
         version = "3.1.9",
         intro = "Steadier totem tracking.",
         sections = {
@@ -1400,6 +1426,18 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.2.0",
+        intro = "A login freeze with Arc UI fixed, and out-of-range looks that work on their own.",
+        sections = {
+            { header = "Bug Fixes", items = {
+                { title = "Freeze at login with Arc UI",
+                    desc = "A totem icon set to Cooldown Manager sync no longer freezes the game when Arc UI also shows that Cooldown Manager icon." },
+                { title = "Out of range",
+                    desc = "The out-of-range shadow, grey-out, opacity, glow and own looks now show without the out-of-range tint switched on." },
+            } },
+        },
+    },
     {
         version = "3.1.9",
         intro = "A Call Dreadstalkers fix.",

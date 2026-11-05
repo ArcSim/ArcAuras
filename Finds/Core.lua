@@ -149,6 +149,8 @@ function Command(msg)
         ns.Signal("Demo", false)
     elseif msg == "demo clear" and ns.DEV then
         ns.Signal("Demo", true)
+    elseif msg == "traffic" and ns.Dev then
+        ns.Dev.ShowTraffic()
     -- a test run outside Forever: count that client's own items as finds, to try the pop-ups (off by default)
     elseif msg == "retailfinds" and ns.DEV and not ns.isForever then
         ns.db.retailFinds = not ns.db.retailFinds or nil

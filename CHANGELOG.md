@@ -1,5 +1,23 @@
 # Arc Auras
 
+## 3.2.0
+
+Item Finds sharing fixed, dungeon entrances on the map, Call of the Elements totems on the right icons, and out-of-range looks that work on their own.
+
+### Improvements
+
+- **Item Finds: dungeon entrances** - Items found inside a dungeon now show the dungeon's entrance on the map.
+- **Item Finds: item data** - Updated to the current WoW Forever build: one newly found item, eleven items that are now released, test copies and placeholder items gone, and fresher drop places.
+- **Item Finds: who drops it** - Items with no known drop place yet name the creatures that drop them.
+- **Item Finds: seen items** - An item someone has seen but not looted says "Seen in game, no drop place yet" instead of "Not found in game yet".
+
+### Bug Fixes
+
+- **Item Finds: sharing** - Sharing finds with other players works now.
+- **Call of the Elements** - Each totem icon follows its own totem when one cast drops several, in and out of combat, and no longer takes over another totem's timer once its own runs out.
+- **General on /1** - The Item Finds channel no longer takes slot 1, so General is back on /1.
+- **Out of range** - The out-of-range shadow, grey-out, opacity, glow and own looks now show without the out-of-range tint switched on.
+
 ## 3.1.9
 
 Steadier totem tracking.

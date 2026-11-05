@@ -1,5 +1,14 @@
 # Arc Auras
 
+## 3.2.0
+
+A login freeze with Arc UI fixed, and out-of-range looks that work on their own.
+
+### Bug Fixes
+
+- **Freeze at login with Arc UI** - A totem icon set to Cooldown Manager sync no longer freezes the game when Arc UI also shows that Cooldown Manager icon.
+- **Out of range** - The out-of-range shadow, grey-out, opacity, glow and own looks now show without the out-of-range tint switched on.
+
 ## 3.1.9
 
 A Call Dreadstalkers fix.

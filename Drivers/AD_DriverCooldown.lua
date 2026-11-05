@@ -136,11 +136,31 @@ end
 
 -- The settings the feeds read per icon, cached until the next change. A
 -- refresh also drops the frame's skip signatures, so the setters rerun.
+-- Range is read only for an icon with an out-of-range look: any one of them
+-- needs the state, not just the tint.
+local function RangeWanted(rec)
+    local function S(field) return Store.Resolve(rec, "states", field) end
+    if S("rangeTint") ~= false or S("rangeShadow") == true or S("rangeDesaturate") == true
+        or S("rangeGlow") == true or (S("rangeAlpha") or 1) < 1 then
+        return true
+    end
+    local OL = NS.OwnLooks
+    local list = OL and OL.Effective and OL.Effective(rec)
+    if type(list) == "table" then
+        for i = 1, #list do
+            local l = list[i]
+            if type(l) == "table" and l.state == "range" then return true end
+        end
+    end
+    return false
+end
+Driver.RangeWanted = RangeWanted
+
 local function UsabCfg(a)
     if a.cfgGen == cfgGen then return end
     a.cfgGen = cfgGen
     local rec = a.rec
-    a.rangeOn = Store.Resolve(rec, "states", "rangeTint") ~= false
+    a.rangeOn = RangeWanted(rec)
     a.edgeOn = Store.Resolve(rec, "alerts", "usableSoundEnabled") == true
     a.kbOn = Factory.KeybindEnabled(rec)
     a.kbByName = Store.Resolve(rec, "keybind", "keybindByName") == true

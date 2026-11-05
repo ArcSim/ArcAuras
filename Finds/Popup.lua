@@ -498,10 +498,50 @@ function Popup.Offer(e)
     Show(e)
 end
 
--- a catch-up copy (quiet) is old news: it reaches the feed, never a pop-up
+-- Old news from other copies (a catch-up page, or a find sent long after it was made) fills the feed and the database at
+-- once, and a pop-up for it waits its turn: one now and then at a random moment, so a backlog arriving together never
+-- floods the screen. The waiting ids are saved, so the turns carry over to the next session
+local LIVE_AGE = 900
+local LATER_MIN, LATER_MAX = 60, 240
+local LATER_CAP = 50
+local laterDue = false
+
+function Popup.ScheduleLater()
+    if laterDue or not ns.db or not ns.db.later or #ns.db.later == 0 then return end
+    laterDue = true
+    C_Timer.After(math.random(LATER_MIN, LATER_MAX), function()
+        laterDue = false
+        Popup.Trickle()
+    end)
+end
+
+function Popup.Trickle()
+    local q = ns.db and ns.db.later
+    if not q or #q == 0 then return end
+    if current or moving or InCombatLockdown() or GetTime() - lastShown < LATER_MIN then return Popup.ScheduleLater() end
+    local e = ns.Finds.Get(table.remove(q, math.random(#q)))
+    if e then Popup.Offer(e) end
+    Popup.ScheduleLater()
+end
+
+local function Later(e)
+    if not Popup.Passes(e) or (ns.db.popped and ns.db.popped[e.id]) then return end
+    local q = ns.db.later or {}
+    ns.db.later = q
+    for _, id in ipairs(q) do
+        if id == e.id then return end
+    end
+    if #q >= LATER_CAP then table.remove(q, 1) end
+    q[#q + 1] = e.id
+    Popup.ScheduleLater()
+end
+
 ns.Listen("FindsChanged", function(e, status, info)
-    if (status == "new" or status == "changed") and not (info and info.quiet) then Popup.Offer(e) end
+    if status ~= "new" and status ~= "changed" then return end
+    local old = info and (info.quiet or (info.fromNet and type(e.at) == "number" and ns.Now() - e.at > LIVE_AGE))
+    if old then Later(e) else Popup.Offer(e) end
 end)
+ns.Listen("Login", function() Popup.ScheduleLater() end)
 
 ns.On("PLAYER_REGEN_ENABLED", function()
     if held then

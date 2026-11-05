@@ -309,7 +309,7 @@ end
 
 function Engine:Receive(msg, dist, sender)
     local env = self.env
-    if not sender or sender == env.me or self.muted[sender] then return end
+    if not sender or sender == env.me or (env.isMe and env.isMe(sender)) or self.muted[sender] then return end
     -- a banned player is not heard at all
     if env.banned and env.banned(sender) then return end
     local kind = P.Kind(msg)
@@ -385,7 +385,7 @@ function Engine:Receive(msg, dist, sender)
         local mine = self.serving[target]
         -- a claim near this copy's own holding settles it; a much smaller one does not
         if mine and count >= mine.holding - math.max(5, math.floor(mine.holding / 10)) then self.serving[target] = nil end
-        if target == env.me then
+        if target == env.me or (env.isMe and env.isMe(target)) then
             self.lastHeard = env.now()
             self.helped[sender] = env.now()
             self.waiting = nil
@@ -443,6 +443,17 @@ local function Me()
     return name
 end
 
+-- Forever names a player's messages by first name and surname ("Name Surname"), not Name-Realm
+local function IsMe(name)
+    if type(name) ~= "string" or ns.Secret(name) or name == "" then return false end
+    if name == Me() then return true end
+    local full = NameUtil and NameUtil.GetUnmodifiedUnitFullName and NameUtil.GetUnmodifiedUnitFullName("player")
+    if type(full) ~= "string" or ns.Secret(full) or full == "" then return false end
+    if name == full then return true end
+    local realm = GetNormalizedRealmName and GetNormalizedRealmName()
+    return type(realm) == "string" and not ns.Secret(realm) and name == full .. "-" .. realm
+end
+
 -- a player's name the way the ban list and the report write it, with the realm (the game leaves this player's own
 -- realm off some names)
 local function Full(name)
@@ -454,9 +465,26 @@ local function Full(name)
 end
 S.Full = Full
 
+-- On Forever a player's messages carry the first name and surname, with a realm only now and then, so a ban written
+-- with a surname matches that name with or without a realm. A first name alone stays exact: it is shared by many
+local SURNAME = Constants and Constants.CharacterNameSeparatorConsts and Constants.CharacterNameSeparatorConsts.CHARACTERNAME_SURNAME_SEPARATOR
+if type(SURNAME) ~= "string" or SURNAME == "" then SURNAME = " " end
+local function Surnamed(name)
+    local base = name:gsub("%-[^-]+$", "")
+    if base:find(SURNAME, 1, true) then return base end
+end
+S.Surnamed = Surnamed
+
 local function Banned(sender)
+    if type(sender) ~= "string" or ns.Secret(sender) or not ns.BANS then return false end
     local full = Full(sender)
-    return full ~= nil and ns.BANS ~= nil and ns.BANS[full] == true
+    if full ~= nil and ns.BANS[full] == true then return true end
+    local base = ns.isForever and Surnamed(sender)
+    if not base then return false end
+    for name in pairs(ns.BANS) do
+        if Surnamed(name) == base then return true end
+    end
+    return false
 end
 S.Banned = Banned
 
@@ -492,6 +520,39 @@ local function HideChannel()
     end
 end
 
+-- the hidden channel sits after every other channel, so the game's own keep their numbers (/1 stays General). The
+-- game saves each channel's number per character: one that once joined before the world channels pushes them up at
+-- every login until it is moved. Each step swaps it with the next number, the way the chat settings' reorder does
+local function ToEnd()
+    if S.state ~= "on" or not (C_ChatInfo.SwapChatChannelsByChannelIndex and GetChannelList) then return end
+    if InCombatLockdown and InCombatLockdown() then
+        S.toEndAfterCombat = true
+        return
+    end
+    local mine = ChannelNumber()
+    if not mine then return end
+    local last = mine
+    local list = { GetChannelList() }
+    for i = 1, #list, 3 do
+        local id = list[i]
+        if type(id) == "number" and not ns.Secret(id) and id > last then last = id end
+    end
+    if last == mine then return end
+    for at = mine, last - 1 do C_ChatInfo.SwapChatChannelsByChannelIndex(at, at + 1) end
+    HideChannel()
+end
+S.ToEnd = ToEnd
+
+local toEndDue = false
+local function ToEndSoon()
+    if toEndDue then return end
+    toEndDue = true
+    C_Timer.After(2, function()
+        toEndDue = false
+        ToEnd()
+    end)
+end
+
 -- nothing of the channel ever reaches a chat window, whatever someone types into it
 local function Filter(_, _, _, _, _, _, _, _, _, _, channelName)
     if type(channelName) == "string" and not ns.Secret(channelName) and channelName:find(CHANNEL, 1, true) then
@@ -512,6 +573,7 @@ local function Join()
     if ChannelNumber() then
         HideChannel()
         S.state = "on"
+        ToEndSoon()
         ns.Signal("SyncState")
         return true
     end
@@ -525,6 +587,7 @@ local function Join()
         if ChannelNumber() then
             HideChannel()
             S.state = "on"
+            ToEndSoon()
         elseif refused then
             return Hop()
         elseif joinTries < 3 then
@@ -585,6 +648,28 @@ local SAID = {
     WRONG_PASSWORD = function() return "our password was refused" end,
     BANNED = function() return "this character is banned there" end,
 }
+-- a notice names a player by first name and realm; the channel's member list holds the full name their messages carry,
+-- the one a ban needs. Looked up by the notice's player id, and only when the first names agree
+local function MemberName(guid, first, channel)
+    if type(guid) ~= "string" or guid == "" or ns.Secret(guid) or type(first) ~= "string" or ns.Secret(first) then return end
+    if not (C_ChatInfo.GetChannelRosterInfo and GetNumDisplayChannels and GetChannelDisplayInfo) then return end
+    local want, short = channel:lower(), first:match("^[^-]+")
+    if not short then return end
+    for i = 1, GetNumDisplayChannels() or 0 do
+        local name, header, _, _, count = GetChannelDisplayInfo(i)
+        if not header and type(name) == "string" and not ns.Secret(name) and name:lower() == want
+            and type(count) == "number" and not ns.Secret(count) then
+            for r = 1, count do
+                local n, _, _, g = C_ChatInfo.GetChannelRosterInfo(i, r)
+                if type(g) == "string" and not ns.Secret(g) and g == guid and type(n) == "string" and not ns.Secret(n)
+                    and n ~= short and n:sub(1, #short) == short then
+                    return n
+                end
+            end
+        end
+    end
+end
+
 local function Ours(name)
     local n = name:lower()
     if n == CHANNEL:lower() then return true end
@@ -593,9 +678,15 @@ local function Ours(name)
 end
 
 -- arg2 is a notice's first player, arg5 its second, arg9 the channel
-local function Notice(kind, first, _, _, second, _, _, _, name)
+local function Notice(kind, first, _, _, second, _, _, _, name, _, _, guid)
     if ns.Secret(kind) or ns.Secret(name) or type(kind) ~= "string" or type(name) ~= "string" then return end
-    if SAID[kind] and Ours(name) then Report(name .. ": " .. SAID[kind](Full(first), Full(second))) end
+    if SAID[kind] and Ours(name) then
+        local function Named(n)
+            local full, member = Full(n), MemberName(guid, n, name)
+            return full and member and (full .. " (" .. member .. ")") or full
+        end
+        Report(name .. ": " .. SAID[kind](Named(first), Named(second)))
+    end
     if name:lower() ~= Current():lower() then return end
     if kind == "WRONG_PASSWORD" or kind == "BANNED" then
         refused = true
@@ -611,9 +702,10 @@ end
 ns.On("CHAT_MSG_CHANNEL_NOTICE", Notice)
 ns.On("CHAT_MSG_CHANNEL_NOTICE_USER", Notice)
 
+-- AreOutgoingAddonChatMessagesRestricted is no send gate: it reads true on ordinary realms (tournament realms clear it)
+-- while addon messages still go out there
 local function CanSend()
     if C_ChatInfo.InChatMessagingLockdown and C_ChatInfo.InChatMessagingLockdown() then return false end
-    if C_ChatInfo.AreOutgoingAddonChatMessagesRestricted and C_ChatInfo.AreOutgoingAddonChatMessagesRestricted() then return false end
     return true
 end
 
@@ -734,6 +826,7 @@ ns.Listen("DBReady", function()
         canSend = CanSend,
         groups = Groups,
         me = Me(),
+        isMe = IsMe,
         finds = ns.Finds,
         accept = Accept,
         onRecorded = function(rec, status, info) ns.Signal("NetFind", rec, status, info) end,
@@ -758,6 +851,8 @@ local function PurgeBans()
         keys[ns.Finds.ReporterKey(name)] = true
         local short, r = name:match("^([^-]+)%-(.+)$")
         if short and r == realm then keys[ns.Finds.ReporterKey(short)] = true end
+        local base = ns.isForever and Surnamed(name)
+        if base then keys[ns.Finds.ReporterKey(base)] = true end
     end
     ns.Finds.DropReporters(keys)
 end
@@ -788,4 +883,15 @@ end)
 -- a chat window the player adds later must not show the channel either
 ns.On("UPDATE_CHAT_WINDOWS", function()
     if S.state == "on" then HideChannel() end
+end)
+
+-- a world channel joining late (login, leaving an instance) lands after ours: ours moves on again
+ns.On("CHANNEL_UI_UPDATE", function()
+    if S.state == "on" then ToEndSoon() end
+end)
+ns.On("PLAYER_REGEN_ENABLED", function()
+    if S.toEndAfterCombat then
+        S.toEndAfterCombat = nil
+        ToEndSoon()
+    end
 end)

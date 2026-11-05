@@ -214,23 +214,62 @@ end
 -- spell's wait (several quick casts each pair their own slot). A plain slot
 -- out of combat also takes a cast up to PLAIN_MAX old: one of the spell it
 -- names, else the oldest when every cast waiting is of one spell.
-function DT.TakeCast(now, name, sid)
+function DT.TakeCast(now, name, sid, slot)
     DT.Prune(now)
     local q = DT.queue
+    -- a plain slot takes its own spell's cast first: one cast dropping several
+    -- totems reports their casts in another order than their slots light
+    if name ~= nil then
+        for i, c in ipairs(q) do
+            if ((sid ~= nil and Store.SpellMatch(c.id, sid)) or c.name == name) and now - c.at <= DT.PLAIN_MAX then
+                table.remove(q, i)
+                return c
+            end
+        end
+    end
+    -- Forever: a slot is one element, readable while the slot is secret, so a
+    -- cast of another element's totem never pairs it
+    local function Away(c)
+        local h = slot and DT.HomeSlot(c.name)
+        return h ~= nil and h ~= slot
+    end
     for i, c in ipairs(q) do
         local age = now - c.at
         local same = name ~= nil and ((sid ~= nil and Store.SpellMatch(c.id, sid)) or c.name == name)
-        if age <= DT.Window(c.name) or (same and age <= DT.PLAIN_MAX) then
+        if not Away(c) and (age <= DT.Window(c.name) or (same and age <= DT.PLAIN_MAX)) then
             table.remove(q, i)
             return c
         end
     end
-    if name == nil or not q[1] or now - q[1].at > DT.PLAIN_MAX then return nil end
+    if name == nil or not q[1] or now - q[1].at > DT.PLAIN_MAX or Away(q[1]) then return nil end
     for _, c in ipairs(q) do
         if c.name ~= q[1].name then return nil end
     end
     return table.remove(q, 1)
 end
+
+-- Forever: the slot an element totem drops into, by spell name, from the
+-- client's own totem bar lists (only element totems are listed, so a hawk or
+-- any other summon has none). nil elsewhere.
+DT.homes = {}
+function DT.HomeSlot(name)
+    if not (NS.IsForever and name) then return nil end
+    local h = DT.homes[name]
+    if h then return h end
+    -- only a hit is kept: the lists can be empty before the bar loads
+    if type(GetMultiCastTotemSpells) ~= "function" then return nil end
+    for slot = 1, DT.SLOTS do
+        local list = { GetMultiCastTotemSpells(slot) }
+        for i = 1, #list do
+            if DT.SpellName(list[i]) == name then -- raw-id: the client's own totem list
+                DT.homes[name] = slot
+                return slot
+            end
+        end
+    end
+    return nil
+end
+
 
 -- The spell a slot belongs to: the cast that put it down, else its own name.
 local function SlotMatches(d, sid, want, s)
@@ -312,7 +351,9 @@ function DT.TakeBurst(slot, now)
     for h = slot + 1, DT.SLOTS do
         local s = DT.slot[h]
         local b = s and s.paired
-        if b and now - b.at <= DT.SAME_BURST then
+        local home = b and DT.HomeSlot(b.cast.name)
+        -- Forever: another element's totem keeps its own cast
+        if b and now - b.at <= DT.SAME_BURST and (home == nil or home == slot) then
             s.castId, s.pos, s.paired, s.burstId = nil, nil, nil, b.cast.id
             if b.secret then s.name, s.id = nil, nil end
             DT.pending[h], DT.waiting[h] = nil, nil
@@ -414,6 +455,18 @@ local function CdmItemID(f)
     return PlainNum(f.cooldownID)
 end
 
+-- A Show while our own Hide runs is someone answering that Hide (an addon
+-- that keeps the item shown): it stands, or the two would call each other
+-- without end.
+local cdmHiding = false
+local function CdmHide(f)
+    if cdmHiding then return end
+    cdmHiding = true
+    f:Hide()
+    cdmHiding = false
+end
+DT.CdmHide = CdmHide
+
 local function CdmHook(f)
     if DT.cdmHooked[f] then return end
     DT.cdmHooked[f] = true
@@ -425,7 +478,7 @@ local function CdmHook(f)
             DT.cdmHidden[self] = nil
             return
         end
-        self:Hide()
+        CdmHide(self)
     end
     hooksecurefunc(f, "Show", Keep)
     -- the game shows its icons through SetShown(true), which skips Show
@@ -436,7 +489,7 @@ local function CdmHook(f)
             id = PlainNum(id)
             if id and DT.CdmWanted(id) then
                 DT.cdmHidden[self] = id
-                self:Hide()
+                CdmHide(self)
             elseif DT.cdmHidden[self] then
                 DT.cdmHidden[self] = nil
             end
@@ -451,7 +504,7 @@ function DT.CdmSyncItem(f, id)
     CdmHook(f)
     if DT.CdmWanted(id) then
         DT.cdmHidden[f] = id
-        if f:IsShown() then f:Hide() end
+        if f:IsShown() then CdmHide(f) end
     elseif DT.cdmHidden[f] then
         -- let go: the game shows it again on its next update
         DT.cdmHidden[f] = nil
@@ -554,6 +607,21 @@ function DT.ReadAll()
             s.litAt = s.litAt or GetTime()
         end
     end
+    -- A slot paired while secret can hold another lit slot's cast (one cast
+    -- dropping several, lit in another order): once both read plain, the cast
+    -- of a spell another slot names goes back to that slot's own spell.
+    for slot = 1, DT.SLOTS do
+        local s = DT.slot[slot]
+        if s and s.id and s.castId and not Store.SpellMatch(s.castId, s.id) then
+            for o = 1, DT.SLOTS do
+                local t = DT.slot[o]
+                if o ~= slot and t and t.id and Store.SpellMatch(s.castId, t.id) then
+                    s.castId = s.id
+                    break
+                end
+            end
+        end
+    end
     DT.Changed()
 end
 
@@ -581,7 +649,7 @@ function DT.OnSlotUpdate(slot)
     elseif s.litAt then
         -- secret, already lit (named or not): refreshed in place unless a cast
         -- renames it, and a slot lighting fresh in the same burst takes that back
-        local c = DT.TakeCast(now, nil, nil)
+        local c = DT.TakeCast(now, nil, nil, slot)
         if c then
             s.prev = { name = s.name, id = s.id, castId = s.castId, litAt = s.litAt, pos = s.pos, at = now, cast = c }
             s.name, s.id, s.castId, s.litAt, s.pos = c.name, c.id, c.id, now, (c.name == s.name) and s.pos or nil
@@ -590,7 +658,7 @@ function DT.OnSlotUpdate(slot)
         return
     end
     s.litAt, s.paired, s.burstId = now, nil, nil
-    local c = DT.TakeCast(now, name, sid)
+    local c = DT.TakeCast(now, name, sid, slot)
     if not name and not c then c = DT.Reclaim(now) end
     if not c then c = DT.TakeBurst(slot, now) end
     if c then
@@ -644,8 +712,14 @@ function DT.LateCast(list, now, c, secret)
         end
     end
     if not low then return false end
+    -- Forever: the cast goes to its element's slot, or waits for it to light
+    local home = DT.HomeSlot(c.name)
+    if home then
+        if not list[home] then return false end
+        low, lit = home, list[home]
+    end
     for slot, t in pairs(list) do
-        if slot ~= low and math.abs(t - lit) <= DT.SAME_BURST then
+        if not home and slot ~= low and math.abs(t - lit) <= DT.SAME_BURST then
             list[slot] = nil
             local o = DT.slot[slot]
             if o then o.burstId = c.id end

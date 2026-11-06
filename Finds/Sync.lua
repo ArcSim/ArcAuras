@@ -33,7 +33,7 @@ local PING_MAX = 3            -- pings answered per PING_GAP, whoever sends them
 
 function Engine.New(env)
     local e = setmetatable({ env = env, chanQ = {}, whisQ = {}, grpQ = {}, pumping = false, nextChan = 0, nextWhis = 0, nextGrp = 0,
-        senders = {}, muted = {}, serving = {}, announced = {}, helloSent = false, lastHeard = nil, helped = {},
+        senders = {}, muted = {}, serving = {}, announced = {}, helloSent = false, lastHeard = nil, helped = {}, unreachable = {},
         round = { claims = {}, bestCount = -1 }, pageAfter = 0, sent = {} }, Engine)
     return e
 end
@@ -85,15 +85,7 @@ function Engine:Pump()
                 local r = env.send("WHISPER", m.to, m.msg)
                 self.whisperedAt = now
                 if r == "gone" then
-                    -- the asker logged off: the rest of its page is dropped, not sent into nothing
-                    local q, n = self.whisQ, 0
-                    for i = 1, #q do
-                        if q[i].to ~= m.to then
-                            n = n + 1
-                            q[n] = q[i]
-                        end
-                    end
-                    for i = #q, n + 1, -1 do q[i] = nil end
+                    self:Unreachable(m.to)
                 elseif r == "ok" or r == "fail" then
                     table.remove(self.whisQ, 1)
                 end
@@ -141,9 +133,23 @@ function Engine:QueueGroup(dist, msg)
 end
 
 function Engine:QueueWhisper(to, msg)
-    if #self.whisQ >= WHISPER_ROOM then return end
+    if self.unreachable[to] or #self.whisQ >= WHISPER_ROOM then return end
     table.insert(self.whisQ, { to = to, msg = msg })
     self:Pump()
+end
+
+-- the server says this player is not online: the rest of their page is dropped and nothing more is whispered to them
+-- this session, since each whisper into nothing prints a line in the player's chat
+function Engine:Unreachable(to)
+    self.unreachable[to] = true
+    local q, n = self.whisQ, 0
+    for i = 1, #q do
+        if q[i].to ~= to then
+            n = n + 1
+            q[n] = q[i]
+        end
+    end
+    for i = #q, n + 1, -1 do q[i] = nil end
 end
 
 -- this copy saw something worth telling: once per item per session
@@ -818,12 +824,52 @@ function S.LinesWaiting()
     return #lines
 end
 
+-- whisper names by sender (a player from another realm needs the realm), and the whispers sent lately by the name used
+local route, whispered = {}, {}
+local BOUNCE_WAIT = 30
+local NOT_FOUND = type(ERR_CHAT_PLAYER_NOT_FOUND_S) == "string" and ERR_CHAT_PLAYER_NOT_FOUND_S:find("%s", 1, true)
+    and ("^" .. (ERR_CHAT_PLAYER_NOT_FOUND_S:gsub("[%^%$%(%)%.%[%]%*%+%-%?]", "%%%0"):gsub("%%s", "(.+)")) .. "$") or nil
+
+-- the server's "no player named" answer to a whisper this copy sent: the sender it was meant for, else nil
+local function Bounce(msg)
+    if not NOT_FOUND or type(msg) ~= "string" or ns.Secret(msg) then return end
+    local name = msg:match(NOT_FOUND)
+    name = name and name:lower()
+    local w = name and (whispered[name] or whispered[name:match("^[^-]+")])
+    if w and GetTime() - w.at < BOUNCE_WAIT then return w.to end
+end
+S.Bounce = Bounce
+
+if addFilter then
+    addFilter("CHAT_MSG_SYSTEM", function(_, _, msg) return Bounce(msg) ~= nil end)
+end
+ns.On("CHAT_MSG_SYSTEM", function(msg)
+    local to = Bounce(msg)
+    if not to or not engine or engine.unreachable[to] then return end
+    engine:Unreachable(to)
+    if S.OnBounce then S.OnBounce(to) end
+end)
+
+-- a chat line's sender from another realm is whispered with that realm, or the server looks for them on this one
+local function ReplyName(name, sender, guid)
+    if name:find("-", 1, true) or not GetPlayerInfoByGUID then return end
+    local realm = select(7, GetPlayerInfoByGUID(guid))
+    if type(realm) ~= "string" or ns.Secret(realm) or realm == "" then return end
+    return name .. "-" .. (sender:match("%-(.+)$") or realm:gsub("%s", ""))
+end
+
 local RESULT = Enum and Enum.SendAddonMessageResult
 local function Send(dist, target, msg)
     if dist == "CHANNEL" then
         local num = ChannelNumber()
         if not num then return "fail" end
         target = tostring(num)
+    elseif dist == "WHISPER" then
+        local to = target
+        target = route[to] or to
+        local w = { to = to, at = GetTime() }
+        whispered[target:lower()] = w
+        whispered[target:lower():match("^[^-]+")] = w
     end
     local r = C_ChatInfo.SendAddonMessage(P.PREFIX, msg, dist, target)
     local out = "fail"
@@ -906,8 +952,14 @@ ns.On("CHAT_MSG_CHANNEL", function(text, sender, _, _, _, _, _, _, base, _, _, g
     if base:lower() ~= Current():lower() or text:sub(1, #LINE) ~= LINE then return end
     local msg = text:sub(#LINE + 1)
     local mine = UnitGUID and guid ~= nil and guid == UnitGUID("player")
-    if mine then CameBack(msg) else S.lines.heard = S.lines.heard + 1 end
-    engine:Receive(msg, "CHANNEL", mine and engine.env.me or LineSender(sender, guid), "line")
+    if mine then
+        CameBack(msg)
+        return engine:Receive(msg, "CHANNEL", engine.env.me, "line")
+    end
+    S.lines.heard = S.lines.heard + 1
+    local name = LineSender(sender, guid)
+    route[name] = ReplyName(name, sender, guid)
+    engine:Receive(msg, "CHANNEL", name, "line")
 end)
 
 -- the channel's notices, hidden from the chat windows: a throttle notice means the line in flight was dropped

@@ -28,6 +28,10 @@ CL.versions = {
                 { title = "Item Finds: item data",
                     desc = "The latest hotfixes, and new drop places found by players." },
             } },
+            { header = "Bug Fixes", items = {
+                { title = "Item Finds: display",
+                    desc = "Fixed some display issues." },
+            } },
         },
     },
     {

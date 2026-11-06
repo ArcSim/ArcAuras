@@ -14,6 +14,10 @@ Your castbar can give each spell its own look, and Item Finds shares with more p
 - **Item Finds: quest rewards** - Rewards you hover in your quest log are saved as quest rewards.
 - **Item Finds: item data** - The latest hotfixes, and new drop places found by players.
 
+### Bug Fixes
+
+- **Item Finds: display** - Fixed some display issues.
+
 ## 3.2.0
 
 Item Finds sharing fixed, dungeon entrances on the map, Call of the Elements totems on the right icons, and out-of-range looks that work on their own.

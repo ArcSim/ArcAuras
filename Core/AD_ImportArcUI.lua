@@ -621,6 +621,7 @@ IA.BAR_SPECIALS = {
     castTicks = "ticks.* of a castbar (the channel profile's when it turns ticks on): mode, percent (5-50), custom list as percent, colour, thickness, height and its anchor, channels only",
     castProfiles = "v1's cast-type profiles folded: a per-type key from the Hardcast profile unless its category is shared; fill.castChannelOn / castChannelColor from the Channel profile",
     castStages = "fill.castStageColor1..8: each empowered stage's colour, alpha kept",
+    castSpells = "cast.castSpell<k> Per Spell cards (a player castbar, the first six): spell ID, own colour, texture by name, ticks even or at percents where v1's bar draws ticks",
     castColor = "fill.color = the class colour (a player bar), or white with no lock colour (Use Texture Colors)",
     castType = "a cast bar shows every cast (v1's cast-type filter is reported)",
     litColors = "the lit points' colour by how many are lit: a colour from 1 up as the bar's own (fill.color / pointColor), the rest powerthresholds above, absolute",
@@ -681,9 +682,9 @@ IA.CAST_MAP = {
     empowerSegmentColorsEnabled = { "fill", "castStageColors", "bool" },
     empowerSegmentColors = { special = "castStages" },
     empowerMaxStages = { "fill", "castStageCount", "int" },
+    spellOverrides = { special = "castSpells" },
     -- options Arc Auras does not offer yet
     matchSlotsOnly = { gap = "a matched width spans the group's frame, not only its slots (it comes in centred, as v1 drew it)" },
-    spellOverrides = { gap = "per-spell cast bar looks are not offered yet" },
     conditionalColorEnabled = { gap = "cast bar threshold colours are not offered yet" },
     conditionalColorAsSec = { gap = "cast bar threshold colours are not offered yet" },
     colorThresholds = { gap = "cast bar threshold colours are not offered yet" },
@@ -2166,6 +2167,52 @@ function IA.CastStages(o, cfg)
     for i = 1, 8 do Put(o, "fill", "castStageColor" .. i, Color(cols[i])) end
 end
 
+-- v1's Spell Overrides on a player castbar: a Per Spell card each (cast.castSpell<k>), the
+-- first six. v1 drew a spell's ticks only while the bar draws ticks: ticks come over only then.
+function IA.CastSpells(o, cfg, eff, cov)
+    local list = type(cfg.spellOverrides) == "table" and cfg.spellOverrides or nil
+    if not list then return end
+    local max = (NS.Schema and NS.Schema.CAST_SPELL_SLOTS) or 6
+    local ch = IA.CastFold(cfg, "channel")
+    local ticksOn = (ch ~= cfg and ch.tickMarksEnabled == true) or eff.tickMarksEnabled == true
+    local n = 0
+    for _, ov in ipairs(list) do
+        local id = type(ov) == "table" and tonumber(ov.spellID) or nil
+        if id and id > 0 then
+            if n >= max then
+                Dropped(cov, "cast:spellOverrides.past" .. max, "only the first " .. max .. " spell looks come over", true)
+            else
+                n = n + 1
+                local suf = (n > 1) and tostring(n) or ""
+                Put(o, "cast", "castSpell" .. suf, true)
+                Put(o, "cast", "castSpellID" .. suf, math.floor(id))
+                local c = ov.barColorEnabled == true and Color(ov.barColor) or nil
+                if c then
+                    Put(o, "cast", "castSpellColorOn" .. suf, true)
+                    Put(o, "cast", "castSpellColor" .. suf, c)
+                end
+                if ov.textureOverrideEnabled == true and type(ov.texture) == "string" and ov.texture ~= "" then
+                    Put(o, "cast", "castSpellTex" .. suf, ov.texture)
+                end
+                if ticksOn then
+                    local cnt = math.floor(tonumber(ov.tickCount) or 0)
+                    if ov.tickMode == "custom" and type(ov.customTicks) == "string" and ov.customTicks:find("%d") then
+                        Put(o, "cast", "castSpellTicks" .. suf, "custom")
+                        Put(o, "cast", "castSpellTickPos" .. suf, ov.customTicks)
+                    elseif cnt >= 2 then
+                        Put(o, "cast", "castSpellTicks" .. suf, "even")
+                        Put(o, "cast", "castSpellTickCount" .. suf, math.min(20, cnt))
+                    elseif cnt == 1 then
+                        -- one part: v1 drew no mark
+                        Put(o, "cast", "castSpellTicks" .. suf, "custom")
+                    end
+                end
+            end
+        end
+    end
+    if n > 0 then Put(o, "cast", "castSpellCount", n) end
+end
+
 -- A castbar's look beyond its matrix rows: what Arc Auras' new-castbar template turns on
 -- that v1 never drew, one text style for the name and the time, the flat background, the
 -- hold, the ticks (the channel profile's when it turns them on), the channel colour, the
@@ -3561,6 +3608,7 @@ function IA.PlanBars(ctx, charDB, L, own)
         end
         IA.CastStages(B.o, eff)
         IA.CastLook(B, cfg, eff, unit, ctx.classID)
+        if unit == "player" then IA.CastSpells(B.o, cfg, eff, cov) end
         -- what v1 drew differently for a channel (beyond its colour and ticks) or, on an
         -- Evoker, an empowered cast: those casts take the bar's hardcast look
         for _, ct in ipairs({ "channel", "empower" }) do

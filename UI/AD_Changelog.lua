@@ -13,6 +13,24 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.2.1",
+        intro = "Your castbar can give each spell its own look, and Item Finds shares with more players.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Per Spell castbar looks",
+                    desc = "Your castbar can give any of your spells its own color, texture and ticks (Castbar > Per Spell)." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Item Finds: sharing",
+                    desc = "Finds are shared with more players on your realm." },
+                { title = "Item Finds: quest rewards",
+                    desc = "Rewards you hover in your quest log are saved as quest rewards." },
+                { title = "Item Finds: item data",
+                    desc = "The latest hotfixes, and new drop places found by players." },
+            } },
+        },
+    },
+    {
         version = "3.2.0",
         intro = "Item Finds sharing fixed, dungeon entrances on the map, Call of the Elements totems on the right icons, and out-of-range looks that work on their own.",
         sections = {
@@ -1426,6 +1444,20 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.2.1",
+        intro = "Your castbar can give each spell its own look.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Per Spell castbar looks",
+                    desc = "Your castbar can give any of your spells its own color, texture and ticks (Castbar > Per Spell)." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Arc UI import",
+                    desc = "Spell overrides on your Arc UI castbar come over as Per Spell looks." },
+            } },
+        },
+    },
     {
         version = "3.2.0",
         intro = "A login freeze with Arc UI fixed, and out-of-range looks that work on their own.",

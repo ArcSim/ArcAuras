@@ -1,5 +1,19 @@
 # Arc Auras
 
+## 3.2.1
+
+Your castbar can give each spell its own look, and Item Finds shares with more players.
+
+### New Features
+
+- **Per Spell castbar looks** - Your castbar can give any of your spells its own color, texture and ticks (Castbar > Per Spell).
+
+### Improvements
+
+- **Item Finds: sharing** - Finds are shared with more players on your realm.
+- **Item Finds: quest rewards** - Rewards you hover in your quest log are saved as quest rewards.
+- **Item Finds: item data** - The latest hotfixes, and new drop places found by players.
+
 ## 3.2.0
 
 Item Finds sharing fixed, dungeon entrances on the map, Call of the Elements totems on the right icons, and out-of-range looks that work on their own.

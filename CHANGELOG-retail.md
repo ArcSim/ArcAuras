@@ -1,5 +1,17 @@
 # Arc Auras
 
+## 3.2.1
+
+Your castbar can give each spell its own look.
+
+### New Features
+
+- **Per Spell castbar looks** - Your castbar can give any of your spells its own color, texture and ticks (Castbar > Per Spell).
+
+### Improvements
+
+- **Arc UI import** - Spell overrides on your Arc UI castbar come over as Per Spell looks.
+
 ## 3.2.0
 
 A login freeze with Arc UI fixed, and out-of-range looks that work on their own.

@@ -308,6 +308,13 @@ end
 -- by SetVertexColorFromBoolean.
 function CB.Paint(e)
     local rec, shell = e.rec, e.shell
+    -- a spell's own color wins over the channel and can't-interrupt colors
+    local suf = e.castLook
+    if suf and R(rec, "cast", "castSpellColorOn" .. suf) == true then
+        local c = R(rec, "cast", "castSpellColor" .. suf) or { 1, 0.82, 0.2, 1 }
+        shell.fill:SetStatusBarColor(c[1], c[2], c[3], c[4] or 1)
+        return
+    end
     local r, g, b, a = K.BarColorOf(rec)
     if e.castChannel and R(rec, "fill", "castChannelOn") == true then
         local c = R(rec, "fill", "castChannelColor") or { 0.36, 0.85, 0.46, 1 }
@@ -350,7 +357,7 @@ end
 -- empowered cast's stage dividers show whatever the ticks do.
 function CB.TicksFor(e)
     e.ticksOff = (not CB.PerTick(e) and R(e.rec, "ticks", "tickChannelOnly") == true
-        and not e.castChannel and not CB.StageMarksOn(e)) or nil
+        and not e.castChannel and not CB.StageMarksOn(e) and CB.SpellTicks(e) == nil) or nil
     local ticks = e.shell.ticks
     for i = 1, e.tickCount or 0 do
         if ticks[i] then ticks[i]:SetShown(not e.ticksOff) end
@@ -410,12 +417,80 @@ end
 -- block says, as Blizzard's bar always shows its pips, each in its stage's
 -- color if asked; else the block's own.
 function CB.TickFractions(e)
-    if not CB.StageMarksOn(e) then return Bars.TickFractions(e.rec, CB.TickUnit(e)) end
+    if not CB.StageMarksOn(e) then
+        -- a spell's own ticks stand in for the bar's (false: none at all)
+        local own = CB.SpellTicks(e)
+        if own ~= nil then return own or nil end
+        return Bars.TickFractions(e.rec, CB.TickUnit(e))
+    end
     local fr = e.castStageFracs
     if R(e.rec, "ticks", "castStageMarkColors") ~= true then return fr end
     local cols = {}
     for i = 1, #fr do cols[i] = CB.StageColor(e.rec, i) end
     return fr, nil, cols
+end
+
+-- Per Spell: one of your spells wearing its own look on this castbar
+-- (rec.cast castSpell<k>), picked as the cast starts. Returns the slot's
+-- field suffix ("" for spell 1), or nil when no switched-on slot lists it.
+function CB.SpellLook(rec, sid)
+    local S = NS.Schema
+    if not (sid and S and S.PlayerCast and S.PlayerCast(rec)) then return nil end
+    local n = math.min(R(rec, "cast", "castSpellCount") or 1, S.CAST_SPELL_SLOTS or 1)
+    for k = 1, n do
+        local suf = (k > 1) and tostring(k) or ""
+        local id = tonumber(R(rec, "cast", "castSpellID" .. suf))
+        if R(rec, "cast", "castSpell" .. suf) == true and id and id > 0
+            and NS.Store.SpellMatch(id, sid) then
+            return suf
+        end
+    end
+    return nil
+end
+
+-- The cast's spell look's ticks: a list of fractions, false for none, nil
+-- for the bar's own.
+function CB.SpellTicks(e)
+    local suf = e.castLook
+    if not suf then return nil end
+    local rec = e.rec
+    local mode = R(rec, "cast", "castSpellTicks" .. suf)
+    if mode == "even" then
+        local n = math.floor(tonumber(R(rec, "cast", "castSpellTickCount" .. suf)) or 0)
+        if n < 2 then return false end
+        local out = {}
+        for i = 1, n - 1 do out[i] = i / n end
+        return out
+    elseif mode == "custom" then
+        local out = {}
+        for _, v in ipairs(NS.Schema.TickValues(R(rec, "cast", "castSpellTickPos" .. suf))) do
+            if v > 0 and v < 100 then out[#out + 1] = v / 100 end
+        end
+        table.sort(out)
+        return #out > 0 and out or false
+    end
+    return nil
+end
+
+-- The fill's texture: the cast's spell look's, else the bar's own. Swapped
+-- as the style pass does it (a new texture object, its sampling, the sheen).
+function CB.SpellTex(e)
+    local rec, shell = e.rec, e.shell
+    if NS.Schema.BarRing(rec) or not shell.fill then return end
+    local key = e.castLook and R(rec, "cast", "castSpellTex" .. e.castLook)
+    if type(key) ~= "string" or key == "" then key = R(rec, "fill", "texture") end
+    local path = K.ResolveBarTexture(key)
+    if e.texApplied == path then return end
+    e.texApplied = path
+    shell.fill:SetStatusBarTexture(path)
+    local t = shell.fill:GetStatusBarTexture()
+    if t.SetSnapToPixelGrid then t:SetSnapToPixelGrid(false) end
+    if t.SetTexelSnappingBias then t:SetTexelSnappingBias(0) end
+    shell.fillTex = t
+    if shell.sheen then
+        shell.sheen:ClearAllPoints()
+        shell.sheen:SetAllPoints(t)
+    end
 end
 
 function CB.StageColor(rec, i)
@@ -706,10 +781,13 @@ function CB.Show(e, info)
     e.castIdle = nil
     CB.IdleIcon(e)
     K.SetRunText(shell, "dur", "")
+    local hadLook = e.castLook ~= nil
+    e.castLook = CB.SpellLook(rec, info.spellID)
+    CB.SpellTex(e)
     CB.Paint(e)
     CB.LockLook(e)
     e.castTickFracs = e.castChannel and CB.ChannelTicks(info.spellID, info.len) or nil
-    if CB.PerTick(e) or hadStages or e.castStageFracs then K.LayoutTicks(e) end
+    if CB.PerTick(e) or hadStages or e.castStageFracs or hadLook or e.castLook then K.LayoutTicks(e) end
     CB.TicksFor(e)
     CB.Latency(e, info.latency)
     CB.QueueTick(e, info.len)
@@ -742,9 +820,10 @@ function CB.Begin(e, kind, dur, built)
     end
     local name, tex, ni, bid, sid, len, stages
     if kind == "empower" then
-        local n, _, t, _, _, _, x, _, _, st, b = UnitChannelInfo(unit)
+        local n, _, t, _, _, _, x, id, _, st, b = UnitChannelInfo(unit)
         name, tex, ni, bid = n, t, x, b
         stages = CB.StageFracs(unit, CB.Plain(st))
+        if unit == "player" then sid = CB.Plain(id) end
     elseif channel then
         local n, _, t, sMs, eMs, _, x, id, _, _, b = UnitChannelInfo(unit)
         name, tex, ni, bid = n, t, x, b
@@ -754,9 +833,10 @@ function CB.Begin(e, kind, dur, built)
             if sMs and eMs and eMs > sMs then len = (eMs - sMs) / 1000 end
         end
     else
-        local n, _, t, sMs, eMs, _, _, x, _, b = UnitCastingInfo(unit)
+        local n, _, t, sMs, eMs, _, _, x, id, b = UnitCastingInfo(unit)
         name, tex, ni, bid = n, t, x, b
         if unit == "player" then
+            sid = CB.Plain(id)
             sMs, eMs = CB.Plain(sMs), CB.Plain(eMs)
             if sMs and eMs and eMs > sMs then len = (eMs - sMs) / 1000 end
         end
@@ -847,6 +927,9 @@ end
 -- editing.
 function CB.Rest(e)
     local hadStages = e.castStageFracs ~= nil
+    local hadLook = e.castLook ~= nil
+    e.castLook = nil
+    if hadLook then CB.SpellTex(e) end
     e.castOn, e.castHold, e.castDur, e.castNotInt, e.castBarID = false, nil, nil, nil, nil
     e.castChannel, e.castTex, e.castGoneAt, e.castHow = false, nil, nil, nil
     e.castTickFracs, e.castSent, e.castLen = nil, nil, nil
@@ -871,7 +954,7 @@ function CB.Rest(e)
         CB.IdleArt(e)
         e.stateHidden = true
     end
-    if CB.PerTick(e) or hadStages or e.castStageFracs then K.LayoutTicks(e) end
+    if CB.PerTick(e) or hadStages or e.castStageFracs or hadLook then K.LayoutTicks(e) end
     e.ticksOff = nil
     CB.TicksFor(e)
     K.ApplyVisibility(e)
@@ -1069,7 +1152,8 @@ function CB.FromSent(e, s)
     if e.isPreview then return end
     local dur = CB.FakeDuration(s.start, s.len)
     if not dur then return end
-    CB.Show(e, { dur = dur, channel = false, name = s.name, tex = s.tex, len = s.len, sent = s })
+    CB.Show(e, { dur = dur, channel = false, name = s.name, tex = s.tex, len = s.len, sent = s,
+        spellID = CB.Plain(s.sid) })
 end
 
 -- Your cast finished: a press queued behind it waits once more for its own
@@ -1238,6 +1322,7 @@ end
 -- and the stage colours in the bar's new texture.
 function CB.Styled(e)
     if e.iconF and e.iconF.tex then e.iconF.tex:SetTexture(e.castArt) end
+    if e.castLook then CB.SpellTex(e) end
     CB.IdleIcon(e)
     if e.castHold then
         CB.HoldColor(e)

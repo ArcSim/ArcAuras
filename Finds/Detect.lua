@@ -312,18 +312,42 @@ ns.Listen("Login", function()
     C_Timer.After(20, ScanBags)
 end)
 
--- any item tooltip but our own (the database and pop-up show items nobody has seen yet): the item exists,
--- nothing is known about where it drops
+-- a quest reward's tooltip: from the quest log, read anywhere, so the player's spot says nothing about the quest;
+-- from a quest giver's window, where the player stands by the giver. Counted once per item a session
+local questTipped = {}
+local function QuestTipSource(tip)
+    local info = tip and tip.GetProcessingTooltipInfo and tip:GetProcessingTooltipInfo()
+    local getter = info and info.getterName
+    if getter == "GetQuestLogItem" then
+        local quest = info.getterArgs and info.getterArgs[3]
+        if type(quest) ~= "number" and C_QuestLog and C_QuestLog.GetSelectedQuest then quest = C_QuestLog.GetSelectedQuest() end
+        local title = type(quest) == "number" and C_QuestLog and C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(quest)
+        if type(title) ~= "string" or Secret(title) or title == "" then title = nil end
+        return Source("q", title, nil, nil, true)
+    elseif getter == "GetQuestItem" then
+        local title = GetTitleText and GetTitleText()
+        if type(title) ~= "string" or Secret(title) or title == "" then title = nil end
+        return Source("q", title)
+    end
+end
+
+-- any item tooltip but our own (the database and pop-up show items nobody has seen yet): the item exists, and
+-- nothing is known about where it drops unless the tooltip is a quest reward's
 if TooltipDataProcessor and TooltipDataProcessor.AddTooltipPostCall and Enum and Enum.TooltipDataType then
     TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tip, data)
         if ns.Theme.IsOwnTip(tip) then return end
         local id = data and data.id
-        if id and not Secret(id) and not seen[id] then Detect.Saw(id, nil) end
+        if not id or Secret(id) or questTipped[id] then return end
+        local src = QuestTipSource(tip)
+        if src then questTipped[id] = true end
+        -- judged already this session: only a quest reward's tooltip, once, has something to add
+        if not seen[id] or src then Detect.Saw(id, src) end
     end)
 end
 
 function Detect.Forget()
     wipe(seen)
+    wipe(questTipped)
 end
 
 -- /fif demo: a few Forever items as test finds where they really drop, so the window, the pop-up and the badge can

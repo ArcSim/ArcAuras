@@ -537,7 +537,9 @@ local function Later(e)
 end
 
 ns.Listen("FindsChanged", function(e, status, info)
-    if status ~= "new" and status ~= "changed" then return end
+    -- a datamined item seen before is worth a pop-up once a find says where it drops
+    local placed = status == "updated" and info and info.src and info.src.t and info.src.t ~= "q"
+    if status ~= "new" and status ~= "changed" and not placed then return end
     local old = info and (info.quiet or (info.fromNet and type(e.at) == "number" and ns.Now() - e.at > LIVE_AGE))
     if old then Later(e) else Popup.Offer(e) end
 end)

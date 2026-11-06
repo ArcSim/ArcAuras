@@ -41,13 +41,41 @@ local function Num(s, lo, hi)
     return n
 end
 
-local function Opened(msg)
+local function Opened(msg, version)
     if type(msg) ~= "string" or #msg < 6 or #msg > P.MAX then return end
     local body, ck = msg:match("^(.*)~(%x%x%x%x)$")
     if not body or Checksum(body) ~= ck then return end
     local f = Split(body)
-    if tonumber(f[2]) ~= P.VERSION then return end
+    if tonumber(f[2]) ~= (version or P.VERSION) then return end
     return f
+end
+
+-- the developer's ping and its answers carry their own number, so copies from before them let them go as another
+-- version's messages instead of counting them as junk
+P.PING = 101
+
+function P.EncodePing(token)
+    return Seal(table.concat({ "Q", P.PING, token }, "~"))
+end
+
+function P.DecodePing(msg)
+    local f = Opened(msg, P.PING)
+    if not f or f[1] ~= "Q" or #f ~= 3 then return end
+    return Num(f[3], 1, 2147483647)
+end
+
+-- heard: how the ping reached the answering copy, "m" an addon message, "l" a chat line, "ml" both; host: the addon it
+-- runs in
+function P.EncodeAnswer(token, heard, host, version)
+    return Seal(table.concat({ "A", P.PING, token, heard, Clean(host, 16), Clean(version, 20) }, "~"))
+end
+
+function P.DecodeAnswer(msg)
+    local f = Opened(msg, P.PING)
+    if not f or f[1] ~= "A" or #f ~= 6 then return end
+    local token = Num(f[3], 1, 2147483647)
+    if not token or not (f[4] == "m" or f[4] == "l" or f[4] == "ml") then return end
+    return token, f[4], f[5], f[6]
 end
 
 -- e: a find record (Finds.lua keys)

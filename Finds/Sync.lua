@@ -1,4 +1,4 @@
-local _, ns = ...
+local ADDON, ns = ...
 
 local P = ns.Proto
 
@@ -27,6 +27,9 @@ local QUIET_GAP = 600         -- a find announced this long after the last word 
 local RESEND_MAX = 20         -- such finds sent again per SENDER_WINDOW, live finds included, well under SENDER_MAX
 local RESEND_WAIT = 30        -- seconds before they go, so a newcomer's catch-up comes first
 local ANNOUNCE_SPREAD = 3     -- seconds a find may wait before this copy announces it
+local PING_SPREAD = 20        -- seconds a ping's answer may wait, so a channel's answers spread out
+local PING_GAP = 600
+local PING_MAX = 3            -- pings answered per PING_GAP, whoever sends them
 
 function Engine.New(env)
     local e = setmetatable({ env = env, chanQ = {}, whisQ = {}, grpQ = {}, pumping = false, nextChan = 0, nextWhis = 0, nextGrp = 0,
@@ -55,9 +58,10 @@ local function Bucket(self, sender)
     return b
 end
 
--- a message this copy cannot read; a sound one from another version of the addon is let go without counting
-local function Bad(self, b, sender, msg)
-    if P.OtherVersion(msg) then return end
+-- a message this copy cannot read; a sound one from another version of the addon is let go without counting, and so
+-- is a chat line (anything typed into the channel, or a line a chat filter changed on its way)
+local function Bad(self, b, sender, msg, via)
+    if via == "line" or P.OtherVersion(msg) then return end
     b.bad = b.bad + 1
     if b.bad >= BAD_MAX then self:Mute(sender, b.bad .. " unreadable messages") end
 end
@@ -307,7 +311,46 @@ function Engine:Serve(requester, since, after, holding)
     self:QueueWhisper(requester, P.EncodeEnd(#page, page[#page].id))
 end
 
-function Engine:Receive(msg, dist, sender)
+-- the same find sent as an addon message and as a chat line: the two routes may name the sender differently, so a
+-- report is also known by its exact text and route for a window (two windows kept, so none slips through at the turn).
+-- The same text by the other route is that copy again; by the same route it is another player's report
+local function SeenText(self, msg, via)
+    local now, route = self.env.now(), via or "message"
+    if not self.textNow or now - self.textAt > SENDER_WINDOW then
+        self.textOld, self.textNow, self.textAt = self.textNow or {}, {}, now
+    end
+    local was = self.textNow[msg] or self.textOld[msg]
+    if was and was ~= route then return true end
+    self.textNow[msg] = was or route
+    return false
+end
+
+-- the developer's ping: each copy answers once, with its addon, its version and how the ping reached it (an addon
+-- message, a chat line or both), on the channel and by whisper. The wait before answering lets both routes arrive
+function Engine:Ping(sender, token, via)
+    local env, how = self.env, via == "line" and "l" or "m"
+    self.pings = self.pings or {}
+    local p = self.pings[token]
+    if p then
+        p[how] = true
+        return
+    end
+    local now, times = env.now(), self.pingTimes or {}
+    self.pingTimes = times
+    while times[1] and now - times[1] > PING_GAP do table.remove(times, 1) end
+    if #times >= PING_MAX then return end
+    times[#times + 1] = now
+    p = { [how] = true }
+    self.pings[token] = p
+    env.after(2 + env.random(0, PING_SPREAD * 1000) / 1000, function()
+        -- by whisper only: a ping on a busy channel would otherwise fill it with every copy's answer
+        local answer = P.EncodeAnswer(token, (p.m and "m" or "") .. (p.l and "l" or ""), env.host or "?", env.version or "?")
+        self:QueueWhisper(sender, answer)
+    end)
+end
+
+-- via: "line" for a chat line on the channel, nil for an addon message
+function Engine:Receive(msg, dist, sender, via)
     local env = self.env
     if not sender or sender == env.me or (env.isMe and env.isMe(sender)) or self.muted[sender] then return end
     -- a banned player is not heard at all
@@ -318,7 +361,7 @@ function Engine:Receive(msg, dist, sender)
     local b = Bucket(self, sender)
     if kind == "F" then
         local info = P.DecodeFind(msg)
-        if not info then return Bad(self, b, sender, msg) end
+        if not info then return Bad(self, b, sender, msg, via) end
         self:Heard()
         -- a find heard on the channel, the guild or the group is a first-hand report; a whispered one is a catch-up
         -- copy. The same report on two of them counts and records once
@@ -327,6 +370,7 @@ function Engine:Receive(msg, dist, sender)
             b.heard = b.heard or {}
             if b.heard[msg] then return end
             b.heard[msg] = true
+            if SeenText(self, msg, via) then return end
         end
         -- pages from a copy that served this one lately are expected; only live announcements count against a sender
         local served = self.helped[sender]
@@ -339,8 +383,10 @@ function Engine:Receive(msg, dist, sender)
         end
         self.lastHeard = env.now()
         -- the server names the sender and nothing else in a message can be trusted: a credit stands only when it names
-        -- the sender (a finder reporting or serving its own find)
-        if info.by and info.by ~= sender:match("^[^-]+") then info.by = nil end
+        -- the sender (a finder reporting or serving its own find). Forever names a sender "First Surname" while the
+        -- credit carries the first name
+        local base = sender:match("^[^-]+") or sender
+        if info.by and info.by ~= base and info.by ~= base:match("^(%S+)%s") then info.by = nil end
         env.accept(info, sender, function(ok)
             if not ok then return end
             info.fromNet = true
@@ -352,7 +398,7 @@ function Engine:Receive(msg, dist, sender)
         end)
     elseif kind == "H" then
         local count, sum, since, after = P.DecodeHello(msg)
-        if not count then return Bad(self, b, sender, msg) end
+        if not count then return Bad(self, b, sender, msg, via) end
         -- a fresh ask comes at login and at most once a minute from Refresh; past ASK_MAX in a window more asks go
         -- unanswered, without a mute (a player reloading a lot is no troublemaker; a page run's next asks carry a cursor
         -- and are not counted)
@@ -380,7 +426,7 @@ function Engine:Receive(msg, dist, sender)
         end)
     elseif kind == "Y" then
         local target, count = P.DecodeServing(msg)
-        if not target then return Bad(self, b, sender, msg) end
+        if not target then return Bad(self, b, sender, msg, via) end
         self:Heard()
         local mine = self.serving[target]
         -- a claim near this copy's own holding settles it; a much smaller one does not
@@ -395,7 +441,7 @@ function Engine:Receive(msg, dist, sender)
         end
     elseif kind == "E" then
         local n, last = P.DecodeEnd(msg)
-        if not n or dist ~= "WHISPER" then return Bad(self, b, sender, msg) end
+        if not n or dist ~= "WHISPER" then return Bad(self, b, sender, msg, via) end
         self:Heard()
         -- only the biggest holder that claimed this ask steers the pages; late or smaller pages only add finds
         local round = self.round
@@ -412,8 +458,16 @@ function Engine:Receive(msg, dist, sender)
         else
             self:RunDone()
         end
+    elseif kind == "Q" then
+        local token = P.DecodePing(msg)
+        if not token then return Bad(self, b, sender, msg, via) end
+        if dist == "CHANNEL" then self:Ping(sender, token, via) end
+    elseif kind == "A" then
+        local token, heard, host, version = P.DecodeAnswer(msg)
+        if not token then return Bad(self, b, sender, msg, via) end
+        if env.onAnswer then env.onAnswer(sender, token, heard, host, version, dist, via) end
     else
-        Bad(self, b, sender, msg)
+        Bad(self, b, sender, msg, via)
     end
 end
 
@@ -709,6 +763,61 @@ local function CanSend()
     return true
 end
 
+-- Chat lines: every channel message also goes out as an ordinary chat line on the channel, which every copy reads back
+-- (Forever may not carry addon messages on a channel; chat lines always arrive). An addon may only chat while the
+-- game handles a real key press or click, so lines wait here and one goes per press, LINE_GAP apart
+local LINE = P.PREFIX .. " "
+local LINE_GAP = 2
+local LINE_ROOM = 30
+-- the server sends a player's own lines back, and drops lines that come too fast: a line that is not back in
+-- LINE_BACK seconds was dropped, so it goes again after a pause that doubles with each drop in a row
+local LINE_BACK = 5
+local LINE_PAUSE = 10
+local LINE_PAUSE_MAX = 120
+local LINE_TRIES = 4
+local lines = {}
+S.lines = { sent = 0, heard = 0, off = false, nextAt = 0, back = 0, dropped = 0, lost = 0, gap = LINE_GAP, tries = {} }
+
+local function QueueLine(msg)
+    if S.lines.off then return end
+    if #lines >= LINE_ROOM then table.remove(lines, 1) end
+    lines[#lines + 1] = msg
+end
+
+-- the line in flight was dropped: back to the front of the queue, unless it has had its tries
+local function Dropped(now)
+    local L = S.lines
+    local text = L.out
+    L.out = nil
+    if not text then return end
+    L.dropped = L.dropped + 1
+    if (L.tries[text] or 0) >= LINE_TRIES then
+        L.tries[text] = nil
+        L.lost = L.lost + 1
+    else
+        table.insert(lines, 1, text)
+    end
+    L.gap = math.min(LINE_PAUSE_MAX, L.gap < LINE_PAUSE and LINE_PAUSE or L.gap * 2)
+    L.nextAt = now + L.gap
+    if S.OnDrop then S.OnDrop(text, L.tries[text] == nil, L.gap) end
+end
+
+-- this player's own line came back from the server
+local function CameBack(msg)
+    local L = S.lines
+    L.back = L.back + 1
+    if L.out == msg then
+        L.out = nil
+        L.tries[msg] = nil
+        L.gap = math.max(LINE_GAP, L.gap / 2)
+        L.nextAt = math.min(L.nextAt, L.outAt + L.gap)
+    end
+end
+
+function S.LinesWaiting()
+    return #lines
+end
+
 local RESULT = Enum and Enum.SendAddonMessageResult
 local function Send(dist, target, msg)
     if dist == "CHANNEL" then
@@ -717,14 +826,108 @@ local function Send(dist, target, msg)
         target = tostring(num)
     end
     local r = C_ChatInfo.SendAddonMessage(P.PREFIX, msg, dist, target)
-    if r == nil or r == true or r == 0 or (RESULT and r == RESULT.Success) then return "ok" end
-    if RESULT and (r == RESULT.AddonMessageThrottle or r == RESULT.ChannelThrottle or r == RESULT.AddOnMessageLockdown) then
-        return "wait"
+    local out = "fail"
+    if r == nil or r == true or r == 0 or (RESULT and r == RESULT.Success) then
+        out = "ok"
+    elseif (RESULT and (r == RESULT.AddonMessageThrottle or r == RESULT.ChannelThrottle or r == RESULT.AddOnMessageLockdown))
+        or r == 3 or r == 8 or r == 11 then
+        out = "wait"
+    elseif (RESULT and r == RESULT.TargetOffline) or r == 12 then
+        out = "gone"
     end
-    if r == 3 or r == 8 or r == 11 then return "wait" end
-    if (RESULT and r == RESULT.TargetOffline) or r == 12 then return "gone" end
-    return "fail"
+    -- a message held back is sent again later: its line waits for that
+    if dist == "CHANNEL" and out ~= "wait" then QueueLine(msg) end
+    return out
 end
+
+-- called only from a key press or a click
+local function SendLine()
+    local L = S.lines
+    if L.off or S.state ~= "on" or not CanSend() then return end
+    local now = GetTime()
+    if L.out then
+        if now - L.outAt < LINE_BACK then return end
+        Dropped(now)
+    end
+    if #lines == 0 or now < L.nextAt then return end
+    local num = ChannelNumber()
+    local chat = (C_ChatInfo and C_ChatInfo.SendChatMessage) or SendChatMessage
+    if not num or not chat then return end
+    local text = table.remove(lines, 1)
+    L.out, L.outAt = text, now
+    L.tries[text] = (L.tries[text] or 0) + 1
+    L.nextAt = now + L.gap
+    L.sent = L.sent + 1
+    chat(LINE .. text, "CHANNEL", nil, num)
+end
+
+-- the developer build's ping, sent from a button click: its line goes ahead of any waiting and rides that click
+function S.Ping(token)
+    if not engine or S.state ~= "on" then return false end
+    local before = #lines
+    Send("CHANNEL", nil, P.EncodePing(token))
+    if #lines > before then table.insert(lines, 1, table.remove(lines)) end
+    SendLine()
+    return true
+end
+
+-- the presses lines ride on: clicks in the world, and every key (passed on to the game's own bindings). Set up out of
+-- combat, where keyboard input may be changed
+local function WatchPresses()
+    if S.keys then return end
+    if InCombatLockdown and InCombatLockdown() then
+        S.watchAfterCombat = true
+        return
+    end
+    if WorldFrame and WorldFrame.HookScript then WorldFrame:HookScript("OnMouseDown", SendLine) end
+    local keys = CreateFrame("Frame", nil, UIParent)
+    keys:SetPropagateKeyboardInput(true)
+    keys:SetScript("OnKeyDown", SendLine)
+    S.keys = keys
+end
+S.WatchPresses = WatchPresses
+
+-- a chat line names its sender by first name and realm, an addon message on Forever by first name and surname: the
+-- player's id gives the full name where the game has it, so both routes name a player alike (bans, reports)
+local function LineSender(sender, guid)
+    if not ns.isForever or type(guid) ~= "string" or guid == "" then return sender end
+    if GetPlayerInfoByGUID then
+        local _, _, _, _, _, name = GetPlayerInfoByGUID(guid)
+        if type(name) == "string" and not ns.Secret(name) and name:find(SURNAME, 1, true) then return name end
+    end
+    return MemberName(guid, sender, Current()) or sender
+end
+S.LineSender = LineSender
+
+-- arg9 is the channel's name without its number, arg12 the sender's player id
+ns.On("CHAT_MSG_CHANNEL", function(text, sender, _, _, _, _, _, _, base, _, _, guid)
+    if not engine or ns.Secret(text) or ns.Secret(sender) or ns.Secret(base) or ns.Secret(guid) then return end
+    if type(text) ~= "string" or type(sender) ~= "string" or type(base) ~= "string" then return end
+    if base:lower() ~= Current():lower() or text:sub(1, #LINE) ~= LINE then return end
+    local msg = text:sub(#LINE + 1)
+    local mine = UnitGUID and guid ~= nil and guid == UnitGUID("player")
+    if mine then CameBack(msg) else S.lines.heard = S.lines.heard + 1 end
+    engine:Receive(msg, "CHANNEL", mine and engine.env.me or LineSender(sender, guid), "line")
+end)
+
+-- the channel's notices, hidden from the chat windows: a throttle notice means the line in flight was dropped
+ns.On("CHAT_MSG_CHANNEL_NOTICE", function(kind, _, _, _, _, _, _, _, name)
+    if ns.Secret(kind) or ns.Secret(name) or type(kind) ~= "string" or type(name) ~= "string" then return end
+    if name:lower() ~= Current():lower() then return end
+    if S.OnNotice then S.OnNotice(kind, name) end
+    if kind == "THROTTLED" and S.lines.out then Dropped(GetTime()) end
+end)
+
+-- a line the game refused (no press behind it after all): no more lines this session, so the refusal never repeats
+local function Refused(addon, fn)
+    if addon == ADDON and type(fn) == "string" and fn:find("SendChatMessage", 1, true) then
+        S.lines.off = true
+        S.lines.out = nil
+        for i = #lines, 1, -1 do lines[i] = nil end
+    end
+end
+ns.On("ADDON_ACTION_BLOCKED", Refused)
+ns.On("ADDON_ACTION_FORBIDDEN", Refused)
 
 -- place names in a message are never shown as sent: a creature's name comes from the shipped data by its id, a zone's
 -- from the game's map by its id, and anything without such an id is left out
@@ -838,6 +1041,9 @@ ns.Listen("DBReady", function()
         end,
         banned = Banned,
         report = function(_, sender, why) Report("muted " .. (Full(sender) or "?") .. " for this session: " .. why) end,
+        host = ns.SAVE == "ArcAurasFindsDB" and "Arc Auras" or "Item Finder",
+        version = ns.VERSION,
+        onAnswer = function(...) if S.OnAnswer then S.OnAnswer(...) end end,
     })
 end)
 
@@ -865,6 +1071,7 @@ ns.On("PLAYER_ENTERING_WORLD", function(isLogin, isReload)
     -- the game's own channels join first; ours waits so it never takes their numbers
     C_Timer.After(8, function()
         Join()
+        WatchPresses()
         if engine then
             engine.env.me = Me()
             engine:OnLogin()
@@ -890,6 +1097,10 @@ ns.On("CHANNEL_UI_UPDATE", function()
     if S.state == "on" then ToEndSoon() end
 end)
 ns.On("PLAYER_REGEN_ENABLED", function()
+    if S.watchAfterCombat then
+        S.watchAfterCombat = nil
+        WatchPresses()
+    end
     if S.toEndAfterCombat then
         S.toEndAfterCombat = nil
         ToEndSoon()

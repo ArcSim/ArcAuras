@@ -350,7 +350,7 @@ local function FeedCount()
     local seen = ns.db.feedSeenAt or 0
     local n, new = 0, 0
     for _, e in ipairs(ns.Finds.List()) do
-        if AfterClear(e) and (all or e.demo or D.IsDiscovery(e.id)) then
+        if AfterClear(e) and (all or e.demo or D.IsDiscovery(e.id, e)) then
             n = n + 1
             if (e.got or 0) > seen then new = new + 1 end
         end

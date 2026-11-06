@@ -3129,6 +3129,11 @@ function Schema.BarRing(rec)
 end
 -- a straight bar's rows (border, orientation, gradient, padding): gone on a ring
 function Schema.NotRing(rec) return not Schema.BarRing(rec) end
+-- a castbar of your own casts: the only one whose spell ID reads plain in combat
+function Schema.PlayerCast(rec)
+    return type(rec) == "table" and rec.barKind == "cast"
+        and ((rec.driver and rec.driver.unit) or "player") == "player"
+end
 -- Every kind but range bars, whose plate is always full in its band's colour: no
 -- fill colour, fill direction or tick marks there.
 local BK_NOTRANGE = { cooldown = true, aura = true, timer = true, stack = true, swing = true,
@@ -4397,6 +4402,30 @@ Schema.bar = {
             dep = { field = "queueTickOn" } },
         hideBlizzard = { inherit = false, d = false, t = "bool", label = "Hide Blizzard's castbar",
             desc = "Hides the game's castbar under your character while this castbar is loaded. Turn off to bring it back on your next cast." },
+        -- Per Spell (your casts only: their spell ID reads plain in combat).
+        -- Spell 1's fields; Schema.NumberCastSpells copies them for 2 to 6.
+        castSpell = { inherit = false, noDefault = true, d = false, t = "bool", showIf = Schema.PlayerCast,
+            label = "Spell 1" },
+        castSpellID = { inherit = false, noDefault = true, d = 0, t = "int", min = 0, max = 9999999, input = true,
+            showIf = Schema.PlayerCast, label = "Spell ID", dep = { field = "castSpell" } },
+        castSpellColorOn = { inherit = false, noDefault = true, d = false, t = "bool", showIf = Schema.PlayerCast,
+            label = "Own color", dep = { field = "castSpell" },
+            desc = "This spell's casts wear their own fill color, over the channel and can't-interrupt colors." },
+        castSpellColor = { inherit = false, noDefault = true, d = { 1, 0.82, 0.2, 1 }, t = "color", alpha = true,
+            showIf = Schema.PlayerCast, label = "Color", dep = { field = "castSpellColorOn" } },
+        castSpellTex = { inherit = false, noDefault = true, d = "", t = "text", media = "statusbar",
+            showIf = Schema.PlayerCast, label = "Texture", dep = { field = "castSpell" } },
+        castSpellTicks = { inherit = false, noDefault = true, d = "bar", t = "enum", values = { "bar", "even", "custom" },
+            labels = { bar = "The bar's own", even = "Evenly spaced", custom = "At these percents" },
+            showIf = Schema.PlayerCast, label = "Ticks", dep = { field = "castSpell" } },
+        castSpellTickCount = { inherit = false, noDefault = true, d = 3, t = "int", min = 2, max = 20, input = true,
+            showIf = Schema.PlayerCast, label = "Ticks in the cast",
+            dep = { field = "castSpellTicks", value = "even" },
+            desc = "The cast is split into this many even parts: 3 marks two spots." },
+        castSpellTickPos = { inherit = false, noDefault = true, d = "", t = "text", showIf = Schema.PlayerCast,
+            label = "Tick percents (comma list)", dep = { field = "castSpellTicks", value = "custom" } },
+        castSpellCount = { inherit = false, noDefault = true, d = 1, t = "int", min = 1, max = 6, adds = "spell",
+            showIf = Schema.PlayerCast, label = "Number of spells" },
     } },
     -- Range bars (Bars\AD_RangeBar.lua): how the bands draw. The bands themselves
     -- (a preset's, or the bar's own list of text, colour, switch and checks) are
@@ -4892,6 +4921,42 @@ function Schema.NumberBarGlows()
     end
 end
 Schema.NumberBarGlows()
+
+-- Per Spell looks 2 to 6: spell 1's fields again, numbered, shown once the
+-- castbar has that many (castSpellCount, the "+ Add spell" row).
+Schema.CAST_SPELL_SLOTS = 6
+Schema.CAST_SPELL_FIELDS = { "castSpell", "castSpellID", "castSpellColorOn", "castSpellColor", "castSpellTex",
+    "castSpellTicks", "castSpellTickCount", "castSpellTickPos" }
+function Schema.NumberCastSpells()
+    local fields = Schema.bar.cast.fields
+    local own = {}
+    for _, name in ipairs(Schema.CAST_SPELL_FIELDS) do own[name] = true end
+    for k = 2, Schema.CAST_SPELL_SLOTS do
+        local suf = tostring(k)
+        local function shown(rec)
+            local Store = NS.Store
+            return Schema.PlayerCast(rec) and Store ~= nil
+                and (Store.Resolve(rec, "cast", "castSpellCount") or 1) >= k
+        end
+        for _, name in ipairs(Schema.CAST_SPELL_FIELDS) do
+            local src, def = fields[name], {}
+            for key, v in pairs(src) do def[key] = v end
+            if type(src.d) == "table" then
+                def.d = {}
+                for i, x in ipairs(src.d) do def.d[i] = x end
+            end
+            if name == "castSpell" then def.label = "Spell " .. suf end
+            if src.dep then
+                def.dep = {}
+                for key, v in pairs(src.dep) do def.dep[key] = v end
+                if own[def.dep.field] then def.dep.field = def.dep.field .. suf end
+            end
+            def.showIf = shown
+            fields[name .. suf] = def
+        end
+    end
+end
+Schema.NumberCastSpells()
 
 
 -- A resource bar with a States row that marks its spells' cost.

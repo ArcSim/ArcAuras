@@ -13828,30 +13828,37 @@ local function BuildBarPane()
     AT.RowDesc(pg, "Effects that eat healing before it lands.", 20, healAbsorbVis)
     SubPush("Heals & Shields", nil)
 
-    -- The Castbar tab: one page of titled sections, one per job, and one push
-    -- bar. Its colours live in Fill & Colors, the spell's name and time on the
-    -- Text tab, its icon in Icon.
+    -- The Castbar tab: All Casts, one page of titled sections, one per job, and
+    -- one push bar; Per Spell (your castbar only), a card per spell that wears
+    -- its own look (UI\AD_CastSpellOptions.lua). Its colours live in Fill &
+    -- Colors, the spell's name and time on the Text tab, its icon in Icon.
+    local ALL = "All Casts"
     BarBlock("Spark", "cast", "Castbar", {
         "sparkOn", "sparkColor", "sparkWidth",
-    }, nil, false)
+    }, nil, ALL)
     BarBlock("When a Cast Ends", "cast", "Castbar", {
         "holdOn", "holdTime", "holdFailColor", "holdIntColor", "fadeOut",
-    }, nil, false)
+    }, nil, ALL)
     local whichVis = BarBlock("Which Casts", "cast", "Castbar", {
         "hideChannels", "lockHide",
-    }, nil, false)
+    }, nil, ALL)
     Options.BuildYield()
     AT.RowDesc(pg, "The shield is in Appearance > Icon, the color in Appearance > Fill & Colors.", 20, whichVis)
     -- Hidden opacity (the behavior section, not pushable): the empty bar
     -- between casts
-    local idleVis = BarBlock("Between Casts", "behavior", "Castbar", { "hiddenAlpha" }, nil, false)
+    local idleVis = BarBlock("Between Casts", "behavior", "Castbar", { "hiddenAlpha" }, nil, ALL)
     Options.BuildYield()
     AT.RowDesc(pg, "0 hides the bar between casts.", 20, idleVis)
     -- your own casts only: a player castbar
     BarBlock("Your Casts", "cast", "Castbar", {
         "latencyOn", "latencyColor", "queueTickOn", "queueTickColor", "queueTickWidth", "hideBlizzard",
-    }, function(r) return (r.driver and r.driver.unit or "player") == "player" end, false)
-    SubPush("Castbar", nil)
+    }, function(r) return (r.driver and r.driver.unit or "player") == "player" end, ALL)
+    SubPush("Castbar", ALL)
+    if Options.CastSpellRows then
+        Options.BuildYield()
+        Options.CastSpellRows(pg, SelBar, win, { BarBlock = BarBlock, SubPush = SubPush,
+            SectionRows = SectionRows })
+    end
 
     -- Position > Position: the place, then its strata and level, fine-tuning
     -- behind a fold (per bar: no push bar).

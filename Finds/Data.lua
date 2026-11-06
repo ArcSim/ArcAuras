@@ -350,19 +350,31 @@ function D.FindMask(e)
     return m
 end
 
--- what a find teaches the database: an item it has no row for, a hidden one, a new one with no known drop place, an
--- old Classic item Forever changed (a find only when its numbers differ), or a changed one whose drop place was not
--- known. A test run outside Forever counts every find.
+-- what a find teaches the database: an item it has no row for, a hidden one, or an old Classic item Forever changed
+-- (a find only when its numbers differ). A datamined item teaches something only when the game shows other numbers
+-- than its row, or when the find says where it drops and the data does not: just seeing one (a tooltip, the bags, the
+-- quest log) teaches nothing. A test run outside Forever counts every find.
 local Discovery
--- kept per item: the answer holds while the data is loaded, and the feed asks it for every find on each redraw
+-- kept per item: the data's part of the answer holds while the data is loaded, and the feed asks it for every find
+-- on each redraw
 local discovery = {}
-function D.IsDiscovery(id)
+local function TeachesPlace(e)
+    for _, s in ipairs(e.s or {}) do
+        if s.t and s.t ~= "q" then return true end
+    end
+    return false
+end
+function D.IsDiscovery(id, e)
     local v = discovery[id]
     if v == nil then
         v = Discovery(id)
         discovery[id] = v
     end
-    return v
+    if type(v) ~= "table" then return v end
+    e = e or (ns.Finds and ns.Finds.Get(id))
+    if not e then return false end
+    if (e.q and e.q ~= v.q) or (e.il and e.il ~= v.ilvl) or (e.rq and e.rq ~= v.req) then return true end
+    return v.lacksPlace and TeachesPlace(e)
 end
 function Discovery(id)
     if not ns.isForever then return true end
@@ -370,8 +382,9 @@ function Discovery(id)
     if what == "unknown" or what == "withheld" then return true end
     if what ~= "seed" then return false end
     if row.kind == "o" then return true end
-    if row.kind == "n" or row.kind == "x" then return D.IsNotFound(id) end
-    return not D.HasSources(id)
+    local lacksPlace
+    if row.kind == "n" or row.kind == "x" then lacksPlace = D.IsNotFound(id) else lacksPlace = not D.HasSources(id) end
+    return { q = row.q, ilvl = row.ilvl, req = row.req, lacksPlace = lacksPlace }
 end
 
 -- whether a find passes a find filter (the Live Feed's, which pop-ups follow, or the pop-ups' own copy): discoveries
@@ -380,7 +393,7 @@ end
 -- stands in for a discovery, so the demo shows on Forever too, where its items' drop places are known
 local QUALITY_FLOOR = { any = 0, uncommon = 2, rare = 3, epic = 4 }
 function D.FindPasses(f, e, level, classFile, anyKind)
-    if f.discoveries and not e.demo and not D.IsDiscovery(e.id) then return false end
+    if f.discoveries and not e.demo and not D.IsDiscovery(e.id, e) then return false end
     if not anyKind and not f.kinds[e.k == "c" and "c" or "n"] then return false end
     if (e.q or 0) < (QUALITY_FLOOR[f.quality] or 0) then return false end
     local rq = e.rq or 0

@@ -506,6 +506,16 @@ function D.HasSources(id)
     return BlockLine("sources", id) ~= nil
 end
 
+-- a quest's name by its id: the shipped quest data, else the game's own title (nil while the game has none)
+function D.QuestName(id)
+    if type(id) ~= "number" or ns.Secret(id) then return end
+    local line = BlockLine("quests", id)
+    local name = line and line:match("^%d+|([^|]*)|")
+    if name and name ~= "" then return name end
+    local title = C_QuestLog and C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(id)
+    if type(title) == "string" and not ns.Secret(title) and title ~= "" then return title end
+end
+
 function D.Sources(id)
     local line = BlockLine("sources", id)
     if not line then return {} end
@@ -563,6 +573,10 @@ function D.Sources(id)
                 end
             end
             src = { name = (count or 0) .. (t == "s" and " kinds of beasts" or " kinds of mobs"), pins = pins, count = count }
+        elseif t == "d" then
+            -- players had it inside this dungeon, from no creature the data places
+            local d = D.Dungeon(tonumber(rest))
+            if d then src = { name = "Dungeon loot", pins = {}, dungeon = d } end
         end
         if src then
             src.t = t
@@ -586,6 +600,9 @@ function D.SourceMask(id)
         elseif t == "c" then m = AddBit(m, 64)
         elseif t == "k" then m = AddBit(m, 128)
         elseif t == "s" then m = AddBit(m, 256)
+        elseif t == "d" then
+            local d = D.Dungeon(tonumber(ref:match("^d(%d+)")))
+            if d then m = AddBit(m, d.raid and 1 or 2) end
         elseif t == "l" or t == "o" then
             local p = Place(t == "l" and "npcs" or "objects", tonumber(ref:match("^%a(%d+)")))
             if p and p.dungeon then m = AddBit(m, p.dungeon.raid and 1 or 2) end

@@ -577,6 +577,7 @@ end
 
 -- the look of each kind: board E4's green and red, the changed tag's orange, and the faint grey of an old value
 local LOOK = { up = "1EFF00", down = "FF5A36", flat = T.TAG.c.fg, old = T.C.faint }
+T.CHANGE_LOOK = LOOK
 -- the board's sizes: lines 13, an old value 11 with 4 before it; rows of 17
 local BIG, SMALL, OLD_GAP, ROW, SIDE_GAP = 13, 11, 4, 17, 8
 local U = T.U

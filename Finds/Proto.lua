@@ -88,11 +88,20 @@ function P.EncodeFind(e)
             Clean(sz, 40), s.x or "", s.y or "", Clean(e.by, 24), e.at or "", s.m or "",
         }, "~"))
     end
-    -- the place names are the only long fields: drop the subzone, then the zone
-    local msg = Build(s.z, s.sz)
-    if #msg > P.MAX then msg = Build(s.z, nil) end
-    if #msg > P.MAX then msg = Build(nil, nil) end
+    -- a quest reward's quest id rides in the subzone's field as q<id>: every copy drops that field from a message, so
+    -- copies that predate it read nothing there
+    local tag = s.t == "q" and type(s.qid) == "number" and ("q" .. s.qid) or nil
+    -- the place names are the only long fields: drop the subzone, then the zone (a quest id stays)
+    local msg = Build(s.z, tag or s.sz)
+    if #msg > P.MAX then msg = Build(s.z, tag) end
+    if #msg > P.MAX then msg = Build(nil, tag) end
     return msg
+end
+
+-- the quest id a decoded quest source carries (EncodeFind), or nil
+function P.QuestOf(src)
+    local id = src and src.t == "q" and type(src.sz) == "string" and tonumber(src.sz:match("^q(%d+)$"))
+    if id and id > 0 and id <= 9999999 then return id end
 end
 
 function P.DecodeFind(msg)

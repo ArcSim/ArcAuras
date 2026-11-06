@@ -13,6 +13,26 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.2.2",
+        intro = "Item Finds records quest rewards on its own, shows what changed on item tooltips, and pins dungeon finds on the map.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Item Finds: quest rewards",
+                    desc = "Rewards in your quest log are recorded without hovering them, and quest rewards shared by other players now name their quest." },
+                { title = "Item Finds: item changes on tooltips",
+                    desc = "With the full finder, hold Alt over an item to see what changed from Classic right on its tooltip; Settings can switch it to Ctrl, Shift, always or off." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Item Finds: dungeon finds",
+                    desc = "Items found inside a dungeon now show the dungeon's entrance on the map, including finds shared by other players." },
+                { title = "Item Finds: how to get",
+                    desc = "With the full finder, items without drop info yet say what the player who found them saw, like the mob that dropped it or the dungeon it came from." },
+                { title = "Item Finds: item data",
+                    desc = "19 hidden items now have names, 12 old items show what Forever changed, and new drop places found by players." },
+            } },
+        },
+    },
+    {
         version = "3.2.1",
         intro = "Your castbar can give each spell its own look, and Item Finds shares with more players.",
         sections = {
@@ -1450,6 +1470,12 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.2.2",
+        intro = "An update for WoW Forever only; nothing changes on retail.",
+        sections = {
+        },
+    },
     {
         version = "3.2.1",
         intro = "Your castbar can give each spell its own look.",

@@ -1,5 +1,20 @@
 # Arc Auras
 
+## 3.2.2
+
+Item Finds records quest rewards on its own, shows what changed on item tooltips, and pins dungeon finds on the map.
+
+### New Features
+
+- **Item Finds: quest rewards** - Rewards in your quest log are recorded without hovering them, and quest rewards shared by other players now name their quest.
+- **Item Finds: item changes on tooltips** - With the full finder, hold Alt over an item to see what changed from Classic right on its tooltip; Settings can switch it to Ctrl, Shift, always or off.
+
+### Improvements
+
+- **Item Finds: dungeon finds** - Items found inside a dungeon now show the dungeon's entrance on the map, including finds shared by other players.
+- **Item Finds: how to get** - With the full finder, items without drop info yet say what the player who found them saw, like the mob that dropped it or the dungeon it came from.
+- **Item Finds: item data** - 19 hidden items now have names, 12 old items show what Forever changed, and new drop places found by players.
+
 ## 3.2.1
 
 Your castbar can give each spell its own look, and Item Finds shares with more players.

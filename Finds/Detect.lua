@@ -58,6 +58,20 @@ local function Source(t, name, npc, level, noPlace)
     return { t = t, n = name, npc = npc, lv = level, z = zone, sz = sub, x = x, y = y, m = map }
 end
 
+-- a quest reward: the quest's id travels with it, so every copy can name the quest from its own data or game
+local function QuestSource(title, qid, noPlace)
+    local s = Source("q", title, nil, nil, noPlace)
+    if type(qid) == "number" and not Secret(qid) and qid > 0 then s.qid = qid end
+    return s
+end
+
+-- the quest a quest giver's window shows
+local function ShownQuest()
+    local qid = GetQuestID and GetQuestID()
+    if type(qid) ~= "number" or Secret(qid) or qid <= 0 then return nil end
+    return qid
+end
+
 -- a capital city or an inn: what shows up there without a known source (bought, crafted, mailed) says nothing
 -- about where it drops
 local function InTown()
@@ -157,14 +171,15 @@ local function Me()
     return UnitName("player")
 end
 
--- one sighting by this player; the item is judged once per session, new sources still count
-function Detect.Saw(id, src)
+-- one sighting by this player; the item is judged once per session, new sources still count. quiet: read without the
+-- player doing anything (the quest log), so it is kept and shared through catch-ups but never announced or popped up
+function Detect.Saw(id, src, quiet)
     if not id or not ns.db then return end
     local rec = ns.Finds.Get(id)
     if seen[id] then
         if rec and src and src.t ~= "t" then
-            local status = ns.Finds.Record({ id = id, src = src, mine = true })
-            if status then ns.Sync.Announce(rec) end
+            local status = ns.Finds.Record({ id = id, src = src, mine = true, quiet = quiet or nil })
+            if status and not quiet then ns.Sync.Announce(rec) end
         end
         return
     end
@@ -181,11 +196,11 @@ function Detect.Saw(id, src)
             id = id, kind = kind or (rec and rec.k) or "n", q = game.q, ilvl = game.ilvl, req = game.req,
             cls = game.cls, sub = game.sub, inv = game.inv, ac = row and row.ac, name = game.name, fp = fp,
             src = src, mine = true, reporter = Me(),
-            by = (ns.settings.credit ~= "anon") and Me() or nil,
+            by = (ns.settings.credit ~= "anon") and Me() or nil, quiet = quiet or nil,
         }
         local status, e = ns.Finds.Record(info)
         -- tell the others when the find is new, changed, or still waits for a second player
-        if e and (status == "new" or status == "changed" or (status == "updated" and not ns.Finds.Confirmed(e))) then
+        if e and not quiet and (status == "new" or status == "changed" or (status == "updated" and not ns.Finds.Confirmed(e))) then
             ns.Sync.Announce(e)
         end
     end)
@@ -279,11 +294,69 @@ end)
 local function QuestRewards()
     local title = GetTitleText and GetTitleText()
     if Secret(title) then title = nil end
-    for i = 1, (GetNumQuestRewards and GetNumQuestRewards()) or 0 do SawLink(GetQuestItemLink("reward", i), Source("q", title)) end
-    for i = 1, (GetNumQuestChoices and GetNumQuestChoices()) or 0 do SawLink(GetQuestItemLink("choice", i), Source("q", title)) end
+    local qid = ShownQuest()
+    for i = 1, (GetNumQuestRewards and GetNumQuestRewards()) or 0 do SawLink(GetQuestItemLink("reward", i), QuestSource(title, qid)) end
+    for i = 1, (GetNumQuestChoices and GetNumQuestChoices()) or 0 do SawLink(GetQuestItemLink("choice", i), QuestSource(title, qid)) end
 end
 ns.On("QUEST_DETAIL", QuestRewards)
 ns.On("QUEST_COMPLETE", QuestRewards)
+
+-- the quest log's rewards: the whole log once after login, then each quest as it is accepted. Never on
+-- QUEST_LOG_UPDATE, which fires on every kill credit. Rewards the game has not loaded yet are asked for once and read
+-- when they arrive
+local logAsked = {}
+local function ReadQuest(qid)
+    if type(qid) ~= "number" or Secret(qid) or qid <= 0 or not GetNumQuestLogRewards then return end
+    if HaveQuestRewardData and not HaveQuestRewardData(qid) then
+        if not logAsked[qid] and C_QuestLog and C_QuestLog.RequestLoadQuestByID then
+            logAsked[qid] = true
+            C_QuestLog.RequestLoadQuestByID(qid)
+        end
+        return
+    end
+    local title = C_QuestLog and C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(qid)
+    if type(title) ~= "string" or Secret(title) or title == "" then title = nil end
+    for i = 1, GetNumQuestLogRewards(qid) or 0 do
+        local id = select(6, GetQuestLogRewardInfo(i, qid))
+        if type(id) == "number" and not Secret(id) and id > 0 then Detect.Saw(id, QuestSource(title, qid, true), true) end
+    end
+    for i = 1, (GetNumQuestLogChoices and GetNumQuestLogChoices(qid)) or 0 do
+        local id = select(6, GetQuestLogChoiceInfo(i, qid))
+        if type(id) == "number" and not Secret(id) and id > 0 then Detect.Saw(id, QuestSource(title, qid, true), true) end
+    end
+end
+Detect.ReadQuest = ReadQuest
+
+-- the log is read one quest per step, so a long log never stalls a frame
+local logQueue, logReading = {}, false
+local function NextQuest()
+    local qid = table.remove(logQueue, 1)
+    if not qid then
+        logReading = false
+        return
+    end
+    ReadQuest(qid)
+    C_Timer.After(0.1, NextQuest)
+end
+local function ReadLog()
+    if not (C_QuestLog and C_QuestLog.GetNumQuestLogEntries and C_QuestLog.GetInfo) then return end
+    for i = 1, C_QuestLog.GetNumQuestLogEntries() or 0 do
+        local info = C_QuestLog.GetInfo(i)
+        if info and not info.isHeader and info.questID then logQueue[#logQueue + 1] = info.questID end
+    end
+    if not logReading and #logQueue > 0 then
+        logReading = true
+        C_Timer.After(0, NextQuest)
+    end
+end
+Detect.ReadLog = ReadLog
+ns.Listen("Login", function() C_Timer.After(5, ReadLog) end)
+ns.On("QUEST_ACCEPTED", function(qid) ReadQuest(qid) end)
+ns.On("QUEST_DATA_LOAD_RESULT", function(qid, ok)
+    if type(qid) ~= "number" or Secret(qid) or logAsked[qid] ~= true then return end
+    logAsked[qid] = "read"
+    if ok then ReadQuest(qid) end
+end)
 
 ns.On("ENCOUNTER_START", function(_, name) if not Secret(name) then encounterName = name end end)
 ns.On("ENCOUNTER_END", function(_, name) if not Secret(name) then encounterName = name end end)
@@ -323,11 +396,11 @@ local function QuestTipSource(tip)
         if type(quest) ~= "number" and C_QuestLog and C_QuestLog.GetSelectedQuest then quest = C_QuestLog.GetSelectedQuest() end
         local title = type(quest) == "number" and C_QuestLog and C_QuestLog.GetTitleForQuestID and C_QuestLog.GetTitleForQuestID(quest)
         if type(title) ~= "string" or Secret(title) or title == "" then title = nil end
-        return Source("q", title, nil, nil, true)
+        return QuestSource(title, quest, true)
     elseif getter == "GetQuestItem" then
         local title = GetTitleText and GetTitleText()
         if type(title) ~= "string" or Secret(title) or title == "" then title = nil end
-        return Source("q", title)
+        return QuestSource(title, ShownQuest())
     end
 end
 
@@ -348,6 +421,7 @@ end
 function Detect.Forget()
     wipe(seen)
     wipe(questTipped)
+    wipe(logAsked)
 end
 
 -- /fif demo: a few Forever items as test finds where they really drop, so the window, the pop-up and the badge can

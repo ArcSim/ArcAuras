@@ -27,6 +27,7 @@ end
 local function SameSource(a, b)
     if a.t ~= b.t then return false end
     if a.npc and b.npc then return a.npc == b.npc end
+    if a.qid and b.qid then return a.qid == b.qid end
     return a.n == b.n and a.z == b.z
 end
 
@@ -87,6 +88,11 @@ function F.Record(info)
         end
         if found then
             found.c = (found.c or 1) + (info.fromNet and 0 or 1)
+            -- a quest reward seen before its quest's id was known learns it
+            if src.qid and not found.qid then
+                found.qid = src.qid
+                status = status or "updated"
+            end
         elseif #e.s < MAX_SOURCES then
             src.c = src.c or 1
             table.insert(e.s, src)

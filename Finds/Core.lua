@@ -47,6 +47,9 @@ local DEFAULTS = {
     winScale = 100,         -- the window's size, in percent
     showChanges = false,    -- the item box shows what changed from Classic without its button
     itemTips = "changes",   -- lines on the game's item tooltips: off / changes (new and changed items) / all
+    -- the game's item tooltips mark what changed from Classic, as the item box does: off / always / alt / ctrl / shift
+    -- (while that key is held)
+    itemTipChanges = "alt",
     -- favorites on the game's maps (FavPins.lua): both (World Map and minimap) / world / off; starring an item is
     -- already the player asking for it, so this starts on
     favPins = "both",
@@ -110,6 +113,8 @@ ns.On("ADDON_LOADED", function(name)
         db.finds, db.popped, db.demoMined, db.demoOn = {}, {}, nil, nil
     end
     db.settings = db.settings or {}
+    -- only a named choice is read here; anything else falls back to the default
+    if type(db.settings.itemTipChanges) ~= "string" then db.settings.itemTipChanges = nil end
     Fill(db.settings, DEFAULTS)
     -- an older save keeps "off" as its quality choice: that means pop-ups off; the old filter keys go
     if db.settings.popFor == "off" then db.settings.popOn = false end

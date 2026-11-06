@@ -995,6 +995,11 @@ local function TrustPlaces(s)
     -- lists, and then in the data's words, so the entrance comes from that data
     local dungeon = not s.m and ns.Data.DungeonNamed(s.z)
     s.z = (type(zone) == "string" and zone ~= "" and not ns.Secret(zone)) and zone or (dungeon and dungeon.name) or nil
+    -- a quest reward is named by its quest's id, from this copy's own data or game
+    if s.t == "q" then
+        s.qid = P.QuestOf(s)
+        s.n = s.qid and ns.Data.QuestName(s.qid) or nil
+    end
     s.sz = nil
 end
 

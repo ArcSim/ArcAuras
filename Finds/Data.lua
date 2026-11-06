@@ -247,12 +247,13 @@ end
 function D.Dungeon(area)
     local line = area and BlockLine("dungeons", area)
     if not line then return end
-    local name, at, flag = line:match("^%d+|([^|]*)|([^|]*)|?(%a*)")
+    -- game: the name the game shows inside, where it differs ("Stormwind Stockade" for The Stockade)
+    local name, at, flag, game = line:match("^%d+|([^|]*)|([^|]*)|?(%a*)|?([^|]*)")
     if not name then return end
     -- an announced dungeon has no entrance until the data has one
     local m, x, y = at:match("^(%d+)%.(%d+)%.(%d+)$")
     return { name = name, m = tonumber(m), x = tonumber(x), y = tonumber(y), raid = flag:find("r", 1, true) ~= nil,
-        own = flag:find("f", 1, true) ~= nil }
+        own = flag:find("f", 1, true) ~= nil, game = game ~= "" and game or nil }
 end
 
 -- names compared without a leading "The", case or punctuation, so an announced name still matches the game's
@@ -269,8 +270,10 @@ function D.DungeonNamed(zone)
         for area in blocks.dungeons:gmatch("(%d+)|[^\n]*") do
             local d = D.Dungeon(tonumber(area))
             if d and not dungeonByName[NameKey(d.name)] then dungeonByName[NameKey(d.name)] = d end
+            if d and d.game and not dungeonByName[NameKey(d.game)] then dungeonByName[NameKey(d.game)] = d end
         end
     end
+    if type(zone) ~= "string" then return end
     return dungeonByName[NameKey(zone)]
 end
 

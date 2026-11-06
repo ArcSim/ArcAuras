@@ -31,6 +31,8 @@ CL.versions = {
             { header = "Bug Fixes", items = {
                 { title = "Item Finds: display",
                     desc = "Fixed some display issues." },
+                { title = "Item Finds: sharing",
+                    desc = "Finds from players who catch you up when you log in are no longer ignored." },
             } },
         },
     },

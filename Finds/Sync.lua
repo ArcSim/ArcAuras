@@ -378,9 +378,11 @@ function Engine:Receive(msg, dist, sender, via)
             b.heard[msg] = true
             if SeenText(self, msg, via) then return end
         end
-        -- pages from a copy that served this one lately are expected; only live announcements count against a sender
-        local served = self.helped[sender]
-        if not (dist == "WHISPER" and served and env.now() - served < SENDER_WINDOW) then
+        -- pages are expected from a copy that served this one lately, and from any copy soon after this one asked: a
+        -- claim goes out as a chat line that waits for a key press, so several copies may serve one ask unheard
+        local now, served, asked = env.now(), self.helped[sender], self.lastHello
+        local expected = (served and now - served < SENDER_WINDOW) or (asked and now - asked < SENDER_WINDOW)
+        if not (dist == "WHISPER" and expected) then
             b.finds = b.finds + 1
             if b.finds > SENDER_MAX then
                 self:Mute(sender, b.finds .. " finds within 5 minutes")
@@ -989,7 +991,10 @@ local function TrustPlaces(s)
     s.n = place and place.name or nil
     local map = s.m and C_Map.GetMapInfo and C_Map.GetMapInfo(s.m)
     local zone = map and map.name
-    s.z = (type(zone) == "string" and zone ~= "" and not ns.Secret(zone)) and zone or nil
+    -- inside a dungeon the game gives no map, only its name: kept only when it names a dungeon this copy's own data
+    -- lists, and then in the data's words, so the entrance comes from that data
+    local dungeon = not s.m and ns.Data.DungeonNamed(s.z)
+    s.z = (type(zone) == "string" and zone ~= "" and not ns.Secret(zone)) and zone or (dungeon and dungeon.name) or nil
     s.sz = nil
 end
 

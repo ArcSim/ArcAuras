@@ -715,6 +715,7 @@ end
 -- who found it
 local ITEM_STATUS = { h = "Changed by a hotfix", c = "Changed from Classic", o = "Old Classic item" }
 local DROPPED = { l = true, o = true, w = true, r = true, c = true }
+local FOUND_HOW = { l = "Drops from ", v = "Sold by ", o = "Looted from ", x = "Inside " }
 -- how to get an item and, for a drop, its rate: the first known source, else where a player found it
 local function HowToGet(e, sources)
     local how, rate
@@ -736,11 +737,24 @@ local function HowToGet(e, sources)
         else how = "Drops from " .. (s.name or "a mob") .. there end
         if t == "l" or t == "o" or t == "w" then rate = s.chance and RateText(s):gsub("^%l", string.upper) or "Unknown" end
     end
-    local f = e and e.s and e.s[1]
-    if not how and f and f.z then
-        how = "Found in " .. f.z
-        rate = DROPPED[f.t] and "Unknown" or nil
+    if how or not (e and e.s) then return how, rate end
+    -- nothing known yet: the player's find says how, from its first source that names something
+    local f
+    for _, s in ipairs(e.s) do
+        if s.n or s.npc then f = s break end
     end
+    f = f or e.s[1]
+    if not f then return end
+    local dg = D.DungeonNamed(f.z)
+    local at = (dg and dg.name) or f.z
+    local there = at and (" in " .. at) or ""
+    local name = f.n or (f.npc and ("NPC " .. f.npc))
+    if f.t == "q" then how = f.n and ("Quest reward: " .. f.n) or ("A quest" .. there)
+    elseif f.t == "r" then how = "Group roll" .. there
+    elseif f.t == "c" then how = "Another player's loot" .. there
+    elseif name and FOUND_HOW[f.t] then how = FOUND_HOW[f.t] .. name .. there
+    elseif at then how = "Found in " .. at end
+    rate = how and DROPPED[f.t] and "Unknown" or nil
     return how, rate
 end
 -- the same words for the game's own item tooltips (GameTips.lua)

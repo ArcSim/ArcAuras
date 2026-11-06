@@ -17,6 +17,7 @@ Your castbar can give each spell its own look, and Item Finds shares with more p
 ### Bug Fixes
 
 - **Item Finds: display** - Fixed some display issues.
+- **Item Finds: sharing** - Finds from players who catch you up when you log in are no longer ignored.
 
 ## 3.2.0
 

@@ -13,6 +13,20 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.2.3",
+        intro = "A Totem Durations group for Shamans, and fresh Item Finds data for the latest Forever build.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Totem Durations group",
+                    desc = "A new Shaman group template under Add > Group: one icon per element shows any totem you drop with its time left, and greys out with a glow while you are out of range of its buff." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Item Finds: item data",
+                    desc = "78 hidden items now have names, 25 old items show what the latest Forever update changed, and new drop places found by players." },
+            } },
+        },
+    },
+    {
         version = "3.2.2",
         intro = "Item Finds records quest rewards on its own, shows what changed on item tooltips, and pins dungeon finds on the map.",
         sections = {
@@ -1470,6 +1484,12 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.2.3",
+        intro = "An update for WoW Forever only; nothing changes on retail.",
+        sections = {
+        },
+    },
     {
         version = "3.2.2",
         intro = "An update for WoW Forever only; nothing changes on retail.",

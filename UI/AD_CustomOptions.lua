@@ -241,6 +241,41 @@ CO.TEMPLATES_FOREVER[#CO.TEMPLATES_FOREVER + 1] = { key = "huntertraps", which =
     name = "Hunter Traps", art = 13795, make = CO.TrapGroupCreate,
     tip = "Your traps in a row: each shows while it is armed or burning, the rest close up." }
 
+-- Totem Durations: one icon per element slot, each showing whatever totem is
+-- down there with its time left, greyed with a glow and words while its buff
+-- is not on you (Drivers\AD_TotemRange.lua); empty slots close up.
+CO.TOTEM_GROUP = { "Fire Totem", "Earth Totem", "Water Totem", "Air Totem" }
+function CO.TotemGroupCreate(addState, layoutId)
+    local Store = NS.Store
+    local nm = (type(addState.groupName) == "string") and addState.groupName:gsub("^%s+", ""):gsub("%s+$", "") or ""
+    local g = Store.NewGroup(layoutId, (nm ~= "") and nm or "Totem Durations", "cooldown")
+    if not g then return nil end
+    Store.SetOverride(g, "arrangement", "dynamicLayout", true)
+    Store.SetOverride(g, "arrangement", "dynamicCollapse", "hidden")
+    Store.SetOverride(g, "arrangement", "cols", #CO.TOTEM_GROUP)
+    for slot, name in ipairs(CO.TOTEM_GROUP) do
+        local r = Store.NewIcon("totem", { slot = slot }, g.id, layoutId, name)
+        if r then
+            Store.SetOverride(r, "states", "cooldownAlpha", 0)
+            Store.SetOverride(r, "states", "totemRangeDesaturate", true)
+            Store.SetOverride(r, "states", "totemRangeGlow", true)
+            Store.SetOverride(r, "label", "labelText", NS.AT.Tr("Out of Range"))
+            -- the words show only out of range, never on the icon itself
+            Store.SetOverride(r, "label", "labelShowRange", true)
+            Store.SetOverride(r, "label", "labelShowReady", false)
+            Store.SetOverride(r, "label", "labelShowCooldown", false)
+            Store.SetOverride(r, "label", "labelY", 27)
+            Store.SetOverride(r, "label", "labelColor", { 1, 0.376, 0.224, 1 })
+            r.c.classes = { SHAMAN = true }
+        end
+    end
+    Store.Dirty("tree")
+    return g
+end
+CO.TEMPLATES_FOREVER[#CO.TEMPLATES_FOREVER + 1] = { key = "totemdurations", which = "Group", class = "Shaman",
+    name = "Totem Durations", art = 8071, make = CO.TotemGroupCreate,
+    tip = "Any totem you drop with its time left, one per element. Greyed with a glow while its buff is not on you." }
+
 -- Ready-made Custom Icons (retail): an item's buff as a timer from its use.
 -- The cast starts it, dying clears it.
 CO.TEMPLATES_RETAIL = {

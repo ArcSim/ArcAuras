@@ -503,8 +503,12 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
             local r = Rec()
             return (r and NS.TotemRange and NS.TotemRange.AutoName(r)) or ""
         end)
-    -- what the look waits on, and a new search when nothing was found
-    local rangeRow = AT.AddRow(pg, 24, rangeVis)
+    -- what the look waits on, and a new search when nothing was found; a
+    -- slot icon's line names the totems it watches
+    local rangeRow = AT.AddRow(pg, 24, function()
+        local r = Rec()
+        return vis() and r ~= nil and Schema.TotemRangeable(r)
+    end)
     local rangeFS = rangeRow:CreateFontString(nil, "OVERLAY")
     rangeFS:SetFont(NS.AT.FONT, 11, "")
     rangeFS:SetPoint("TOPLEFT", 10, -4)
@@ -527,7 +531,7 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
         local TR = NS.TotemRange
         if not (r and TR) then return end
         rangeFS:SetText(TR.StatusText(r))
-        rangeFind:SetShown(TR.IDs(r) == nil and not TR.Searching(r))
+        rangeFind:SetShown(not TR.SlotMode(r) and TR.IDs(r) == nil and not TR.Searching(r))
         local w = rangeRow:GetWidth() or 0
         if w < 90 then w = (pg:GetWidth() or 0) - 24 end
         if w > 90 then rangeFS:SetWidth(w - 90) end

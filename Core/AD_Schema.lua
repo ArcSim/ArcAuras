@@ -663,6 +663,15 @@ function Schema.TotemBySpell(rec)
     return tonumber(rec.driver.spellID) ~= nil
 end
 
+-- The Out of range look: a totem by its spell, or on Forever a shaman's slot
+-- icon (it watches whichever totem is in its slot, Drivers\AD_TotemRange.lua).
+function Schema.TotemRangeable(rec)
+    if Schema.TotemBySpell(rec) then return true end
+    if not (NS.IsForever == true and rec and rec.kind == "totem" and type(rec.driver) == "table") then return false end
+    local _, cls = UnitClass("player")
+    return cls == "SHAMAN"
+end
+
 -- Icon shapes: width over height. Picking one sets both sizes (whole units,
 -- the layout snaps them to pixels) and crops the picture to them.
 Schema.SHAPES = { square = 1, cropped = 1.25, wide = 1.5, strip = 2, tall = 2 / 3, column = 0.5 }
@@ -1382,46 +1391,46 @@ Schema.icon = {
         -- A totem's Out of range look: while the totem is out and its buff is
         -- not on you (Drivers\AD_TotemRange.lua). The game draws it, so it
         -- holds in combat.
-        totemRangeDesaturate = { d = false, t = "bool", kinds = TOT, showIf = Schema.TotemBySpell,
+        totemRangeDesaturate = { d = false, t = "bool", kinds = TOT, showIf = Schema.TotemRangeable,
             label = "Grey out while out of totem range" },
-        totemRangeTint = { d = false, t = "bool", kinds = TOT, showIf = Schema.TotemBySpell,
+        totemRangeTint = { d = false, t = "bool", kinds = TOT, showIf = Schema.TotemRangeable,
             label = "Out of totem range tint" },
-        totemRangeTintColor = { d = { 0.85, 0.2, 0.2, 1 }, t = "color", kinds = TOT, showIf = Schema.TotemBySpell,
+        totemRangeTintColor = { d = { 0.85, 0.2, 0.2, 1 }, t = "color", kinds = TOT, showIf = Schema.TotemRangeable,
             label = "Out of totem range tint color", dep = { field = "totemRangeTint" } },
-        totemRangeGlow = { d = false, t = "bool", kinds = TOT, showIf = Schema.TotemBySpell,
+        totemRangeGlow = { d = false, t = "bool", kinds = TOT, showIf = Schema.TotemRangeable,
             label = "Glow while out of totem range" },
         totemRangeGlowType = { d = "flash", t = "enum", values = GLOW_STYLES, labels = GLOW_STYLE_LABELS, kinds = TOT,
-            showIf = Schema.TotemBySpell, label = "Out of range glow style", dep = { field = "totemRangeGlow" } },
-        totemRangeGlowColor = { d = { 1, 0.3, 0.2, 1 }, t = "color", kinds = TOT, showIf = Schema.TotemBySpell,
+            showIf = Schema.TotemRangeable, label = "Out of range glow style", dep = { field = "totemRangeGlow" } },
+        totemRangeGlowColor = { d = { 1, 0.3, 0.2, 1 }, t = "color", kinds = TOT, showIf = Schema.TotemRangeable,
             label = "Out of range glow color", dep = { field = "totemRangeGlow" } },
         totemRangeGlowSpeed = { adv = "glow", d = 0.25, t = "num", min = 0.05, max = 1, kinds = TOT,
-            showIf = Schema.TotemBySpell, label = "Out of range glow speed",
+            showIf = Schema.TotemRangeable, label = "Out of range glow speed",
             dep = { { field = "totemRangeGlow" }, { field = "totemRangeGlowType", anyOf = GLOW_SPEED_STYLES } } },
         totemRangeGlowLines = { adv = "glow", d = 8, t = "int", min = 1, max = 16, kinds = TOT,
-            showIf = Schema.TotemBySpell, label = "Out of range glow lines",
+            showIf = Schema.TotemRangeable, label = "Out of range glow lines",
             dep = { { field = "totemRangeGlow" }, { field = "totemRangeGlowType", value = "pixel" } } },
         totemRangeGlowThickness = { adv = "glow", d = 2, t = "int", min = 1, max = 20, kinds = TOT,
-            showIf = Schema.TotemBySpell, label = "Out of range glow thickness",
+            showIf = Schema.TotemRangeable, label = "Out of range glow thickness",
             dep = { { field = "totemRangeGlow" }, { field = "totemRangeGlowType", value = "pixel" } } },
         totemRangeGlowLength = { adv = "glow", d = 0, t = "int", min = 0, max = 40, kinds = TOT,
-            showIf = Schema.TotemBySpell, label = "Out of range glow line length (0 = auto)",
+            showIf = Schema.TotemRangeable, label = "Out of range glow line length (0 = auto)",
             dep = { { field = "totemRangeGlow" }, { field = "totemRangeGlowType", value = "pixel" } } },
         totemRangeGlowParticles = { adv = "glow", d = 4, t = "int", min = 1, max = 16, kinds = TOT,
-            showIf = Schema.TotemBySpell, label = "Out of range glow particles",
+            showIf = Schema.TotemRangeable, label = "Out of range glow particles",
             dep = { { field = "totemRangeGlow" }, { field = "totemRangeGlowType", value = "autocast" } } },
         totemRangeGlowScale = { adv = "glow", d = 1, t = "num", min = 0.5, max = 2, kinds = TOT,
-            showIf = Schema.TotemBySpell, label = "Out of range glow size",
+            showIf = Schema.TotemRangeable, label = "Out of range glow size",
             dep = { { field = "totemRangeGlow" }, { field = "totemRangeGlowType", anyOf = GLOW_SIZE_STYLES } } },
         totemRangeGlowIntensity = { adv = "glow", d = 1, t = "num", min = 0.1, max = 1, kinds = TOT,
-            showIf = Schema.TotemBySpell, label = "Out of range glow intensity", dep = { field = "totemRangeGlow" } },
+            showIf = Schema.TotemRangeable, label = "Out of range glow intensity", dep = { field = "totemRangeGlow" } },
         totemRangeGlowXOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = TOT,
-            showIf = Schema.TotemBySpell, label = "Out of range glow X offset", dep = { field = "totemRangeGlow" } },
+            showIf = Schema.TotemRangeable, label = "Out of range glow X offset", dep = { field = "totemRangeGlow" } },
         totemRangeGlowYOffset = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = TOT,
-            showIf = Schema.TotemBySpell, label = "Out of range glow Y offset", dep = { field = "totemRangeGlow" } },
+            showIf = Schema.TotemRangeable, label = "Out of range glow Y offset", dep = { field = "totemRangeGlow" } },
         totemRangeGlowMoveX = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = TOT,
-            showIf = Schema.TotemBySpell, label = "Out of range glow move X", dep = { field = "totemRangeGlow" } },
+            showIf = Schema.TotemRangeable, label = "Out of range glow move X", dep = { field = "totemRangeGlow" } },
         totemRangeGlowMoveY = { adv = "glow", d = 0, t = "int", min = -20, max = 20, kinds = TOT,
-            showIf = Schema.TotemBySpell, label = "Out of range glow move Y", dep = { field = "totemRangeGlow" } },
+            showIf = Schema.TotemRangeable, label = "Out of range glow move Y", dep = { field = "totemRangeGlow" } },
     } },
     -- Up to three custom texts per icon, each shown or hidden by state.
     label = { push = true, inherit = true, fields = {
@@ -1469,7 +1478,7 @@ Schema.icon = {
         -- A totem set to one totem: shown only while out of its range, in the
         -- Out of range look (Drivers\AD_TotemRange.lua); the same dropdown
         -- writes it (rangePick).
-        labelShowRange = { inherit = false, d = false, t = "bool", kinds = TOT, showIf = Schema.TotemBySpell,
+        labelShowRange = { inherit = false, d = false, t = "bool", kinds = TOT, showIf = Schema.TotemRangeable,
             label = "Show custom text only while out of totem range", pickedBy = "labelShowReady",
             dep = { field = "labelText", nonempty = true } },
         -- Drawn on the engine button, so it holds in combat. One dropdown writes both (showPick).
@@ -1492,7 +1501,7 @@ Schema.icon = {
             statePick = "labelShowCooldown2", rangePick = "labelShowRange2", dep = { field = "labelText2", nonempty = true } },
         labelShowCooldown2 = { inherit = false, d = true, t = "bool", kinds = TWO, label = "Show custom text 2 on cooldown",
             pickedBy = "labelShowReady2", dep = { field = "labelText2", nonempty = true } },
-        labelShowRange2 = { inherit = false, d = false, t = "bool", kinds = TOT, showIf = Schema.TotemBySpell,
+        labelShowRange2 = { inherit = false, d = false, t = "bool", kinds = TOT, showIf = Schema.TotemRangeable,
             label = "Show custom text 2 only while out of totem range", pickedBy = "labelShowReady2",
             dep = { field = "labelText2", nonempty = true } },
         labelActiveOnly2 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show custom text 2",
@@ -1514,7 +1523,7 @@ Schema.icon = {
             statePick = "labelShowCooldown3", rangePick = "labelShowRange3", dep = { field = "labelText3", nonempty = true } },
         labelShowCooldown3 = { inherit = false, d = true, t = "bool", kinds = TWO, label = "Show custom text 3 on cooldown",
             pickedBy = "labelShowReady3", dep = { field = "labelText3", nonempty = true } },
-        labelShowRange3 = { inherit = false, d = false, t = "bool", kinds = TOT, showIf = Schema.TotemBySpell,
+        labelShowRange3 = { inherit = false, d = false, t = "bool", kinds = TOT, showIf = Schema.TotemRangeable,
             label = "Show custom text 3 only while out of totem range", pickedBy = "labelShowReady3",
             dep = { field = "labelText3", nonempty = true } },
         labelActiveOnly3 = { inherit = false, d = false, t = "bool", kinds = AU, label = "Show custom text 3",

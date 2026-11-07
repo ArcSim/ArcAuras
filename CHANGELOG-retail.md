@@ -1,5 +1,9 @@
 # Arc Auras
 
+## 3.2.3
+
+An update for WoW Forever only; nothing changes on retail.
+
 ## 3.2.2
 
 An update for WoW Forever only; nothing changes on retail.

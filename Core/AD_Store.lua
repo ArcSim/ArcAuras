@@ -2883,6 +2883,7 @@ local function BookHas(id)
     if bank and bank.Pet then return Answer(SB.IsSpellKnown(id, bank.Pet)) end
     return false
 end
+Store.BookHas = BookHas
 
 local function PlainNum(v)
     if issecretvalue and issecretvalue(v) then return nil end

@@ -587,9 +587,9 @@ ET.STATES = {
           fx = { glow = { "states.readyGlow" } } },
         { key = "missing", label = "Missing", when = "while no totem is out", alpha = COOLDOWN.alpha,
           grey = COOLDOWN.grey, tint = COOLDOWN.tint },
-        -- a totem set to one totem: out, but its buff not on you
+        -- a totem by spell or a slot icon: out, but its buff not on you
         -- (Drivers\AD_TotemRange.lua); its look covers the art, so no opacity
-        { key = "range", label = "Out of range", lookTitle = "Out of totem range", showIf = Schema.TotemBySpell,
+        { key = "range", label = "Out of range", lookTitle = "Out of totem range", showIf = Schema.TotemRangeable,
           when = "while the totem is out and its buff is not on you",
           grey = { S, "totemRangeDesaturate" }, tint = { S, "totemRangeTintColor", on = "totemRangeTint" },
           fx = { glow = { "states.totemRangeGlow" } } },

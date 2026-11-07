@@ -24,8 +24,31 @@ TR.ART_AT, TR.TOP_AT = 1, 6
 -- A search that never answered (another search replaced it) frees the queue
 -- after this many seconds.
 TR.STALE = 30
-TR.attached = {}   -- [iconId] = { rec, frame, active, painted }
+TR.attached = {}   -- [iconId] = { rec, frame, active, painted, slot, live }
 TR.layers = {}     -- [iconId] = { art = layer, top = layer }, kept: engine frames cannot go
+TR.slotSets = {}   -- [iconId] = { [totem key] = { art, top } }: a slot icon's sets, one per buffed totem
+
+-- Forever's totems that put a buff on you, by element slot (1 Fire, 2 Earth,
+-- 3 Water, 4 Air): every rank's cast and buff, from the client's spell data
+-- (tools\gen_totem_buffs.sh). Grounding's effect sits on the totem; attack
+-- and cleansing totems give none.
+TR.BUFFS = (NS.IsForever == true) and {
+    { key = "flametongue", slot = 1, casts = { 8227, 8249, 10526, 16387 }, buffs = { 8230, 8250, 10521, 15036 } },
+    { key = "frostres", slot = 1, casts = { 8181, 10478, 10479 }, buffs = { 8182, 10476, 10477 } },
+    { key = "stoneskin", slot = 2, casts = { 8071, 8154, 8155, 10406, 10407, 10408 },
+      buffs = { 8072, 8156, 8157, 10403, 10404, 10405 } },
+    { key = "strength", slot = 2, casts = { 8075, 8160, 8161, 10442, 25361 }, buffs = { 8076, 8162, 8163, 10441, 25362 } },
+    { key = "fireres", slot = 3, casts = { 8184, 10537, 10538 }, buffs = { 8185, 10534, 10535 } },
+    { key = "healingstream", slot = 3, casts = { 5394, 6375, 6377, 10462, 10463 },
+      buffs = { 5672, 6371, 6372, 10460, 10461 } },
+    { key = "manaspring", slot = 3, casts = { 5675, 10495, 10496, 10497, 24854 },
+      buffs = { 5677, 10491, 10493, 10494, 24853 } },
+    { key = "manatide", slot = 3, casts = { 16190, 17354, 17359, 1325256 }, buffs = { 16191, 17355, 17360, 1325257 } },
+    { key = "graceofair", slot = 4, casts = { 8835, 10627, 25359 }, buffs = { 8836, 10626, 25360 } },
+    { key = "natureres", slot = 4, casts = { 10595, 10600, 10601 }, buffs = { 10596, 10598, 10599 } },
+    { key = "windfury", slot = 4, casts = { 8512, 10613, 10614 }, buffs = { 8515, 10609, 10612 } },
+    { key = "windwall", slot = 4, casts = { 15107, 15111, 15112 }, buffs = { 15108, 15109, 15110 } },
+} or {}
 TR.queue = {}      -- icon ids waiting for their buff's IDs, one search at a time
 TR.inCombat = InCombatLockdown() and true or false
 
@@ -41,6 +64,68 @@ local function AurasSecret()
     local v = C_Secrets.ShouldAurasBeSecret()
     if not Plain(v) then return true end
     return v == true
+end
+
+-- The table's totems
+
+local byCast, byName = nil, nil
+local function Index()
+    if byCast then return end
+    byCast, byName = {}, {}
+    for _, e in ipairs(TR.BUFFS) do
+        for _, id in ipairs(e.casts) do byCast[id] = e end
+    end
+end
+
+-- A totem's entry by any rank's cast, else by the name its slot shows.
+function TR.EntryOf(id, name)
+    Index()
+    local e = type(id) == "number" and Plain(id) and byCast[id]
+    if e then return e end
+    if type(name) ~= "string" or name == "" or not Plain(name) then return nil end
+    local hit = byName[name]
+    if hit ~= nil then return hit or nil end
+    hit = false
+    for _, t in ipairs(TR.BUFFS) do
+        local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(t.casts[1]) -- raw-id: a table totem's own cast
+        if nm == name then hit = t break end
+    end
+    byName[name] = hit
+    return hit or nil
+end
+
+-- A slot icon: any totem icon that is not set to one totem.
+local function SlotMode(rec)
+    return not NS.Schema.TotemBySpell(rec) and NS.Schema.TotemRangeable ~= nil and NS.Schema.TotemRangeable(rec)
+end
+TR.SlotMode = SlotMode
+
+-- The table's totems for a slot icon's slot that you know.
+function TR.Candidates(rec)
+    local out = {}
+    local slot = rec and type(rec.driver) == "table" and tonumber(rec.driver.slot) or 1
+    for _, e in ipairs(TR.BUFFS) do
+        if e.slot == slot then
+            local known = false
+            for _, id in ipairs(e.casts) do
+                -- nil (a secret answer) counts as known: built rather than missed
+                if not Store.BookHas or Store.BookHas(id) ~= false then known = true break end -- raw-id: a table totem's own cast
+            end
+            if known then out[#out + 1] = e end
+        end
+    end
+    return out
+end
+
+-- The table's key of the totem in a slot icon's slot now, or nil.
+function TR.LiveKey(rec)
+    local DT = NS.DriverTotem
+    if not (DT and DT.slot and DT.SlotFor) then return nil end
+    local slot = DT.SlotFor(rec)
+    local s = slot and DT.slot[slot]
+    if not s then return nil end
+    local e = TR.EntryOf(s.castId) or TR.EntryOf(s.id, s.name)
+    return e and e.key or nil
 end
 
 -- The buff
@@ -62,12 +147,20 @@ function TR.BuffName(rec)
 end
 
 -- The buff's IDs when they were found for its current name, else nil.
+-- Untyped and not found, a totem in the table gives its own (Flametongue and
+-- Windfury's buffs keep the word Totem, so the name search misses them).
 function TR.IDs(rec)
     local name = TR.BuffName(rec)
     local d = rec and rec.driver
-    if not name or d.rangeBuffFor ~= name or type(d.rangeBuffIDs) ~= "table" then return nil end
-    if #d.rangeBuffIDs == 0 then return nil end
-    return d.rangeBuffIDs
+    if not name then return nil end
+    if d.rangeBuffFor == name and type(d.rangeBuffIDs) == "table" and #d.rangeBuffIDs > 0 then
+        return d.rangeBuffIDs
+    end
+    if d.rangeBuff == nil or d.rangeBuff == "" then
+        local e = TR.EntryOf(tonumber(d.spellID))
+        if e then return e.buffs, e end
+    end
+    return nil
 end
 
 -- Every ID a slot shows, as the engine's filter map; none gets the
@@ -143,9 +236,23 @@ end
 function TR.StatusText(rec)
     local AT = NS.AT
     local Tr = (AT and AT.Tr) or function(s) return s end
+    if SlotMode(rec) then
+        local names = {}
+        for _, e in ipairs(TR.Candidates(rec)) do
+            local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(e.casts[1]) -- raw-id: a table totem's own cast
+            if type(nm) == "string" and Plain(nm) then names[#names + 1] = nm end
+        end
+        if #names == 0 then return Tr("No totem you know for this slot gives you a buff.") end
+        return Tr("Out of range shows while one of these is out and its buff is not on you: %s.")
+            :format(table.concat(names, ", "))
+    end
     local name = TR.BuffName(rec)
     if not name then return Tr("Set the totem's spell ID first.") end
-    local ids = TR.IDs(rec)
+    local ids, entry = TR.IDs(rec)
+    if entry then
+        local nm = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(entry.buffs[1]) -- raw-id: a table totem's own buff
+        if type(nm) == "string" and Plain(nm) then name = nm end
+    end
     if ids then
         return Tr("Out of range shows while the totem is out and %s is not on you (%d spell IDs).")
             :format(name, #ids)
@@ -173,7 +280,7 @@ end
 
 -- The art layer (grey or tint) and the top layer (a glow or texts).
 function TR.Wants(rec)
-    if not (NS.Schema.TotemBySpell and NS.Schema.TotemBySpell(rec)) then return false, false end
+    if not (NS.Schema.TotemBySpell(rec) or SlotMode(rec)) then return false, false end
     local R = function(k) return Store.Resolve(rec, "states", k) == true end
     local art = R("totemRangeDesaturate") or R("totemRangeTint")
     local top = R("totemRangeGlow") or #TR.RangeTexts(rec) > 0
@@ -213,7 +320,7 @@ end
 
 -- A layer: our frame over the holder, drawn as one picture, and a player aura
 -- slot on the buff's IDs. Built out of combat, kept for the icon's life.
-local function BuildLayer(rec, part, ids)
+local function BuildLayer(rec, part, ids, tag)
     local DA = NS.DriverAura
     if not (DA and DA.CreateIconContainer and DA.FilterSig and DA.EraserAvailable
         and DA.EraserAvailable()) then return nil end
@@ -234,7 +341,7 @@ local function BuildLayer(rec, part, ids)
         return nil
     end
     local layer = { stage = st, part = part, container = c,
-        key = "adtr" .. tostring(rec.id) .. "_" .. part }
+        key = "adtr" .. tostring(rec.id) .. "_" .. part .. (tag or "") }
     local map = IDMap(ids)
     layer.sig = DA.FilterSig(map)
     c:AddAuraSlot(layer.key, "HELPFUL", {
@@ -454,16 +561,27 @@ local function HolderSize(f)
     return w, h
 end
 
--- Stands and dresses the live layers; their buttons follow when writable.
-function TR.Paint(a)
+-- The icon's layer sets: its one set by spell, or a slot icon's per totem.
+-- A slot icon's live set is the one of the totem in its slot.
+local ONE = {}
+local function Sets(a)
+    if a.slot then return TR.slotSets[a.rec.id] or ONE end
     local L = TR.layers[a.rec.id]
-    if not L then return end
+    if not L then return ONE end
+    if not (a.one and a.one[""] == L) then a.one = { [""] = L } end
+    return a.one
+end
+local function IsLive(a, k)
+    if a.slot then return k == a.live end
+    return true
+end
+
+-- Stands and dresses one set; its buttons follow when writable.
+local function PaintSet(a, L, wantArt, wantTop)
     local rec, f = a.rec, a.frame
-    local wantArt, wantTop = TR.Wants(rec)
     local w, h = HolderSize(f)
     local kS = h / 36
     local alpha = ShownAlpha(f)
-    a.painted = alpha
     if L.art and wantArt then
         Stand(L.art, f, TR.ART_AT)
         PaintArt(L.art, rec, f, kS, alpha)
@@ -476,33 +594,95 @@ function TR.Paint(a)
     end
 end
 
+-- The live set, or with all every set (out of combat, so every button
+-- reaches as far as its look before a fight needs it).
+function TR.Paint(a, all)
+    local wantArt, wantTop = TR.Wants(a.rec)
+    a.painted = ShownAlpha(a.frame)
+    for k, L in pairs(Sets(a)) do
+        if all or IsLive(a, k) then PaintSet(a, L, wantArt, wantTop) end
+    end
+end
+
 -- The layers' alpha: the holder's while the totem is out, else none.
 function TR.Sync(a)
-    local L = TR.layers[a.rec.id]
-    if not L then return end
     local f = a.frame
     local wantArt, wantTop = TR.Wants(a.rec)
     local ea = f:GetEffectiveAlpha()
     if type(ea) ~= "number" or not Plain(ea) then ea = 1 end
-    local shown = a.active == true and TR.IDs(a.rec) ~= nil and f:IsVisible() == true
+    local shown = a.active == true and f:IsVisible() == true and (a.slot or TR.IDs(a.rec) ~= nil)
     local F = NS.Factory
-    if L.art then
-        local on = shown and wantArt and F.HoldsPicture(L.art.stage)
-        L.art.stage:SetShown(on)
-        L.art.stage:SetAlpha(on and ea or 0)
+    for k, L in pairs(Sets(a)) do
+        local live = shown and IsLive(a, k)
+        if L.art then
+            local on = live and wantArt and F.HoldsPicture(L.art.stage)
+            L.art.stage:SetShown(on)
+            L.art.stage:SetAlpha(on and ea or 0)
+        end
+        if L.top then
+            local on = live and wantTop and F.HoldsPicture(L.top.stage)
+            L.top.stage:SetShown(on)
+            L.top.stage:SetAlpha(on and ea or 0)
+            SetGlow(L.top, on)
+        end
     end
-    if L.top then
-        local on = shown and wantTop and F.HoldsPicture(L.top.stage)
-        L.top.stage:SetShown(on)
-        L.top.stage:SetAlpha(on and ea or 0)
-        SetGlow(L.top, on)
+end
+
+-- A slot icon's layer listens and holds its picture only while its totem is
+-- the one down: a slot switch, never a filter change, so legal in combat.
+local function Light(layer, on)
+    on = on == true
+    NS.Factory.HoldPicture(layer.stage, on)
+    if layer.lit == on then return end
+    layer.lit = on
+    NS.DriverAura.SlotOn(layer.container, layer.key, on)
+end
+
+-- Lights the live totem's set, every other one off.
+function TR.LightSets(a)
+    local wantArt, wantTop = TR.Wants(a.rec)
+    local want = { art = wantArt, top = wantTop }
+    for k, L in pairs(Sets(a)) do
+        for _, part in ipairs(PARTS) do
+            local layer = L[part]
+            if layer then Light(layer, want[part] == true and a.cand and a.cand[k] == true and k == a.live) end
+        end
     end
+end
+
+-- A slot icon's sets: one per totem of its slot you know with a buff, each
+-- slot born on that totem's buffs (built out of combat only).
+local function EnsureSlotSets(a, wantArt, wantTop)
+    local rec = a.rec
+    local S = TR.slotSets[rec.id]
+    a.cand = {}
+    local want = { art = wantArt, top = wantTop }
+    for _, e in ipairs(TR.Candidates(rec)) do
+        a.cand[e.key] = true
+        if wantArt or wantTop then
+            S = S or {}
+            TR.slotSets[rec.id] = S
+            local L = S[e.key] or {}
+            S[e.key] = L
+            for _, part in ipairs(PARTS) do
+                if want[part] and not L[part] then L[part] = BuildLayer(rec, part, e.buffs, e.key) end
+            end
+        end
+    end
+    a.live = TR.LiveKey(rec)
+    TR.LightSets(a)
 end
 
 -- The layers this icon needs, built and aimed out of combat.
 function TR.Ensure(a)
     local rec = a.rec
     local wantArt, wantTop = TR.Wants(rec)
+    if a.slot then
+        EnsureSlotSets(a, wantArt, wantTop)
+        TR.Paint(a, not (TR.inCombat or InCombatLockdown()))
+        TR.Sync(a)
+        return
+    end
     local ids = TR.IDs(rec)
     local L = TR.layers[rec.id]
     if not L and ids and (wantArt or wantTop) then
@@ -530,14 +710,25 @@ end
 -- Every layer of an icon off: no alpha, no glow, the slot parked.
 local function Park(id)
     local L = TR.layers[id]
-    if not L then return end
-    for _, part in ipairs(PARTS) do
-        local layer = L[part]
-        if layer then
-            layer.stage:SetAlpha(0)
-            SetGlow(layer, false)
-            AimLayer(layer, nil)
-            NS.Factory.HoldPicture(layer.stage, false)
+    if L then
+        for _, part in ipairs(PARTS) do
+            local layer = L[part]
+            if layer then
+                layer.stage:SetAlpha(0)
+                SetGlow(layer, false)
+                AimLayer(layer, nil)
+                NS.Factory.HoldPicture(layer.stage, false)
+            end
+        end
+    end
+    for _, set in pairs(TR.slotSets[id] or ONE) do
+        for _, part in ipairs(PARTS) do
+            local layer = set[part]
+            if layer then
+                layer.stage:SetAlpha(0)
+                SetGlow(layer, false)
+                Light(layer, false)
+            end
         end
     end
 end
@@ -561,11 +752,20 @@ function TR.OnEvent(ev)
     for _, a in pairs(TR.attached) do TR.Ensure(a) end
 end
 
+-- A totem learned: a slot icon builds its set (out of combat).
+function TR.OnSpells()
+    if TR.inCombat or InCombatLockdown() then return end
+    for _, a in pairs(TR.attached) do
+        if a.slot then TR.Ensure(a) end
+    end
+end
+
 function TR.EnsureEvents()
     if TR.live then return end
     TR.live = true
     Events.On("PLAYER_REGEN_DISABLED", "adtotemrange", TR.OnEvent)
     Events.On("PLAYER_REGEN_ENABLED", "adtotemrange", TR.OnEvent)
+    Events.On("SPELLS_CHANGED", "adtotemrange", TR.OnSpells)
     if not TR.heard then
         TR.heard = true
         -- a group, layout or condition fade reaches the layers
@@ -598,9 +798,13 @@ function TR.Attach(rec, f)
     local a = TR.attached[rec.id] or {}
     TR.attached[rec.id] = a
     a.rec, a.frame = rec, f
+    -- a slot icon set to one totem, or back: the other kind's layers park
+    local slot = SlotMode(rec) == true
+    if a.slot ~= nil and a.slot ~= slot then Park(rec.id) end
+    a.slot = slot
     TR.EnsureEvents()
     HookHolder(f)
-    if not TR.IDs(rec) then MaybeFind(rec) end
+    if not slot and not TR.IDs(rec) then MaybeFind(rec) end
     TR.Ensure(a)
 end
 
@@ -610,6 +814,16 @@ function TR.Feed(rec, f, active)
     if not a then return end
     a.frame = f
     a.active = active == true
+    if a.slot then
+        -- the totem in the slot picks the set
+        local live = TR.LiveKey(rec)
+        local moved = live ~= a.live
+        a.live = live
+        if moved then TR.LightSets(a) end
+        if a.active and (moved or a.painted ~= ShownAlpha(f)) then TR.Paint(a) end
+        TR.Sync(a)
+        return
+    end
     local L = TR.layers[rec.id]
     if not L then return end
     if a.active and a.painted ~= ShownAlpha(f) then
@@ -628,4 +842,5 @@ function TR.Detach(id)
     TR.live = false
     Events.Off("PLAYER_REGEN_DISABLED", "adtotemrange")
     Events.Off("PLAYER_REGEN_ENABLED", "adtotemrange")
+    Events.Off("SPELLS_CHANGED", "adtotemrange")
 end

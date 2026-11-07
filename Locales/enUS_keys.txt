@@ -586,6 +586,7 @@ After it plays, the rule stays silent this long (aura rules: the game's limit, 5
 After reload
 After rule
 After the name
+Air Totem
 Alert sound
 Alert when your focus casts and your kick is ready
 Alert with
@@ -763,6 +764,7 @@ Any talent
 Any talent build
 Any text you like in place of the name. Leave it empty to show the default name.
 Any time
+Any totem you drop with its time left, one per element. Greyed with a glow while its buff is not on you.
 Anyone
 Anyone but me
 Anyone lacks it
@@ -1671,6 +1673,7 @@ Each type on its own line
 Each type shows up to Rows by Columns of its auras.
 Each type starts a new line. Off: the types follow straight on, with no gap between them.
 Earth Shock
+Earth Totem
 Ease In
 Ease In/Out
 Ease Out
@@ -1857,6 +1860,7 @@ Fine-tuning for the rows above. Click to show or hide it.
 Fine-tuning for the rows above; some differ from their default. Click to show or hide it.
 Fine-tuning for this one. Click to show or hide it.
 Finish flash
+Fire Totem
 Fire Trap
 Fire even while on cooldown
 Fires as soon as the spell's own requirement is met (a proc, enough mana), even while it is on cooldown.
@@ -2879,6 +2883,7 @@ No target
 No text
 No texture has "%s" in its name.
 No tooltip while the icon's art is hidden (Appearance).
+No totem you know for this slot gives you a buff.
 No type
 No type border
 No type color
@@ -3148,6 +3153,7 @@ Other classes (%d)
 Other classes' Arc Procs too. Each loads only for its own class.
 Other heals color
 Other spells this icon can show, separated by commas. It turns to the last of them you cast, else shows the first one you know.
+Out of Range
 Out of Shadowform
 Out of combat
 Out of range
@@ -3168,6 +3174,7 @@ Out of range glow size
 Out of range glow speed
 Out of range glow style
 Out of range glow thickness
+Out of range shows while one of these is out and its buff is not on you: %s.
 Out of range shows while the totem is out and %s is not on you (%d spell IDs).
 Out of range, not enough resource and can't use tint it while it cools down too, as the game's buttons do.
 Out of stock
@@ -4736,6 +4743,7 @@ Totem
 Totem / Guardian
 Totem / Guardian Duration
 Totem Bar
+Totem Durations
 Totem Icon
 Totem Slot 
 Totem State
@@ -4979,6 +4987,7 @@ Watches the spell %s  (ID %s)
 Watches the spell (ID %s)
 Watching.
 Watching: everything matches.
+Water Totem
 Weapon
 Weapon Enchant
 Weapon Enchant Bar

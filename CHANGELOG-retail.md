@@ -1,5 +1,18 @@
 # Arc Auras
 
+## 3.2.4
+
+Your own art for empty totem slots, smoother aura swipes and the Expressway font fixed.
+
+### New Features
+
+- **Empty slot art** - A totem slot icon can show any icon of your own while its slot is empty: Icon > Look > Art > Empty slot art > Custom.
+
+### Bug Fixes
+
+- **Aura swipe** - The swipe on aura icons now has a smooth edge, like spell cooldowns.
+- **Expressway font** - Bar texts and the panel now show Expressway when it is picked, instead of falling back to the default font.
+
 ## 3.2.3
 
 An update for WoW Forever only; nothing changes on retail.

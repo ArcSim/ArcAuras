@@ -3409,6 +3409,18 @@ function Store.TrackedAuraIDs(d)
             out[#out + 1] = v
         end
     end
+    -- a totem's buff: every rank, as any shaman's rank may be the one on you
+    local TR = NS.TotemRange
+    if TR and TR.BuffRanks then
+        for _, id in ipairs(ids) do
+            for _, b in ipairs(TR.BuffRanks(id) or {}) do
+                if not seen[b] then
+                    seen[b] = true
+                    out[#out + 1] = b
+                end
+            end
+        end
+    end
     return out
 end
 

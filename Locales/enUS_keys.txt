@@ -1064,6 +1064,7 @@ CONTENTS  -  %d element
 CONTENTS  -  %d element  (folded)
 CONTENTS  -  %d elements
 CONTENTS  -  %d elements  (folded)
+Call spells
 Can't Be Interrupted
 Can't be interrupted color
 Can't pin
@@ -1723,6 +1724,8 @@ Empty fill when idle
 Empty groups
 Empty health color
 Empty pip tint
+Empty slot art
+Empty slot icon ID
 Empty spots close up while you play: a spot with no icon, or with an icon that is not loaded.
 Empty your cursor first
 Enable sound
@@ -4749,6 +4752,7 @@ Totem Slot
 Totem State
 Totem and aura gone
 Totem bar  -  %s
+Totem bar squares
 Totem bars
 Totem down
 Totem from spell ID

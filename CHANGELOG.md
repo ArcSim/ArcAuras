@@ -1,5 +1,23 @@
 # Arc Auras
 
+## 3.2.4
+
+Empty totem slots get proper art, totem buffs follow every rank, and smoother aura swipes.
+
+### New Features
+
+- **Empty totem slot art** - An empty totem slot icon now shows a totem icon instead of a question mark. Icon > Look > Art > Empty slot art also offers the totem bar's element squares, the Call spells' icons, or any icon of your own.
+
+### Improvements
+
+- **Totem buffs by rank** - An aura icon on any rank of a totem's buff, or on the totem itself, now tracks every rank of that buff, so you no longer add each rank by hand.
+- **Totem Durations group** - Empty slots now stay on screen with their empty slot art.
+
+### Bug Fixes
+
+- **Aura swipe** - The swipe on aura icons now has a smooth edge, like spell cooldowns.
+- **Expressway font** - Bar texts and the panel now show Expressway when it is picked, instead of falling back to the default font.
+
 ## 3.2.3
 
 A Totem Durations group for Shamans, and fresh Item Finds data for the latest Forever build.

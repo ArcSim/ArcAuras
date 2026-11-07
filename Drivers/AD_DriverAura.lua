@@ -822,8 +822,8 @@ local function WireButton(btn)
     icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     btn._adIcon = icon
 
-    -- Reversed swipe. Lua-created cooldowns need a texture file with explicit
-    -- white color args (a color-only swipe does not render) and start hidden.
+    -- Reversed swipe, on the template's own colour swipe as the icon's cooldown
+    -- is: an 8x8 swipe file cuts the wedge's edge into steps.
     local swipe = CreateFrame("Cooldown", nil, btn, "CooldownFrameTemplate")
     swipe:SetAllPoints()
     swipe:SetReverse(true)
@@ -834,7 +834,6 @@ local function WireButton(btn)
     if swipe.SetMinimumCountdownDuration then swipe:SetMinimumCountdownDuration(0) end
     swipe:SetDrawEdge(false)
     swipe:SetDrawBling(false)
-    swipe:SetSwipeTexture("Interface\\Buttons\\WHITE8X8", 1, 1, 1, 1)
     swipe:SetSwipeColor(0, 0, 0, 0.8)
     swipe:Show()
     btn._adSwipe = swipe

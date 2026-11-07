@@ -13,6 +13,28 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.2.4",
+        intro = "Empty totem slots get proper art, totem buffs follow every rank, and smoother aura swipes.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Empty totem slot art",
+                    desc = "An empty totem slot icon now shows a totem icon instead of a question mark. Icon > Look > Art > Empty slot art also offers the totem bar's element squares, the Call spells' icons, or any icon of your own." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Totem buffs by rank",
+                    desc = "An aura icon on any rank of a totem's buff, or on the totem itself, now tracks every rank of that buff, so you no longer add each rank by hand." },
+                { title = "Totem Durations group",
+                    desc = "Empty slots now stay on screen with their empty slot art." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Aura swipe",
+                    desc = "The swipe on aura icons now has a smooth edge, like spell cooldowns." },
+                { title = "Expressway font",
+                    desc = "Bar texts and the panel now show Expressway when it is picked, instead of falling back to the default font." },
+            } },
+        },
+    },
+    {
         version = "3.2.3",
         intro = "A Totem Durations group for Shamans, and fresh Item Finds data for the latest Forever build.",
         sections = {
@@ -1484,6 +1506,22 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.2.4",
+        intro = "Your own art for empty totem slots, smoother aura swipes and the Expressway font fixed.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Empty slot art",
+                    desc = "A totem slot icon can show any icon of your own while its slot is empty: Icon > Look > Art > Empty slot art > Custom." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Aura swipe",
+                    desc = "The swipe on aura icons now has a smooth edge, like spell cooldowns." },
+                { title = "Expressway font",
+                    desc = "Bar texts and the panel now show Expressway when it is picked, instead of falling back to the default font." },
+            } },
+        },
+    },
     {
         version = "3.2.3",
         intro = "An update for WoW Forever only; nothing changes on retail.",

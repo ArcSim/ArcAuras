@@ -728,7 +728,11 @@ local function ProvenFontPath(path, size, flags)
         fontProbe = UIParent:CreateFontString(nil, "OVERLAY")
         fontProbe:Hide()
     end
-    if fontProbe:SetFont(path, size, flags) then return path end
+    -- SetFont's answer can be false for a font that loads: the theme reads
+    -- back instead (a theme without the reader keeps the answer)
+    local took
+    if AT.FontTook then took = AT.FontTook(fontProbe, path, size, flags) else took = fontProbe:SetFont(path, size, flags) end
+    if took then return path end
     return BUILTIN_FONTS["Default"]
 end
 

@@ -10213,7 +10213,7 @@ local function BuildIconEditor(parent)
         if not (lookDef.vis() and r ~= nil and r.groupId and NS.Skins and NS.Skins.CdmLook) then return false end
         return Store.Resolve(r, "appearance", "cdmLook") ~= true and NS.Skins.CdmLook(Store.Get(r.groupId)) == true
     end)
-    Sub(lookDef, "Art", "appearance", { "forceHideIcon", "customIconFrom", "customIcon", "activeArt" })
+    Sub(lookDef, "Art", "appearance", { "forceHideIcon", "customIconFrom", "customIcon", "totemEmptyArt", "totemEmptyIcon", "activeArt" })
     Options.BuildYield()
     AT.RowDesc(pg, "Conditions > By State sets the art while the aura is up or missing.", 20,
         function()
@@ -15133,6 +15133,10 @@ local function BuildAddWindow()
             local rec = Store.NewIcon("totem", { slot = slot, spellID = sid,
                 which = (only and only >= 1) and only or nil, slotWait = tpl and tpl.wait or nil },
                 dest, layoutId, name)
+            -- a new slot icon keeps its empty art in colour (empty is the cooldown state)
+            if rec and NS.IsForever == true and Schema.TotemSlotArt(rec) then
+                Store.SetOverride(rec, "states", "cooldownDesaturate", false)
+            end
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
         elseif iconKind == "ammo" then
             -- Nothing to configure: the icon is the ammo slot.

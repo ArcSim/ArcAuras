@@ -243,20 +243,19 @@ CO.TEMPLATES_FOREVER[#CO.TEMPLATES_FOREVER + 1] = { key = "huntertraps", which =
 
 -- Totem Durations: one icon per element slot, each showing whatever totem is
 -- down there with its time left, greyed with a glow and words while its buff
--- is not on you (Drivers\AD_TotemRange.lua); empty slots close up.
+-- is not on you (Drivers\AD_TotemRange.lua); an empty slot shows its element's art.
 CO.TOTEM_GROUP = { "Fire Totem", "Earth Totem", "Water Totem", "Air Totem" }
 function CO.TotemGroupCreate(addState, layoutId)
     local Store = NS.Store
     local nm = (type(addState.groupName) == "string") and addState.groupName:gsub("^%s+", ""):gsub("%s+$", "") or ""
     local g = Store.NewGroup(layoutId, (nm ~= "") and nm or "Totem Durations", "cooldown")
     if not g then return nil end
-    Store.SetOverride(g, "arrangement", "dynamicLayout", true)
-    Store.SetOverride(g, "arrangement", "dynamicCollapse", "hidden")
     Store.SetOverride(g, "arrangement", "cols", #CO.TOTEM_GROUP)
     for slot, name in ipairs(CO.TOTEM_GROUP) do
         local r = Store.NewIcon("totem", { slot = slot }, g.id, layoutId, name)
         if r then
-            Store.SetOverride(r, "states", "cooldownAlpha", 0)
+            -- an empty slot is the cooldown state: its art stays in colour
+            Store.SetOverride(r, "states", "cooldownDesaturate", false)
             Store.SetOverride(r, "states", "totemRangeDesaturate", true)
             Store.SetOverride(r, "states", "totemRangeGlow", true)
             Store.SetOverride(r, "label", "labelText", NS.AT.Tr("Out of Range"))

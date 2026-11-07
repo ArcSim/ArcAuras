@@ -68,13 +68,24 @@ end
 
 -- The table's totems
 
-local byCast, byName = nil, nil
+local byCast, byName, byBuff = nil, nil, nil
 local function Index()
     if byCast then return end
-    byCast, byName = {}, {}
+    byCast, byName, byBuff = {}, {}, {}
     for _, e in ipairs(TR.BUFFS) do
         for _, id in ipairs(e.casts) do byCast[id] = e end
+        for _, id in ipairs(e.buffs) do byBuff[id] = e end
     end
+end
+
+-- Every rank of a totem's buff, from any one rank of the buff or of the
+-- totem's cast: the buff's ranks share no name with a spell you know, so
+-- following your rank never finds them (Store.TrackedAuraIDs).
+function TR.BuffRanks(id)
+    if type(id) ~= "number" or not Plain(id) then return nil end
+    Index()
+    local e = byBuff[id] or byCast[id]
+    return e and e.buffs or nil
 end
 
 -- A totem's entry by any rank's cast, else by the name its slot shows.

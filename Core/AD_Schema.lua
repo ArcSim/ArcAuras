@@ -663,6 +663,12 @@ function Schema.TotemBySpell(rec)
     return tonumber(rec.driver.spellID) ~= nil
 end
 
+-- A slot icon (a totem or guardian slot, no spell), whose empty slot shows
+-- its Empty slot art.
+function Schema.TotemSlotArt(rec)
+    return rec ~= nil and rec.kind == "totem" and type(rec.driver) == "table" and not Schema.TotemBySpell(rec)
+end
+
 -- The Out of range look: a totem by its spell, or on Forever a shaman's slot
 -- icon (it watches whichever totem is in its slot, Drivers\AD_TotemRange.lua).
 function Schema.TotemRangeable(rec)
@@ -830,6 +836,16 @@ Schema.icon = {
         customIconFrom = { noDefault = true, inherit = false, d = "icon", t = "enum", values = ICON_FROM, labels = ICON_FROM_LABELS,
             label = "Custom icon from" },
         customIcon = { noDefault = true, inherit = false, d = 0, t = "id", label = "Custom icon ID" },
+        -- an empty slot icon's art: the totem icon, your own, or on Forever
+        -- the totem bar's element squares or a Call spell's icon per element
+        -- (retail slots hold any guardian, not an element)
+        totemEmptyArt = { noDefault = true, inherit = false, d = "totem", t = "enum",
+            values = { "totem", "squares", "calls", "custom" },
+            labels = { totem = "Totem icon", squares = "Totem bar squares", calls = "Call spells", custom = "Custom" },
+            valueIf = { squares = function() return NS.IsForever == true end, calls = function() return NS.IsForever == true end },
+            label = "Empty slot art", showIf = function(rec) return Schema.TotemSlotArt(rec) end },
+        totemEmptyIcon = { noDefault = true, inherit = false, d = 0, t = "id", label = "Empty slot icon ID",
+            dep = { field = "totemEmptyArt", value = "custom" }, showIf = function(rec) return Schema.TotemSlotArt(rec) end },
         -- Toggled spells (aspects, stances, ranked-realm auras): the icon
         -- copies the art of the action button holding the spell, such as the
         -- active swirl or Auto Shot's bow, so no list of toggles is needed. Off

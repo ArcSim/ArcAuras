@@ -11,8 +11,14 @@ local Factory = {}
 NS.Factory = Factory
 
 local QUESTION_MARK = 134400
--- an empty totem slot's art, the totem glyph (retail's file)
+-- an empty totem slot's art, the totem glyph (retail's file, Forever has it too)
 Factory.TOTEM_GLYPH = 310731
+-- an empty slot's Call spell icon by its colour: Elements (red) for Fire,
+-- Totemic Recall for Earth, Ancestors (blue) for Water, Spirits (purple) for Air
+Factory.TOTEM_CALL_ART = { 310730, 310733, 310731, 310732 }
+-- an empty Forever slot's art by slot: the totem bar's own empty squares
+local TOTEM_ART = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Totems\\AD_TotemSlot_"
+Factory.TOTEM_SLOT_ART = { TOTEM_ART .. "Fire", TOTEM_ART .. "Earth", TOTEM_ART .. "Water", TOTEM_ART .. "Air" }
 -- the custom texts' slots; a special icon adds its own three
 Factory.LABELS = { "", "2", "3" }
 Factory.SPECIAL_LABELS = { "", "2", "3", "4", "5", "6" }
@@ -300,7 +306,7 @@ local function KindTexture(rec)
         -- duration shadow says whether the slot is live (nil before its first
         -- feed). The icon is only painted, and SetTexture takes a secret. An
         -- empty slot's own art is blank: a totem followed by spell shows its
-        -- spell's art, any other the totem glyph (retail; Forever lacks it).
+        -- spell's art, any other the totem glyph, or on Forever its Empty slot art.
         local slot = d.slot or 1
         if NS.DriverTotem then slot = NS.DriverTotem.SlotFor(rec) end
         local DC = NS.DriverCooldown
@@ -311,7 +317,16 @@ local function KindTexture(rec)
         end
         local sid = Store.RecordSpellID(d)
         local tex = sid and C_Spell.GetSpellTexture(sid)
-        return tex or ((NS.IsForever ~= true) and Factory.TOTEM_GLYPH or QUESTION_MARK)
+        if tex then return tex end
+        local look = Store.Resolve(rec, "appearance", "totemEmptyArt")
+        if look == "custom" then
+            local id = tonumber(Store.Resolve(rec, "appearance", "totemEmptyIcon"))
+            if id and id > 0 then return id end
+        elseif NS.IsForever == true and slot and Factory.TOTEM_SLOT_ART[slot] then
+            if look == "squares" then return Factory.TOTEM_SLOT_ART[slot] end
+            if look == "calls" then return Factory.TOTEM_CALL_ART[slot] end
+        end
+        return Factory.TOTEM_GLYPH
     elseif kind == "enchant" then
         -- the enchant's own art while it is on, else the weapon's
         local E = NS.DriverEnchant

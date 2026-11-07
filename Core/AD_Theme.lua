@@ -8,7 +8,7 @@ local AT = {}
 -- Other addons carry copies of this file, generated from it by the
 -- arc-theme-sync tool, which compares this number to find stale copies.
 -- Bump it on every change and never edit a copy.
-AT.VERSION = 37
+AT.VERSION = 38
 
 -- The addon this copy loads in: a palette's font file sits in its folder.
 local THEME_ADDON = ...
@@ -204,8 +204,21 @@ function AT.Brand(first, rest)
     return "|cff" .. AT.Hex(COL.arc) .. first .. "|r|cff" .. AT.Hex(COL.word) .. rest .. "|r"
 end
 
--- A font file the client will not load fails SetFont, and a font string
--- without a font cannot take text, so a palette's font is tried first.
+-- Whether a font string took the font: SetFont's answer can be false for a
+-- font that loads, so the probe starts on the game's font and reads back.
+function AT.FontTook(fs, path, size, flags)
+    if type(path) ~= "string" or path == "" then return false end
+    local base = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
+    fs:SetFont(base, size or 12, flags or "")
+    fs:SetFont(path, size or 12, flags or "")
+    local got = fs:GetFont()
+    if type(got) ~= "string" then return false end
+    local function norm(s) return (s:gsub("/", "\\"):lower()) end
+    return norm(got) == norm(path)
+end
+
+-- A font string without a font cannot take text, so a palette's font is
+-- tried first.
 local function FontLoads(path)
     local fs = AT._fontProbe
     if not fs then
@@ -213,7 +226,7 @@ local function FontLoads(path)
         fs:Hide()
         AT._fontProbe = fs
     end
-    return fs:SetFont(path, 12, "") and true or false
+    return AT.FontTook(fs, path, 12, "")
 end
 
 -- Fills the colour and look tables in place, never new ones (files hold them

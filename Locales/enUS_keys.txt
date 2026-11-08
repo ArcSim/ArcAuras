@@ -1724,6 +1724,7 @@ Empty fill when idle
 Empty groups
 Empty health color
 Empty pip tint
+Empty slot
 Empty slot art
 Empty slot icon ID
 Empty spots close up while you play: a spot with no icon, or with an icon that is not loaded.
@@ -3078,6 +3079,7 @@ On: the skin sets it for every bar that wears it. Off: each bar keeps its own.
 On: the spell's own requirement decides (a proc, enough mana), even on cooldown. Off: only when it can be cast now.
 On: the trigger fires for your pet's casts of the spell as well as yours.
 On: this opacity while none is left. Off: it keeps its opacity.
+On: this opacity while nothing is equipped. Off: it keeps its opacity.
 On: this opacity while toggled on. Off: it keeps its opacity.
 On: this trigger has its own pulse duration and animation tuning. Off drops them, and the reminder's apply.
 Once an ability is off cooldown.
@@ -5687,6 +5689,7 @@ while its aura is down
 while its aura is up
 while no totem is out
 while none is left
+while nothing is equipped
 while the aura is missing
 while the aura is up
 while the buff is covered

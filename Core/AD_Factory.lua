@@ -174,6 +174,9 @@ Factory.LiveSpellArt = LiveSpellArt
 -- the art an item, trinket or ammo icon wears while its item's own is not readable
 Factory.QUESTION_MARK = QUESTION_MARK
 
+-- an empty trinket slot's art: the character sheet's empty trinket slot (both games)
+Factory.TRINKET_EMPTY = 136528
+
 local ammoEmptyTex
 function Factory.AmmoEmptyTexture()
     if ammoEmptyTex == nil then
@@ -280,7 +283,7 @@ local function KindTexture(rec)
         return tex or QUESTION_MARK
     elseif kind == "trinket" then
         local tex = d.slotID and GetInventoryItemTexture("player", d.slotID)
-        return tex or QUESTION_MARK
+        return tex or Factory.TRINKET_EMPTY
     elseif kind == "item" then
         -- an item by its category wears the category's picture
         local cat = d.category and Factory.CATEGORY_ART[d.category]
@@ -5676,7 +5679,9 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         local u = f._adUsability
         if u == "unusable" or u == "nomana" or u == "range" then LU = OL.Active(rec, u) end
         if f._adToggled then LT = OL.Active(rec, "toggle") end
-        if f._adItemEmpty and (rec.kind == "item" or rec.kind == "ammo") then LO = OL.Active(rec, "out") end
+        if f._adItemEmpty and (rec.kind == "item" or rec.kind == "ammo" or rec.kind == "trinket") then
+            LO = OL.Active(rec, "out")
+        end
         if f._adNoWeapon and rec.kind == "enchant" then LN = OL.Active(rec, "noweapon") end
         OL.PutGlows(f, rec, bkey, LB)
         if u == "range" then OL.PutGlows(f, rec, "range", LU) end
@@ -5870,7 +5875,8 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     if rec.kind == "item" or rec.kind == "trinket" or rec.kind == "ammo" then
         Factory.ApplyFrameAlpha(f, rec)
     end
-    if (rec.kind == "item" or rec.kind == "ammo") and f._adItemEmpty then
+    -- a trinket's empty slot wears the same looks (its Empty slot state)
+    if (rec.kind == "item" or rec.kind == "ammo" or rec.kind == "trinket") and f._adItemEmpty then
         local lookO = LO and LO.grey
         if lookO == true or (lookO == nil and R("outOfStock", "outDesaturate") ~= false) then
             f.icon:SetDesaturated(true)

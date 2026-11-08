@@ -450,6 +450,10 @@ end
 local OUT_OF_STOCK = { key = "out", label = "Out of stock", when = "while none is left", alpha = { O, "outAlpha", on = "outAlphaEnabled" },
     grey = { O, "outDesaturate" }, tint = { O, "outTintColor", on = "outTintEnabled" },
     onTip = "On: this opacity while none is left. Off: it keeps its opacity." }
+-- a trinket's out state is its empty slot, with the same looks
+local EMPTY_SLOT = { key = "out", label = "Empty slot", when = "while nothing is equipped", alpha = OUT_OF_STOCK.alpha,
+    grey = OUT_OF_STOCK.grey, tint = OUT_OF_STOCK.tint,
+    onTip = "On: this opacity while nothing is equipped. Off: it keeps its opacity." }
 -- ammo running low or the pet in trouble (Drivers\AD_DriverWarn.lua), for
 -- the classes with ammo or a pet: a glow, named for what it warns of
 local WARN_LABEL = { ammo = "Ammo low", petHealth = "Pet health low", petMood = "Pet not happy" }
@@ -556,7 +560,7 @@ ET.STATES = {
           fx = { glow = AuraGlowKeys(true), sound = { "alerts.auraLostSoundEnabled" }, art = { "art.missing" } } },
     },
     item = { READY, COOLDOWN, UNUSABLE, OUT_OF_STOCK, WARNING, OVERLAY, OVERLAY_MISSING },
-    trinket = { READY, COOLDOWN, OUT_OF_STOCK, WARNING, OVERLAY, OVERLAY_MISSING },
+    trinket = { READY, COOLDOWN, EMPTY_SLOT, WARNING, OVERLAY, OVERLAY_MISSING },
     -- a Custom Icon: active per its Show as active while (the ready bucket),
     -- else not active (the cooldown bucket); both can grey out. With an aura
     -- or a cooldown on it the rows follow what it shows: Aura up, Timer

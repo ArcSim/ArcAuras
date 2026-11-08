@@ -1,5 +1,14 @@
 # Arc Auras
 
+## 3.2.5
+
+Trinket icons show an empty trinket slot instead of a question mark, and can dim while nothing is equipped.
+
+### Improvements
+
+- **Empty trinket slot** - A trinket icon with no trinket equipped now shows the empty trinket slot instead of a question mark.
+- **Empty slot effect** - A trinket icon can change its opacity, grey out or take a tint while nothing is equipped: Icon > Effects > + Add > Empty slot.
+
 ## 3.2.4
 
 Empty totem slots get proper art, totem buffs follow every rank, and smoother aura swipes.

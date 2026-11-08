@@ -441,7 +441,7 @@ do
         spell = { ready = READY, recharge = St({ "rechargeGlow" }), cooldown = COOLDOWN, unusable = PLAIN,
             nomana = PLAIN, range = St({ "rangeGlow" }), toggle = St({ "toggleGlow" }) },
         item = { ready = READY, cooldown = COOLDOWN, unusable = PLAIN, out = PLAIN },
-        trinket = { ready = READY, cooldown = COOLDOWN },
+        trinket = { ready = READY, cooldown = COOLDOWN, out = PLAIN },
         ammo = { ready = St(nil, true, false, false), out = PLAIN },
         timer = { active = St({ "readyGlow" }), inactive = COOLDOWN, idle = St({ "idleGlow" }) },
         totem = { active = St({ "readyGlow" }), missing = PLAIN },
@@ -1675,11 +1675,13 @@ Schema.icon = {
     -- Things that run out: an item's bag count, the quiver. Counts are compared
     -- only when plain; a secret count keeps the last known state.
     outOfStock = { push = true, inherit = true, kinds = { item = true, trinket = true, ammo = true }, fields = {
-        outDesaturate = { d = true, t = "bool", kinds = { item = true, ammo = true }, label = "Desaturate when out of stock" },
-        outAlphaEnabled = { d = false, t = "bool", kinds = { item = true, ammo = true }, label = "Out-of-stock alpha" },
-        outAlpha = { d = 0.4, t = "num", min = 0, max = 1, kinds = { item = true, ammo = true }, label = "Out-of-stock alpha value", dep = { field = "outAlphaEnabled" } },
-        outTintEnabled = { d = false, t = "bool", kinds = { item = true, ammo = true }, label = "Out-of-stock tint" },
-        outTintColor = { d = { 0.5, 0.5, 0.5, 1 }, t = "color", kinds = { item = true, ammo = true }, label = "Out-of-stock tint color",
+        -- a trinket's is its empty slot: off by default, so its look is unchanged
+        outDesaturate = { d = true, dk = { trinket = false }, t = "bool", kinds = { item = true, ammo = true, trinket = true },
+            label = "Desaturate when out of stock" },
+        outAlphaEnabled = { d = false, t = "bool", kinds = { item = true, ammo = true, trinket = true }, label = "Out-of-stock alpha" },
+        outAlpha = { d = 0.4, t = "num", min = 0, max = 1, kinds = { item = true, ammo = true, trinket = true }, label = "Out-of-stock alpha value", dep = { field = "outAlphaEnabled" } },
+        outTintEnabled = { d = false, t = "bool", kinds = { item = true, ammo = true, trinket = true }, label = "Out-of-stock tint" },
+        outTintColor = { d = { 0.5, 0.5, 0.5, 1 }, t = "color", kinds = { item = true, ammo = true, trinket = true }, label = "Out-of-stock tint color",
             dep = { field = "outTintEnabled" } },
         -- Show: Always, while in stock (hidden while missing) or only when out
         -- (its partner). An item is missing when its guarded bag count is

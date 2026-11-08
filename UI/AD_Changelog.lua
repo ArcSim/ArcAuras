@@ -13,6 +13,18 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.2.5",
+        intro = "Trinket icons show an empty trinket slot instead of a question mark, and can dim while nothing is equipped.",
+        sections = {
+            { header = "Improvements", items = {
+                { title = "Empty trinket slot",
+                    desc = "A trinket icon with no trinket equipped now shows the empty trinket slot instead of a question mark." },
+                { title = "Empty slot effect",
+                    desc = "A trinket icon can change its opacity, grey out or take a tint while nothing is equipped: Icon > Effects > + Add > Empty slot." },
+            } },
+        },
+    },
+    {
         version = "3.2.4",
         intro = "Empty totem slots get proper art, totem buffs follow every rank, and smoother aura swipes.",
         sections = {
@@ -1506,6 +1518,18 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.2.5",
+        intro = "Trinket icons show an empty trinket slot instead of a question mark, and can dim while nothing is equipped.",
+        sections = {
+            { header = "Improvements", items = {
+                { title = "Empty trinket slot",
+                    desc = "A trinket icon with no trinket equipped now shows the empty trinket slot instead of a question mark." },
+                { title = "Empty slot effect",
+                    desc = "A trinket icon can change its opacity, grey out or take a tint while nothing is equipped: Icon > Effects > + Add > Empty slot." },
+            } },
+        },
+    },
     {
         version = "3.2.4",
         intro = "Your own art for empty totem slots, smoother aura swipes and the Expressway font fixed.",

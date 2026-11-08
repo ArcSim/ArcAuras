@@ -1,5 +1,19 @@
 # Arc Auras
 
+## 3.2.7
+
+Tighter countdown text, charge spells that grey out on time, and a fix for the trinket Empty slot effect.
+
+### Improvements
+
+- **Space before units** - Countdowns now read 3m instead of 3 m, like the game's own cooldown numbers. Settings > Timers > Space before units sets how many spaces go between the number and its unit, for every icon, bar and text, and each icon can pick its own under Text > Duration.
+
+### Bug Fixes
+
+- **Last charge** - A spell with charges now greys out as soon as its last charge is spent, instead of a second or two later (Lava Burst, Healing Stream Totem and others).
+- **Skip short locks** - Now off by default, since it only suits spells with a short lock after each cast. Shimmer players can turn it on in the icon's Tracking tab.
+- **Empty slot effect** - Show on a trinket's Empty slot effect now works the right way round: pick Always or While equipped. An item's Out of stock effect gets the same choices as its Tracking tab.
+
 ## 3.2.6
 
 Stack counts on cooldown icons, an order for effects, and fresh Item Finds data for the latest Forever build.

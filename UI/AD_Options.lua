@@ -1734,6 +1734,42 @@ function Options.TextDragRow(pg, ctx, vis)
         "While this window is open, drag this item's texts where they sit on screen. X and Y follow.")
 end
 
+-- Two exclusive switches as one pick: Always (both off), While the aura is
+-- up (this one), While the aura is missing (its partner, def.showPick).
+-- def.pickWords(rec) words them for a kind and may leave the second out;
+-- def.wornPick is a third, offered while the words carry `worn`. Every
+-- drawer of such a field uses this, never a bare checkbox (its field hides).
+function Options.ShowPickParts(def, section, field, ctx)
+    local other, worn = def.showPick, def.wornPick
+    local function Words(r)
+        return (def.pickWords and def.pickWords(r))
+            or { up = "While the aura is up", missing = "While the aura is missing" }
+    end
+    local function get()
+        local r = ctx()
+        if not r then return "always" end
+        if Store.Resolve(r, section, field) == true then return "up" end
+        if Store.Resolve(r, section, other) == true then return "missing" end
+        if worn and Words(r).worn and Store.Resolve(r, section, worn) == true then return "worn" end
+        return "always"
+    end
+    local function set(v)
+        local r = ctx()
+        if not r then return end
+        Store.SetOverride(r, section, field, v == "up")
+        Store.SetOverride(r, section, other, v == "missing")
+        if worn then Store.SetOverride(r, section, worn, v == "worn") end
+    end
+    local function items()
+        local w = Words(ctx())
+        local out = { { value = "always", text = "Always" }, { value = "up", text = w.up } }
+        if w.missing then out[#out + 1] = { value = "missing", text = w.missing } end
+        if worn and w.worn then out[#out + 1] = { value = "worn", text = w.worn } end
+        return out
+    end
+    return get, set, items
+end
+
 local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
     local tier = opts and opts.layoutTier == true
     local fam = Schema[family]
@@ -1831,35 +1867,8 @@ local function SectionRows(pg, family, section, ctx, tabVisible, only, opts)
             -- aura is up (this one), While the aura is missing (its partner).
             -- def.pickWords(rec) words them for a kind and may leave the second out.
             -- def.wornPick: a third switch, offered while the words carry `worn`.
-            local other, worn = def.showPick, def.wornPick
-            local function Words(r)
-                return (def.pickWords and def.pickWords(r))
-                    or { up = "While the aura is up", missing = "While the aura is missing" }
-            end
-            row = AT.RowDropdown(pg, win, label,
-                function()
-                    local r = ctx()
-                    if not r then return "always" end
-                    if Store.Resolve(r, section, field) == true then return "up" end
-                    if Store.Resolve(r, section, other) == true then return "missing" end
-                    if worn and Words(r).worn and Store.Resolve(r, section, worn) == true then return "worn" end
-                    return "always"
-                end,
-                function(v)
-                    local r = ctx()
-                    if not r then return end
-                    Store.SetOverride(r, section, field, v == "up")
-                    Store.SetOverride(r, section, other, v == "missing")
-                    if worn then Store.SetOverride(r, section, worn, v == "worn") end
-                end,
-                function()
-                    local w = Words(ctx())
-                    local items = { { value = "always", text = "Always" }, { value = "up", text = w.up } }
-                    if w.missing then items[#items + 1] = { value = "missing", text = w.missing } end
-                    if worn and w.worn then items[#items + 1] = { value = "worn", text = w.worn } end
-                    return items
-                end,
-                visible)
+            local get, set, items = Options.ShowPickParts(def, section, field, ctx)
+            row = AT.RowDropdown(pg, win, label, get, set, items, visible)
         elseif def.t == "bool" and def.statePick then
             -- Two state switches as one pick, in the kind's own words (its
             -- first two Conditions states): Always (both on), while the
@@ -10650,7 +10659,7 @@ local function BuildIconEditor(parent)
 
     -- Text > Duration
     local durDef = Block("Text", "Duration", "Duration text", "text", {
-        "durationText", "durationRounding", "durationFont", "durationSize", "durationColor", "durationOutline",
+        "durationText", "durationRounding", "durationUnitGap", "durationFont", "durationSize", "durationColor", "durationOutline",
         "durationShadow", "durationShadowColor", "durationShadowX", "durationShadowY", "durationAnchor", "durationX", "durationY",
         "durationStrata",
     })
@@ -15681,6 +15690,16 @@ local function BuildSettingsPane()
         end)
     AT.Tooltip(roundRow, "Round timer numbers",
         "How countdown numbers round. Up: 13.2 reads 14, like action bar cooldowns. Down: 13.2 reads 13, like buff timers and nameplates.")
+    Options.BuildYield()
+    -- 0 (none, like the game's cooldown numbers) is stored as nil
+    AT.RowInput(pg, "Space before units",
+        function() return ("%g"):format(NS.Factory and NS.Factory.TimerGap() or 0) end,
+        function(v)
+            local n = NS.Factory and NS.Factory.GapCount(v)
+            Store.SetSetting("timerUnitGap", (n and n > 0) and n or nil)
+        end,
+        nil, "Spaces between a countdown's number and its unit, 0 to 3: 0 reads 3m, 1 reads 3 m. Every icon, bar and text.",
+        "0")
     -- The game's Cooldown Manager, switched off here as in the game's own
     -- options: Arc Auras reads its lists, which work either way.
     local cdmVis = function()

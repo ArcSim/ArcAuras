@@ -1204,7 +1204,13 @@ local function MakePair(ed, blk, field, ctx, owner, relay)
         if fdef.onSet then fdef.onSet(r, v) end
     end
     local t = fdef.t
-    if t == "bool" then
+    if t == "bool" and fdef.showPick then
+        -- the field means "only while up": a checkbox named Show would read backwards
+        local get, set, items = Options.ShowPickParts(fdef, section, field, ctx)
+        local dd = AT.MakeDropdown(owner, ed, nil, items, get, set, function() relay() end)
+        P.ctrl = dd
+        P.sync = function() dd.Refresh() end
+    elseif t == "bool" then
         local cb = AT.MakeCheckbox(ed)
         cb:SetScript("OnClick", function()
             AT.CloseDropdown()

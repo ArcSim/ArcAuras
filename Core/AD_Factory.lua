@@ -566,6 +566,36 @@ function Factory.IconRounding(rec)
     return Factory.TimerRounding()
 end
 
+-- Spaces between a countdown's number and its unit, 0 to 3: none by default,
+-- as the game's cooldown numbers read "3m". Whole spaces only: the game's
+-- fonts have no narrow space (it drew a box). nil = not a count (follow Settings).
+function Factory.GapCount(v)
+    v = tonumber(v)
+    if not v then return nil end
+    v = math.floor(v + 0.5)
+    if v < 0 then return 0 end
+    if v > 3 then return 3 end
+    return v
+end
+-- Settings > Timers > Space before units
+function Factory.TimerGap()
+    return Factory.GapCount(Store.GetSetting("timerUnitGap")) or 0
+end
+-- an icon's own (Text > Duration text), else the Settings one
+function Factory.IconGap(rec)
+    local v = rec and Factory.GapCount(Store.Resolve(rec, "text", "durationUnitGap"))
+    if v then return v end
+    return Factory.TimerGap()
+end
+
+-- plain, no-break and narrow no-break spaces, as client unit strings use them
+local UNIT_GAPS = { " ", "\194\160", "\226\128\175" }
+local function Gap(fmt, n)
+    for _, sp in ipairs(UNIT_GAPS) do fmt = fmt:gsub("%%d" .. sp, "%%d") end
+    if n and n > 0 then fmt = fmt:gsub("%%d(.)", "%%d" .. string.rep(" ", n) .. "%1") end
+    return fmt
+end
+
 local function ColorEscape(c)
     return string.format("|c%02x%02x%02x%02x", 255,
         math.floor((c[1] or 1) * 255 + 0.5),
@@ -578,7 +608,7 @@ end
 -- can't be read; above the top band the fontstring's own color shows.
 -- roundMode: "up" | "down" | nil (the Settings choice). below =
 -- seconds from which the text prints a blank (0 = always shown).
-function Factory.GetCountdownFormatter(decTo, bands, abbrev, roundMode, below)
+function Factory.GetCountdownFormatter(decTo, bands, abbrev, roundMode, below, gap)
     decTo = tonumber(decTo) or 0
     if decTo > 60 then decTo = 60 end
     abbrev = tonumber(abbrev) or 0
@@ -587,11 +617,12 @@ function Factory.GetCountdownFormatter(decTo, bands, abbrev, roundMode, below)
     if below < 0 then below = 0 end
     local nBands = (type(bands) == "table") and #bands or 0
     if decTo <= 0 and nBands == 0 and abbrev == 0 and below == 0 then return nil end
+    gap = Factory.GapCount(gap) or Factory.TimerGap()
     if not (C_StringUtil and C_StringUtil.CreateNumericRuleFormatter) then return nil end
     local CN = GetLocale and GetLocale() == "zhCN"
     if CN then decTo = 0 end   -- decimal refreshes can crash the zhCN client
     local mode = roundMode or Factory.TimerRounding()
-    local parts = { tostring(decTo), tostring(abbrev), mode, tostring(below) }
+    local parts = { tostring(decTo), tostring(abbrev), mode, tostring(below), "g" .. ("%g"):format(gap) }
     for i = 1, nBands do
         local b = bands[i]
         parts[#parts + 1] = string.format("%g:%.2f,%.2f,%.2f",
@@ -639,7 +670,7 @@ function Factory.GetCountdownFormatter(decTo, bands, abbrev, roundMode, below)
             -- a space keeps the font string's height while it waits
             fmt, esc = " ", nil
         elseif lo >= 3600 then
-            fmt, comps, step = "%d h", { { div = 3600 } }, 3600
+            fmt, comps, step = Gap("%d h", gap), { { div = 3600 } }, 3600
         elseif lo >= 60 then
             if abbrev > 60 and lo < abbrev then
                 -- M:SS below the abbreviation threshold, both floored.
@@ -649,7 +680,7 @@ function Factory.GetCountdownFormatter(decTo, bands, abbrev, roundMode, below)
                     { mod = 60, step = 1, rounding = Down },
                 }
             else
-                fmt, comps, step = "%d m", { { div = 60 } }, 60
+                fmt, comps, step = Gap("%d m", gap), { { div = 60 } }, 60
             end
         elseif (not CN) and lo < decTo then
             fmt = "%.1f"
@@ -672,8 +703,9 @@ end
 
 -- A countdown with no options. aura = the aura engine's look ("13 s", seconds
 -- up to 90 like its own text), else the Cooldown widget's ("13").
-local function PlainTimerFormatter(mode, aura)
-    local key = "plain|" .. mode .. (aura and "|aura" or "")
+local function PlainTimerFormatter(mode, aura, gap)
+    gap = Factory.GapCount(gap) or Factory.TimerGap()
+    local key = "plain|" .. mode .. (aura and "|aura" or "") .. "|g" .. ("%g"):format(gap)
     if fmtCache[key] ~= nil then return fmtCache[key] or nil end
     local E = Enum.NumericRuleFormatRounding
     if not (C_StringUtil and C_StringUtil.CreateNumericRuleFormatter and E) then
@@ -698,6 +730,7 @@ local function PlainTimerFormatter(mode, aura)
         minF = Unit(MINUTE_ONELETTER_ABBR, "%d m")
         hourF = Unit(HOUR_ONELETTER_ABBR, "%d h")
     end
+    secF, minF, hourF = Gap(secF, gap), Gap(minF, gap), Gap(hourF, gap)
     local f = C_StringUtil.CreateNumericRuleFormatter()
     if not f then
         fmtCache[key] = false
@@ -715,27 +748,31 @@ end
 -- The formatter for any countdown text: the options one for decimals, colour
 -- bands or M:SS, else a plain one when the stock text rounds the other way.
 -- stock: "up" (a Cooldown widget) or "down" (aura engine). nil = keep stock.
-function Factory.TimerFormatter(decTo, bands, abbrev, stock, roundMode, below)
-    local fmt = Factory.GetCountdownFormatter(decTo, bands, abbrev, roundMode, below)
+function Factory.TimerFormatter(decTo, bands, abbrev, stock, roundMode, below, gap)
+    gap = Factory.GapCount(gap) or Factory.TimerGap()
+    local fmt = Factory.GetCountdownFormatter(decTo, bands, abbrev, roundMode, below, gap)
     if fmt then return fmt end
     local mode = roundMode or Factory.TimerRounding()
     stock = stock or "up"
-    if mode == stock then return nil end
-    return PlainTimerFormatter(mode, stock == "down")
+    -- only the Cooldown widget's own text reads "3m"; the aura engine's keeps
+    -- the client's spaced units, so it always takes ours
+    if mode == stock and stock == "up" and gap == 0 then return nil end
+    return PlainTimerFormatter(mode, stock == "down", gap)
 end
 
 -- The same rules in plain Lua, for countdowns our own GetTime math drives
 -- (timer and swing bars): seconds, tenths under decTo, M:SS under abbrev,
 -- then minutes and hours; whole units round the way roundDown says.
-function Factory.FormatCountdown(t, decTo, abbrev, roundDown)
+function Factory.FormatCountdown(t, decTo, abbrev, roundDown, gap)
+    gap = Factory.GapCount(gap) or Factory.TimerGap()
     local Rn = roundDown and math.floor or math.ceil
-    if t >= 3600 then return string.format("%d h", Rn(t / 3600)) end
+    if t >= 3600 then return string.format(Gap("%d h", gap), Rn(t / 3600)) end
     if t >= 60 then
         if (abbrev or 0) > 60 and t < abbrev then
             local s = math.floor(t)
             return string.format("%d:%02d", math.floor(s / 60), s % 60)
         end
-        return string.format("%d m", Rn(t / 60))
+        return string.format(Gap("%d m", gap), Rn(t / 60))
     end
     if (decTo or 0) > 0 and t < decTo then return string.format("%.1f", t) end
     return string.format("%d", Rn(t))
@@ -780,14 +817,15 @@ local function CountdownFormatterFor(rec)
     -- Rounding is in the signature, so changing it re-pushes the formatter.
     local mode = Factory.IconRounding(rec)
     local below = R("text", "durationShowBelow") or 0
-    local sig = tostring(decTo) .. "/" .. tostring(abbrev) .. "/" .. mode .. "/" .. tostring(below)
+    local gap = Factory.IconGap(rec)
+    local sig = tostring(decTo) .. "/" .. tostring(abbrev) .. "/" .. mode .. "/" .. tostring(below) .. "/g" .. ("%g"):format(gap)
     if bands then
         for _, b in ipairs(bands) do
             sig = sig .. "|" .. b.t .. ":"
                 .. (b.c[1] or 1) .. "," .. (b.c[2] or 1) .. "," .. (b.c[3] or 1)
         end
     end
-    return Factory.TimerFormatter(decTo, bands, abbrev, nil, mode, below), sig
+    return Factory.TimerFormatter(decTo, bands, abbrev, nil, mode, below, gap), sig
 end
 
 -- Aura stack formatter: the engine prints a count only above 1 unless handed a
@@ -2196,7 +2234,7 @@ function Pct.Apply(f, rec, kS)
         f._adPctBind = bnd
     end
     local fmt = CountdownFormatterFor(rec)
-    fmt = fmt or PlainTimerFormatter(Factory.IconRounding(rec), false)
+    fmt = fmt or PlainTimerFormatter(Factory.IconRounding(rec), false, Factory.IconGap(rec))
     if fmt then bnd:SetFormatter(fmt) end
     bnd:SetTextColorCurve(curve, Enum.DurationTextBindingProperty.RemainingPercent)
     bnd:SetEnabled(true)
@@ -2223,7 +2261,7 @@ function Pct.Button(b, rec, kS, sw, textA)
         b._adPctText = fs
     end
     local fmt, fsig = CountdownFormatterFor(rec)
-    fmt = fmt or PlainTimerFormatter(Factory.IconRounding(rec), true)
+    fmt = fmt or PlainTimerFormatter(Factory.IconRounding(rec), true, Factory.IconGap(rec))
     local _, csig = Pct.Curve(rec)
     local sig = tostring(fsig) .. "|" .. tostring(csig)
     if b._adPctSig ~= sig then

@@ -631,7 +631,7 @@ local function ShadowState(a)
         if Store.Resolve(a.rec, "states", "ignoreHardICD") == true then
             m = false
         elseif a.lockUntil and GetTime() < a.lockUntil
-            and Store.Resolve(a.rec, "states", "skipShortLocks") ~= false then
+            and Store.Resolve(a.rec, "states", "skipShortLocks") == true then
             m = false
         end
     end
@@ -762,17 +762,25 @@ Feed = function(a)
     local rangeMoved = a.rangeSid ~= nil and a.rangeSid ~= sid
     a.effSid = sid
     -- charges are the current rank's or override's: re-read when it changes
+    local info
     if a.chargeSid ~= sid then
         a.chargeSid, a.chg = sid, nil
-        local info = LearnCharges(a, sid)
+        info = LearnCharges(a, sid)
         a.maxCharges = info and info.maxCharges or nil
     elseif a.hasCharges then
         -- the cap is the game's own, read each feed: a proc's extra charge moves
         -- it with no SPELLS_CHANGED; the kind stays as learned. A gap in the
         -- charge info keeps the last one.
-        local info = C_Spell.GetSpellCharges(sid)
+        info = C_Spell.GetSpellCharges(sid)
         local mx = info and info.maxCharges
         if type(mx) == "number" and not (issecretvalue and issecretvalue(mx)) then a.maxCharges = mx end
+    end
+    -- our count starts from the game's whenever it reads plain (it is secret
+    -- in instances), so a fight that never fills the spell still knows its
+    -- last charge; never in a cast's first moment, which may predate the cast
+    local cur = a.isCharge and info and info.currentCharges
+    if type(cur) == "number" and not (issecretvalue and issecretvalue(cur)) and not CastFresh(a) then
+        a.chg = cur
     end
     -- the tooltip shows this rank / override too (our own frame field)
     a.frame._adEffSid = sid
@@ -812,7 +820,9 @@ Feed = function(a)
         local mainDur = C_Spell.GetSpellCooldownDuration(sid, true)
         -- the time left to ready, for On cooldown's timed opacity (Factory.SetState)
         a.frame._adTimedDur = mainDur
-        if mainDur and not onGcd and not disabled then
+        -- the cast that spent the last charge starts the GCD too, and the game
+        -- may call the spell on the GCD in that update: the verdict wins
+        if mainDur and (not onGcd or (a.isCharge and a.icdToZero)) and not disabled then
             a.sCD:SetCooldownFromDurationObject(mainDur, true)
         else
             a.sCD:Clear()
@@ -1779,9 +1789,14 @@ local function EnsureEvents()
                     end
                     a.castAt, a.bothSeen = GetTime(), nil
                 end
-                if a.isCharge and Store.Resolve(a.rec, "states", "skipShortLocks") ~= false then
+                -- the grace only while a charge is known to be left: with no
+                -- count it would hold every last charge in colour for a second
+                if a.isCharge and not a.icdToZero and (a.maxCharges == 2 or a.chg ~= nil)
+                    and Store.Resolve(a.rec, "states", "skipShortLocks") == true then
                     a.lockUntil = GetTime() + LOCK_GRACE
                     ArmLockEnd(a)
+                elseif a.isCharge then
+                    a.lockUntil = nil
                 end
                 Feed(a)
             end

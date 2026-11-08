@@ -922,8 +922,9 @@ Schema.icon = {
         ignoreHardICD = { d = false, t = "bool", kinds = SP, showIf = ChargeShows, label = "Ignore hard ICD",
             desc = "For a charge spell that also locks for a while after each cast: show its charges and recharge, not that lock." },
         -- The same lock when it is short (Shimmer's 0.5 s): for its first
-        -- second after a cast it reads as recharging (ShadowState).
-        skipShortLocks = { d = true, t = "bool", kinds = SP, showIf = ChargeShows, label = "Skip short locks",
+        -- second after a cast it reads as recharging (ShadowState). Off by
+        -- default: only a few spells (Shimmer) have such a lock.
+        skipShortLocks = { d = false, t = "bool", kinds = SP, showIf = ChargeShows, label = "Skip short locks",
             desc = "The brief lock some charge spells have after each cast never greys the icon. Longer locks still show." },
         -- Which state a proc's full opacity covers; recharging counts as on cooldown.
         procOverrideWhen = { d = "always", t = "enum", values = { "always", "ready", "cooldown" }, kinds = SP,
@@ -2051,6 +2052,10 @@ Schema.icon = {
         durationRounding = { kinds = DUR, d = "global", t = "enum", values = { "global", "up", "down" },
             labels = { global = "Same as Settings", up = "Round up", down = "Round down" },
             label = "Round timer numbers", dep = { field = "durationText" } },
+        -- spaces between the number and its unit; empty follows Settings > Timers
+        durationUnitGap = { kinds = DUR, d = "", t = "text", label = "Space before units",
+            desc = "Spaces between the number and its unit: 0 reads 3m, 1 reads 3 m. Empty: as in Settings.",
+            hintFn = function() return "Same as Settings" end, dep = { field = "durationText" } },
         durationSize = { kinds = DUR, d = 14, t = "int", min = 6, max = 32, label = "Duration text size", short = "Size", dep = { field = "durationText" } },
         durationColor = { kinds = DUR, d = { 1, 1, 1, 1 }, t = "color", alpha = true, label = "Duration text color", short = "Color", dep = { field = "durationText" } },
         -- A baked NumericRuleFormatter renders the countdown from the real
@@ -3042,7 +3047,7 @@ Schema.TYPE_FULL_BLOCKS = {
         fields = { "activeAlpha", "activeDesaturate", "activeTintEnabled", "activeTintColor", "activePreserveText", "activePreserveSwipe" } },
     { tab = "Glows", glows = true, section = "auraActive" },
     { tab = "Text", title = "Duration text", section = "text",
-        fields = { "durationText", "durationRounding", "durationFont", "durationSize", "durationColor",
+        fields = { "durationText", "durationRounding", "durationUnitGap", "durationFont", "durationSize", "durationColor",
             "durationOutline", "durationShadow", "durationShadowColor", "durationShadowX", "durationShadowY",
             "durationAnchor", "durationX", "durationY" } },
     { tab = "Text", title = "Format", section = "text",

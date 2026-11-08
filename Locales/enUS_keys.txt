@@ -4062,7 +4062,10 @@ Sound when a ping comes in
 Sound when regen resumes
 Sounds
 Space above
+Space before units
 Space below
+Spaces between a countdown's number and its unit, 0 to 3: 0 reads 3m, 1 reads 3 m. Every icon, bar and text.
+Spaces between the number and its unit: 0 reads 3m, 1 reads 3 m. Empty: as in Settings.
 Spacing
 Spacing X
 Spacing Y

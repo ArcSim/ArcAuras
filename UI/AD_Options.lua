@@ -9987,6 +9987,23 @@ local function BuildIconEditor(parent)
         ovVis)
     AT.Tooltip(ovCasterRow, "Cast by",
         "Me: only your own copy shows on this icon, the usual choice. Anyone: any copy. Anyone but me: only copies from other players.")
+    -- the same choice as Aura active's Look on the Effects tab (auraActive.activeShows)
+    Options.BuildYield()
+    local ovShowsRow = AT.RowDropdown(pg, win, "While the aura is up, show",
+        function()
+            local r = SelIcon()
+            return r and Store.Resolve(r, "auraActive", "activeShows") or "aura"
+        end,
+        function(v)
+            local r = SelIcon()
+            if not r then return end
+            Store.SetOverride(r, "auraActive", "activeShows", (v ~= "aura") and v or nil)
+            Store.Dirty("style", r.id)
+        end,
+        function() return { { value = "aura", text = "The aura" }, { value = "glows", text = "Only its glows" } } end,
+        function() return ovVis() and NS.DriverAura.ButtonOver(SelIcon()) == true end)
+    AT.Tooltip(ovShowsRow, "While the aura is up, show",
+        "Only its glows: the spell's own look and cooldown stay, and the aura's glows show over them.")
 
     -- a Custom Icon's Tracking sub-tabs come after the panes exist (below)
     -- a Special Aura's tracking rows (UI\AD_SpecialOptions.lua)
@@ -10319,6 +10336,13 @@ local function BuildIconEditor(parent)
         end)
     end
     AddPart(stateDef, "auraMissing", { "showWhileMissing" })
+    -- a cooldown icon's aura: the aura's look, or only its glows (first in Aura active's LOOK)
+    if EF then
+        EF.LookRow("overlay", "auraActive", { "activeShows" }, function(r)
+            if Store.Resolve(r, "auraActive", "activeShows") == "glows" then return "Only its glows" end
+        end)
+    end
+    AddPart(stateDef, "auraActive", { "activeShows" })
     -- When Active starts is the clock on its opacity (ET.TimePop): no rows
     -- under the table, only the push parts.
     AddPart(stateDef, "auraActive", { "activeTimeOnly", "activeTimeUnit", "activeTimePct", "activeTimeSec",
@@ -10326,8 +10350,11 @@ local function BuildIconEditor(parent)
     -- The count states (UI\AD_EffectsTab.lua EF.COUNTS): an aura's stacks and
     -- a charge spell's charges, triggers of their own on the list; their
     -- fields join the push and, each a block, the looks and the Defaults page.
-    AddPart(stateDef, "auraActive", { "stacksRule", "stacksA", "stacksB", "stacksAlpha", "stacksDesaturate",
-        "stacksTintEnabled", "stacksTintColor" })
+    for n = 1, Schema.STACK_SLOTS or 1 do
+        local pre = Schema.StackPre(n)
+        AddPart(stateDef, "auraActive", { pre .. "Rule", pre .. "A", pre .. "B", pre .. "Alpha", pre .. "Desaturate",
+            pre .. "TintEnabled", pre .. "TintColor" })
+    end
     AddPart(stateDef, "states", { "chargesRule", "chargesA", "chargesB", "chargesAlpha", "chargesDesaturate",
         "chargesTintEnabled", "chargesTintColor" })
     -- When Active starts joins the aura's Active state in the looks (as Show
@@ -10431,7 +10458,14 @@ local function BuildIconEditor(parent)
         -- the count states (UI\AD_EffectsTab.lua EF.COUNTS): their glows, shown
         -- only while the count meets the rule (the fields' showIf offers them)
         Card("At a stack count", "auraActive", "stacksGlow", nil, "Glow at that count",
-            "the aura is at that many stacks", { kindOnly = { aura = true }, noLook = true })
+            "the aura is at that many stacks", { kindOnly = { aura = true, spell = true, item = true, trinket = true, timer = true },
+                noLook = true })
+        -- the other stacks states' glows (Schema.STACK_SLOTS), each its own trigger's
+        for n = 2, Schema.STACK_SLOTS or 1 do
+            Card("At a stack count", "auraActive", Schema.StackPre(n) .. "Glow", nil, "Glow at that count",
+                "the aura is at that many stacks", { kindOnly = { aura = true, spell = true, item = true, trinket = true,
+                    timer = true }, noLook = true })
+        end
         Card("At a charge count", "states", "chargesGlow", nil, "Glow at that count",
             "the spell has that many charges", { kindOnly = { spell = true }, noLook = true })
         -- a charge spell's cooldown is every charge spent: No charges

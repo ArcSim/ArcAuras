@@ -1702,6 +1702,7 @@ Editor's order keeps your order. Time left puts the aura closest to running out 
 Edits the name in place. Enter saves, Escape cancels.
 Effects
 Effects lists: %s.
+Effects order
 Effects that eat healing before it lands.
 Either choice
 Elemental Blast
@@ -2215,6 +2216,8 @@ Hides this update here until the next version. The tag on the layout in the side
 Hides while the unit is not there; always shows while this window is open.
 High
 High threat
+Higher wins
+Higher wins: the higher trigger's look shows while both hold.
 Highest rank
 Highlight color
 Highlight icons when you press their button
@@ -2925,6 +2928,7 @@ Not attacking
 Not casting
 Not drawn on screen for now. Click to show it again. Closing this window shows everything again.
 Not enough resource
+Not in a Close gaps group: turn off Close gaps in Group Settings
 Not in a group
 Not in a stance.
 Not in combat
@@ -3106,12 +3110,15 @@ Only fire when proc is active
 Only if
 Only if it is not running
 Only in combat
+Only its glows
+Only its glows: the spell's own look and cooldown stay, and the aura's glows show over them.
 Only load once learned
 Only load while this hand holds a weapon
 Only new
 Only new %s
 Only new ones
 Only on %s
+Only on an icon that watches one unit
 Only on-use trinkets (hide passive ones)
 Only out of combat
 Only the spells I pick
@@ -4383,6 +4390,7 @@ The Timer running look, its timer frozen with its swipe and duration text. Drag 
 The Tracked Bars entry this bar copies. Keep the Cooldown Manager's own bar on, and hide it with opacity 0 in Edit Mode.
 The action bar's yellow check on the icon while it waits for your next swing.
 The art's spell
+The aura
 The aura at 3 stacks.
 The aura comes up with a fake duration (swipe and duration text), drops to its missing look, and comes back.
 The aura counts down, drops off, and comes back: threshold colours and the duration text.
@@ -5172,6 +5180,7 @@ While the aura is up
 While the aura is up the game shows it over the icon: its time, and gone the moment it drops. Works in combat.
 While the aura is up, its border takes the game's color for its type: Magic, Curse, Disease or Poison. Others keep the border color.
 While the aura is up, only once little time is left, only while the aura is missing, or always. Works in combat.
+While the aura is up, show
 While the aura is up, the border takes its own color. A skin's border takes it too.
 While the button is held
 While the timer is idle at 0 stacks, the count shows this many: a pool reads full before its first use. Empty = off.

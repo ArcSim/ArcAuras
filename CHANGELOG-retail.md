@@ -1,5 +1,20 @@
 # Arc Auras
 
+## 3.2.6
+
+Stack counts on cooldown icons and an order for effects.
+
+### New Features
+
+- **Stacks on cooldown icons** - A spell, item or trinket icon that also tracks an aura can now show, hide, dim or glow at a stack count of that aura: Icon > Effects > + Add > Stacks at a count.
+- **Several stack counts** - An icon can hold up to three Stacks at a count effects, each with its own range and look, for example a glow at 5 stacks and a dim below 3.
+- **Effects order** - On spell, item and trinket icons the Effects list now has arrows: the higher effect wins while both hold, for opacity and grey out.
+- **Only its glows** - A spell icon tracking an aura can keep its own look and cooldown while the aura is up and show only the aura's glows: Tracking > On this icon > While the aura is up, show.
+
+### Improvements
+
+- **Stacks effect** - When Stacks at a count cannot work on an icon, it now shows in red in + Add with the reason, instead of being missing.
+
 ## 3.2.5
 
 Trinket icons show an empty trinket slot instead of a question mark, and can dim while nothing is equipped.

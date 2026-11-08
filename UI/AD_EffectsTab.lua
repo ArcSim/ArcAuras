@@ -5,6 +5,8 @@ local Options = NS.Options
 if not Options then return end
 local AT, Store, Schema = NS.AT, NS.Store, NS.Schema
 local COL = AT.COL
+-- a trigger the icon cannot have where it is
+local BLOCKED = { 0.95, 0.38, 0.38 }
 local Tr = AT.Tr
 
 local EF = {}
@@ -133,6 +135,14 @@ local COUNTS = {
         alpha = "chargesAlpha", min = 0, start = { rule = "most", a = 1 },
         tile = "Charges at a count", line = "While its charges are at a count" },
 }
+-- the other stacks states (Schema.STACK_SLOTS): the same rows on stacks2*, stacks3*
+for n = 2, Schema.STACK_SLOTS or 1 do
+    local pre = Schema.StackPre(n)
+    table.insert(COUNTS, n, { key = pre, base = "stacks", label = "Stacks", section = "auraActive", rule = pre .. "Rule",
+        a = pre .. "A", b = pre .. "B", alpha = pre .. "Alpha", min = 1, start = { rule = "least" },
+        tile = "Stacks at a count", line = "While its stacks are at a count" })
+end
+COUNTS[1].base = "stacks"
 -- its state: the look's cells and the glow its fields give it (a field the
 -- schema lacks leaves its cell out)
 for _, C in ipairs(COUNTS) do
@@ -484,8 +494,17 @@ local function AllCards(r)
         end
     end
     if EF.FadeOK(r) then out[#out + 1] = { key = "while", kind = "while", isWhile = true } end
+    -- the stacks states share one gate: asked once
+    local stacksOK
     for _, C in ipairs(COUNTS) do
-        if CountOffered(r, C) then out[#out + 1] = { key = C.key, st = C.st, count = C, kind = "count", isCount = true } end
+        local ok
+        if C.base == "stacks" then
+            if stacksOK == nil then stacksOK = CountOffered(r, C) end
+            ok = stacksOK
+        else
+            ok = CountOffered(r, C)
+        end
+        if ok then out[#out + 1] = { key = C.key, st = C.st, count = C, kind = "count", isCount = true } end
     end
     return out
 end
@@ -557,13 +576,148 @@ local function Listed(r, c)
     return false
 end
 
+-- THE LOOK ORDER, on a cooldown icon its aura covers: the list's order is
+-- which look wins (higher wins; DriverAura.OrderMarks reads it). The aura and
+-- its stacks states are one block; a spell state sits over it or under it.
+-- (a spell, item or trinket icon always; another kind while its aura covers it)
+local ORDER_KINDS = { spell = true, item = true, trinket = true }
+local function OrderOn(r)
+    if r == nil or r._adMulti or r.kind == "aura" then return false end
+    if ORDER_KINDS[r.kind] then return true end
+    local DA = NS.DriverAura
+    return DA ~= nil and DA.ButtonOver ~= nil and DA.ButtonOver(r) == true
+end
+EF.OrderOn = OrderOn
+local function Movable(c)
+    if c.i or c.isWhile then return false end
+    if c.key == "overlay" or (c.isCount and c.count.base == "stacks") then return true end
+    local DA = NS.DriverAura
+    return DA ~= nil and DA.ORDER_SPELL_KEYS ~= nil and DA.ORDER_SPELL_KEYS[c.key] == true
+end
+local function InBlock(k) return k == "overlay" or k:find("^stacks") ~= nil end
+-- the listed movable keys, top first: the stored order, then each new one in
+-- its default place (a stacks state over the aura, a spell state at the foot)
+local function OrderKeys(r, cards)
+    local have, order = {}, {}
+    for _, c in ipairs(cards) do
+        if Movable(c) then
+            have[c.key] = true
+            order[#order + 1] = c.key
+        end
+    end
+    -- a spell state not placed yet goes where today's rules put it
+    local rank = {}
+    for i, k in ipairs(NS.Factory.DefaultSpellOrder(r)) do rank[k] = i end
+    table.sort(order, function(x, y)
+        local bx, by = InBlock(x), InBlock(y)
+        if bx ~= by then return bx end
+        if bx then return x < y end
+        return (rank[x] or 99) < (rank[y] or 99)
+    end)
+    local seq, placed = {}, {}
+    local s = Store.Resolve(r, "auraActive", "lookOrder")
+    if type(s) == "string" then
+        for k in s:gmatch("[^,]+") do
+            if have[k] and not placed[k] then
+                seq[#seq + 1] = k
+                placed[k] = true
+            end
+        end
+    end
+    local function At(k)
+        for i, x in ipairs(seq) do if x == k then return i end end
+    end
+    if have.overlay and not placed.overlay then
+        -- under the stored stacks, over every stored spell state
+        local i = 1
+        while seq[i] and InBlock(seq[i]) do i = i + 1 end
+        table.insert(seq, i, "overlay")
+        placed.overlay = true
+    end
+    for _, k in ipairs(order) do
+        if not placed[k] then
+            if InBlock(k) then
+                table.insert(seq, At("overlay") or 1, k)
+            else
+                seq[#seq + 1] = k
+            end
+            placed[k] = true
+        end
+    end
+    return seq
+end
+EF.OrderKeys = OrderKeys
+-- seq with key moved one step (dir "up" / "down"), or nil where it cannot go:
+-- a stacks state stays in the aura's block, a spell state passes the whole block
+local function MoveSeq(seq, key, dir)
+    local i
+    for n, k in ipairs(seq) do if k == key then i = n end end
+    if not i or key == "overlay" then return nil end
+    local j = i + ((dir == "up") and -1 or 1)
+    local nb = seq[j]
+    if not nb then return nil end
+    local out = {}
+    for n, k in ipairs(seq) do out[n] = k end
+    if InBlock(key) then
+        if not InBlock(nb) then return nil end
+        out[i], out[j] = out[j], out[i]
+        return out
+    end
+    if not InBlock(nb) then
+        out[i], out[j] = out[j], out[i]
+        return out
+    end
+    local lo, hi = j, j
+    while out[lo - 1] and InBlock(out[lo - 1]) do lo = lo - 1 end
+    while out[hi + 1] and InBlock(out[hi + 1]) do hi = hi + 1 end
+    table.remove(out, i)
+    if dir == "up" then
+        table.insert(out, lo, key)
+    else
+        table.insert(out, hi, key)
+    end
+    return out
+end
+EF.MoveSeq = MoveSeq
+
 function EF.Cards(r)
     local out = {}
     if not r then return out end
+    local order = OrderOn(r)
     for _, c in ipairs(AllCards(r)) do
-        if Listed(r, c) then out[#out + 1] = c end
+        -- the aura anchors the order: always listed there
+        if Listed(r, c) or (order and c.key == "overlay") then out[#out + 1] = c end
     end
-    return out
+    if not order then return out end
+    -- in the look order, each state's own looks under it, the rest after
+    local seq = OrderKeys(r, out)
+    local sorted, used = {}, {}
+    local function Take(c)
+        if not used[c] then
+            used[c] = true
+            sorted[#sorted + 1] = c
+        end
+    end
+    for _, k in ipairs(seq) do
+        for _, c in ipairs(out) do
+            if c.key == k or (c.i and c.st and c.st.key == k) then Take(c) end
+        end
+    end
+    for _, c in ipairs(out) do Take(c) end
+    return sorted
+end
+
+-- seq: the pass's order when the caller has it (a list pass asks per arrow)
+function EF.CanMove(r, key, dir, seq)
+    return OrderOn(r) and MoveSeq(seq or OrderKeys(r, EF.Cards(r)), key, dir) ~= nil
+end
+-- one step up or down the list; the order is written whole
+function EF.Move(r, key, dir)
+    if not OrderOn(r) then return false end
+    local seq = MoveSeq(OrderKeys(r, EF.Cards(r)), key, dir)
+    if not seq then return false end
+    Store.SetOverride(r, "auraActive", "lookOrder", table.concat(seq, ","))
+    return true
 end
 
 local function OpenStore() return Slot("effOpen") end
@@ -899,7 +1053,7 @@ end
 -- a count state's: "While it has 5+ stacks", "While it has 1 charge or fewer"
 function EF.CountWhen(r, c)
     local kind, a, b = CountRule(r, c.count)
-    local f = CountHasWords(c.count.key, kind, a == 1)
+    local f = CountHasWords(c.count.base or c.count.key, kind, a == 1)
     if not f then return "" end
     return Tr("While it has %s"):format(f:format(a, b))
 end
@@ -972,12 +1126,32 @@ function EF.Offers(r)
             line = Tr("Fades or shows it while a condition is true"), added = listed["while"] == true,
             card = { key = "while", kind = "while", isWhile = true } } } }
     end
-    local counts = {}
+    local counts, stackTile = {}, nil
     for _, c in ipairs(AllCards(r)) do
         if c.isCount then
-            counts[#counts + 1] = { key = c.key, card = c, name = Tr(c.count.tile), line = Tr(c.count.line),
+            local t = { key = c.key, card = c, name = Tr(c.count.tile), line = Tr(c.count.line),
                 added = listed[c.key] == true, count = true }
+            -- the stacks states share one tile: it adds the first one not in use,
+            -- and is done once every one is
+            if c.count.base == "stacks" then
+                if not stackTile then
+                    stackTile = t
+                    counts[#counts + 1] = t
+                elseif stackTile.added and not t.added then
+                    stackTile.key, stackTile.card, stackTile.added = t.key, t.card, false
+                end
+            else
+                counts[#counts + 1] = t
+            end
         end
+    end
+    -- a count the icon cannot have here shows why, in red, and does nothing
+    local DA = NS.DriverAura
+    local why = not r._adMulti and DA and DA.CountGateBlock and DA.CountGateBlock(r)
+    if why then
+        counts[#counts + 1] = { key = "stacks", name = Tr("Stacks at a count"), blocked = true,
+            line = why == "dynamic" and Tr("Not in a Close gaps group: turn off Close gaps in Group Settings")
+                or Tr("Only on an icon that watches one unit") }
     end
     if #counts > 0 then groups[#groups + 1] = { title = "AT A COUNT", side = true, tiles = counts } end
     return groups
@@ -1430,6 +1604,16 @@ end
 -- row's top and bottom padding, the text's left edge, the scroll strip
 local NAME_LH, CHIP_LH, CHIP_GAP_Y, ROW_PAD_Y = 15, 14, 2, 7
 local TEXT_X, OWN_INDENT, STRIP = 10 + EF.MINI + 9, 12, 12
+-- the look order's arrows (EF.OrderOn): their width off the row's text, and
+-- the "Higher wins" caption's height over the list
+local ARROW_W, ORDER_CAP_H = 14, 20
+-- an order arrow's look: dim when it can move, the accent on a lit square
+-- while hovered, faint when it cannot go that way
+local function ArrowInk(b, hot)
+    local lit = hot and b._can == true
+    b._hot:SetShown(lit)
+    b._chev:SetColor(lit and COL.arc or (b._can and COL.dim or COL.line2))
+end
 -- the column round the list: the first row flush under its top edge (the
 -- open one's top line is the column's), + Add a trigger 9 under the last row
 local COL_TOP, COL_FOOT = 0, 9 + EF.ADD_H + 9 + 1
@@ -1597,6 +1781,28 @@ function EF.Build(pg, ctx, vis, owner, under)
         rw._name = Font(rw, 13)
         rw._name:SetWordWrap(true)
         rw._segs, rw._gl = {}, {}
+        -- the look order's up and down (higher wins)
+        for _, dir in ipairs({ "up", "down" }) do
+            local b = CreateFrame("Button", nil, rw)
+            b:SetSize(ARROW_W, 12)
+            -- hovered while it can move: a lit square under an accent chevron
+            b._hot = Tex(b, "BACKGROUND")
+            b._hot:SetAllPoints()
+            b._hot:SetVertexColor(COL.btn[1], COL.btn[2], COL.btn[3], 1)
+            b._hot:Hide()
+            b._chev = AT.MakeChevron(b)
+            b._chev:SetPoint("CENTER")
+            b._chev:SetDir(dir)
+            b._dir = dir
+            b:SetScript("OnEnter", function(self) ArrowInk(self, true) end)
+            b:SetScript("OnLeave", function(self) ArrowInk(self, false) end)
+            b:SetScript("OnClick", function(self)
+                local r, c = Rec(), rw._card
+                if r and c and self._can and EF.Move(r, c.key, self._dir) then Relay() end
+            end)
+            AT.Tooltip(b, dir == "up" and "Move up" or "Move down", "Higher wins: the higher trigger's look shows while both hold.")
+            rw[dir == "up" and "_up" or "_dn"] = b
+        end
         rw:SetScript("OnClick", function(self)
             local r = Rec()
             local c = self._card
@@ -1672,6 +1878,19 @@ function EF.Build(pg, ctx, vis, owner, under)
     local function PaintRow(rw, r, L, on, y, rowW)
         local c = L.card
         rw._card, rw._lay, rw._on = c, L, on
+        -- the order's arrows on a row that can move, clear of the scroll strip
+        -- the aura anchors the order: it never moves
+        local arrows = OrderOn(r) and Movable(c) and c.key ~= "overlay"
+        local ax = -(4 + (EF.scrolls and STRIP or 0))
+        for _, b in ipairs({ rw._up, rw._dn }) do
+            b:SetShown(arrows)
+            if arrows then
+                b._can = EF.CanMove(r, c.key, b._dir, EF.passSeq)
+                ArrowInk(b, b:IsMouseOver())
+                b:ClearAllPoints()
+                b:SetPoint("RIGHT", rw, "RIGHT", ax, (b._dir == "up") and 7 or -7)
+            end
+        end
         rw:ClearAllPoints()
         rw:SetPoint("TOPLEFT", content, "TOPLEFT", 0, -y)
         rw:SetSize(rowW, L.h)
@@ -2357,7 +2576,13 @@ function EF.Build(pg, ctx, vis, owner, under)
     EF.tiles, EF.pickCaps = tiles, caps
     local function PaintTile(t, hot)
         local m = t._mini
-        if t._added then
+        if t._blocked then
+            t:SetBackdropColor(0, 0, 0, 0)
+            t:SetBackdropBorderColor(BLOCKED[1], BLOCKED[2], BLOCKED[3], 0.7)
+            t._name:SetTextColor(BLOCKED[1], BLOCKED[2], BLOCKED[3])
+            t._line:SetTextColor(BLOCKED[1], BLOCKED[2], BLOCKED[3])
+            m:SetAlpha(0.4)
+        elseif t._added then
             t:SetBackdropColor(0, 0, 0, 0)
             local e = Mix(COL.box, COL.line, 0.5)
             t:SetBackdropBorderColor(e[1], e[2], e[3], 1)
@@ -2411,7 +2636,7 @@ function EF.Build(pg, ctx, vis, owner, under)
         t:SetScript("OnEnter", function(self) PaintTile(self, true) end)
         t:SetScript("OnLeave", function(self) PaintTile(self, false) end)
         t:SetScript("OnClick", function(self)
-            if self._added then return end
+            if self._added or self._blocked then return end
             local r = Rec()
             if not r then return end
             AT.CloseDropdown()
@@ -2460,7 +2685,7 @@ function EF.Build(pg, ctx, vis, owner, under)
                     local d = g.tiles[k]
                     nt = nt + 1
                     local t = Tile(nt)
-                    t._key, t._added, t._card = d.key, d.added == true, d.card
+                    t._key, t._added, t._card, t._blocked = d.key, d.added == true, d.card, d.blocked == true
                     if t._added and not t._check then
                         t._check = Check(t)
                         t._check:SetPoint("RIGHT", t, "RIGHT", -9, 0)
@@ -2536,13 +2761,17 @@ function EF.Build(pg, ctx, vis, owner, under)
         local top = -(EF.TITLE_H + EF.GAP_Y)
         local rowW = EF.SIDE_W - 2 * px
         -- the list: at the full text width, narrower by the strip when it scrolls
-        local textW = rowW - TEXT_X - 9
-        local lmax = ListMax()
+        local order = OrderOn(r)
+        -- the order once for the pass: every arrow asks it
+        EF.passSeq = order and OrderKeys(r, cards) or nil
+        local textW = rowW - TEXT_X - 9 - (order and ARROW_W or 0)
+        local ct = COL_TOP + (order and ORDER_CAP_H or 0)
+        local lmax = ListMax() - (ct - COL_TOP)
         local lays, total = MeasureRows(r, cards, textW)
         local scroll = total > lmax
         if scroll then lays, total = MeasureRows(r, cards, textW - STRIP) end
         local listH = scroll and lmax or total
-        local colMin = COL_TOP + listH + COL_FOOT
+        local colMin = ct + listH + COL_FOOT
         EF.scrolls, EF.listH = scroll, listH
         -- the panel: the picker, the open trigger, or a word
         local pw = w - EF.PANEL_X
@@ -2595,7 +2824,22 @@ function EF.Build(pg, ctx, vis, owner, under)
         for i = #lays + 1, #rows do rows[i]:Hide() end
         content:SetSize(rowW, math.max(1, total))
         host:ClearAllPoints()
-        host:SetPoint("TOPLEFT", col, "TOPLEFT", px, -COL_TOP)
+        host:SetPoint("TOPLEFT", col, "TOPLEFT", px, -ct)
+        -- over the list: which way wins
+        if order and not EF.orderCap then
+            local cap = Font(col, 10, COL.faint)
+            cap:SetText(Tr("Higher wins"))
+            local chev = AT.MakeChevron(col)
+            chev:SetDir("up")
+            chev:SetColor(COL.faint)
+            chev:SetPoint("LEFT", col, "TOPLEFT", 8, -ORDER_CAP_H / 2)
+            cap:SetPoint("LEFT", chev, "RIGHT", 2, 0)
+            EF.orderCap, EF.orderChev = cap, chev
+        end
+        if EF.orderCap then
+            EF.orderCap:SetShown(order)
+            EF.orderChev:SetShown(order)
+        end
         host:SetSize(rowW, math.max(1, listH))
         -- the wheel scrolls the list only while it overflows, else the page;
         -- the strip over the rows, so it takes the clicks along its edge
@@ -2615,7 +2859,7 @@ function EF.Build(pg, ctx, vis, owner, under)
         host:UpdateScroll()
         -- + Add a trigger 9 under the last row, the column running on below it
         add:ClearAllPoints()
-        add:SetPoint("TOPLEFT", col, "TOPLEFT", 1 + 9, -(COL_TOP + listH + 9))
+        add:SetPoint("TOPLEFT", col, "TOPLEFT", 1 + 9, -(ct + listH + 9))
         PaintAdd(picking)
         local want = math.floor(EF.TITLE_H + EF.GAP_Y + H + 2 + 0.5)
         if row._h ~= want then

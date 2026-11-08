@@ -945,7 +945,10 @@ Schema.icon = {
             desc = "Out of range, not enough resource and can't use tint it while it cools down too, as the game's buttons do." },
         usabilityReadyOnly = { adv = "usability", d = false, t = "bool", kinds = SP, showIf = ChargeShows, label = "Usability looks only while ready",
             desc = "While a charge comes back it keeps Recharging's look: can't use, not enough resource and out of range wait until it is ready." },
+        -- on a spell, item or trinket the Effects list's order says it instead
+        -- (over the state: replaces; under it: the lower of the two)
         usabilityAlphaReplaces = { adv = "usability", d = false, t = "bool", kinds = SPI, label = "Usability opacity replaces the state's",
+            showIf = function(rec) return not (rec.kind == "spell" or rec.kind == "item" or rec.kind == "trinket") end,
             desc = "Can't use and not enough resource set the opacity, instead of the lower of theirs and the state's." },
         readyGreyUsable = { adv = "usability", d = false, t = "bool", kinds = SP, label = "Ready grey only while usable",
             desc = "Ready's and Recharging's grey wait while it is out of range, lacks the resource or can't be used; their own grey applies then.",
@@ -1856,6 +1859,19 @@ Schema.icon = {
         -- active look keeps its texts bright. A spell icon's aura phase follows
         -- the spell's own states.preserveDurationText instead.
         activePreserveText = { d = true, t = "bool", kinds = AU, label = "Keep texts bright while active" },
+        -- a cooldown icon's aura: the aura's look over the icon, or only its
+        -- glows (no art, border, swipe or texts; the cooldown stays seen)
+        activeShows = { d = "aura", t = "enum", values = { "aura", "glows" }, labels = { "The aura", "Only its glows" },
+            kinds = SPX, showIf = function(rec)
+                local DA = NS.DriverAura
+                return DA ~= nil and DA.ButtonOver ~= nil and DA.ButtonOver(rec) == true
+            end,
+            label = "While the aura is up, show",
+            desc = "Only its glows: the spell's own look and cooldown stay, and the aura's glows show over them." },
+        -- the Effects tab list's order on such an icon, top first (higher wins;
+        -- DriverAura.OrderMarks): its arrows write it, no row of its own
+        lookOrder = { d = "", t = "text", kinds = SPX, noDefault = true, inherit = false,
+            label = "Effects order" },
         -- The twin of states.preserveSwipe on the live button's own swipe.
         activePreserveSwipe = { d = false, t = "bool", kinds = AU, label = "Keep the swipe bright while active",
             desc = "The swipe keeps its own opacity while Active opacity dims the icon, so only the art fades." },
@@ -1901,20 +1917,20 @@ Schema.icon = {
         -- 0 cuts the whole look away; under 1, grey and tint redraw the art and
         -- border at that count, the swipe and texts over them; its glow shows only then.
         stacksRule = { d = "any", t = "enum", values = Schema.COUNT_RULES, labels = Schema.COUNT_RULE_LABELS,
-            kinds = AU, showIf = CountGateShows, label = "Stacks",
+            kinds = AAX, showIf = CountGateShows, label = "Stacks",
             desc = "Holds while the aura is up at this many stacks. Its effects apply only then." },
-        stacksA = { d = 3, t = "int", min = 1, max = 99, input = true, kinds = AU, showIf = CountGateShows,
+        stacksA = { d = 3, t = "int", min = 1, max = 99, input = true, kinds = AAX, showIf = CountGateShows,
             label = "Stack count", dep = { field = "stacksRule", notValue = "any" } },
-        stacksB = { d = 5, t = "int", min = 1, max = 99, input = true, kinds = AU, showIf = CountGateShows,
+        stacksB = { d = 5, t = "int", min = 1, max = 99, input = true, kinds = AAX, showIf = CountGateShows,
             label = "Up to stacks", dep = { field = "stacksRule", value = "between" } },
-        stacksAlpha = { d = 1, t = "num", min = 0, max = 1, kinds = AU, showIf = CountGateShows,
+        stacksAlpha = { d = 1, t = "num", min = 0, max = 1, kinds = AAX, showIf = CountGateShows,
             label = "Opacity at that count", dep = { field = "stacksRule", notValue = "any" },
             desc = "The icon's art and border at this opacity while the rule holds. 0% hides the whole icon, texts and glows too." },
-        stacksDesaturate = { d = false, t = "bool", kinds = AU, showIf = CountGateShows,
+        stacksDesaturate = { d = false, t = "bool", kinds = AAX, showIf = CountGateShows,
             label = "Desaturate at that count", dep = { field = "stacksRule", notValue = "any" } },
-        stacksTintEnabled = { d = false, t = "bool", kinds = AU, showIf = CountGateShows,
+        stacksTintEnabled = { d = false, t = "bool", kinds = AAX, showIf = CountGateShows,
             label = "Tint at that count", dep = { field = "stacksRule", notValue = "any" } },
-        stacksTintColor = { d = { 1, 0.3, 0.3, 1 }, t = "color", kinds = AU, showIf = CountGateShows,
+        stacksTintColor = { d = { 1, 0.3, 0.3, 1 }, t = "color", kinds = AAX, showIf = CountGateShows,
             label = "Tint color at that count",
             dep = { { field = "stacksRule", notValue = "any" }, { field = "stacksTintEnabled" } } },
         activeGlow = { d = false, t = "bool", label = "Glow while active" },
@@ -2327,6 +2343,34 @@ Schema.COUNT_GLOW_LABELS = { Glow = "Glow at that count", GlowType = "Glow style
     GlowLength = "Glow line length (0 = auto)", GlowParticles = "Glow particles", GlowScale = "Glow size",
     GlowIntensity = "Glow intensity", GlowXOffset = "Glow X offset", GlowYOffset = "Glow Y offset",
     GlowMoveX = "Glow move X", GlowMoveY = "Glow move Y", GlowLevel = "Glow frame level" }
+-- Several stacks states on one icon (dim at 1 to 4, glow at 5): slot 1 is
+-- stacks*, the others stacks2*, stacks3*, each the same rows as slot 1.
+Schema.STACK_SLOTS = 3
+Schema.STACK_LOOK_PARTS = { "Rule", "A", "B", "Alpha", "Desaturate", "TintEnabled", "TintColor" }
+function Schema.StackPre(n) return (n and n > 1) and ("stacks" .. n) or "stacks" end
+do
+    local function copy(v)
+        if type(v) ~= "table" then return v end
+        local t = {}
+        for k, x in pairs(v) do t[k] = copy(x) end
+        return t
+    end
+    local fields = Schema.icon.auraActive.fields
+    for n = 2, Schema.STACK_SLOTS do
+        local pre = Schema.StackPre(n)
+        for _, part in ipairs(Schema.STACK_LOOK_PARTS) do
+            local from = fields["stacks" .. part]
+            local def = {}
+            for k, v in pairs(from) do def[k] = v end
+            def.d = copy(from.d)
+            if from.dep then
+                def.dep = copy(from.dep)
+                for _, d in ipairs(def.dep.field and { def.dep } or def.dep) do d.field = d.field:gsub("^stacks", pre) end
+            end
+            fields[pre .. part] = def
+        end
+    end
+end
 do
     local src = Schema.icon.states.fields
     local function copy(v)
@@ -2335,7 +2379,9 @@ do
         for k, x in pairs(v) do t[k] = copy(x) end
         return t
     end
-    for _, st in ipairs({ { "auraActive", "stacks", AU, CountGateShows }, { "states", "charges", SP, ChargeCountShows } }) do
+    local counts = { { "states", "charges", SP, ChargeCountShows } }
+    for n = Schema.STACK_SLOTS, 1, -1 do table.insert(counts, 1, { "auraActive", Schema.StackPre(n), AAX, CountGateShows }) end
+    for _, st in ipairs(counts) do
         local fields, pre = Schema.icon[st[1]].fields, st[2]
         local rule = { field = pre .. "Rule", notValue = "any" }
         for _, part in ipairs(Schema.COUNT_GLOW_PARTS) do
@@ -2362,7 +2408,7 @@ do
     local lanes = { { "states", "ready" }, { "states", "cooldown" }, { "states", "proc" }, { "states", "usable" },
         { "states", "warn" }, { "states", "toggle" }, { "states", "assist" }, { "states", "range" },
         { "states", "recharge" }, { "states", "totemRange" }, { "states", "idle" }, { "auraActive", "active" },
-        { "auraActive", "stacks" }, { "states", "charges" } }
+        { "auraActive", "stacks" }, { "auraActive", "stacks2" }, { "auraActive", "stacks3" }, { "states", "charges" } }
     for _, ln in ipairs(lanes) do
         local sec, pre = ln[1], ln[2]
         local fields = Schema.icon[sec].fields
@@ -2383,7 +2429,7 @@ do
                 desc = "A dim dark line along the edge, under the moving lines.",
                 dep = { { field = sw }, { field = ty, value = "pixel" } } })
             -- the aura's Active glow and the count glows draw their own art, which has no fade
-            if pre ~= "active" and pre ~= "stacks" and pre ~= "charges" then
+            if pre ~= "active" and not pre:find("^stacks") and pre ~= "charges" then
                 fields[pre .. "GlowFadeOut"] = Lane({ adv = "glow", d = 0, t = "num", min = 0, max = 1, step = 0.05,
                     fmt = "%g", label = Schema.LANE_LABELS.fade:format(word),
                     desc = "How long the button glow takes to fade when it stops. 0: it goes at once.",

@@ -80,14 +80,15 @@ function Driver.NeedsEraser(rec)
         -- (none at Active 0: a glow-only aura keeps the cooldown), where the
         -- plate alone would not hide it: a look or countdown past the art, or a dimmed aura
         if not Driver.ShapeFor(rec) then return false end
+        -- the stacks state's cut erases the icon under the aura's button too
+        if Driver.CountCutsLook(rec) then return true end
         local aA = Store.Resolve(rec, "auraActive", "activeAlpha") or 1
-        if aA <= 0 then return false end
+        if aA <= 0 or Factory.AuraGlowOnly(rec) then return false end
         return aA < 1 or Factory.CooldownLookReaches(rec)
     end
     if Driver.TimeGateFrac(rec) then return true end
     -- the stacks state's cut needs its stage (a glow alone does not)
-    local cg = Driver.CountGate(rec)
-    if cg and (cg.whole or cg.copy) then return true end
+    if Driver.CountCutsLook(rec) then return true end
     if not Driver.GhostShown(rec) then return false end
     if Store.Resolve(rec, "appearance", "forceHideIcon") == true then return true end
     if (Store.Resolve(rec, "auraActive", "activeAlpha") or 1) < 1 then return true end
@@ -339,7 +340,56 @@ end
 
 -- The stacks state: the same icons as the time gate.
 function Driver.CountGateOK(rec)
+    -- a cooldown icon's aura: the aura's button covers the icon in its stage,
+    -- so the cut inside that button takes the whole icon with it
+    if rec and rec.kind ~= "aura" then
+        local sh = FB_OK and Driver.ButtonOver(rec) and Driver.ShapeFor(rec)
+        return type(sh) == "table" and not MultiUnit(sh)
+    end
     return Driver.TimeGateOK(rec)
+end
+
+-- Why an icon cannot have the stacks state, so the picker can say it:
+-- "dynamic" (its Close gaps aura group draws it in the group's rows) or
+-- "units" (several units); nil when it can, or has no aura to count.
+function Driver.CountGateBlock(rec)
+    if not (FB_OK and IS_121 and rec) or rec._adNoHolder then return nil end
+    if rec.kind ~= "aura" then
+        local sh = Driver.ButtonOver(rec) and Driver.ShapeFor(rec)
+        return (type(sh) == "table" and MultiUnit(sh)) and "units" or nil
+    end
+    if Driver.CountGateOK(rec) then return nil end
+    local g = rec.groupId and Store.Get(rec.groupId)
+    if g and g.groupKind == "aura" and Store.Resolve(g, "arrangement", "dynamicLayout") == true then
+        return "dynamic"
+    end
+    if MultiUnit(rec.driver) then return "units" end
+    return nil
+end
+
+-- The look order (the Effects tab's list, higher wins) on a cooldown icon its
+-- aura covers: auraActive.lookOrder holds the keys top first. Returns the
+-- spell states ranked over the aura and the stacks states ranked under it
+-- (key sets), or nil while the order is today's (none set, or no aura).
+Driver.ORDER_SPELL_KEYS = Factory.ORDER_SPELL_KEYS
+function Driver.OrderMarks(rec)
+    if not (rec and rec.kind ~= "aura" and Driver.ButtonOver(rec)) then return nil end
+    local s = Store.Resolve(rec, "auraActive", "lookOrder")
+    if type(s) ~= "string" or s == "" then return nil end
+    if rec._adOrderStr == s then return rec._adOrderAbove, rec._adOrderUnder end
+    local above, under, seen = {}, {}, false
+    for k in s:gmatch("[^,]+") do
+        if k == "overlay" then
+            seen = true
+        elseif not seen and Driver.ORDER_SPELL_KEYS[k] then
+            above[k] = true
+        elseif seen and k:find("^stacks") then
+            under[k] = true
+        end
+    end
+    if not seen then above, under = {}, {} end
+    rec._adOrderStr, rec._adOrderAbove, rec._adOrderUnder = s, above, under
+    return above, under
 end
 
 -- A count state's rules (Schema.COUNT_RULES but "any").
@@ -370,28 +420,58 @@ function Driver.CountCut(s)
     return s
 end
 
--- The stacks state (an aura icon's), or nil (any count, or not offered): when
--- it holds (kind least / most / exactly / between, a and b), the bar's top
--- count, and its look (Driver.CountLook).
-function Driver.StacksState(rec)
+-- Stacks state n (1 by default; Schema.STACK_SLOTS of them), or nil (any
+-- count, or not offered): when it holds (kind least / most / exactly /
+-- between, a and b), the bar's top count, and its look (Driver.CountLook).
+local function StackPre(n) return (n and n > 1) and ("stacks" .. n) or "stacks" end
+function Driver.StacksState(rec, n)
     if not Driver.CountGateOK(rec) then return nil end
-    local R = function(k) return Store.Resolve(rec, "auraActive", k) end
-    local kind = R("stacksRule") or "any"
+    local pre = StackPre(n)
+    local R = function(k) return Store.Resolve(rec, "auraActive", pre .. k) end
+    local kind = R("Rule") or "any"
     if not Driver.COUNT_KINDS[kind] then return nil end
-    local a = math.max(1, math.floor(tonumber(R("stacksA")) or 3))
-    local b = (kind == "between") and math.max(a, math.floor(tonumber(R("stacksB")) or 5)) or a
+    local a = math.max(1, math.floor(tonumber(R("A")) or 3))
+    local b = (kind == "between") and math.max(a, math.floor(tonumber(R("B")) or 5)) or a
     -- one past the rule's high end at least, so a count over it reads as over
     local top = math.max(a, b) + 1
-    local id = TrackedIDs(rec.driver or {})[1]
+    local id = TrackedIDs(Driver.ShapeFor(rec) or {})[1]
     local Max = C_Spell and C_Spell.GetSpellMaxCumulativeAuraApplications
     local m = (id and Max) and Max(id)
     if type(m) == "number" and not (issecretvalue and issecretvalue(m)) and m > top then top = m end
-    return { kind = kind, a = a, b = b, max = top, look = Driver.CountLook(rec, "auraActive", "stacks") }
+    local look = Driver.CountLook(rec, "auraActive", pre)
+    -- ranked under Aura active (which holds whenever it does): only its glow
+    local _, under = Driver.OrderMarks(rec)
+    if under and under[pre] then look = { alpha = 1, grey = false, tint = nil, glow = look.glow } end
+    return { kind = kind, a = a, b = b, max = top, slot = n or 1, pre = pre, look = look }
 end
 
--- What the icon's button carries for the stacks state (Driver.CountCut), or nil.
-function Driver.CountGate(rec)
-    return Driver.CountCut(Driver.StacksState(rec))
+-- What the icon's button carries for stacks state n (Driver.CountCut), or nil.
+function Driver.CountGate(rec, n)
+    return Driver.CountCut(Driver.StacksState(rec, n))
+end
+
+-- Every stacks state that does something, in slot order, all on one top
+-- (the button's one bar serves them all); nil when none.
+function Driver.CountGates(rec)
+    local out, top
+    for n = 1, (NS.Schema and NS.Schema.STACK_SLOTS) or 1 do
+        local g = Driver.CountGate(rec, n)
+        if g then
+            out = out or {}
+            out[#out + 1] = g
+            if not top or g.max > top then top = g.max end
+        end
+    end
+    if out then for _, g in ipairs(out) do g.max = top end end
+    return out
+end
+
+-- A stacks state cuts the look (opacity 0) or redraws it (a copy): the stage it needs.
+function Driver.CountCutsLook(rec)
+    for _, g in ipairs(Driver.CountGates(rec) or {}) do
+        if g.whole or g.copy then return true end
+    end
+    return false
 end
 
 -- The charges state: spell icons whose spell has charges.
@@ -1250,7 +1330,7 @@ local function ShareOK(rec)
     if not (IS_121 and rec and rec.kind == "aura") then return false end
     -- Dynamic group rows and type looks draw their own
     if not Driver.GlowLaneOK(rec) then return false end
-    if Driver.NeedsEraser(rec) or AnyGlowWanted(rec) or Driver.CountGate(rec) then return false end
+    if Driver.NeedsEraser(rec) or AnyGlowWanted(rec) or Driver.CountGates(rec) then return false end
     local a = Store.Resolve(rec, "appearance", "alpha") or 1
     if a ~= 1 and a ~= 0 then return false end
     local C = NS.Conditions
@@ -1516,8 +1596,9 @@ SyncEntryAlpha = function(entry)
     local a = ea
     local scr = NS.IconScreen
     if scr and entry.rec and scr.On(entry.rec.id) then a = 0 end
-    -- its totem shows first, on the icon itself (Drivers\AD_DriverPhase.lua): the aura steps aside
-    if holder._adPhaseUp then a = 0 end
+    -- its totem shows first, on the icon itself (Drivers\AD_DriverPhase.lua), or
+    -- a spell state ranked over the aura holds (Factory.SetState): the aura steps aside
+    if holder._adPhaseUp or holder._adAuraAside then a = 0 end
     -- not a holder child: a hidden holder hides its missing look here, and
     -- quiets a shared slot (its container stays up for the rest)
     local vis = true
@@ -1559,6 +1640,12 @@ SyncEntryAlpha = function(entry)
         g.container:SetAlpha(ga)
         SetQuiet(entry, g, ga <= 0 or not vis)
     end
+end
+
+-- The icon's aura again after its holder's step-aside mark changed.
+function Driver.SyncHolder(f)
+    local e = f and f._adRecId and entries[f._adRecId]
+    if e and e.holder == f then SyncEntryAlpha(e) end
 end
 
 -- A target or focus swap, or its side turning, on 12.1.0: re-judge its lanes.

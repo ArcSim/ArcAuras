@@ -3031,10 +3031,25 @@ end
 -- The Active look's alpha, with the editing floor the Missing look gets too
 -- (the engine button restyles on an accessible pass, so closing the window
 -- mid-fight keeps the floor until the fight ends).
+-- A cooldown icon's aura set to show only its glows.
+function Factory.AuraGlowOnly(rec)
+    if not rec or rec.kind == "aura" or Store.Resolve(rec, "auraActive", "activeShows") ~= "glows" then return false end
+    local DA = NS.DriverAura
+    return DA ~= nil and DA.ButtonOver ~= nil and DA.ButtonOver(rec) == true
+end
+
 function Factory.AuraActiveAlpha(rec)
     local aA = Store.Resolve(rec, "auraActive", "activeAlpha") or 1
     if aA < 0 then aA = 0 elseif aA > 1 then aA = 1 end
+    -- a choice, not a hidden look: the options window shows it as play does
+    if Factory.AuraGlowOnly(rec) then return 0 end
     return EditFloor(aA)
+end
+
+-- The opacity the aura's glows draw at: Active opacity, or full when it shows only its glows.
+function Factory.AuraGlowAlpha(rec)
+    if Factory.AuraGlowOnly(rec) then return 1 end
+    return Factory.AuraActiveAlpha(rec)
 end
 
 -- the gate mask on `frame`, anchored to the gate bar's fill
@@ -3229,6 +3244,8 @@ Factory.CountPiece = CountPiece
 -- Every piece clears the look by 2 at the counts it leaves alone.
 function Factory.CountGeom(g, w, h, reach)
     local m = math.max(w, h, reach or 0)
+    -- zero: the bar starts at count 0 (several states share it), each piece
+    -- moved by the same amount, so every edge lands where it did
     local span = w + 2 * m
     local step = span + 4
     local top = g.max
@@ -3242,6 +3259,11 @@ function Factory.CountGeom(g, w, h, reach)
         if lo > 0 then G.low = { x = span + 2, w = lo * step + span } end
         -- every count past the high end, up to the full bar
         if g.kind ~= "least" then G.high = { x = -(hi - lo) * step - 2, w = (top + 1 - hi) * step + span } end
+    end
+    if g.zero and lo > 0 then
+        G.barX = -m
+        if G.low then G.low.x = G.low.x - lo * step end
+        if G.high then G.high.x = G.high.x - lo * step end
     end
     return G
 end
@@ -3337,6 +3359,13 @@ Factory.PaintCountCopy = PaintCountCopy
 -- A count state's glow (its own fields and host, src) on fr, every texture
 -- it draws cut to the window. g nil or without a glow: off.
 Factory.STACKS_GLOW = { sec = "auraActive", pre = "stacks", key = "Stacks" }
+-- stacks state n's glow source (its own fields and host)
+local STACK_GLOWS = { Factory.STACKS_GLOW }
+function Factory.StackGlow(n)
+    n = n or 1
+    if not STACK_GLOWS[n] then STACK_GLOWS[n] = { sec = "auraActive", pre = "stacks" .. n, key = "Stacks" .. n } end
+    return STACK_GLOWS[n]
+end
 Factory.CHARGES_GLOW = { sec = "states", pre = "charges", key = "Charges" }
 local function CountGlow(fr, rec, g, w, h, alphaMul, src, fill, G)
     local on = g ~= nil and g.glow == true and rec ~= nil
@@ -3366,7 +3395,10 @@ function Factory.CountReach(rec, kS, w)
     for k = 1, (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1 do
         reach = math.max(reach, Factory.GlowReach(rec, "auraActive", "active", w, kS, (k > 1) and tostring(k) or ""))
     end
-    return math.max(reach, Factory.GlowReach(rec, "auraActive", "stacks", w, kS))
+    for n = 1, (NS.Schema and NS.Schema.STACK_SLOTS) or 1 do
+        reach = math.max(reach, Factory.GlowReach(rec, "auraActive", Factory.StackGlow(n).pre, w, kS))
+    end
+    return reach
 end
 
 -- The stacks state on the aura's button: the engine fills the bar by the
@@ -3376,64 +3408,88 @@ end
 -- cuts the whole look; a copy look cuts the art and border on the low stack's
 -- gate rung and draws its copy on the copy rung, the swipe and texts over it.
 -- True while on.
-local function ApplyCountGate(b, g, w, h, reach, rec, padPx, erase, alphaMul)
+local function ApplyCountGate(b, gs, w, h, reach, rec, padPx, erase, alphaMul)
+    -- one state, or the list Driver.CountGates gives
+    if gs and gs.kind then gs = { gs } end
     local cg = b._adCountGate
     local E = NS.LayoutEngine
-    local on = g ~= nil and b.SetApplicationBar ~= nil and Enum ~= nil and Enum.StatusBarInterpolation ~= nil
+    local on = gs ~= nil and #gs > 0 and b.SetApplicationBar ~= nil and Enum ~= nil and Enum.StatusBarInterpolation ~= nil
         and not (E ~= nil and E.IsEditMode ~= nil and E.IsEditMode() == true)
-    if not on then
-        if cg then
-            cg:Hide()
-            b._adCountCut:Hide()
+    local slots = b._adCountS
+    local live = {}
+    if on then
+        if not cg then
+            cg = CreateFrame("StatusBar", nil, b)
+            cg:SetStatusBarTexture(WHITE)
+            cg:GetStatusBarTexture():SetColorTexture(0, 0, 0, 0)
+            cg:EnableMouse(false)
+            b._adCountGate = cg
         end
-        if b._adCountCopy then b._adCountCopy:Hide() end
-        CountGlow(b, rec, nil, w, h, 1, Factory.STACKS_GLOW)
-        return false
-    end
-    if not cg then
-        cg = CreateFrame("StatusBar", nil, b)
-        cg:SetStatusBarTexture(WHITE)
-        cg:GetStatusBarTexture():SetColorTexture(0, 0, 0, 0)
-        cg:EnableMouse(false)
-        -- its own frame over the whole stack: texts and glows go with the art
-        local cut = CreateFrame("Frame", nil, b)
-        cut:SetAllPoints(b)
-        b._adCountGate, b._adCountCut = cg, cut
-        b._adCountLow, b._adCountHigh = CountPiece(cut), CountPiece(cut)
-    end
-    -- the range is the game's (min, max(max, 1)): sent again only for a new top
-    if b._adCountTop ~= g.max then
-        b._adCountTop = g.max
-        b:SetApplicationBar(cg, { minApplications = 0, maxApplications = g.max + 1,
-            interpolation = Enum.StatusBarInterpolation.Immediate })
-    end
-    local G = Factory.CountGeom(g, w, h, reach)
-    Factory.PlaceCountGate(cg, b._adCountLow, b._adCountHigh, b, G)
-    local fill = cg:GetStatusBarTexture()
-    -- a cut: everything (or the art and border under a copy), in a buffer only
-    local cut = erase ~= false and (g.whole or g.copy or g.inside ~= true) == true
-    local base = ButtonBase(b)
-    if base then
-        cg:SetFrameLevel(base + Factory.ButtonStack(b).gate)
-        b._adCountCut:SetFrameLevel(base + (g.copy and Factory.BUTTON_STACK_LOW.gate or (Factory.ButtonStack(b).gate + 1)))
-    end
-    cg:Show()
-    b._adCountCut:SetShown(cut)
-    local c = b._adCountCopy
-    if cut and g.copy and rec then
-        if not c then
-            c = CreateFrame("Frame", nil, b)
-            c:SetAllPoints(b)
-            c:EnableMouse(false)
-            b._adCountCopy = c
+        -- the range is the game's (min, max(max, 1)): sent again only for a new top
+        local top = gs[1].max
+        if b._adCountTop ~= top then
+            b._adCountTop = top
+            b:SetApplicationBar(cg, { minApplications = 0, maxApplications = top + 1,
+                interpolation = Enum.StatusBarInterpolation.Immediate })
         end
-        if base then c:SetFrameLevel(base + Factory.BUTTON_STACK_LOW.copy) end
-        PaintCountCopy(c, rec, g.look, b, Factory.AuraLiveTexture(rec), w, h, padPx or 0, Factory.CountMask(c, fill, G), true)
-    elseif c then
-        c:Hide()
+        local base = ButtonBase(b)
+        if base then cg:SetFrameLevel(base + Factory.ButtonStack(b).gate) end
+        cg:Show()
+        local fill = cg:GetStatusBarTexture()
+        for _, g in ipairs(gs) do
+            local n = g.slot or 1
+            live[n] = true
+            slots = slots or {}
+            b._adCountS = slots
+            local S = slots[n]
+            if not S then
+                -- its own frame over the whole stack: texts and glows go with the art
+                local cut = CreateFrame("Frame", nil, b)
+                cut:SetAllPoints(b)
+                S = { cut = cut, low = CountPiece(cut), high = CountPiece(cut) }
+                slots[n] = S
+                if n == 1 then b._adCountCut, b._adCountLow, b._adCountHigh = cut, S.low, S.high end
+            end
+            g.zero = #gs > 1 or nil
+            local G = Factory.CountGeom(g, w, h, reach)
+            Factory.PlaceCountGate(cg, S.low, S.high, b, G)
+            -- a cut: everything (or the art and border under a copy), in a buffer only
+            local cut = erase ~= false and (g.whole or g.copy or g.inside ~= true) == true
+            if base then
+                S.cut:SetFrameLevel(base + (g.copy and Factory.BUTTON_STACK_LOW.gate or (Factory.ButtonStack(b).gate + 1)))
+            end
+            S.cut:SetShown(cut)
+            local c = S.copy
+            if cut and g.copy and rec then
+                if not c then
+                    c = CreateFrame("Frame", nil, b)
+                    c:SetAllPoints(b)
+                    c:EnableMouse(false)
+                    S.copy = c
+                    if n == 1 then b._adCountCopy = c end
+                end
+                if base then c:SetFrameLevel(base + Factory.BUTTON_STACK_LOW.copy) end
+                PaintCountCopy(c, rec, g.look, b, Factory.AuraLiveTexture(rec), w, h, padPx or 0, Factory.CountMask(c, fill, G), true)
+            elseif c then
+                c:Hide()
+            end
+            CountGlow(b, rec, g.glow and g or nil, w, h, alphaMul, Factory.StackGlow(n), fill, G)
+        end
+    elseif cg then
+        cg:Hide()
     end
-    CountGlow(b, rec, g.glow and g or nil, w, h, alphaMul, Factory.STACKS_GLOW, fill, G)
-    return true
+    -- every state that is off now
+    for n = 1, (NS.Schema and NS.Schema.STACK_SLOTS) or 1 do
+        if not live[n] then
+            local S = slots and slots[n]
+            if S then
+                S.cut:Hide()
+                if S.copy then S.copy:Hide() end
+            end
+            CountGlow(b, rec, nil, w, h, 1, Factory.StackGlow(n))
+        end
+    end
+    return on
 end
 Factory.ApplyCountGate = ApplyCountGate
 
@@ -3576,6 +3632,8 @@ function Factory.StyleAuraButton(b, rec, px, opts)
     local kS = (px and px > 0) and (px / 36) or 1
     local forceHide = R("appearance", "forceHideIcon") == true
     local aA = Factory.AuraActiveAlpha(rec)
+    -- its glows: at Active opacity, or full on an aura set to show only them
+    local gA = Factory.AuraGlowAlpha(rec)
     -- "Hide icon art": art, swipe, border and glow go; texts keep full alpha.
     -- A dimmed active look keeps them bright too, as the missing look and a
     -- spell's states do; a hidden one (alpha 0) hides them with it.
@@ -3594,12 +3652,14 @@ function Factory.StyleAuraButton(b, rec, px, opts)
     b:SetAlpha(1)
     -- the stacks state (DriverAura.CountGate); "Hide icon art" leaves it nothing to draw
     local DA = NS.DriverAura
-    local cnt = (rec.kind == "aura" and not forceHide and DA and DA.CountGate) and DA.CountGate(rec) or nil
+    local cnt = (not forceHide and DA and DA.CountGates) and DA.CountGates(rec) or nil
+    local cntCopy = false
+    for _, g in ipairs(cnt or {}) do if g.copy then cntCopy = true end end
     -- a Before that above 0, or the stacks state's copy, lays the low stack (the
     -- gate under the swipe and texts)
     local before = Factory.TimeGateBefore(rec)
     local low = (timed ~= nil and before > 0 and not forceHide)
-        or (cnt ~= nil and cnt.copy == true and opts.erase == true)
+        or (cntCopy and opts.erase == true)
     if (b._adLowStack or false) ~= low then
         b._adLowStack = low
         LayStack(b)
@@ -3844,14 +3904,14 @@ function Factory.StyleAuraButton(b, rec, px, opts)
     Factory.SetAuraButtonGlow(b, rec, (not forceHide) and not opts.glowElsewhere
         and not (timed and opts.previewGlows ~= true)
         and R("auraActive", "activeGlow") == true and not Elsewhere(1),
-        opts.w or px, opts.h or px, aA)
+        opts.w or px, opts.h or px, gA)
     -- Glows 2-4 ride their own buttons in play; the editor preview's one
     -- stand-in draws them all (opts.previewGlows) and drops them otherwise,
     -- as it also serves spell icons.
     for k = 2, (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1 do
         Factory.SetAuraButtonGlow(b, rec, (opts.previewGlows == true or row) and (not forceHide)
             and R("auraActive", "activeGlow" .. k) == true and not Elsewhere(k),
-            opts.w or px, opts.h or px, aA, k)
+            opts.w or px, opts.h or px, gA, k)
     end
     -- Show only when little time is left (opts.erase), at Before that's
     -- opacity until then
@@ -3864,7 +3924,7 @@ function Factory.StyleAuraButton(b, rec, px, opts)
     ApplyBeforeCopy(b, rec, gated and low, before, opts.w or px, opts.h or px, padPx)
     -- The stacks state: its look while it holds (its cuts only with opts.erase)
     ApplyCountGate(b, cnt, opts.w or px, opts.h or px, Factory.CountReach(rec, kS, opts.w or px), rec, padPx,
-        opts.erase == true, aA)
+        opts.erase == true, gA)
 end
 
 -- Aura button glow: drawn on the live engine button, so it shows exactly while
@@ -5415,7 +5475,7 @@ function Factory.StyleAuraGlowButton(b, rec, px, opts)
     opts = opts or {}
     local slot = opts.glowSlot or 1
     local R = function(s, k) return Store.Resolve(rec, s, k) end
-    local aA = Factory.AuraActiveAlpha(rec)
+    local aA = Factory.AuraGlowAlpha(rec)
     b:SetAlpha(1)
     Factory.SetAuraButtonGlow(b, rec, opts.glowOn == true
         and R("appearance", "forceHideIcon") ~= true
@@ -5485,7 +5545,7 @@ local function PhaseGlows(f, rec, on)
     local w, h = f:GetSize()
     if type(w) ~= "number" or (issecretvalue and issecretvalue(w)) then w = 36 end
     if type(h) ~= "number" or (issecretvalue and issecretvalue(h)) then h = w end
-    Factory.SetAuraButtonGlow(host, rec, want, w, h, Factory.AuraActiveAlpha(rec), 1)
+    Factory.SetAuraButtonGlow(host, rec, want, w, h, Factory.AuraGlowAlpha(rec), 1)
 end
 
 -- A totem's time or a set duration runs on the icon's own cooldown
@@ -5576,6 +5636,126 @@ end
 -- State writer: drivers report, this paints. onCooldown picks the alpha bucket
 -- (missing, on an aura icon); desatState (nil = onCooldown) drives desaturation
 -- alone, so a recharging charge spell dims but stays colored until depleted.
+-- THE LOOK ORDER AMONG THE SPELL'S STATES (step 2; the Effects tab list,
+-- higher wins). The default order is today's rules as positions: a full
+-- opacity rule (Usable, Proc lit) that is on sits on top, Toggled on next,
+-- Can't use it and Not enough resource over the state when their opacity
+-- replaces it, the state, then the usability states that only dim it.
+Factory.ORDER_BASE = { ready = true, recharge = true, idle = true, cooldown = true }
+-- every spell state the order can rank (DriverAura shares this table)
+Factory.ORDER_SPELL_KEYS = { ready = true, recharge = true, cooldown = true, unusable = true, nomana = true,
+    range = true, toggle = true, proc = true, usable = true, idle = true }
+Factory.ORDER_USABILITY = { unusable = true, nomana = true, range = true }
+function Factory.DefaultSpellOrder(rec)
+    local R = function(k) return Store.Resolve(rec, "states", k) end
+    local rep = R("usabilityAlphaReplaces") == true
+    local out = {}
+    local function Add(k) out[#out + 1] = k end
+    if R("usableOverride") == true then Add("usable") end
+    if R("procOverride") == true then Add("proc") end
+    Add("toggle")
+    if rep then Add("unusable") Add("nomana") end
+    Add("ready") Add("recharge") Add("idle") Add("cooldown")
+    if not rep then Add("unusable") Add("nomana") end
+    Add("range")
+    if R("procOverride") ~= true then Add("proc") end
+    if R("usableOverride") ~= true then Add("usable") end
+    return out
+end
+-- The spell's states in the player's order (auraActive.lookOrder, each
+-- missing one in its default place at the foot), or nil: no order set, so
+-- today's rules run untouched.
+function Factory.SpellOrder(rec)
+    local keys = Factory.ORDER_SPELL_KEYS
+    local s = Store.Resolve(rec, "auraActive", "lookOrder")
+    if not (keys and type(s) == "string" and s ~= "") then return nil end
+    if rec._adSpellOrderStr == s then return rec._adSpellOrder end
+    local out, seen = {}, {}
+    for k in s:gmatch("[^,]+") do
+        if keys[k] and not seen[k] then
+            out[#out + 1] = k
+            seen[k] = true
+        end
+    end
+    if #out == 0 then out = nil end
+    if out then
+        for _, k in ipairs(Factory.DefaultSpellOrder(rec)) do
+            if not seen[k] then out[#out + 1] = k end
+        end
+    end
+    rec._adSpellOrderStr, rec._adSpellOrder = s, out
+    return out
+end
+-- The ordered opacity and grey: the highest state that holds and has one
+-- decides; the state itself takes the lower opacity of the usability states
+-- under it and their grey (today's "never brighter than the state").
+-- st[key] = { holds, alpha (nil: no say), grey (nil: no say) }; base = the state's key.
+function Factory.OrderedLook(order, st, base)
+    local below, a, g, win = false, nil, nil, nil
+    local capA, capG = nil, false
+    -- the usability states under the state cap it
+    for _, k in ipairs(order) do
+        if k == base then
+            below = true
+        elseif below and Factory.ORDER_USABILITY[k] then
+            local x = st[k]
+            if x and x.holds then
+                if x.alpha ~= nil then capA = math.min(capA or 1, x.alpha) end
+                if x.grey == true then capG = true end
+            end
+        end
+    end
+    for _, k in ipairs(order) do
+        local x = st[k]
+        if x and x.holds then
+            if a == nil and x.alpha ~= nil then
+                a, win = x.alpha, k
+                if k == base and capA then a = math.min(a, capA) end
+            end
+            if g == nil and x.grey ~= nil then
+                g = x.grey
+                if k == base and capG then g = true end
+            end
+            if k == base then break end
+        end
+    end
+    return a, g, win
+end
+
+-- The look order (DriverAura.OrderMarks): while a spell state ranked over the
+-- aura holds, the aura steps aside (its containers go to 0, our own frames:
+-- legal in combat) and the spell's look shows. Every input is the plain state
+-- this function already works from.
+function Factory.AuraAsideFor(f, rec, onCooldown)
+    local DA = NS.DriverAura
+    local above = DA and DA.OrderMarks and DA.OrderMarks(rec)
+    local aside = false
+    if above and next(above) then
+        local u = f._adUsability
+        local rech = f._adRecharging == true
+        local castable = not onCooldown or rech
+        if rech and Store.Resolve(rec, "states", "usabilityReadyOnly") == true then castable = false end
+        local idle = onCooldown and rec.kind == "timer" and f._adIdleReady == true
+        local holds = {
+            ready = not onCooldown and not rech, recharge = rech, idle = idle,
+            cooldown = onCooldown and not rech and not idle,
+            unusable = castable and u == "unusable", nomana = castable and u == "nomana", range = u == "range",
+            toggle = f._adToggled == true, proc = f._adProcLit == true, usable = not onCooldown and u == nil,
+        }
+        for k in pairs(above) do
+            if holds[k] then
+                aside = true
+                break
+            end
+        end
+    end
+    if (f._adAuraAside or false) ~= aside then
+        f._adAuraAside = aside or nil
+        if DA and DA.SyncHolder then DA.SyncHolder(f) end
+    end
+    return aside
+end
+
 function Factory.SetState(f, rec, onCooldown, desatState)
     f._adOnCooldown = onCooldown and true or false
     if desatState == nil then desatState = onCooldown end
@@ -5658,6 +5838,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         end
         return
     end
+    Factory.AuraAsideFor(f, rec, onCooldown)
     local keepBright = R("appearance", "keepBright") == true
     -- Recharging: a charge spell with a charge left and another on its way
     -- (the driver's flag). Castable: ready, or recharging with that charge.
@@ -5750,6 +5931,60 @@ function Factory.SetState(f, rec, onCooldown, desatState)
             and ((LU and LU.alpha) or R("states", "rangeAlpha") or 1) >= 1)) then
         f._adStateAlpha = 1
     end
+    -- The player's order of the states (Effects tab, higher wins), once set:
+    -- it decides opacity and grey; tint keeps its fixed order.
+    local order = (rec.kind == "spell" or rec.kind == "item" or rec.kind == "trinket") and not keepBright
+        and Factory.SpellOrder(rec) or nil
+    local ord, ordWin
+    if order then
+        local u = f._adUsability
+        local ucode = usabOK and u or nil
+        local lookG = LB and LB.grey
+        local function BaseGrey()
+            local gr = f._adDesatState and (lookG == nil or bucket ~= "cooldown")
+                and R("states", "cooldownDesaturate") == true
+            local held = R("states", "readyGreyUsable") == true and u ~= nil
+            if not onCooldown and (lookG == nil or bucket ~= "ready") and R("states", "readyDesaturate") == true
+                and not held then gr = true end
+            if idle and (lookG == nil or bucket ~= "idle") and R("states", "idleDesaturate") == true then gr = true end
+            if recharging and (lookG == nil or bucket ~= "recharge") and R("states", "rechargeDesaturate") == true
+                and not held then gr = true end
+            if lookG == true and (bucket ~= "cooldown" or f._adDesatState)
+                and not ((bucket == "ready" or bucket == "recharge") and held) then gr = true end
+            return gr == true
+        end
+        local baseA
+        if LB and LB.alpha ~= nil then baseA = LB.alpha
+        elseif recharging then baseA = R("states", "rechargeAlpha") or 1
+        elseif idle then baseA = R("states", "idleAlpha") or 1
+        elseif onCooldown then baseA = R("states", "cooldownAlpha") or 1
+        else baseA = R("states", "readyAlpha") or 1 end
+        local lookU = LU and LU.grey
+        local function UGrey(field)
+            if lookU ~= nil then return lookU end
+            return R("states", field) == true
+        end
+        local lookT = LT and LT.grey
+        -- the state the icon is in (bucket is set only with own looks)
+        local bkey = (recharging and "recharge") or (idle and "idle") or (onCooldown and "cooldown") or "ready"
+        ord = {
+            [bkey] = { holds = true, alpha = baseA, grey = BaseGrey() },
+            unusable = { holds = ucode == "unusable", alpha = (LU and LU.alpha) or R("states", "unusableAlpha") or 1,
+                grey = UGrey("unusableDesaturate") },
+            nomana = { holds = ucode == "nomana", alpha = (LU and LU.alpha) or R("states", "resourceAlpha") or 1,
+                grey = UGrey("resourceDesaturate") },
+            range = { holds = ucode == "range", alpha = (LU and LU.alpha) or R("states", "rangeAlpha") or 1,
+                grey = UGrey("rangeDesaturate") },
+            toggle = { holds = f._adToggled == true, alpha = toggleA or nil,
+                grey = (lookT ~= nil and lookT) or (lookT == nil and R("states", "toggleDesaturate") == true) },
+            proc = { holds = procLift == true, alpha = 1 },
+            usable = { holds = not onCooldown and R("states", "usableOverride") == true
+                and (u == nil or (u == "range" and ((LU and LU.alpha) or R("states", "rangeAlpha") or 1) >= 1)), alpha = 1 },
+        }
+        local a, g, win = Factory.OrderedLook(order, ord, bkey)
+        if a ~= nil then f._adStateAlpha = a end
+        ord._grey, ordWin = g, win
+    end
     -- On cooldown's opacity waiting for the last seconds: only On cooldown's
     -- own value (no toggle or proc took over), and only with the cooldown's
     -- duration object (the driver's, or the preview's fake one). The plain
@@ -5761,6 +5996,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         and not toggleA
         and not (LB and LB.alpha ~= nil)
         and not procLift
+        and (ordWin == nil or ordWin == "cooldown")
         and R("states", "cooldownAlphaTimed") == true
         and C_CurveUtil ~= nil and C_CurveUtil.CreateCurve ~= nil then
         local before = R("states", "cooldownAlphaBefore") or 0
@@ -5815,6 +6051,8 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     if desatOK and f._adToggled and (lookT == true or (lookT == nil and R("states", "toggleDesaturate") == true)) then
         f.icon:SetDesaturated(true)
     end
+    -- the player's order decides grey (higher wins), over the rules above
+    if ord and desatOK and ord._grey ~= nil then f.icon:SetDesaturated(ord._grey) end
     -- "Desaturate while the aura is down" with an aura overlay: the art stays
     -- grey under the aura's button, so it reads grey exactly while the aura is
     -- down, with no presence read. Wins over every other desaturation.

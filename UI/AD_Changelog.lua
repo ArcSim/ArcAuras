@@ -13,6 +13,28 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.2.6",
+        intro = "Stack counts on cooldown icons, an order for effects, and fresh Item Finds data for the latest Forever build.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Stacks on cooldown icons",
+                    desc = "A spell, item or trinket icon that also tracks an aura can now show, hide, dim or glow at a stack count of that aura: Icon > Effects > + Add > Stacks at a count." },
+                { title = "Several stack counts",
+                    desc = "An icon can hold up to three Stacks at a count effects, each with its own range and look, for example a glow at 5 stacks and a dim below 3." },
+                { title = "Effects order",
+                    desc = "On spell, item and trinket icons the Effects list now has arrows: the higher effect wins while both hold, for opacity and grey out." },
+                { title = "Only its glows",
+                    desc = "A spell icon tracking an aura can keep its own look and cooldown while the aura is up and show only the aura's glows: Tracking > On this icon > While the aura is up, show." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Stacks effect",
+                    desc = "When Stacks at a count cannot work on an icon, it now shows in red in + Add with the reason, instead of being missing." },
+                { title = "Item Finds: item data",
+                    desc = "Updated with Forever's latest hotfixes: over 150 old items show what Forever changed (Zul'Farrak, Sunken Temple, Maraudon and Blackrock Depths gear), 95 hidden items now have names, and new drop places found by players." },
+            } },
+        },
+    },
+    {
         version = "3.2.5",
         intro = "Trinket icons show an empty trinket slot instead of a question mark, and can dim while nothing is equipped.",
         sections = {
@@ -1518,6 +1540,26 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.2.6",
+        intro = "Stack counts on cooldown icons and an order for effects.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Stacks on cooldown icons",
+                    desc = "A spell, item or trinket icon that also tracks an aura can now show, hide, dim or glow at a stack count of that aura: Icon > Effects > + Add > Stacks at a count." },
+                { title = "Several stack counts",
+                    desc = "An icon can hold up to three Stacks at a count effects, each with its own range and look, for example a glow at 5 stacks and a dim below 3." },
+                { title = "Effects order",
+                    desc = "On spell, item and trinket icons the Effects list now has arrows: the higher effect wins while both hold, for opacity and grey out." },
+                { title = "Only its glows",
+                    desc = "A spell icon tracking an aura can keep its own look and cooldown while the aura is up and show only the aura's glows: Tracking > On this icon > While the aura is up, show." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Stacks effect",
+                    desc = "When Stacks at a count cannot work on an icon, it now shows in red in + Add with the reason, instead of being missing." },
+            } },
+        },
+    },
     {
         version = "3.2.5",
         intro = "Trinket icons show an empty trinket slot instead of a question mark, and can dim while nothing is equipped.",

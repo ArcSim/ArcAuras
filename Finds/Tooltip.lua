@@ -408,9 +408,23 @@ function T.MarkChanges(lines, id, row)
         list[#list + 1] = l
         return l
     end
+    -- a stat Forever gives through an equip spell reads in that spell's words ("...a Critical Strike with Spells by
+    -- 1.0%."): the one unused line that starts with the stat's words before "by" and holds its number
+    local function Worded(want, num)
+        local lead = Norm(want):match("^(.-) by ")
+        if not lead or not num then return end
+        local hit
+        for i, l in ipairs(lines) do
+            if not used[i] and Norm(l[1]):sub(1, #lead) == lead and (l[1] or ""):find(num, 1, true) then
+                if hit then return end
+                hit = i
+            end
+        end
+        return hit
+    end
     -- the game's line with its value marked, else a line of our own at the bottom
-    local function Line(text, value, dir, old, prefix, rgb)
-        local i = Find(text, prefix)
+    local function Line(text, value, dir, old, prefix, rgb, worded)
+        local i = Find(text, prefix) or (worded and Worded(text, value))
         if i then
             used[i] = true
             lines[i].segs = Valued(lines[i][1], value, dir, old)
@@ -486,9 +500,9 @@ function T.MarkChanges(lines, id, row)
             local ft, isWhite = StatLine(s[1], s[2])
             local rgb = not isWhite and GREEN or nil
             if ft and ct then
-                Line(ft, FirstNumber(ft), Dir(s[2], s[3]), FirstNumber(ct) or tostring(s[3]), nil, rgb)
+                Line(ft, FirstNumber(ft), Dir(s[2], s[3]), FirstNumber(ct) or tostring(s[3]), nil, rgb, true)
             elseif ft then
-                Line(ft, FirstNumber(ft), "up", nil, nil, rgb)
+                Line(ft, FirstNumber(ft), "up", nil, nil, rgb, true)
             end
         elseif ct then
             local _, isWhite = StatLine(s[1], s[3])

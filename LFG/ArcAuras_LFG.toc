@@ -1,0 +1,14 @@
+## Interface: 16001
+## AllowLoadGameType: camelot
+## Title: Arc Auras: LFG Filter
+## Notes: Filter the Looking For Group list by role, class, level, players or groups. Part of Arc Auras; set it up on its Modules page.
+## Author: Arc
+## Version: @project-version@
+## IconTexture: Interface\AddOns\ArcAuras_LFG\Media\ArcLFGFilter_Icon
+## Dependencies: ArcAuras
+## LoadOnDemand: 1
+## SavedVariables: ArcLFGFilterDB
+
+ALF_Theme.lua
+ArcLFGFilter.lua
+ALF_Panel.lua

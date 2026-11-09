@@ -8,7 +8,7 @@ local AT = {}
 -- Other addons carry copies of this file, generated from it by the
 -- arc-theme-sync tool, which compares this number to find stale copies.
 -- Bump it on every change and never edit a copy.
-AT.VERSION = 38
+AT.VERSION = 39
 
 -- The addon this copy loads in: a palette's font file sits in its folder.
 local THEME_ADDON = ...
@@ -46,6 +46,12 @@ AT.COL = {
     head     = { 0.063, 0.094, 0.153 },  -- a fold header bar, a step off the page
     word     = { 0.835, 0.886, 0.949 },  -- a window title's plain words
     discord  = { 0.447, 0.537, 0.855 },  -- the Discord button's word
+    -- Delete buttons: one red on every palette (none sets its own)
+    danger      = { 0.784, 0.286, 0.302 },  -- delete button border
+    dangerInk   = { 1.000, 0.780, 0.780 },  -- delete button words
+    dangerFill  = { 0.243, 0.082, 0.098 },  -- delete button fill
+    dangerHover = { 0.380, 0.114, 0.133 },  -- delete button fill on hover
+    dangerEdge  = { 0.949, 0.420, 0.435 },  -- delete button border on hover
 }
 
 -- Layout constants, in pixels. Spacing comes from the row height, not padding.
@@ -748,6 +754,26 @@ function AT.MakeQuietButton(parent, label, w)
         b:SetBackdropColor(0, 0, 0, 0)
         b:SetBackdropBorderColor(COL.line2[1], COL.line2[2], COL.line2[3], 1)
         b.fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
+    end)
+    return b
+end
+
+-- Delete button: the raised button in red, so a delete never looks like the
+-- buttons beside it. Same geometry, so mixed rows line up.
+function AT.MakeDangerButton(parent, label, w)
+    local b = AT.MakeSmallButton(parent, label, w)
+    b:SetBackdropColor(COL.dangerFill[1], COL.dangerFill[2], COL.dangerFill[3], 1)
+    b:SetBackdropBorderColor(COL.danger[1], COL.danger[2], COL.danger[3], 1)
+    b.fs:SetTextColor(COL.dangerInk[1], COL.dangerInk[2], COL.dangerInk[3])
+    b:SetScript("OnEnter", function()
+        b:SetBackdropColor(COL.dangerHover[1], COL.dangerHover[2], COL.dangerHover[3], 1)
+        b:SetBackdropBorderColor(COL.dangerEdge[1], COL.dangerEdge[2], COL.dangerEdge[3], 1)
+        b.fs:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+    end)
+    b:SetScript("OnLeave", function()
+        b:SetBackdropColor(COL.dangerFill[1], COL.dangerFill[2], COL.dangerFill[3], 1)
+        b:SetBackdropBorderColor(COL.danger[1], COL.danger[2], COL.danger[3], 1)
+        b.fs:SetTextColor(COL.dangerInk[1], COL.dangerInk[2], COL.dangerInk[3])
     end)
     return b
 end

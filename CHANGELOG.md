@@ -1,5 +1,26 @@
 # Arc Auras
 
+## 3.2.8
+
+Aura groups for your party and raid that you can click to dispel, three new modules, and the latest Item Finds data.
+
+### New Features
+
+- **Party and raid auras** - An All auras on a unit group can now watch Any party member, Party 1 to 4 or Any raid member, with the same debuff type filters you use on yourself.
+- **Click the icons** - On those groups, the new Members tab lets a click target that player or cast your dispel on them. Pick what Left click and Right click do.
+- **On each party frame** - The Members tab can also place each player's auras on their own party or raid frame, on the side you choose.
+- **LFG Filter** - Filter the Looking For Group list by role, class and level, find groups with a spot for you, and whisper the players you invite. On by default: the button is beside Refresh in the Looking For Group window, and the settings are on Modules > LFG Filter.
+- **Auto Combat Log** - Logs combat in the dungeons and raids you pick, and asks first if you want it to. Turn it on in Modules > Auto Combat Log.
+- **Quest Lookup** - Hold a key on your target to see which of your quests want it. Turn it on in Modules > Quest Lookup.
+
+### Improvements
+
+- **Delete buttons** - Delete buttons in the panel are now red.
+- **Arcane Blast template** - The Arcane Blast Custom Bar now runs 18 seconds from your first cast, and there is an Icon version in the Add window too.
+- **Imbue damage on tooltips** - Frostbrand Weapon now shows its damage, and the numbers count Stormstrike if you know it.
+- **Item Finds: minimap nodes** - In the full finder, the minimap pin of a marked vein, herb or chest hides its icon when you are close, so you can see whether the node is up. Change the distance or turn it off under Settings, Favorites on the Map, Nodes.
+- **Item Finds: item data** - Updated with Forever's latest data: 23 more new items, 66 hidden items now have names, over 200 old items show what Forever changed (Scholomance, Stratholme, Dire Maul and Blackrock Depths gear among them), and new drop places found by players.
+
 ## 3.2.7
 
 Tighter countdown text, charge spells that grey out on time, and a fix for the trinket Empty slot effect.

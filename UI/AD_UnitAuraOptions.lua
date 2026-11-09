@@ -4,7 +4,8 @@ local ADDON, NS = ...
 local Options = NS.Options
 if not Options then return end
 
-local UO = { TAB = "Tracking", withTab = setmetatable({}, { __mode = "k" }) }
+local UO = { TAB = "Tracking", MEMBERS = "Members", withTab = setmetatable({}, { __mode = "k" }),
+    withMembers = setmetatable({}, { __mode = "k" }) }
 Options.UnitAuraOptions = UO
 
 -- An aura group opens on what it shows, where the game has the aura engine
@@ -12,13 +13,22 @@ Options.UnitAuraOptions = UO
 function Options.UnitAuraTabsFor(g, tabs)
     local G = NS.DriverAuraGroups
     if not (g and g.groupKind == "aura" and G and G.IsAvailable()) then return tabs end
-    local out = UO.withTab[tabs]
+    local cache = UO.Members(g) and UO.withMembers or UO.withTab
+    local out = cache[tabs]
     if not out then
         out = { UO.TAB }
+        if cache == UO.withMembers then out[2] = UO.MEMBERS end
         for _, t in ipairs(tabs) do out[#out + 1] = t end
-        UO.withTab[tabs] = out
+        cache[tabs] = out
     end
     return out
+end
+
+-- A group showing all auras on a party or raid unit.
+function UO.Members(g)
+    local Store = NS.Store
+    return g ~= nil and Store.ShowsAll(g) == true
+        and NS.Schema.UNIT_AURA_GROUP[Store.Resolve(g, "unitAuras", "unit")] == true
 end
 
 -- The alignment the placement reads, for AD_Options' Alignment row: a group
@@ -47,6 +57,7 @@ function Options.UnitAuraGroupRows(pg, ctx, tabFn, kit)
         end
     end
     local function Plates(g) return Store.Resolve(g, "unitAuras", "unit") == "nameplate" end
+    local function UnitIs(u) return function(g) return Store.Resolve(g, "unitAuras", "unit") == u end end
     local function SR(fields) kit.SectionRows(pg, "iconGroup", "unitAuras", ctx, vis, fields) end
 
     AT.Section(pg, "Auras", { visibleFn = vis })
@@ -59,6 +70,8 @@ function Options.UnitAuraGroupRows(pg, ctx, tabFn, kit)
     end))
     SR({ "unit" })
     AT.RowDesc(pg, "Enemy nameplates show debuffs in this version.", 20, On(Plates))
+    AT.RowDesc(pg, "Each party member gets their own rows, in party order.", 20, On(UnitIs("party")))
+    AT.RowDesc(pg, "Each raid member gets their own rows, five to a line, in raid order.", 20, On(UnitIs("raid")))
     SR({ "auraType", "caster", "fill", "debuffLine" })
     AT.RowDesc(pg, "Rows and Columns are set under Appearance, Grid. Up to 40 show.", 20, On(function() return true end))
     AT.RowDesc(pg, "Most people want one row of 3 to 6 there.", 20, On(Plates))
@@ -67,7 +80,11 @@ function Options.UnitAuraGroupRows(pg, ctx, tabFn, kit)
     -- with both halves it reaches the one the game honours
     AT.RowDesc(pg, "Debuffs on you or your pet cannot be hidden by spell.", 20, On(function(g)
         local unit, harmful = Schema.UnitAuraShape(g)
-        return harmful and not Schema.UnitAuraHideOK(unit, harmful)
+        return harmful and not Schema.UnitAuraHideOK(unit, harmful) and not Schema.UNIT_AURA_GROUP[unit]
+    end))
+    AT.RowDesc(pg, "Debuffs on party or raid members cannot be hidden by spell.", 20, On(function(g)
+        local unit, harmful = Schema.UnitAuraShape(g)
+        return harmful and Schema.UNIT_AURA_GROUP[unit] == true
     end))
     AT.RowDesc(pg, "Buffs on a target or focus cannot be hidden by spell.", 20, On(function(g)
         local unit, harmful, both = Schema.UnitAuraShape(g)
@@ -88,7 +105,7 @@ function Options.UnitAuraGroupRows(pg, ctx, tabFn, kit)
     SR({ "plateCount" })
     AT.RowDesc(pg, "Plates past the pool get their rows out of combat, or after a /reload.", 20, On(function(g)
         local UA = NS.DriverUnitAuras
-        return UA ~= nil and UA.PoolShort(g)
+        return Plates(g) and UA ~= nil and UA.PoolShort(g)
     end))
     SR({ "plateEdge", "plateX", "plateY" })
     -- the game's own dispel-type filter: any unit, enemies too, in combat
@@ -96,6 +113,18 @@ function Options.UnitAuraGroupRows(pg, ctx, tabFn, kit)
     AT.Section(pg, "Dispel types", { visibleFn = always })
     AT.RowDesc(pg, "Tick any to show only those types; none ticked shows every aura.", 20, always)
     SR({ "dispelMagic", "dispelCurse", "dispelDisease", "dispelPoison" })
+    -- party and raid units only, on a tab of their own
+    local function mvis() return tabFn() == UO.MEMBERS and UO.Members(G()) end
+    local function MR(fields) kit.SectionRows(pg, "iconGroup", "unitAuras", ctx, mvis, fields) end
+    local function Clicks()
+        return mvis() and Store.Resolve(G(), "unitAuras", "clicks") == true
+    end
+    AT.Section(pg, "Where it shows", { visibleFn = mvis })
+    MR({ "showAt", "frameEdge", "frameX", "frameY" })
+    AT.Section(pg, "Click the icons", { visibleFn = mvis })
+    MR({ "clicks", "clickLeft", "clickRight" })
+    AT.RowDesc(pg, "Hover macros work on these icons too.", 20, Clicks)
+    AT.RowDesc(pg, "Spots with no icon take clicks too. Low Columns keeps this small.", 20, Clicks)
 end
 
 -- Debuff type looks (Drivers\AD_TypeLooks.lua): the type picked in the strip
@@ -357,8 +386,14 @@ function Options.TypeLookRows(pg, ctx, tabVis, kit)
     local function SR(fields, opts) kit.SectionRows(pg, "iconGroup", "typeLook", ctx, vis, fields, opts) end
     AT.Section(pg, "Debuff types", { visibleFn = vis })
     SR({ "looks" })
+    local function OnMembers()
+        return NS.Schema.UNIT_AURA_MEMBERS[Store.Resolve(G(), "unitAuras", "unit")] ~= nil
+    end
     AT.RowDesc(pg, "With both aura types, or on nameplates, it shows as Colors and badges.", 20, function()
-        return vis() and UO.FullFallback(G())
+        return vis() and UO.FullFallback(G()) and not OnMembers()
+    end)
+    AT.RowDesc(pg, "On any party or raid member it shows as Colors and badges.", 20, function()
+        return vis() and UO.FullFallback(G()) and OnMembers()
     end)
     AT.RowDesc(pg, "The full look starts out of combat, or after a /reload.", 20, function()
         local UA = NS.DriverUnitAuras

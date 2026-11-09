@@ -1,9 +1,9 @@
 -- AD_ImbueTooltip: a "With your weapon" line on weapon imbue and weapon stone
--- tooltips (Rockbiter, Flametongue and Windfury Weapon; sharpening stones and
--- weightstones): what each adds per hit and per second with the main-hand
--- weapon, worked from the numbers the tooltip prints (the realm's own values),
--- read through its language's words: no patterns for it, no line. Opt-in on
--- Modules > Tooltip IDs. Secret weapon reads (stats restricted): no line.
+-- tooltips (Rockbiter, Flametongue, Frostbrand and Windfury Weapon; sharpening
+-- stones and weightstones): what each adds per hit and per second with the
+-- main-hand weapon, worked from the numbers the tooltip prints (the realm's own
+-- values), read through its language's words: no patterns for it, no line.
+-- Opt-in on Modules > Tooltip IDs. Secret weapon reads (stats restricted): no line.
 local ADDON, NS = ...
 
 local IT = {}
@@ -19,20 +19,33 @@ IT.SETTING = "tooltipImbueDamage"
 IT.MAIN_HAND = 16
 -- attack power per point of damage per second of swing
 IT.AP_PER_DPS = 14
+-- Frostbrand's procs per minute, measured in combat logs: the game's data has no rate.
+IT.FROSTBRAND_PPM = 8
+-- seconds between Windfury procs, from its proc spell
+IT.WINDFURY_LOCKOUT = 1.5
+IT.STORMSTRIKE = 17364
+-- Rockbiter's enchant IDs and the rank spell whose text holds that enchant's attack power
+IT.ROCKBITER_ENCHANTS = {
+    [29] = 8017, [6] = 8018, [1] = 8019, [503] = 10399,
+    [1663] = 16314, [683] = 16315, [1664] = 16316, [7568] = 461635,
+}
 
 -- The imbues by name: every rank shares its rank 1 spell's name, which the
 -- game gives in the client's language; the English names stand in until it
 -- answers. The stones are found by their text on any item.
-IT.IMBUE_IDS = { rockbiter = 8017, flametongue = 8024, windfury = 8232 }
+IT.IMBUE_IDS = { rockbiter = 8017, flametongue = 8024, frostbrand = 8033, windfury = 8232 }
 IT.IMBUES = {
     ["Rockbiter Weapon"] = "rockbiter",
     ["Flametongue Weapon"] = "flametongue",
+    ["Frostbrand Weapon"] = "frostbrand",
     ["Windfury Weapon"] = "windfury",
 }
 IT.PATTERNS = {
     rockbiter = "attack power by (%d+)",
     flametongue = "causes (%d+) to (%d+) additional Fire damage",
+    frostbrand = "chance of causing (%d+) additional Frost damage",
     windfury = "(%d+)%% chance of granting you (%d+) extra %a+ with (%d+) extra melee attack power",
+    strike = "strike for (%d+)%% weapon damage",
     stones = { "sharp weapon damage by (%d+)", "damage of a blunt weapon by (%d+)" },
 }
 -- the patterns per client language; one missing here means no line there
@@ -88,6 +101,46 @@ function IT.Weapon()
     return speed, (lo + hi) / 2
 end
 
+local function Description(spellID)
+    local get = C_Spell and C_Spell.GetSpellDescription
+    local text = get and get(spellID) -- raw-id: a fixed imbue rank or strike
+    if type(text) ~= "string" or Secret(text) then return nil end
+    return text
+end
+
+-- Stormstrike while the player knows it: its cooldown in seconds and its share
+-- of a weapon hit; nil otherwise, so a line counts swings alone.
+function IT.Strike()
+    local P = IT.Patterns()
+    local catalog = NS.SpellCatalog
+    if not (P and catalog and catalog.Known and catalog.Known(IT.STORMSTRIKE)) then return nil end
+    local ms = GetSpellBaseCooldown and GetSpellBaseCooldown(IT.STORMSTRIKE) -- raw-id: a fixed strike
+    if Secret(ms) or type(ms) ~= "number" or ms <= 0 then return nil end
+    local text = Description(IT.STORMSTRIKE)
+    local pct = text and tonumber(text:match(P.strike))
+    if not pct then return nil end
+    return { cooldown = ms / 1000, weapon = pct / 100 }
+end
+
+-- What Rockbiter adds to UnitDamage's average while it is on the main hand: an
+-- imbue put in its place would lose it. 0 with none on, nil when it cannot be read.
+function IT.WornHit(speed)
+    local P = IT.Patterns()
+    local DE = NS.DriverEnchant
+    if not (P and DE and DE.ReadHand) then return 0 end
+    local list = DE.ReadHand("main")
+    if list == nil then return nil end
+    for _, e in ipairs(list) do
+        local spell = IT.ROCKBITER_ENCHANTS[e.id]
+        if spell then
+            local text = Description(spell)
+            local ap = text and tonumber(text:match(P.rockbiter))
+            return ap and ap / IT.AP_PER_DPS * speed or nil
+        end
+    end
+    return 0
+end
+
 -- The tooltip's lines as one string, or nil when any of them reads secret.
 function IT.Text(data)
     local parts = {}
@@ -102,35 +155,45 @@ end
 -- Damage per hit and per second, worked from the tooltip's numbers:
 -- attack power adds AP / 14 per second of swing; Flametongue's high end is its
 -- per-hit damage on a 4.0 speed weapon (the tooltip's own formula), so a hit
--- is high / 4 per second of swing; Windfury is an average (its chance x its
--- extra attacks, each a main-hand hit with the extra attack power); a stone
--- adds its number to every hit. Returns perHit, dps, avg (true = an average)
--- or nil when the text does not match or this client has no patterns.
-function IT.Gain(kind, text, speed, avgHit)
+-- is high / 4 per second of swing; Frostbrand is an average (its damage at its
+-- procs per minute); Windfury is an average (its chance x its extra attacks,
+-- each a main-hand hit with the extra attack power, less its lockout); a stone
+-- adds its number to every hit. strike (IT.Strike, optional) adds Stormstrike's
+-- hits: weapon damage counts at its share of a weapon hit, a flat or proc effect
+-- once per hit. Returns perHit, dps, avg (true = an average) or nil when the
+-- text does not match or this client has no patterns.
+function IT.Gain(kind, text, speed, avgHit, strike)
     local P = IT.Patterns()
     if not P then return nil end
+    local strikeHits = strike and 1 / strike.cooldown or 0
+    local strikeShare = strike and strike.weapon / strike.cooldown or 0
     if kind == "rockbiter" then
         local ap = tonumber(text:match(P.rockbiter))
         if not ap then return nil end
-        local dps = ap / IT.AP_PER_DPS
-        return dps * speed, dps
+        local hit = ap / IT.AP_PER_DPS * speed
+        return hit, hit / speed + hit * strikeShare
     elseif kind == "flametongue" then
         local lo, hi = text:match(P.flametongue)
         lo, hi = tonumber(lo), tonumber(hi)
         if not (lo and hi) then return nil end
         local hit = math.max(lo, math.min(hi, hi / 4 * speed))
-        return hit, hit / speed
+        return hit, hit / speed + hit * strikeHits
+    elseif kind == "frostbrand" then
+        local hit = tonumber(text:match(P.frostbrand))
+        if not hit then return nil end
+        local chance = math.min(1, IT.FROSTBRAND_PPM * speed / 60)
+        return hit, hit * chance * (1 / speed + strikeHits), true
     elseif kind == "windfury" then
         local chance, n, ap = text:match(P.windfury)
         chance, n, ap = tonumber(chance), tonumber(n), tonumber(ap)
         if not (chance and n and ap) then return nil end
         local perProc = n * (avgHit + ap / IT.AP_PER_DPS * speed)
-        local perSwing = chance / 100 * perProc
-        return perProc, perSwing / speed, true
+        local rolls = (1 / speed + strikeHits) * chance / 100
+        return perProc, perProc * rolls / (1 + rolls * IT.WINDFURY_LOCKOUT), true
     elseif kind == "stone" then
         for _, pat in ipairs(P.stones) do
             local n = tonumber(text:match(pat))
-            if n then return n, n / speed end
+            if n then return n, n / speed + n * strikeShare end
         end
     end
     return nil
@@ -170,9 +233,14 @@ function IT.Append(tooltip, data)
     if tooltip._adImbueDone == data.id then return end
     local speed, avgHit = IT.Weapon()
     if not speed then return end
+    if kind == "windfury" then
+        local worn = IT.WornHit(speed)
+        if not worn then return end
+        avgHit = avgHit - worn
+    end
     local text = IT.Text(data)
     if not text then return end
-    local perHit, dps, avg = IT.Gain(kind, text, speed, avgHit)
+    local perHit, dps, avg = IT.Gain(kind, text, speed, avgHit, IT.Strike())
     if not perHit then return end
     tooltip._adImbueDone = data.id
     if not tooltip._adImbueHooked and tooltip.HookScript then

@@ -554,7 +554,7 @@ function MOD.TooltipRows(pg, m)
     row = AT.RowToggle(pg, "Imbue damage with your weapon",
         function() return Store.GetSetting("tooltipImbueDamage") == true end,
         function(v) Store.SetSetting("tooltipImbueDamage", v and true or nil) end,
-        m.isOn, "Compares what Rockbiter, Flametongue, Windfury, sharpening stones and weightstones add per hit and per second, main hand.")
+        m.isOn, "Compares what Rockbiter, Flametongue, Frostbrand, Windfury, sharpening stones and weightstones add per hit and per second, main hand.")
     MOD.Stamp(row, m, "tooltipImbueDamage", "bool")
 end
 

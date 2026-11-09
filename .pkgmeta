@@ -7,6 +7,7 @@ package-as: ArcAuras
 move-folders:
   ArcAuras/Bridge/ArcUI: ArcUI
   ArcAuras/Finds: ArcAuras_Finds
+  ArcAuras/LFG: ArcAuras_LFG
 
 manual-changelog:
   filename: CHANGELOG.md

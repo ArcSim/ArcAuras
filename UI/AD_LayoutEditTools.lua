@@ -1498,7 +1498,7 @@ function LT.AnyLocked(ids)
 end
 
 function LT.DeleteButton(parent, onClick)
-    local b = (AT.MakeQuietButton or AT.MakeSmallButton)(parent, "Delete")
+    local b = AT.MakeDangerButton(parent, "Delete")
     b.fs:SetFont(AT.FONT, 13, "")
     b:SetScript("OnClick", onClick)
     if AT.Tooltip then

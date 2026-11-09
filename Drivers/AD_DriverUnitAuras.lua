@@ -1,5 +1,5 @@
 -- AD_DriverUnitAuras: aura groups that show every aura on one unit, drawn by the game in AuraContainers the group owns.
--- It places such a group for the layout engine (Engine.RegisterGroupClaim): one container follows the unit, or one per enemy nameplate; the member rows skip it.
+-- It places such a group for the layout engine (Engine.RegisterGroupClaim): one container follows the unit, or one per enemy nameplate, or one per party or raid member; the member rows skip it.
 -- A full look per type adds a second container on the unit, one aura group per dispel type, shown in the first one's place.
 -- The game reads the auras and draws the buttons, so it works in combat; nothing here reads an aura or a rect, and a unit answer is never compared unguarded.
 local ADDON, NS = ...
@@ -34,10 +34,12 @@ UA.TYPED = { Magic = true, Curse = true, Disease = true, Poison = true }
 UA.NO_KEYS = {}
 -- a type with no look of its own reads through this (never written)
 UA.NO_LOOK = setmetatable({}, { __newindex = function() end })
-UA.UNITS = { player = true, pet = true, target = true, focus = true, nameplate = true }
+UA.UNITS = { player = true, pet = true, target = true, focus = true, nameplate = true,
+    party = true, party1 = true, party2 = true, party3 = true, party4 = true, raid = true }
 -- The unit token stays the same when it points at someone new, and the
 -- container re-reads only on its own unit's aura events.
-UA.SWAP = { target = "PLAYER_TARGET_CHANGED", focus = "PLAYER_FOCUS_CHANGED", pet = "UNIT_PET" }
+UA.SWAP = { target = "PLAYER_TARGET_CHANGED", focus = "PLAYER_FOCUS_CHANGED", pet = "UNIT_PET",
+    group = "GROUP_ROSTER_UPDATE" }
 UA.PLATE_EVENTS = { "NAME_PLATE_UNIT_ADDED", "NAME_PLATE_UNIT_REMOVED" }
 UA.SORTS = { default = "Default", time = "ExpirationOnly" }
 -- Blizzard_AuraContainerShared's values, for a client that has not loaded it
@@ -55,6 +57,23 @@ function UA.Claims(g)
 end
 
 function UA.Token(i) return "nameplate" .. i end
+
+-- The token container i follows: a plate's, a member's, or the unit.
+function UA.TokenFor(cfg, i)
+    if cfg.plates then return UA.Token(i) end
+    if cfg.members then return cfg.members.prefix .. i end
+    return cfg.unit
+end
+
+-- The swap event's name for a unit: every party and raid token shares one.
+function UA.SwapKey(unit)
+    if unit:find("^party%d") or unit:find("^raid%d") then return "group" end
+    return unit
+end
+
+function UA.ModeOf(cfg)
+    return (cfg.plates and "plates") or (cfg.members and "members") or "unit"
+end
 
 -- Rows by the arrangement's Columns, and the cap they make per half, never
 -- past Schema.UNIT_AURA_MAX.
@@ -103,10 +122,12 @@ function UA.Config(g)
     local unit, harmful, both = S.UnitAuraShape(g)
     if not UA.UNITS[unit] then unit, harmful, both = "player", R("auraType") == "debuff", R("auraType") == "both" end
     local plates = unit == "nameplate"
+    local members = S.UNIT_AURA_MEMBERS[unit]
+    local group = S.UNIT_AURA_GROUP[unit] == true
     local hide, hideD
     if S.UnitAuraHideOK(unit, harmful) then hide = UA.ParseIDs(R("hideSpells")) end
     if both and S.UnitAuraHideOK(unit, true) then hideD = UA.ParseIDs(R("hideSpells")) end
-    local count = 1
+    local count = members and members.count or 1
     if plates then
         local max = S.UNIT_AURA_PLATES or 40
         count = math.floor(tonumber(R("plateCount")) or 20)
@@ -130,7 +151,10 @@ function UA.Config(g)
         full = TL ~= nil and TL.Full(g) == true, types = types,
         ownLine = Store.Resolve(g, "typeLook", "ownLine") == true,
         dispel = dispel, dispelSig = dispelSig,
-        unit = unit, plates = plates, harmful = harmful, both = both, hide = hide, hideD = hideD, count = count,
+        onFrames = group and R("showAt") == "frames", frameEdge = R("frameEdge") or "right",
+        frameX = tonumber(R("frameX")) or 0, frameY = tonumber(R("frameY")) or 0,
+        clicks = group and R("clicks") == true, clickLeft = R("clickLeft"), clickRight = R("clickRight"),
+        unit = unit, plates = plates, members = members, harmful = harmful, both = both, hide = hide, hideD = hideD, count = count,
         rows = rows, cols = cols, cap = cap,
         filter = DA.FilterForLane({ caster = caster }, { harmful = harmful }),
         filterD = both and DA.FilterForLane({ caster = caster }, { harmful = true }) or nil,
@@ -180,7 +204,10 @@ function UA.Plan(g, cfg)
     local cap, vertical = cfg.cap, cfg.vertical == true
     local per = math.max(1, math.min(vertical and cfg.rows or cfg.cols, cap))
     local lines = math.ceil(cap / per)
-    local blocks = cfg.both and 2 or 1
+    local blocks = (cfg.members and cfg.members.count) or (cfg.both and 2) or 1
+    -- any member: Rows by Columns each, wrap of those to a line
+    local wrap = cfg.members and cfg.members.wrap or 1
+    local blockLines = math.ceil(blocks / wrap)
     -- whole pixels, as the slots and gaps are, so the box is too (on the
     -- group's layout scale)
     local E = NS.LayoutEngine
@@ -217,8 +244,8 @@ function UA.Plan(g, cfg)
     -- past one line's buttons and short of the next one's end, so exactly
     -- `per` fit, whatever the spacing
     local lineSize = span + math.max(0.5, (pw + ps) / 2)
-    local n = lines * blocks
-    local bw, bh = span, n * cw + (n - 1) * cs
+    local n = lines * blockLines
+    local bw, bh = wrap * span + (wrap - 1) * ps, n * cw + (n - 1) * cs
     -- each type on its own line: a block per type that can show
     local typeBlocks = (cfg.full and cfg.ownLine) and UA.TypeBlocks(g, cfg, vertical, lineSize, ps, cs) or nil
     if typeBlocks then
@@ -227,7 +254,11 @@ function UA.Plan(g, cfg)
     end
     if vertical then bw, bh = bh, bw end
     bw, bh = math.max(Snap(4), bw + 2 * pad), math.max(Snap(4), bh + 2 * pad)
+    -- on a frame the lines grow away from it
+    if cfg.onFrames then right, down = cfg.frameEdge ~= "left", cfg.frameEdge ~= "top" end
     local corner = (down and "TOP" or "BOTTOM") .. (right and "LEFT" or "RIGHT")
+    local crossMid = (vertical and hPart == "") or (not vertical and vPart == "")
+    local alongMid = (vertical and vPart == "") or (not vertical and hPart == "")
     local pin, ox, oy = corner, 0, 0
     if not cfg.plates then
         pin = vPart .. hPart
@@ -241,7 +272,33 @@ function UA.Plan(g, cfg)
         w = w, h = h, sx = sx, sy = sy, per = per, lines = lines, blocks = blocks, cap = cap, pad = pad,
         right = right, down = down, vertical = vertical, corner = corner, pin = pin, ox = ox, oy = oy,
         lineSize = lineSize, boxW = bw, boxH = bh, typeBlocks = typeBlocks,
+        memberStep = cfg.members and lines * (cw + cs) or nil, memberAlong = span + ps,
+        blockW = vertical and (lines * cw + (lines - 1) * cs) or span,
+        blockH = vertical and span or (lines * cw + (lines - 1) * cs),
+        memberWrap = wrap, memberLines = blockLines, crossMid = crossMid, alongMid = alongMid,
     }
+end
+
+-- Member block i's place in the wrap: how far along a line, how far across.
+function UA.BlockDelta(p, i)
+    return ((i - 1) % p.memberWrap) * p.memberAlong, math.floor((i - 1) / p.memberWrap) * p.memberStep
+end
+
+-- A delta in reading order as an x / y offset.
+function UA.DeltaXY(p, a, c)
+    local x, y = a, c
+    if p.vertical then x, y = c, a end
+    return p.right and x or -x, p.down and -y or y
+end
+
+-- Member i's offset from the pin, the blocks centred as one on a centred
+-- axis. Every other group has one container and no offset.
+function UA.BlockXY(p, i)
+    if not p.memberStep then return 0, 0 end
+    local a, c = UA.BlockDelta(p, i)
+    if p.alongMid then a = a - (p.memberWrap - 1) * p.memberAlong / 2 end
+    if p.crossMid then c = c - (p.memberLines - 1) * p.memberStep / 2 end
+    return UA.DeltaXY(p, a, c)
 end
 
 -- A type's button size: its own look's (Use group scale off), else the
@@ -292,6 +349,11 @@ end
 -- Mark i's offset and size: a plain cell, or with a block per type, cell
 -- (i - 1) % cap of the block i falls in.
 function UA.MarkAt(p, i)
+    if p.memberStep then
+        local x, y = UA.CellXY(p, (i - 1) % p.cap + 1)
+        local dx, dy = UA.DeltaXY(p, UA.BlockDelta(p, math.floor((i - 1) / p.cap) + 1))
+        return x + dx, y + dy, p.w, p.h
+    end
     local tb = p.typeBlocks
     if not tb then
         local x, y = UA.CellXY(p, i)
@@ -447,7 +509,7 @@ function UA.Halves(g, rt, cfg)
         UA.pending = true
         return
     end
-    local c = UA.MakeContainer(g, rt, cfg, cfg.plates and UA.Token(1) or cfg.unit, cfg.both)
+    local c = UA.MakeContainer(g, rt, cfg, UA.TokenFor(cfg, 1), cfg.both)
     if not c then return end
     -- the old one hidden and let go: a hidden container listens to nothing
     local old = rt.cs[1]
@@ -602,8 +664,8 @@ function UA.Build(g)
     local p = UA.Plan(g, cfg)
     rt = { cs = {}, buttons = {}, engines = {}, slotDims = {}, bound = {}, hostile = {},
         slotRecs = { UA.LookRec(g, cfg) }, cfg = { iconW = p.w, iconH = p.h, sx = p.sx, sy = p.sy },
-        mode = cfg.plates and "plates" or "unit", want = 1, gid = g.id, afterStyle = UA.AfterStyle }
-    local c = UA.MakeContainer(g, rt, cfg, cfg.plates and UA.Token(1) or cfg.unit, cfg.both)
+        mode = UA.ModeOf(cfg), want = 1, gid = g.id, afterStyle = UA.AfterStyle }
+    local c = UA.MakeContainer(g, rt, cfg, UA.TokenFor(cfg, 1), cfg.both)
     if not c then return nil end
     rt.cs[1] = c
     rt.c, rt.sent, rt.hasD = c, c._adSent, cfg.both == true
@@ -612,18 +674,19 @@ function UA.Build(g)
     return rt
 end
 
--- The plate pool: container i follows "nameplate<i>", Nameplates covered
--- deep. It grows under the creation rule, so plates past it stay uncovered
--- until it can; a smaller count keeps the extra containers, unused.
+-- The pool: container i follows "nameplate<i>", Nameplates covered deep, or
+-- each party or raid token. It grows under the creation rule, so tokens past
+-- it stay uncovered until it can; a smaller count keeps the extra containers,
+-- unused.
 function UA.Pool(g, rt, cfg)
-    local want = cfg.plates and cfg.count or 1
+    local want = cfg.count
     rt.want = want
     while #rt.cs < want do
         if not UA.CanMake() then
             UA.pending = true
             break
         end
-        local c = UA.MakeContainer(g, rt, cfg, UA.Token(#rt.cs + 1))
+        local c = UA.MakeContainer(g, rt, cfg, UA.TokenFor(cfg, #rt.cs + 1))
         if not c then break end
         rt.cs[#rt.cs + 1] = c
     end
@@ -636,17 +699,17 @@ function UA.Covered(rt)
 end
 
 -- Sends what changed since the last send to each container in use: the one
--- following the unit, or every plate row. The setters are data only, yet
+-- following the unit, or every plate or member row. The setters are data only, yet
 -- they wait out combat like the other aura drivers' edits; a client lacking
 -- one keeps what the container was built with.
 function UA.Push(g, rt)
     local cfg = UA.Config(g)
     rt.slotRecs[1] = UA.LookRec(g, cfg)
     local filters, sig = UA.Filters(cfg)
-    local n = cfg.plates and UA.Covered(rt) or 1
+    local n = UA.Covered(rt)
     for i = 1, n do
         local c, s = rt.cs[i], rt.cs[i]._adSent
-        local unit = cfg.plates and UA.Token(i) or cfg.unit
+        local unit = UA.TokenFor(cfg, i)
         if s.unit ~= unit then
             if InCombatLockdown() then
                 UA.pending = true
@@ -728,20 +791,73 @@ end
 -- (UA.Pin).
 function UA.Layout(rt, gf, p, cfg)
     rt.cfg.iconW, rt.cfg.iconH, rt.cfg.sx, rt.cfg.sy = p.w, p.h, p.sx, p.sy
-    local n = cfg.plates and UA.Covered(rt) or 1
+    local n = UA.Covered(rt)
     for i = 1, n do UA.Flow(rt, rt.cs[i], p, cfg) end
     if cfg.plates then return end
-    local c = rt.cs[1]
-    c:ClearAllPoints()
     local lx, ly = UA.Lean(gf, p.pin)
-    c:SetPoint(p.pin, gf, p.pin, lx, ly)
+    rt.onFrames = cfg.onFrames
+    if not cfg.onFrames then
+        rt.frames = nil
+    elseif not InCombatLockdown() then
+        rt.frames = UA.FindFrames(cfg, n)
+    end
+    for i = 1, n do
+        local frame = rt.frames and rt.frames[i]
+        if frame then
+            UA.PinToFrame(rt.cs[i], frame, cfg)
+        else
+            local bx, by = UA.BlockXY(p, i)
+            rt.cs[i]:ClearAllPoints()
+            rt.cs[i]:SetPoint(p.pin, gf, p.pin, lx + bx, ly + by)
+        end
+    end
     -- the full look's container: the same flow and the same pin
     local f = rt.full
     if f then
         UA.FlowFull(f, p, cfg)
-        f:ClearAllPoints()
-        f:SetPoint(p.pin, gf, p.pin, lx, ly)
+        if rt.frames and rt.frames[1] then
+            UA.PinToFrame(f, rt.frames[1], cfg)
+        else
+            f:ClearAllPoints()
+            f:SetPoint(p.pin, gf, p.pin, lx, ly)
+        end
     end
+end
+
+-- Where a line meets a member's frame: the side of the line, the side of the frame.
+UA.FRAME_POINTS = { top = { "BOTTOM", "TOP" }, bottom = { "TOP", "BOTTOM" }, left = { "RIGHT", "LEFT" }, right = { "LEFT", "RIGHT" } }
+function UA.FramePoint(cfg)
+    local t = UA.FRAME_POINTS[cfg.frameEdge] or UA.FRAME_POINTS.right
+    return t[1], t[2]
+end
+
+function UA.PinToFrame(c, frame, cfg)
+    local point, rel = UA.FramePoint(cfg)
+    c:ClearAllPoints()
+    c:SetPoint(point, frame, rel, cfg.frameX, cfg.frameY)
+end
+
+-- The game's party and raid frames showing a token now. Asked out of combat,
+-- since a frame's unit can be secret; a member with no frame keeps the
+-- group's place.
+function UA.FrameUnit(f, map)
+    if not f or not f.IsVisible or (f.IsForbidden and f:IsForbidden()) or not f:IsVisible() then return end
+    local unit = f.unit
+    if unit == nil and f.GetAttribute then unit = f:GetAttribute("unit") end
+    if (issecretvalue and issecretvalue(unit)) or type(unit) ~= "string" then return end
+    map[unit] = map[unit] or f
+end
+
+function UA.FindFrames(cfg, n)
+    local map, out = {}, {}
+    for i = 1, 5 do UA.FrameUnit(_G["CompactPartyFrameMember" .. i], map) end
+    for i = 1, 4 do UA.FrameUnit(PartyFrame and PartyFrame["MemberFrame" .. i], map) end
+    for i = 1, 40 do UA.FrameUnit(_G["CompactRaidFrame" .. i], map) end
+    for g = 1, 8 do
+        for m = 1, 5 do UA.FrameUnit(_G["CompactRaidGroup" .. g .. "Member" .. m], map) end
+    end
+    for i = 1, n do out[i] = map[UA.TokenFor(cfg, i)] end
+    return out
 end
 
 -- Fill down first turns the flow's axis: a line runs down, so each spacing
@@ -923,6 +1039,17 @@ function UA.ArmPlates()
     end
 end
 
+-- The containers off the plates follow their group frame: every member's, or
+-- the one in play.
+function UA.MirrorRows(g, rt, gf)
+    local G = NS.DriverAuraGroups
+    if rt.mode == "members" then
+        for i = 1, UA.Covered(rt) do G.MirrorOnto(rt.cs[i], gf, UA.Drawn(g)) end
+    else
+        G.MirrorOnto(UA.Shown(rt), gf, UA.Drawn(g))
+    end
+end
+
 -- The engine's place: the box, the cells while editing, then the containers.
 -- On enemy nameplates the box is the editor's stand-in (one plate's worth of
 -- cells, so the group can be found, sized and given conditions); in play the
@@ -933,11 +1060,11 @@ function UA.Place(g, gf, editMode)
     gf:SetSize(p.boxW, p.boxH)
     UA.placed[g.id] = gf
     UA.Marks(gf, p, editMode)
-    if cfg.plates then gf:SetShown(editMode) end
+    if cfg.plates or cfg.onFrames then gf:SetShown(editMode) end
     local rt = UA.runtimes[g.id] or UA.Build(g)
     if rt then
         local G = NS.DriverAuraGroups
-        rt.mode = cfg.plates and "plates" or "unit"
+        rt.mode = UA.ModeOf(cfg)
         rt.pin = { edge = cfg.edge, x = cfg.x, y = cfg.y }
         UA.Pool(g, rt, cfg)
         if not cfg.plates then UA.UnbindAll(rt) end
@@ -954,13 +1081,15 @@ function UA.Place(g, gf, editMode)
             UA.BindAll(g, rt, gf)
         else
             -- live with the window open too: the auras show over the cells
-            local live = UA.Shown(rt)
-            G.MirrorOnto(live, gf, UA.Drawn(g))
-            for _, c in ipairs(rt.cs) do
-                if c ~= live then c:Hide() end
+            UA.MirrorRows(g, rt, gf)
+            local n, live = UA.Covered(rt), UA.Shown(rt)
+            local many = rt.mode == "members"
+            for i, c in ipairs(rt.cs) do
+                if (many and i > n) or (not many and c ~= live) then c:Hide() end
             end
             if rt.full and rt.full ~= live then rt.full:Hide() end
         end
+        if NS.UnitAuraClicks then NS.UnitAuraClicks.Place(g, rt, gf, cfg, p, editMode) end
     end
     UA.ArmSwaps()
     UA.ArmPlates()
@@ -969,6 +1098,7 @@ end
 function UA.Release(g)
     local gid = g.id
     UA.placed[gid] = nil
+    if NS.UnitAuraClicks then NS.UnitAuraClicks.Let(gid) end
     local rt = UA.runtimes[gid]
     if rt then
         UA.UnbindAll(rt)
@@ -991,6 +1121,7 @@ function UA.Waiting(g)
     if rt == nil then return UA.blocked[g.id] == true end
     local _, _, both = NS.Schema.UnitAuraShape(g)
     if (both == true) ~= (rt.hasD == true) then return true end
+    if rt.mode == "members" and rt.short then return true end
     return UA.FullWaiting(g)
 end
 
@@ -1015,7 +1146,8 @@ function UA.ArmSwaps()
     local want = {}
     for gid in pairs(UA.placed) do
         local rt = UA.runtimes[gid]
-        if rt and UA.SWAP[rt.sent.unit] then want[rt.sent.unit] = true end
+        local key = rt and UA.SwapKey(rt.sent.unit)
+        if key and UA.SWAP[key] then want[key] = true end
     end
     for unit, event in pairs(UA.SWAP) do
         if want[unit] and not UA.armed[unit] and UA.Valid(event) then
@@ -1036,8 +1168,18 @@ function UA.OnSwap(unit, who)
     end
     for gid in pairs(UA.placed) do
         local rt = UA.runtimes[gid]
-        local c = rt and UA.Shown(rt)
-        if c and rt.sent.unit == unit and c:IsShown() and c.UpdateAllAuras then c:UpdateAllAuras() end
+        if rt and UA.SwapKey(rt.sent.unit) == unit then
+            local many = rt.mode == "members"
+            for i = 1, many and UA.Covered(rt) or 1 do
+                local c = many and rt.cs[i] or UA.Shown(rt)
+                if c and c:IsShown() and c.UpdateAllAuras then c:UpdateAllAuras() end
+            end
+            -- the members' frames may have changed hands
+            if rt.onFrames then
+                UA.pending = true
+                if not InCombatLockdown() then UA.Settle() end
+            end
+        end
     end
 end
 
@@ -1058,6 +1200,11 @@ end
 -- waited; secrecy can lift a beat after combat, so one more try a second later.
 function UA.Settle()
     Events.Coalesce("adua_rebind", UA.RebindPlates)
+    -- frames shift during a fight and party frames can appear after the load
+    for gid in pairs(UA.placed) do
+        local rt = UA.runtimes[gid]
+        if rt and rt.onFrames then UA.pending = true end
+    end
     if not UA.pending then return end
     UA.pending = false
     local E = NS.LayoutEngine
@@ -1114,7 +1261,7 @@ Events.OnMessage("AD_VISIBILITY", "adua", function()
                     if rt.bound[i] then UA.MirrorPlate(g, rt, i, gf) end
                 end
             else
-                G.MirrorOnto(UA.Shown(rt), gf, UA.Drawn(g))
+                UA.MirrorRows(g, rt, gf)
             end
         end
     end

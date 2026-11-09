@@ -54,6 +54,8 @@ local DEFAULTS = {
     -- already the player asking for it, so this starts on
     favPins = "both",
     favLook = "icon",       -- icon (the item's) / dot (the window's pin for its source)
+    -- a vein, herb or chest on the minimap within 50 / 100 yards keeps only its border: always / border50 / border100
+    nodeNear = "border50",
     -- place counts on the World Map (PlacePins.lua): on / off, and what they count: new, changed, Classic, marked
     placePins = "off",
     placeShow = { n = true, c = false, o = false, f = false },

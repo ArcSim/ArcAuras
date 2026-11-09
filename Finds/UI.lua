@@ -2697,6 +2697,9 @@ function UI.BuildSettings(body)
     set.favPins = Row("Pins", fy, { { "both", "World Map and Minimap" }, { "world", "World Map only" }, { "off", "Off" } }, "favPins")
     fy = fy + U(34)
     set.favLook = Row("Look", fy, { { "icon", "Item icon" }, { "dot", "Dot" } }, "favLook")
+    fy = fy + U(34)
+    set.nodeNear = Row("Nodes", fy, { { "always", "Always show the icon" }, { "border50", "Border only within 50 yd" },
+        { "border100", "Border only within 100 yd" } }, "nodeNear")
     favMap:SetHeight(fy + U(26) + U(12))
     set.favMap = favMap
 
@@ -2722,7 +2725,7 @@ function UI.BuildSettings(body)
     set.placeShow:SetPoint("TOPLEFT", U(84), -py)
     places:SetHeight(py + U(26) + U(12))
     set.places = places
-    set.controls = { credit, set.favPins, set.favLook, set.placePins, set.placeShow }
+    set.controls = { credit, set.favPins, set.favLook, set.nodeNear, set.placePins, set.placeShow }
 
     -- the item box's changes from Classic on every changed item, not only behind its button
     local items = T.Section(pane, "Items")

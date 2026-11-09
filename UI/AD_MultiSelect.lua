@@ -883,7 +883,7 @@ function M.Fill(pane, header, win, kit)
     local dup = AT.MakeSmallButton(act, "Duplicate", 74)
     local exp = AT.MakeSmallButton(act, "Export selection", 112)
     local act2 = AT.AddRow(pg, 28)
-    local del = AT.MakeSmallButton(act2, "Delete selection", 112)
+    local del = AT.MakeDangerButton(act2, "Delete selection", 112)
     local clr = AT.MakeQuietButton(act2, "Clear selection", 108)
     clr:SetPoint("LEFT", del, "RIGHT", 8, 0)
     act2._colCtrl = del

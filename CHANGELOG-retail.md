@@ -1,5 +1,20 @@
 # Arc Auras
 
+## 3.2.8
+
+Aura groups for your party and raid that you can click to dispel, and automatic combat logging.
+
+### New Features
+
+- **Party and raid auras** - An All auras on a unit group can now watch Any party member, Party 1 to 4 or Any raid member, with the same debuff type filters you use on yourself.
+- **Click the icons** - On those groups, the new Members tab lets a click target that player or cast your dispel on them. Pick what Left click and Right click do.
+- **On each party frame** - The Members tab can also place each player's auras on their own party or raid frame, on the side you choose.
+- **Auto Combat Log** - Logs combat in the dungeons and raids you pick, and asks first if you want it to. Turn it on in Modules > Auto Combat Log.
+
+### Improvements
+
+- **Delete buttons** - Delete buttons in the panel are now red.
+
 ## 3.2.7
 
 Tighter countdown text, charge spells that grey out on time, and a fix for the trinket Empty slot effect.

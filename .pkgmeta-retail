@@ -20,6 +20,7 @@ ignore:
   - ArcDisplay.toc
   - Bridge
   - Finds
+  - LFG
   - "*.bak"
   - Textures/ArcUI_Icon_400x400.tga
   - Textures/ArcUI_Icon_Dial_256.tga

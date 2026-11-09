@@ -1,0 +1,5 @@
+<Bindings>
+    <Binding name="ARCAURAS_QUESTLOOKUP" category="ADDONS" header="ARCAURAS" runOnUp="true">
+        if ArcAurasQuestLookup_Key then ArcAurasQuestLookup_Key(keystate) end
+    </Binding>
+</Bindings>

@@ -22,6 +22,8 @@ local dirty = true
 local function S() return ns.settings or {} end
 local function Mode() return S().favPins or "both" end
 local function Look() return S().favLook or "icon" end
+-- the Nodes setting: yards within which a vein, herb or chest on the minimap keeps only its border
+local NEAR = { border50 = 50, border100 = 100 }
 
 -- the items on the map: the favorites while Pins is on, less those taken off it (they stay favorites), and the Mark
 -- on Map item whatever the setting
@@ -192,7 +194,7 @@ local function Style(p, r, size)
     local kind = icon and 1 or group and 2 or 3
     local what = icon and r.id or group and #r.items or r.look
     if p.sKind == kind and p.sWhat == what and p.sSize == size and p.sGen == styleGen then return end
-    p.sKind, p.sWhat, p.sSize, p.sGen = kind, what, size, styleGen
+    p.sKind, p.sWhat, p.sSize, p.sGen, p.sSee = kind, what, size, styleGen, nil
     if icon then
         p.glow:Hide()
         p.ring:Hide()
@@ -216,6 +218,19 @@ local function Style(p, r, size)
             p.core:Hide()
             p.count:SetText(tostring(#r.items))
         end
+    end
+end
+
+-- a node this near keeps only its border (an icon) or its halo (a dot), so the game's own tracking dot under it shows
+-- whether the node is up
+local function SeeThrough(p, see)
+    if p.sSee == see then return end
+    p.sSee = see
+    if p.sKind == 1 then
+        p.face.icon:SetShown(not see)
+    elseif p.sKind == 3 then
+        p.ring:SetShown(not see)
+        p.fill:SetShown(not see)
     end
 end
 
@@ -527,8 +542,10 @@ local function MiniUpdate()
     end
     local n = 0
     local size = U(MINI_ICON)
+    local seeYards = NEAR[S().nodeNear]
     for _, r in ipairs(z.near) do
         local east, north = (r.x / 1000 - mx) * z.wide, (my - r.y / 1000) * z.tall
+        local see = seeYards ~= nil and r.look == "object" and east * east + north * north <= seeYards * seeYards
         -- a turning minimap keeps the player's facing up: the spots turn the other way
         if rotate then east, north = east * cs + north * sn, north * cs - east * sn end
         local sx, sy = east * perYard, north * perYard
@@ -544,6 +561,7 @@ local function MiniUpdate()
             end
             p.rec = r
             Style(p, r, size)
+            SeeThrough(p, see)
             p:SetFrameLevel(Minimap:GetFrameLevel() + 5)
             p:ClearAllPoints()
             p:SetPoint("CENTER", Minimap, "CENTER", sx, sy)

@@ -28,7 +28,7 @@ D.PER_ITEM = { icon = { position = { offsetX = true, offsetY = true } },
     bar = { fill = { shape = true, ringThick = true, ringStart = true, ringDir = true } } }
 -- The editor tabs whose rows are each item's own (what it tracks, its rules,
 -- where it loads, a Reminder group's reminders).
-D.PER_ITEM_TABS = { Tracking = true, Triggers = true, ["Load Conditions"] = true, Reminders = true }
+D.PER_ITEM_TABS = { Tracking = true, Members = true, Triggers = true, ["Load Conditions"] = true, Reminders = true }
 -- Rows an editor draws through its own control, with no plain row to offer.
 D.NOT_ON_PAGE = {
     iconGroup = { arrangement = { alignment = "the editor's own pick, in the words of the group's shape" } },

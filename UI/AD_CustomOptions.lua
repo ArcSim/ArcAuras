@@ -96,21 +96,27 @@ function Options.CustomWhat(rec)
     return Tr("custom icon, %s"):format(words)
 end
 
--- Ready-made Custom Bars (WoW Forever): picked in the Add window, made with
--- their rules. Every class sees every template, so players know they exist;
--- the tooltip names the class. Rule spells are rank 1; every rank matches by
--- name there.
+-- The Arcane Blast debuff on you can't be tracked by spell ID, so the casts
+-- count it: each adds a stack (4 at most); the first starts its 18 s, which
+-- later casts do not renew. Other spells leave it; dying clears it.
+local function ArcaneBlastDriver()
+    return { duration = 18, maxStacks = 4, clearOnEnd = true, showWhile = "stacks", rules = {
+        { when = "cast", spellID = 400574, act = "start", mode = "idle", secs = 18 },
+        { when = "cast", spellID = 400574, act = "add" },
+        { when = "cond_on", cond = "dead", act = "reset" },
+    } }
+end
+
+-- Ready-made Custom Bars and Icons (WoW Forever): picked in the Add window,
+-- made with their rules. Every class sees every template; the tooltip names
+-- the class. Rule spells are rank 1; every rank matches by name there.
 CO.TEMPLATES_FOREVER = {
-    -- The debuff on you can't be tracked by spell ID, so the casts count it:
-    -- each adds a stack (4 at most) and restarts its 8 s; the time running
-    -- out, casting any other spell, or dying clears them all.
     { key = "arcaneblast", class = "Mage", name = "Arcane Blast", art = 400574, showSpell = 400574, mode = "stack",
-      tip = "Your Arcane Blast stacks: up to 4, each cast restarts their 8 seconds; any other spell or dying clears them.",
-      driver = { duration = 8, maxStacks = 4, clearOnEnd = true, showWhile = "stacks", rules = {
-          { when = "cast", spellID = 400574, act = "add", restartToo = true, secs = 8 },
-          { when = "cast_except", spellID = 400574, act = "reset" },
-          { when = "cond_on", cond = "dead", act = "reset" },
-      } } },
+      tip = "Your Arcane Blast stacks: up to 4, for 18 seconds from the first cast; dying clears them.",
+      driver = ArcaneBlastDriver() },
+    { key = "arcaneblasticon", which = "Icon", class = "Mage", name = "Arcane Blast", art = 400574, showSpell = 400574,
+      tip = "Your Arcane Blast stacks: up to 4, for 18 seconds from the first cast; dying clears them.",
+      driver = ArcaneBlastDriver() },
 }
 
 -- A hunter trap's minute on the ground. When it springs the game sends the

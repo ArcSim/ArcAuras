@@ -7,7 +7,7 @@
 ## Notes-zhCN: 为你的技能冷却、光环和资源提供图标、图标组和状态条，全部在一个面板中设置。/arcauras 或 /arcui2
 ## Notes-zhTW: 為你的技能冷卻、光環和資源提供圖示、圖示群組和量條，全部在一個面板中設定。/arcauras 或 /arcui2
 ## Author: Arc
-## Version: 3.2.7
+## Version: 3.2.8
 ## IconTexture: Interface\AddOns\ArcAuras\Textures\ArcAuras_Icon_256
 ## SavedVariables: ArcAurasDB
 ## OptionalDeps: ArcUI, Masque
@@ -62,6 +62,9 @@ Core\AD_PressHighlight.lua
 Modules\AD_Pings.lua
 Modules\AD_KickAssist.lua [AllowLoadGameType standard]
 Modules\AD_ItemFinds.lua [ExcludeLoadGameType standard]
+Modules\AD_LFGFilter.lua [ExcludeLoadGameType standard]
+Modules\AD_QuestLookup.lua
+Modules\AD_AutoLog.lua
 Drivers\AD_DriverCooldown.lua
 Drivers\AD_DriverTotem.lua
 Drivers\AD_DriverEnchant.lua
@@ -120,6 +123,7 @@ Drivers\Special\AD_Special_PowerInfusion.lua
 Drivers\Special\AD_Special_NaturesGuardian.lua
 Core\AD_SpecialIcon.lua
 Drivers\AD_DriverUnitAuras.lua
+Drivers\AD_UnitAuraClicks.lua
 Drivers\AD_TypeLooks.lua
 Drivers\AD_DriverAuraRows.lua
 UI\AD_Options.lua
@@ -136,6 +140,9 @@ UI\AD_Modules.lua
 UI\AD_PingsOptions.lua
 UI\AD_KickAssistOptions.lua [AllowLoadGameType standard]
 UI\AD_ItemFindsOptions.lua [ExcludeLoadGameType standard]
+UI\AD_LFGFilterOptions.lua [ExcludeLoadGameType standard]
+UI\AD_QuestLookupOptions.lua [ExcludeLoadGameType standard]
+UI\AD_AutoLogOptions.lua
 UI\AD_EditorTabs.lua
 UI\AD_EffectsTab.lua
 UI\AD_FramePicker.lua

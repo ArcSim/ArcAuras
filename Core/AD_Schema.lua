@@ -2572,9 +2572,14 @@ Schema.UNIT_AURA_PLATES = 40
 -- The game hides an aura by spell ID only for buffs on you or your pet and
 -- debuffs on a unit you cannot assist (a target, a focus, an enemy plate);
 -- elsewhere an exclude list is skipped, so the hidden aura would still show.
+-- Buffs on group members are honoured too, debuffs on them never.
+Schema.UNIT_AURA_GROUP = { party = true, party1 = true, party2 = true, party3 = true, party4 = true, raid = true }
+-- Any member: one container per token, wrap blocks to a line.
+Schema.UNIT_AURA_MEMBERS = { party = { prefix = "party", count = 4, wrap = 1 },
+    raid = { prefix = "raid", count = 40, wrap = 5 } }
 function Schema.UnitAuraHideOK(unit, harmful)
     if harmful then return unit == "target" or unit == "focus" or unit == "nameplate" end
-    return unit == "player" or unit == "pet"
+    return unit == "player" or unit == "pet" or Schema.UNIT_AURA_GROUP[unit] == true
 end
 
 -- The unit and type a show-all group reads, and whether it shows both
@@ -2585,6 +2590,8 @@ function Schema.UnitAuraShape(rec)
     local unit = Store.Resolve(rec, "unitAuras", "unit")
     if unit == "nameplate" then return unit, true, false end
     local t = Store.Resolve(rec, "unitAuras", "auraType")
+    -- one container per member, each with one half
+    if Schema.UNIT_AURA_MEMBERS[unit] then return unit, t ~= "buff", false end
     return unit, t == "debuff", t == "both"
 end
 
@@ -2600,6 +2607,26 @@ end
 function Schema.UnitAuraOffPlates(rec)
     return NS.Store.Resolve(rec, "unitAuras", "unit") ~= "nameplate"
 end
+
+function Schema.UnitAuraBothOK(rec)
+    return Schema.UnitAuraOffPlates(rec)
+        and not Schema.UNIT_AURA_MEMBERS[NS.Store.Resolve(rec, "unitAuras", "unit")]
+end
+
+-- Friendly dispels of both games: the list offers those this character has,
+-- named by the game. Saved as "s<id>", so one group can travel between classes.
+Schema.DISPEL_SPELLS = { 527, 528, 552, 1152, 4987, 2782, 8946, 2893, 526, 2870, 475,
+    213634, 213644, 88423, 77130, 51886, 115450, 218164, 360823, 365585, 374251 }
+Schema.CLICK_VALUES, Schema.CLICK_IF = { "none", "target" }, {}
+for _, id in ipairs(Schema.DISPEL_SPELLS) do
+    local key = "s" .. id
+    Schema.CLICK_VALUES[#Schema.CLICK_VALUES + 1] = key
+    Schema.CLICK_IF[key] = function() return NS.Store.KnowsSpell(id) ~= false end
+end
+Schema.CLICK_LABELS = setmetatable({ none = "Nothing", target = "Target them" }, { __index = function(_, key)
+    local id = type(key) == "string" and tonumber(key:match("^s(%d+)$"))
+    return id and C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(id) or key -- raw-id: a fixed dispel from the list above
+end })
 
 -- Max shown, retired for Rows by Columns: a saved cap under one line becomes
 -- that many columns, so the box and the cap stay as they were; a longer one
@@ -2743,9 +2770,11 @@ Schema.iconGroup = {
             labels = { tracked = "Tracked auras", unit = "All auras on a unit" }, label = "Shows",
             showIf = function() return NS.DriverAuraGroups ~= nil and NS.DriverAuraGroups.IsAvailable() end,
             desc = "Tracked auras: the aura icons you add, matched by spell ID. All auras on a unit: every buff or debuff on a unit, no icons to add." },
-        unit = { d = "player", t = "enum", values = { "player", "pet", "target", "focus", "nameplate" },
+        unit = { d = "player", t = "enum", values = { "player", "pet", "target", "focus",
+                "party", "party1", "party2", "party3", "party4", "raid", "nameplate" },
             labels = { player = "Player", pet = "Pet", target = "Target", focus = "Focus",
-                nameplate = "Enemy nameplates" }, label = "Unit",
+                party = "Any party member", party1 = "Party 1", party2 = "Party 2", party3 = "Party 3",
+                party4 = "Party 4", raid = "Any raid member", nameplate = "Enemy nameplates" }, label = "Unit",
             valueIf = { focus = function()
                 return not (C_EventUtils and C_EventUtils.IsEventValid)
                     or C_EventUtils.IsEventValid("PLAYER_FOCUS_CHANGED")
@@ -2755,7 +2784,7 @@ Schema.iconGroup = {
         -- the unit's container as two aura groups
         auraType = { d = "buff", t = "enum", values = { "buff", "debuff", "both" },
             labels = { buff = "Buffs", debuff = "Debuffs", both = "Buffs and debuffs" }, label = "Aura type",
-            valueIf = { buff = Schema.UnitAuraOffPlates, both = Schema.UnitAuraOffPlates },
+            valueIf = { buff = Schema.UnitAuraOffPlates, both = Schema.UnitAuraBothOK },
             dep = { field = "shows", value = "unit" } },
         caster = { d = "any", t = "enum", values = { "any", "mine", "others" },
             labels = { any = "Anyone", mine = "Me (or my pet)", others = "Anyone but me" }, label = "Cast by",
@@ -2771,7 +2800,26 @@ Schema.iconGroup = {
         debuffLine = { d = true, t = "bool", label = "Debuffs start a new line",
             desc = "On: the debuffs start on the line after the buffs. Off: they follow straight on.",
             dep = { { field = "shows", value = "unit" }, { field = "auraType", value = "both" },
-                { field = "unit", notValue = "nameplate" } } },
+                { field = "unit", notValue = "nameplate" }, { field = "unit", notValue = "party" },
+                { field = "unit", notValue = "raid" } } },
+        showAt = { d = "group", t = "enum", values = { "group", "frames" },
+            labels = { group = "In the group's place", frames = "On each party frame" }, label = "Show at",
+            dep = { field = "shows", value = "unit" } },
+        frameEdge = { d = "right", t = "enum", values = { "top", "bottom", "left", "right" },
+            labels = { top = "Top", bottom = "Bottom", left = "Left", right = "Right" }, label = "Attach to the frame",
+            dep = { { field = "shows", value = "unit" }, { field = "showAt", value = "frames" } } },
+        frameX = { d = 4, t = "int", min = -200, max = 200, label = "Offset X",
+            dep = { { field = "shows", value = "unit" }, { field = "showAt", value = "frames" } } },
+        frameY = { d = 0, t = "int", min = -200, max = 200, label = "Offset Y",
+            dep = { { field = "shows", value = "unit" }, { field = "showAt", value = "frames" } } },
+        clicks = { d = false, t = "bool", label = "Click the icons",
+            dep = { field = "shows", value = "unit" } },
+        clickLeft = { d = "target", t = "enum", values = Schema.CLICK_VALUES, labels = Schema.CLICK_LABELS,
+            valueIf = Schema.CLICK_IF, label = "Left click",
+            dep = { { field = "shows", value = "unit" }, { field = "clicks" } } },
+        clickRight = { d = "none", t = "enum", values = Schema.CLICK_VALUES, labels = Schema.CLICK_LABELS,
+            valueIf = Schema.CLICK_IF, label = "Right click",
+            dep = { { field = "shows", value = "unit" }, { field = "clicks" } } },
         order = { d = "default", t = "enum", values = { "default", "time" },
             labels = { default = "Game default", time = "Time left" }, label = "Order",
             desc = "Game default puts your own auras first. Time left puts the aura closest to running out first; auras that never end come last.",
@@ -3019,11 +3067,12 @@ for _, t in ipairs(Schema.TYPE_LOOKS) do Schema.TYPE_KEYS[t.key] = true end
 
 -- A full look per type splits one half into an engine aura group per type:
 -- Buffs or Debuffs alone (a group per type cannot start the debuffs on a new
--- line once its first type is empty), off the plates (a group per type on
--- every plate is too many frames). Elsewhere the types show Colors and badges.
+-- line once its first type is empty), off the plates and any-member units (a
+-- group per type on every row is too many frames). Elsewhere the types show
+-- Colors and badges.
 function Schema.TypeFullOK(rec)
     local unit, _, both = Schema.UnitAuraShape(rec)
-    return unit ~= "nameplate" and both ~= true
+    return unit ~= "nameplate" and not Schema.UNIT_AURA_MEMBERS[unit] and both ~= true
 end
 
 -- What a type's full look may set: the icon look rows a show-all group's

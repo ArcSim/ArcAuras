@@ -21,6 +21,10 @@ Aura groups for your party and raid that you can click to dispel, three new modu
 - **Item Finds: minimap nodes** - In the full finder, the minimap pin of a marked vein, herb or chest hides its icon when you are close, so you can see whether the node is up. Change the distance or turn it off under Settings, Favorites on the Map, Nodes.
 - **Item Finds: item data** - Updated with Forever's latest data: 23 more new items, 66 hidden items now have names, over 200 old items show what Forever changed (Scholomance, Stratholme, Dire Maul and Blackrock Depths gear among them), and new drop places found by players.
 
+### Bug Fixes
+
+- **Expressway font** - Bar texts and the panel now show Expressway when another addon has already loaded it, instead of falling back to the default font.
+
 ## 3.2.7
 
 Tighter countdown text, charge spells that grey out on time, and a fix for the trinket Empty slot effect.

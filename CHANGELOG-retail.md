@@ -15,6 +15,10 @@ Aura groups for your party and raid that you can click to dispel, and automatic 
 
 - **Delete buttons** - Delete buttons in the panel are now red.
 
+### Bug Fixes
+
+- **Expressway font** - Bar texts and the panel now show Expressway when another addon has already loaded it, instead of falling back to the default font.
+
 ## 3.2.7
 
 Tighter countdown text, charge spells that grey out on time, and a fix for the trinket Empty slot effect.

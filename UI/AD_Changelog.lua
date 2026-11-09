@@ -42,6 +42,10 @@ CL.versions = {
                 { title = "Item Finds: item data",
                     desc = "Updated with Forever's latest data: 23 more new items, 66 hidden items now have names, over 200 old items show what Forever changed (Scholomance, Stratholme, Dire Maul and Blackrock Depths gear among them), and new drop places found by players." },
             } },
+            { header = "Bug Fixes", items = {
+                { title = "Expressway font",
+                    desc = "Bar texts and the panel now show Expressway when another addon has already loaded it, instead of falling back to the default font." },
+            } },
         },
     },
     {
@@ -1607,6 +1611,10 @@ CL.retailVersions = {
             { header = "Improvements", items = {
                 { title = "Delete buttons",
                     desc = "Delete buttons in the panel are now red." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Expressway font",
+                    desc = "Bar texts and the panel now show Expressway when another addon has already loaded it, instead of falling back to the default font." },
             } },
         },
     },

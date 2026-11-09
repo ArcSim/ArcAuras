@@ -8,7 +8,7 @@ local AT = {}
 -- Other addons carry copies of this file, generated from it by the
 -- arc-theme-sync tool, which compares this number to find stale copies.
 -- Bump it on every change and never edit a copy.
-AT.VERSION = 39
+AT.VERSION = 40
 
 -- The addon this copy loads in: a palette's font file sits in its folder.
 local THEME_ADDON = ...
@@ -212,6 +212,8 @@ end
 
 -- Whether a font string took the font: SetFont's answer can be false for a
 -- font that loads, so the probe starts on the game's font and reads back.
+-- The read-back names whichever path loaded that file first, so a font that
+-- moved off the game's font counts even when the path is not ours.
 function AT.FontTook(fs, path, size, flags)
     if type(path) ~= "string" or path == "" then return false end
     local base = STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF"
@@ -220,7 +222,7 @@ function AT.FontTook(fs, path, size, flags)
     local got = fs:GetFont()
     if type(got) ~= "string" then return false end
     local function norm(s) return (s:gsub("/", "\\"):lower()) end
-    return norm(got) == norm(path)
+    return norm(got) == norm(path) or norm(got) ~= norm(base)
 end
 
 -- A font string without a font cannot take text, so a palette's font is

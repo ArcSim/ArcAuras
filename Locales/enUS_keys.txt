@@ -1623,6 +1623,7 @@ Drag, size and anchor this layout's elements on your screen.
 Drag: move this button
 Drain: the time left
 Drawn on screen while this window is open, with an "unloaded" tag. It loads on: %s. Click to hide it again.
+Draws the icon at this count, for an aura set to show only its glows.
 Driven by
 Drop sound
 Drops every talent picked in this tree. Other classes' and specs' picks stay.
@@ -3653,6 +3654,7 @@ Ready text
 Ready text string
 Ready tint
 Ready tint color
+Ready to turn in
 Ready's and Recharging's grey wait while it is out of range, lacks the resource or can't be used; their own grey applies then.
 Ready, a fake cooldown, then ready again (a charge spell: Ready, Recharging, No charges and back). Swipe, texts, dims and glows loop.
 Ready, the timer runs, the aura is up, then the cooldown runs out to Ready again.
@@ -4033,6 +4035,7 @@ Show tenths
 Show the Auto Shot windup
 Show the bar bigger. When it no longer fits, drag the preview to look around.
 Show the bar smaller. The mouse wheel over the preview zooms too.
+Show the icon
 Show the off-hand on this bar
 Show the ping feed
 Show the pulse timer

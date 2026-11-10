@@ -10362,7 +10362,7 @@ local function BuildIconEditor(parent)
     for n = 1, Schema.STACK_SLOTS or 1 do
         local pre = Schema.StackPre(n)
         AddPart(stateDef, "auraActive", { pre .. "Rule", pre .. "A", pre .. "B", pre .. "Alpha", pre .. "Desaturate",
-            pre .. "TintEnabled", pre .. "TintColor" })
+            pre .. "TintEnabled", pre .. "TintColor", pre .. "ShowArt" })
     end
     AddPart(stateDef, "states", { "chargesRule", "chargesA", "chargesB", "chargesAlpha", "chargesDesaturate",
         "chargesTintEnabled", "chargesTintColor" })
@@ -10377,6 +10377,12 @@ local function BuildIconEditor(parent)
     -- Charges at a count stays off the Defaults page: a spell's By State page
     -- is at its height (900), and a page of its own would add a sub-tab row to it
     if EF then
+        for n = 1, Schema.STACK_SLOTS or 1 do
+            local field = Schema.StackPre(n) .. "ShowArt"
+            EF.LookRow(Schema.StackPre(n), "auraActive", { field }, function(r)
+                if Store.Resolve(r, "auraActive", field) == true then return "Show the icon" end
+            end)
+        end
         EF.LookRow("out", "outOfStock", { "hideWhenMissing" }, function(r)
             if Store.Resolve(r, "outOfStock", "hideWhenMissing") == true then return "Hidden", true end
         end)

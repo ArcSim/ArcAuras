@@ -564,6 +564,14 @@ local function Have(r, c)
 end
 EF.Have = Have
 
+-- an effect the card can still take (a count's When tab is not one of them)
+function EF.CanAddFx(r, c)
+    for _, fx in ipairs(Allowed(r, c)) do
+        if not EF.Has(r, c, fx) then return true end
+    end
+    return false
+end
+
 -- A card is listed: it does something, is an own look, the fade rules while
 -- they hold something, or was added from + Add a trigger.
 local function Listed(r, c)
@@ -753,9 +761,8 @@ function EF.OpenCard(r, cards)
             if c.key == lk and not c.i and On(c) then return c end
         end
     end
-    for _, c in ipairs(all) do
-        if On(c) then return c end
-    end
+    -- nothing picked: the top of the list as drawn, never the unsorted one's
+    return (cards or EF.Cards(r))[1]
 end
 
 function EF.Picked(r)
@@ -2425,7 +2432,7 @@ function EF.Build(pg, ctx, vis, owner, under)
         if RowW(padX) > inner then padX = 5 end
         local tabsW = RowW(padX)
         -- + Add effect after the tabs, or above them where they leave it no room
-        local left = #Allowed(r, c) > #have
+        local left = EF.CanAddFx(r, c)
         local addW = left and AddFxButton():GetWidth() or 0
         local above = left and #have > 0 and tabsW + 3 + 5 + addW > inner
         local by = 0

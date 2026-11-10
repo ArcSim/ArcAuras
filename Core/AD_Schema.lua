@@ -1934,6 +1934,14 @@ Schema.icon = {
         stacksTintColor = { d = { 1, 0.3, 0.3, 1 }, t = "color", kinds = AAX, showIf = CountGateShows,
             label = "Tint color at that count",
             dep = { { field = "stacksRule", notValue = "any" }, { field = "stacksTintEnabled" } } },
+        -- Only its glows draws no art: this draws the icon at the count
+        stacksShowArt = { d = false, t = "bool", kinds = SPX, label = "Show the icon",
+            showIf = function(rec)
+                local F = NS.Factory
+                return CountGateShows(rec) and F ~= nil and F.AuraGlowOnly ~= nil and F.AuraGlowOnly(rec)
+            end,
+            dep = { field = "stacksRule", notValue = "any" },
+            desc = "Draws the icon at this count, for an aura set to show only its glows." },
         activeGlow = { d = false, t = "bool", label = "Glow while active" },
         -- The gates ride a lane: the icon's own (DriverAura) or its Dynamic
         -- row's (AD_DriverAuraRows). The pick is one of the icon's spells, its
@@ -2351,7 +2359,7 @@ Schema.COUNT_GLOW_LABELS = { Glow = "Glow at that count", GlowType = "Glow style
 -- Several stacks states on one icon (dim at 1 to 4, glow at 5): slot 1 is
 -- stacks*, the others stacks2*, stacks3*, each the same rows as slot 1.
 Schema.STACK_SLOTS = 3
-Schema.STACK_LOOK_PARTS = { "Rule", "A", "B", "Alpha", "Desaturate", "TintEnabled", "TintColor" }
+Schema.STACK_LOOK_PARTS = { "Rule", "A", "B", "Alpha", "Desaturate", "TintEnabled", "TintColor", "ShowArt" }
 function Schema.StackPre(n) return (n and n > 1) and ("stacks" .. n) or "stacks" end
 do
     local function copy(v)

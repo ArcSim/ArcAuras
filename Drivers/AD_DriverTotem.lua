@@ -36,6 +36,10 @@ DT.SAME_BURST = 0.25
 -- the longer waits a player may pick (driver.slotWait), in seconds
 DT.WAITS = { 1, 1.5, 2, 3, 4, 5 }
 DT.QUEUE_MAX = 8
+-- An icon can follow a spell that summons nothing (a buff's cast with its
+-- totem ticked). While another cast waits too, one that has lit nothing gives
+-- way. A cast waiting alone always pairs. Per session.
+DT.missed = {}     -- [spell name] = casts in a row that lit no slot
 -- how many of one spell an icon can tell apart (driver.which: First to Fourth)
 DT.WHICH_MAX = 4
 -- Seconds between pulses, keyed by the rank 1 spell ID; other ranks match by
@@ -198,11 +202,19 @@ function DT.Window(name, rec)
     return math.max(DT.PAIR_WINDOW, hand or 0)
 end
 
+-- A spell the player set to wait for its slot, or to show from the cast, is a
+-- summon by their word: it never counts as lighting nothing.
+function DT.NoteMiss(name)
+    if DT.Window(name) > DT.PAIR_WINDOW or DT.Predicting(name) then return end
+    DT.missed[name] = (DT.missed[name] or 0) + 1
+end
+
 -- casts too old to pair any slot drop out
 function DT.Prune(now)
     local q, i = DT.queue, 1
     while q[i] do
         if now - q[i].at > math.max(DT.Window(q[i].name), DT.PLAIN_MAX) then
+            DT.NoteMiss(q[i].name)
             table.remove(q, i)
         else
             i = i + 1
@@ -217,13 +229,24 @@ end
 function DT.TakeCast(now, name, sid, slot)
     DT.Prune(now)
     local q = DT.queue
+    -- a cast that gives way goes, or it would take the burst's next slot
+    local function Take(i)
+        local c = table.remove(q, i)
+        if DT.missed[c.name] then
+            DT.missed[c.name] = nil
+        else
+            for j = #q, 1, -1 do
+                if DT.missed[q[j].name] and now - q[j].at <= DT.Window(q[j].name) then table.remove(q, j) end
+            end
+        end
+        return c
+    end
     -- a plain slot takes its own spell's cast first: one cast dropping several
     -- totems reports their casts in another order than their slots light
     if name ~= nil then
         for i, c in ipairs(q) do
             if ((sid ~= nil and Store.SpellMatch(c.id, sid)) or c.name == name) and now - c.at <= DT.PLAIN_MAX then
-                table.remove(q, i)
-                return c
+                return Take(i)
             end
         end
     end
@@ -233,19 +256,23 @@ function DT.TakeCast(now, name, sid, slot)
         local h = slot and DT.HomeSlot(c.name)
         return h ~= nil and h ~= slot
     end
-    for i, c in ipairs(q) do
-        local age = now - c.at
-        local same = name ~= nil and ((sid ~= nil and Store.SpellMatch(c.id, sid)) or c.name == name)
-        if not Away(c) and (age <= DT.Window(c.name) or (same and age <= DT.PLAIN_MAX)) then
-            table.remove(q, i)
-            return c
+    local function Waiting(evenMissed)
+        for i, c in ipairs(q) do
+            local age = now - c.at
+            local same = name ~= nil and ((sid ~= nil and Store.SpellMatch(c.id, sid)) or c.name == name)
+            if (evenMissed or not DT.missed[c.name]) and not Away(c)
+                and (age <= DT.Window(c.name) or (same and age <= DT.PLAIN_MAX)) then
+                return i
+            end
         end
     end
+    local i = Waiting(false) or Waiting(true)
+    if i then return Take(i) end
     if name == nil or not q[1] or now - q[1].at > DT.PLAIN_MAX or Away(q[1]) then return nil end
     for _, c in ipairs(q) do
         if c.name ~= q[1].name then return nil end
     end
-    return table.remove(q, 1)
+    return Take(1)
 end
 
 -- Forever: the slot an element totem drops into, by spell name, from the
@@ -739,14 +766,15 @@ end
 -- half second can never name a slot.
 function DT.OnCast(spellID)
     local name = DT.SpellName(spellID) -- raw-id: the cast the game reports
-    if not DT.IsTotemName(name) then return end
     local now = GetTime()
+    DT.Prune(now)
+    if not DT.IsTotemName(name) then return end
     local c = { name = name, id = spellID, at = now }
     if DT.LateCast(DT.pending, now, c, true) or DT.LateCast(DT.waiting, now, c, false) then
+        DT.missed[name] = nil
         DT.Changed()
         return
     end
-    DT.Prune(now)
     local q = DT.queue
     q[#q + 1] = { name = name, id = spellID, at = now }
     while #q > DT.QUEUE_MAX do table.remove(q, 1) end

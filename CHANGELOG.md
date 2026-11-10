@@ -1,5 +1,19 @@
 # Arc Auras
 
+## 3.2.9
+
+Show the icon at a stack count, Quest Lookup tells you when a quest is done, and fixes for Effects and totem timers.
+
+### Improvements
+
+- **Show the icon** - On a spell icon whose aura shows only its glows, a Stacks at a count trigger can now show the icon at that count. Find it in the trigger's Look.
+- **Quest Lookup** - A quest you have finished now says Ready to turn in.
+
+### Bug Fixes
+
+- **+ Add effect** - Stacks and Charges at a count triggers can add a Look after a Glow, and + Add effect always adds to the trigger on screen.
+- **Totem timers** - A spell that summons nothing no longer takes the timer of a totem or summon cast right after it.
+
 ## 3.2.8
 
 Aura groups for your party and raid that you can click to dispel, three new modules, and the latest Item Finds data.

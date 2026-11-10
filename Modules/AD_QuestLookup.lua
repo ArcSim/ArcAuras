@@ -40,6 +40,33 @@ local function NpcID(unit)
     return tonumber(id)
 end
 
+local function ObjectiveRow(text, done)
+    if Secret(done) then done = false end
+    return { text = text, col = (done == true) and GREEN or COL.dim, x = INDENT }
+end
+
+local function Objectives(id)
+    local list = C_QuestLog.GetQuestObjectives(id)
+    if Secret(list) or type(list) ~= "table" then return {} end
+    return list
+end
+
+-- Every objective finished. With none to read, the game's own word decides.
+local function IsReady(id, objectives)
+    local any = false
+    for _, o in ipairs(objectives) do
+        local done = o.finished
+        if Secret(done) or done ~= true then return false end
+        any = true
+    end
+    if any then return true end
+    local api = C_QuestLog
+    local ready = api.ReadyForTurnIn and api.ReadyForTurnIn(id)
+    if not Secret(ready) and ready == true then return true end
+    local complete = api.IsComplete and api.IsComplete(id)
+    return not Secret(complete) and complete == true
+end
+
 -- The game's own answer. Secret text still draws, so only the line's type has to be plain.
 local function FromTooltip(unit, out, seen)
     local types = Enum and Enum.TooltipDataLineType
@@ -54,12 +81,11 @@ local function FromTooltip(unit, out, seen)
         local hasText = Secret(text) or (type(text) == "string" and text ~= "")
         if hasText and not Secret(kind) then
             if kind == types.QuestTitle then
-                out[#out + 1] = { text = text, col = COL.ink }
-                if not Secret(text) then seen[text] = true end
+                local row = { text = text, col = COL.ink }
+                out[#out + 1] = row
+                if not Secret(text) then seen[text] = row end
             elseif kind == types.QuestObjective then
-                local done = line.completed
-                if Secret(done) then done = false end
-                out[#out + 1] = { text = text, col = (done == true) and GREEN or COL.dim, x = INDENT }
+                out[#out + 1] = ObjectiveRow(text, line.completed)
             end
         end
     end
@@ -73,9 +99,10 @@ local function NamesMob(text, mob)
     return after == "" or not after:find("[%w\128-\255]")
 end
 
+-- A quest the tooltip named learns whether it is finished here, since its lines carry no quest ID.
 -- For quests the tooltip left out: an objective that names this mob.
 local function FromLog(mob, out, seen)
-    if Secret(mob) or type(mob) ~= "string" or mob == "" then return end
+    local canMatch = not Secret(mob) and type(mob) == "string" and mob ~= ""
     local api = C_QuestLog
     if not (api and api.GetNumQuestLogEntries and api.GetInfo and api.GetQuestObjectives) then return end
     local n = api.GetNumQuestLogEntries()
@@ -84,22 +111,25 @@ local function FromLog(mob, out, seen)
         local info = api.GetInfo(i)
         if type(info) == "table" then
             local title, id, isHeader = info.title, info.questID, info.isHeader
-            if not Secret(title) and type(title) == "string" and not seen[title]
+            if not Secret(title) and type(title) == "string"
                 and not Secret(isHeader) and isHeader ~= true and not Secret(id) and id then
-                local objectives = api.GetQuestObjectives(id)
-                local named = false
-                for _, o in ipairs(type(objectives) == "table" and objectives or {}) do
-                    local text, kind = o.text, o.type
-                    if not Secret(text) and type(text) == "string" and not Secret(kind)
-                        and kind == "monster" and NamesMob(text, mob) then
-                        if not named then
-                            named = true
-                            seen[title] = true
-                            out[#out + 1] = { text = title, col = COL.ink }
+                local shown = seen[title]
+                if shown then
+                    shown.ready = IsReady(id, Objectives(id))
+                elseif canMatch then
+                    local objectives = Objectives(id)
+                    local row
+                    for _, o in ipairs(objectives) do
+                        local text, kind = o.text, o.type
+                        if not Secret(text) and type(text) == "string" and not Secret(kind)
+                            and kind == "monster" and NamesMob(text, mob) then
+                            if not row then
+                                row = { text = title, col = COL.ink, ready = IsReady(id, objectives) }
+                                seen[title] = row
+                                out[#out + 1] = row
+                            end
+                            out[#out + 1] = ObjectiveRow(text, o.finished)
                         end
-                        local done = o.finished
-                        if Secret(done) then done = false end
-                        out[#out + 1] = { text = text, col = (done == true) and GREEN or COL.dim, x = INDENT }
                     end
                 end
             end
@@ -122,8 +152,31 @@ local function Word(why)
     if why == "loot" then return Tr("Loot") end
 end
 
--- A source's quests: the log's turn-ins join the quests above, and anything else in the log is the game's to answer.
-local function FromSources(npc, mine, open)
+-- A source's quest in the log: its title and every objective, the item ones too.
+local function AddLogQuest(id, title, mine, seen)
+    if seen[title] then return end
+    local objectives = Objectives(id)
+    local row = { text = title, col = COL.ink, ready = IsReady(id, objectives) }
+    seen[title] = row
+    mine[#mine + 1] = row
+    for _, o in ipairs(objectives) do
+        local text = o.text
+        if Secret(text) or (type(text) == "string" and text ~= "") then
+            mine[#mine + 1] = ObjectiveRow(text, o.finished)
+        end
+    end
+end
+
+-- The log's own spelling, which is what the other quests above were matched on.
+local function LogTitle(index, fallback)
+    local info = C_QuestLog.GetInfo(index)
+    local title = type(info) == "table" and info.title or nil
+    if Secret(title) or type(title) ~= "string" then return fallback end
+    return title
+end
+
+-- A source's quests: the log's turn-ins and the quests it ties to this mob join the quests above.
+local function FromSources(npc, mine, open, seen)
     if not npc or #sources == 0 then return end
     local api = C_QuestLog
     local level = UnitLevel("player")
@@ -138,7 +191,10 @@ local function FromSources(npc, mine, open)
                 local inLog = (not Secret(index)) and index ~= nil
                 if inLog then
                     if q.why == "ends" then
-                        mine[#mine + 1] = { text = q.name, col = GREEN, word = word, wordCol = GREEN }
+                        local ready = IsReady(q.id, Objectives(q.id))
+                        mine[#mine + 1] = { text = q.name, col = GREEN, word = ready and Tr("Ready to turn in") or word, wordCol = GREEN }
+                    elseif q.why ~= "gives" then
+                        AddLogQuest(q.id, LogTitle(index, q.name), mine, seen)
                     end
                 elseif q.why ~= "ends" then
                     local text = q.level and ("[%d] %s"):format(q.level, q.name) or q.name
@@ -154,16 +210,35 @@ local function Caption(rows, words)
     rows[#rows + 1] = { text = Tr(words), col = COL.arc }
 end
 
+-- A finished quest's line closes its block; the indented rows are the block's objectives.
+local function WithReady(rows)
+    local out, owed = {}, false
+    local function Settle()
+        if owed then out[#out + 1] = { text = Tr("Ready to turn in"), col = GREEN, x = INDENT } end
+        owed = false
+    end
+    for _, r in ipairs(rows) do
+        if not r.x then
+            Settle()
+            owed = r.ready == true
+        end
+        out[#out + 1] = r
+    end
+    Settle()
+    return out
+end
+
 -- What the box shows for a unit: its name (may be secret) and the flat rows, capped so the box stays small.
 function QL.Collect(unit)
     local name = UnitName(unit)
     local mine, open, seen = {}, {}, {}
     FromTooltip(unit, mine, seen)
     FromLog(name, mine, seen)
+    FromSources(NpcID(unit), mine, open, seen)
     if #mine == 0 and Related(unit) then
         mine[1] = { text = Tr("Part of a quest in your log"), col = COL.ink }
     end
-    FromSources(NpcID(unit), mine, open)
+    mine = WithReady(mine)
 
     local rows = {}
     if #open > 0 and #mine > 0 then Caption(rows, "In your log") end

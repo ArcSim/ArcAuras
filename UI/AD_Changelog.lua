@@ -13,6 +13,24 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.2.9",
+        intro = "Show the icon at a stack count, Quest Lookup tells you when a quest is done, and fixes for Effects and totem timers.",
+        sections = {
+            { header = "Improvements", items = {
+                { title = "Show the icon",
+                    desc = "On a spell icon whose aura shows only its glows, a Stacks at a count trigger can now show the icon at that count. Find it in the trigger's Look." },
+                { title = "Quest Lookup",
+                    desc = "A quest you have finished now says Ready to turn in." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "+ Add effect",
+                    desc = "Stacks and Charges at a count triggers can add a Look after a Glow, and + Add effect always adds to the trigger on screen." },
+                { title = "Totem timers",
+                    desc = "A spell that summons nothing no longer takes the timer of a totem or summon cast right after it." },
+            } },
+        },
+    },
+    {
         version = "3.2.8",
         intro = "Aura groups for your party and raid that you can click to dispel, three new modules, and the latest Item Finds data.",
         sections = {
@@ -1594,6 +1612,22 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.2.9",
+        intro = "Show the icon at a stack count, and fixes for Effects and totem timers.",
+        sections = {
+            { header = "Improvements", items = {
+                { title = "Show the icon",
+                    desc = "On a spell icon whose aura shows only its glows, a Stacks at a count trigger can now show the icon at that count. Find it in the trigger's Look." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "+ Add effect",
+                    desc = "Stacks and Charges at a count triggers can add a Look after a Glow, and + Add effect always adds to the trigger on screen." },
+                { title = "Totem timers",
+                    desc = "A spell that summons nothing, like Ruination, no longer takes the timer of a summon cast right after it, like Call Dreadstalkers." },
+            } },
+        },
+    },
     {
         version = "3.2.8",
         intro = "Aura groups for your party and raid that you can click to dispel, and automatic combat logging.",

@@ -414,7 +414,7 @@ function Driver.CountCut(s)
     local L = s.look
     s.inside = true
     s.whole = L.alpha <= 0
-    s.copy = not s.whole and (L.alpha < 1 or L.grey or L.tint ~= nil)
+    s.copy = not s.whole and (L.alpha < 1 or L.grey or L.tint ~= nil or L.show == true)
     s.glow = not s.whole and L.glow
     if not (s.whole or s.copy or s.glow) then return nil end
     return s
@@ -439,6 +439,7 @@ function Driver.StacksState(rec, n)
     local m = (id and Max) and Max(id)
     if type(m) == "number" and not (issecretvalue and issecretvalue(m)) and m > top then top = m end
     local look = Driver.CountLook(rec, "auraActive", pre)
+    look.show = R("ShowArt") == true and Factory.AuraGlowOnly(rec) == true
     -- ranked under Aura active (which holds whenever it does): only its glow
     local _, under = Driver.OrderMarks(rec)
     if under and under[pre] then look = { alpha = 1, grey = false, tint = nil, glow = look.glow } end

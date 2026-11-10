@@ -4148,7 +4148,7 @@ Schema.bar = {
     -- bars (the editor shows it for pips only). A continuous bar flips the
     -- whole fill, a segmented one colours its cells, all as extra engine-driven
     -- fills shown by count, which is never read.
-    stackcolors = { push = true, kinds = { aura = true, resource = true }, modes = { stack = true }, fields = {
+    stackcolors = { push = true, kinds = { aura = true, resource = true, timer = true }, modes = { stack = true }, fields = {
         -- On: each cell keeps its band's colour by position. Off (default): the
         -- whole fill takes a band's colour once the count reaches it.
         scPosition = { d = false, t = "bool", kinds = { aura = true }, appWindow = true,

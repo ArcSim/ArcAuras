@@ -156,29 +156,29 @@ local GREENC = { 0.482, 0.847, 0.561 }
 -- (Heals & Shields, Castbar) sits right after it. An old pick lands
 -- on its new home (Options.EditorTabs.Home, UI\AD_EditorTabs.lua).
 local BAR_TABS = {
-    cooldown = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
-    aura     = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
-    timer    = { "Tracking", "Triggers", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
-    stack    = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
-    swing    = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
-    resource = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
-    health   = { "Tracking", "Appearance", "Conditions", "Heals & Shields", "Text", "Position", "Load Conditions" },
-    cast     = { "Tracking", "Appearance", "Conditions", "Castbar", "Text", "Position", "Load Conditions" },
-    enchant  = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
-    range    = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    cooldown = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
+    aura     = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
+    timer    = { "Tracking", "Triggers", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
+    stack    = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
+    swing    = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
+    resource = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
+    health   = { "Tracking", "Appearance", "Effects", "Heals & Shields", "Text", "Position", "Load Conditions" },
+    cast     = { "Tracking", "Appearance", "Effects", "Castbar", "Text", "Position", "Load Conditions" },
+    enchant  = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
+    range    = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
     -- a Text element: one string, no text runs of its own (Bars\AD_TextElement.lua);
     -- Triggers only with rules of its own (Options.TextTabs); this is every tab it can have
-    text     = { "Tracking", "Triggers", "Appearance", "Conditions", "Position", "Load Conditions" },
+    text     = { "Tracking", "Triggers", "Appearance", "Effects", "Position", "Load Conditions" },
     -- Triggers only with custom triggers (Options.TextureTabs); this is every tab it can have
-    texture  = { "Tracking", "Triggers", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    texture  = { "Tracking", "Triggers", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
     -- a wheel opens at the cursor: no place, chrome or show rules (Bars\AD_Wheel.lua)
     wheel    = { "Wheel", "Appearance", "Load Conditions" },
     -- an Arc Proc's deck (Bars\AD_SpecialBar.lua, rows in UI\AD_SpecialOptions.lua)
-    special  = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    special  = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
     -- a copy of a Cooldown Manager Tracked Bar (Bars\AD_CDMBar.lua, rows in UI\AD_CDMBarOptions.lua)
-    cdmbar   = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    cdmbar   = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
     -- a totem's time left (Bars\AD_TotemBar.lua, rows in UI\AD_TotemBarOptions.lua)
-    totembar = { "Tracking", "Appearance", "Conditions", "Text", "Position", "Load Conditions" },
+    totembar = { "Tracking", "Appearance", "Effects", "Text", "Position", "Load Conditions" },
     -- a Sound item draws nothing: its rules, and when it loads (Bars\AD_SoundItem.lua)
     sound    = { "Tracking", "Load Conditions" },
 }
@@ -367,6 +367,7 @@ local function BarPillText(barKind, barMode)
     if barKind == "totembar" then return "Totem Bar", Options.ICON_PILL_COLORS.totem end
     return stack and "CD Stack" or "CD Duration", YELLOW
 end
+Options.BarPillText = BarPillText
 
 -- A family keeps its colour across icons, bars and groups (CD yellow, aura
 -- purple, timer cyan); the icon-only kinds take hues nothing else uses.
@@ -12111,6 +12112,10 @@ local function BuildBarPane()
             if t == ui.barTab then listed = true end
         end
         if not listed then ui.barTab = tabs[1] end
+        -- the open Effects tab opens into its darker ground
+        local BE = Options.BarEffects
+        local ground = BE ~= nil and BE.SyncGround ~= nil and BE.SyncGround()
+        tabRow._strip._openFill = ground and COL.bg or COL.panel
         local h = tabRow._strip:Set(tabs, ui.barTab, function(name)
             ui.barTab = name
             AT.LayoutPage(pg)
@@ -12795,13 +12800,15 @@ local function BuildBarPane()
     Options.SEARCH_SRC.bar = { page = pg, subs = AvailSecs }
     ui.barSec = ui.barSec or {}
     local secRow = AT.AddRow(pg, 30, function()
-        return SelBar() ~= nil and #AvailSecs(ui.barTab) >= 2
+        return SelBar() ~= nil and ui.barTab ~= "Effects" and #AvailSecs(ui.barTab) >= 2
     end)
     secRow._strip = AT.TabRow(secRow)
     secRow._strip._openFill = COL.panel
     secRow._strip:SetPoint("TOPLEFT", 8, 0)
     secRow._strip:SetPoint("BOTTOMRIGHT", -8, 2)
     secRow._sync = function()
+        -- Effects picks through its trigger list
+        if ui.barTab == "Effects" then return end
         local avail = AvailSecs(ui.barTab)
         if #avail == 0 then return end
         local cur = ui.barSec[ui.barTab]
@@ -12820,6 +12827,12 @@ local function BuildBarPane()
     -- a block's sub-tab shows: no sub-tab, fewer than two, or the picked one
     local function SubOpen(tabName, sub)
         if not sub then return true end
+        if tabName == "Effects" then
+            local BX = Options.BarEffects
+            local r = SelBar()
+            if BX and r then BX.Ensure(r, AvailSecs, ui.barSec) end
+            return ui.barSec.Effects == sub and not (BX and BX.picking)
+        end
         local avail = AvailSecs(tabName)
         return #avail < 2 or ui.barSec[tabName] == sub
     end
@@ -12834,13 +12847,22 @@ local function BuildBarPane()
         local def = { title = title, section = section, fields = fields, when = when, sub = sub or nil }
         SEC_LISTS[tabName] = SEC_LISTS[tabName] or {}
         table.insert(SEC_LISTS[tabName], def)
+        -- one set of rows drawn for several sub-tabs: each sub-tab lists itself
+        local also = rowOpts and rowOpts.alsoSubs or {}
+        for _, e in ipairs(also) do
+            e.def = { title = title, section = section, fields = fields, when = e.when, sub = e.sub, perItem = e.perItem }
+            table.insert(SEC_LISTS[tabName], e.def)
+        end
         local tabVis = BarTabVisible(tabName)
         local vis = function()
             if not tabVis() then return false end
             local r = SelBar()
             if not r then return false end
-            if not BlockApplies(r, def) then return false end
-            return SubOpen(tabName, def.sub)
+            if BlockApplies(r, def) and SubOpen(tabName, def.sub) then return true end
+            for _, e in ipairs(also) do
+                if BlockApplies(r, e.def) and SubOpen(tabName, e.sub) then return true end
+            end
+            return false
         end
         DEF_OF[vis] = def
         -- the block's rows, keyed by its vis: a PushBar handed this `vis`
@@ -12870,7 +12892,11 @@ local function BuildBarPane()
             def.card = card
             return vis
         end
-        AT.Section(pg, title, { visibleFn = vis })
+        -- noTitle: the trigger's head above it already names the block
+        local noTitle = rowOpts and rowOpts.noTitle
+        AT.Section(pg, (not noTitle) and title or nil, { visibleFn = vis })
+        if noTitle then pg._curSection.searchTitle = title end
+        if tabName == "Effects" then pg._curSection.fxBlock = true end
         -- a bespoke row that leads the block's own rows
         if rowOpts and rowOpts.before then rowOpts.before(vis) end
         if rowOpts and rowOpts.rows then
@@ -12959,6 +12985,10 @@ local function BuildBarPane()
     -- a texture is a picture: its size has a sub-tab of its own, after Picture
     local function IsTexture(r) return r.barKind == "texture" end
     local SF, FC = "Size & Frame", "Fill & Colors"
+    -- Effects: the trigger list, its head and its picker (UI\AD_BarEffects.lua)
+    if Options.BarEffects then
+        Options.BarEffects.Build(pg, SelBar, BarTabVisible("Effects"), AvailSecs, function() return ui.barSec end, tabRow)
+    end
 
     -- Appearance > Size & Frame. A resource bar's style (a bar or a row of
     -- cells) and a range bar's (how its bands draw) lead: they decide the frame.
@@ -13018,7 +13048,7 @@ local function BuildBarPane()
         "pipShape", "pipWidth", "pipHeight", "pipSpacing", "pointColor", "pipEmptyTint",
     })
     BarBlock("Style", "range", "Appearance", {
-        "style", "plateShow", "textBandColor", "cellGap", "cellDim",
+        "style", "plateShow", "cellGap", "cellDim",
     }, nil, SF)
     -- a custom bar showing its stacks: one bar, or a row of cells
     local cellVis = BarBlock("Style", "stacklook", "Appearance", { "style" }, nil, SF)
@@ -13229,13 +13259,13 @@ local function BuildBarPane()
     -- resource bar's fill rows are its Color and Texture blocks below
     local FILL_FIELDS = {
         "colorMode", "color", "gradLowColor", "gradMidColor", "gradHighColor",
-        -- A castbar's channel and can't-be-interrupted colours.
-        "castChannelOn", "castChannelColor", "castLockOn", "castLockColor",
         "rotateTexture", "fillMode", "idleEmpty",
         "smoothing", "fillInset",
     }
     local fillVis = BarBlock("Fill", "fill", "Appearance", FILL_FIELDS,
         function(r) return NotPips(r) and r.barKind ~= "resource" end, FC, true)
+    BarBlock("Channeling", "fill", "Effects", { "castChannelOn", "castChannelColor" }, nil, "Channeling")
+    BarBlock("Can't be interrupted", "fill", "Effects", { "castLockOn", "castLockColor" }, nil, "Can't be interrupted")
     -- the layout looks and Defaults keep one Fill block for every kind: they
     -- match blocks to kinds by their rows, so the resource bar's own Color
     -- and Texture blocks stay in its editor
@@ -13249,10 +13279,10 @@ local function BuildBarPane()
     Options.LookBlock("bar", "Appearance", "Fill", "fill", { "texture" }, FC)
     -- A castbar's empowered stages in their own colours; the count's buttons
     -- sit under the colour rows they reveal.
-    BarBlock("Empowered stages", "fill", "Appearance", {
+    BarBlock("Empowered stages", "fill", "Effects", {
         "castStageColors", "castStageColor1", "castStageColor2", "castStageColor3", "castStageColor4",
         "castStageColor5", "castStageColor6", "castStageColor7", "castStageColor8", "castStageCount",
-    }, NotPips, FC)
+    }, NotPips, "Empowered stages")
     Options.BuildYield()
     -- A resource bar (bar style): every colour of the fill in one Color block,
     -- ending in what its States table does on the power in play, then the
@@ -13272,8 +13302,9 @@ local function BuildBarPane()
         local go = AT.MakeSmallButton(row, "Open By State", 110)
         go:SetPoint("LEFT", fs, "RIGHT", 10, 0)
         go:SetScript("OnClick", function()
-            ui.barTab = "Conditions"
-            ui.barSec.Conditions = "By State"
+            ui.barTab = "Effects"
+            local RSO = Options.ResStateOptions
+            ui.barSec.Effects = RSO and RSO.FirstView(SelBar()) or "Power"
             AT.LayoutPage(pg)
             if NS.Bars and NS.Bars.PreviewRepaint then NS.Bars.PreviewRepaint() end
         end)
@@ -13321,58 +13352,55 @@ local function BuildBarPane()
     }, function(r) return Schema.Foldable(r) end, FC)
     -- Pips style: the cells' banding by position (an aura stack bar's is
     -- Stack Colors below).
-    local pointVis = BarBlock("Point Colors", "stackcolors", "Appearance", {
+    local pointVis = BarBlock("Point Colors", "stackcolors", "Effects", {
         "scEnabled", "sc2Value", "sc2Color", "sc3Value", "sc3Color",
         "sc4Value", "sc4Color", "scCount", "maxColorEnabled", "maxColor",
-    }, IsPips, FC)
+    }, IsPips, "Points")
     Options.BuildYield()
     AT.RowDesc(pg, "Each band colors its point and every point after it.", 20, pointVis)
     local segsVis = BarBlock("Segments", "segments", "Appearance", {
         "segmentsShow", "segmentCount", "segmentSpacing", "dividerColor",
     }, nil, FC)
-    BarSub(segsVis, "Segment colors", "segments", {
+    BarBlock("Segment colors", "segments", "Effects", {
         "fullColorEnabled", "fullColor", "rechargeColorEnabled", "rechargeColor",
-    })
+    }, nil, "Charges")
     -- Time bands, stack colors, power and health bands and a swing bar's
     -- ability colours, each block gated on kind and mode by the schema.
     -- an aura bar's bands sit along its length, so an aura ring has none; a
     -- cooldown ring keeps them (the whole fill takes the colour)
-    BarBlock("Thresholds", "thresholds", "Appearance", {
+    BarBlock("Thresholds", "thresholds", "Effects", {
         "threshEnabled", "threshAsSeconds", "threshCdSeconds", "threshRef",
         "thresh2Value", "thresh2Color", "thresh3Value", "thresh3Color",
         "thresh4Value", "thresh4Color", "threshCount", "threshText",
-    }, function(r) return not (r.barKind == "aura" and Schema.BarRing(r)) end, FC)
+    }, function(r) return not (r.barKind == "aura" and Schema.BarRing(r)) end, "Time left", nil, { rows = function(vis)
+        if Options.BarEffects then Options.BarEffects.StepsRows(pg, SelBar, vis, Options.BarEffects.STEPS.time) end
+        SectionRows(pg, "bar", "thresholds", SelBar, vis, { "threshAsSeconds", "threshCdSeconds", "threshRef", "threshText" })
+    end })
     -- aura stack bars only here: a resource bar's banding is Point Colors
     -- above (pips style), and a continuous fill has no per-point cells
-    local scVis = BarBlock("Stack Colors", "stackcolors", "Appearance", {
+    BarBlock("Stack Colors", "stackcolors", "Effects", {
         "scEnabled", "sc2Value", "sc2Color", "sc3Value", "sc3Color",
         "sc4Value", "sc4Color", "scCount", "maxColorEnabled", "maxColor", "scPosition",
     }, function(r)
         return r.barKind ~= "resource"
-    end, FC)
-    -- The bands in words, re-read on every sync.
-    local scSum = AT.AddRow(pg, 22, scVis)
-    local scFS = scSum:CreateFontString(nil, "OVERLAY")
-    scFS:SetFont(AT.FONT, 10, "")
-    scFS:SetPoint("LEFT", 10, 0)
-    scFS:SetPoint("RIGHT", -10, 0)
-    scFS:SetJustifyH("LEFT")
-    scFS:SetWordWrap(false)
-    scFS:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])
-    scSum._sync = function()
-        local r = SelBar()
-        scFS:SetText(r and Options.StackColorSummary(r) or "")
-    end
+    end, "Stacks", nil, { rows = function(vis)
+        if Options.BarEffects then Options.BarEffects.StepsRows(pg, SelBar, vis, Options.BarEffects.STEPS.stacks) end
+        SectionRows(pg, "bar", "stackcolors", SelBar, vis, { "maxColorEnabled", "maxColor", "scPosition" })
+    end })
     -- health bars: colour by health percent (a low-health warning, the
     -- execute range); wins over the Bar color while a band applies
-    BarBlock("Health Colors", "healththresholds", "Appearance", {
+    BarBlock("Health Colors", "healththresholds", "Effects", {
         "hpthEnabled", "hpthDirection", "hpth2Value", "hpth2Color",
         "hpth3Value", "hpth3Color", "hpth4Value", "hpth4Color", "hpthCount", "hpthText", "hpthPulse",
-    }, nil, FC)
+    }, nil, "Health", nil, { rows = function(vis)
+        SectionRows(pg, "bar", "healththresholds", SelBar, vis, { "hpthDirection" })
+        if Options.BarEffects then Options.BarEffects.StepsRows(pg, SelBar, vis, Options.BarEffects.STEPS.health) end
+        SectionRows(pg, "bar", "healththresholds", SelBar, vis, { "hpthText", "hpthPulse" })
+    end })
     -- Swing bars: the fill wears an ability's colour while it is queued or
     -- after its cast. The rules are the bar's own (rec.driver.swingColors),
     -- drawn by UI\AD_SwingColorOptions.lua; not pushable.
-    local abcVis = BarBlock("Ability Colors", "abilcolors", "Appearance", { "abilColorsOn" }, nil, FC)
+    local abcVis = BarBlock("Ability Colors", "abilcolors", "Effects", { "abilColorsOn" }, nil, "An ability")
     DEF_OF[abcVis].perItem = true   -- the rules are one bar's own: never over several
     Options.BuildYield()
     if Options.SwingColorRows then Options.SwingColorRows(pg, SelBar, abcVis, win) end
@@ -13456,10 +13484,10 @@ local function BuildBarPane()
     BarBlock("Swing", "fill", "Appearance", { "swingClosing" }, nil, SW)
     Options.BuildYield()
     -- a ranged bar's windup colours, while its switch on Tracking is on
-    BarBlock("Windup", "fill", "Appearance", { "swingWindupColor", "swingWaitColor" }, function(r)
+    BarBlock("Windup", "fill", "Effects", { "swingWindupColor", "swingWaitColor" }, function(r)
         return r.barKind == "swing" and ((r.driver and r.driver.swingType) or 0) == 2
             and Store.Resolve(r, "fill", "swingWindup") == true
-    end, SW)
+    end, "Windup")
     BarBlock("Spark", "fill", "Appearance", {
         "edgeSpark", "edgeSparkColor", "edgeSparkWidth",
     }, function(r) return r.barKind == "swing" end, SW, true)
@@ -13771,16 +13799,16 @@ local function BuildBarPane()
     -- Conditions > By State: the state hides and their opacity (a cooldown
     -- bar's ready and full charges; an aura, timer, swing or enchant bar's
     -- inactive). Per bar, like the driver: no push bar.
-    BarBlock("Hide by state", "behavior", "Conditions", {
+    BarBlock("Hide by state", "behavior", "Effects", {
         "hideWhenReady", "hideWhenFullCharges", "hiddenAlpha",
-    }, function(r) return r.barKind == "cooldown" end, "By State")
+    }, function(r) return r.barKind == "cooldown" end, "Ready")
     do
-        local inactiveVis = BarBlock("Hide when inactive", "behavior", "Conditions", {
+        local inactiveVis = BarBlock("Hide when inactive", "behavior", "Effects", {
             "hideWhenInactive", "hiddenAlpha",
         }, function(r)
             return r.barKind == "aura" or r.barKind == "timer" or r.barKind == "swing" or r.barKind == "enchant"
                 or r.barKind == "cdmbar" or r.barKind == "totembar"
-        end, "By State")
+        end, "Not active")
         -- Swing bars: dim while the target is out of range of a spell, the
         -- bar's own or its hand's usual one (the field's kinds hide the sub on
         -- other bars). The spell is the bar's own (rec.driver), so its row is
@@ -13823,27 +13851,39 @@ local function BuildBarPane()
                 return inactiveVis() and r ~= nil and r.barKind == "swing"
             end }
     end
-    -- Conditions > By State (resource bars): the States table, one row per
-    -- state with what it changes: fill, texts, cost mark, glow
-    -- (UI\AD_ResColorOptions.lua). The rows are the bar's own: no push bar,
-    -- never over several.
-    local statesVis = BarBlock("How the bar looks in each state", "rescolors", "Conditions", { "resTextFill" },
-        nil, "By State", true, { rows = function(vis)
+    -- Effects > Power, Spells, Auras (resource bars): the States table, one row
+    -- per state with what it changes: fill, texts, cost mark, glow
+    -- (UI\AD_ResColorOptions.lua). One set of rows, filtered per trigger. The
+    -- rows are the bar's own: no push bar, never over several.
+    local statesVis = BarBlock("How the bar looks in each state", "rescolors", "Effects", { "resTextFill" },
+        nil, "Power", true, { noTitle = true, alsoSubs = {
+            { sub = "Spells", perItem = true },
+            { sub = "Auras", perItem = true, when = function(r)
+                local RSO = Options.ResStateOptions
+                return RSO ~= nil and RSO.AurasOffered(r)
+            end },
+        }, rows = function(vis)
             if Options.ResStateRows then Options.ResStateRows(pg, SelBar, vis, win) end
         end })
     DEF_OF[statesVis].perItem = true
+    -- Effects > Distance (range bars): each band's color and Show, then the
+    -- text's color; the checks and words stay on Tracking (UI\AD_RangeOptions.lua).
+    BarBlock("Distance", "range", "Effects", { "textBandColor" }, nil, "Distance", nil, { noTitle = true,
+        before = function(vis)
+            if Options.RangeDistanceRows then Options.RangeDistanceRows(pg, SelBar, vis) end
+        end })
     -- Conditions (textures): a picture per stack count, then a look of its
     -- own under a time left. When it shows at all is Tracking's (UI\AD_TextureOptions.lua).
     -- Per picture, like its source: no push bar.
-    BarBlock("Pictures by stack count", "texstate", "Conditions", {
+    BarBlock("Pictures by stack count", "texstate", "Effects", {
         "stackBands", "sb1From", "sb1Image", "sb1Color", "sb2From", "sb2Image", "sb2Color",
         "sb3From", "sb3Image", "sb3Color", "sb4From", "sb4Image", "sb4Color",
     }, function(r) return Schema.TexStackBands(r) end, "Stack Pictures")
-    BarBlock("A look under a time left", "texstate", "Conditions", {
+    BarBlock("A look under a time left", "texstate", "Effects", {
         "timeOn", "timeUnit", "timePct", "timeSec", "timeLen", "timeColor",
     }, function(r) return Schema.TexTimeLook(r) end, "Time Left")
     -- a power or health picture: shown at or above a value, or below it
-    BarBlock("Show by value", "texstate", "Conditions", { "valShow", "valUnit", "valPct", "valPts" },
+    BarBlock("Show by value", "texstate", "Effects", { "valShow", "valUnit", "valPct", "valPts" },
         function(r) return Schema.TexValue(r) end, "By Value")
     -- Conditions > Glows: up to three glows around any bar, on every kind in
     -- Schema.BAR_GLOW_KINDS but a resource bar's (its glows are its States rows)
@@ -13855,11 +13895,20 @@ local function BuildBarPane()
     end
     -- Conditions > Fade When: the fade rules.
     Options.BuildYield()
-    VisibilityRows(pg, SelBar, BarPane("Fade When", "Conditions"))
+    do
+        local whileVis = BarPane("While", "Effects")
+        VisibilityRows(pg, SelBar, whileVis)
+        if Options.BarEffects then Options.BarEffects.WhileRows(pg, SelBar, whileVis) end
+    end
+    -- the step tables' Copy to, per trigger
+    for _, sub in ipairs({ "Stacks", "Points", "Time left", "Health", "Charges" }) do
+        Options.BuildYield()
+        SubPush("Effects", sub)
+    end
     -- Conditions > Blizzard's Bar (resource bars): the game's own class bar,
     -- faded while this bar is loaded. Per bar: no push bar.
-    BarBlock("Blizzard's Bar", "resource", "Conditions", { "hideBlizzard" },
-        function(r) return Schema.HasBlizzardBar(r) end)
+    BarBlock("Blizzard's Bar", "resource", "Appearance", { "hideBlizzard" },
+        function(r) return Schema.HasBlizzardBar(r) end, SF)
 
     -- Heals & Shields (health bars): one page of titled sections, one per
     -- overlay, and one push bar. A health bar's colour is on Fill & Colors and
@@ -13885,17 +13934,18 @@ local function BuildBarPane()
     BarBlock("Spark", "cast", "Castbar", {
         "sparkOn", "sparkColor", "sparkWidth",
     }, nil, ALL)
-    BarBlock("When a Cast Ends", "cast", "Castbar", {
+    BarBlock("When a Cast Ends", "cast", "Effects", {
         "holdOn", "holdTime", "holdFailColor", "holdIntColor", "fadeOut",
-    }, nil, ALL)
-    local whichVis = BarBlock("Which Casts", "cast", "Castbar", {
+    }, nil, "Cast ended")
+    local whichVis = BarBlock("Which Casts", "cast", "Effects", {
         "hideChannels", "lockHide",
-    }, nil, ALL)
+    }, nil, "Which casts")
     Options.BuildYield()
     AT.RowDesc(pg, "The shield is in Appearance > Icon, the color in Appearance > Fill & Colors.", 20, whichVis)
     -- Hidden opacity (the behavior section, not pushable): the empty bar
     -- between casts
-    local idleVis = BarBlock("Between Casts", "behavior", "Castbar", { "hiddenAlpha" }, nil, ALL)
+    local idleVis = BarBlock("Between Casts", "behavior", "Effects", { "hiddenAlpha" },
+        function(r) return r.barKind == "cast" end, "Between casts")
     Options.BuildYield()
     AT.RowDesc(pg, "0 hides the bar between casts.", 20, idleVis)
     -- your own casts only: a player castbar
@@ -14195,8 +14245,8 @@ end
 
 -- The Add window
 
--- Pick what first (Icon, Bar or Group), then its options; the icon kinds
--- are a dropdown, not tabs.
+-- A start page of every kind, then a side list and the kind's form
+-- (UI\AD_AddWindow.lua holds the pages; the form's rows and Create are here).
 local addState = { cat = "Icon", iconKind = "spell",
     layoutId = nil, destGroupId = nil, forceFree = false }
 
@@ -14207,7 +14257,7 @@ local function AddDestItems()
     local groups = Store.ChildrenOf(layout)
     for _, g in ipairs(groups) do
         -- kind filter: aura groups take aura icons, reminder groups none
-        if Store.GroupTakes(g, (addState.cat == "Arc Procs") and "special" or (addState.iconKind or "spell")) then
+        if Store.GroupTakes(g, addState.iconKind or "spell") then
             items[#items + 1] = { value = g.id, text = g.name, raw = true }
         end
     end
@@ -14216,8 +14266,10 @@ local function AddDestItems()
 end
 
 local function BuildAddWindow()
+    local AW = Options.AddWin
     addWin = AT.CreateWindow("ArcUIv2Add", {
-        w = 500, h = 560, minW = 500, minH = 560, resizable = false,
+        w = AW.W, h = AW.H, minW = AW.REM_W, minH = AW.REM_H, resizable = false,
+        scaleH = Options.MAIN_H,
         title = AT.Brand(AT.Tr("Add"), " " .. AT.Tr("New")),
     })
     addWin:SetFrameLevel(win:GetFrameLevel() + 40)
@@ -14229,12 +14281,15 @@ local function BuildAddWindow()
     pg:SetPoint("BOTTOMRIGHT", -10, 12)
     pg:Show()
     addWin._pg = pg
+    local UpdateCreate        -- forward: the Create button's enabled state (below)
+    AW.Build(addWin, pg, addState, {
+        destItems = AddDestItems,
+        update = function() if UpdateCreate then UpdateCreate() end end,
+    })
     -- Nothing spills out of the window. After each layout the page is
     -- measured: open aura squares give back what it runs over (whole rows, two
-    -- at least), then the window grows by what is still over, and it is its
-    -- own size again once the page fits. ADD_H: its size; PAGE_PAD: the page's
-    -- insets above.
-    local ADD_H, PAGE_PAD = 560, 52
+    -- at least). The window keeps its size; only a Reminder group's small
+    -- form still grows by what is over.
     local fitting = false
     hooksecurefunc(AT, "LayoutPage", function(p)
         if p ~= pg or fitting then return end
@@ -14245,57 +14300,46 @@ local function BuildAddWindow()
         local content = pg._contentH or 0
         local room
         if pick and AP then
-            room = (ADD_H - PAGE_PAD) - (content - (pick._h or 0)) - (AP.TOP + AP.GAP)
+            room = AW.PageH() - (content - (pick._h or 0)) - (AP.TOP + AP.GAP)
         end
         if room ~= addWin._pickRoom then
             addWin._pickRoom = room
             AT.LayoutPage(pg)
             content = pg._contentH or 0
         end
-        local h = math.max(ADD_H, math.ceil(content + PAGE_PAD))
-        if math.abs((addWin:GetHeight() or ADD_H) - h) > 0.5 then
-            addWin:SetHeight(h)
-            AT.LayoutPage(pg)
+        if AW.Small() then
+            local h = math.max(AW.REM_H, math.ceil(content + AW.REM_H - AW.PageH()))
+            if math.abs((addWin:GetHeight() or AW.REM_H) - h) > 0.5 then
+                addWin:SetHeight(h)
+                AT.LayoutPage(pg)
+            end
         end
+        AW.AfterLayout()
         fitting = false
     end)
 
-    local TABS = { "Icon", "Bar", "Group" }
-    -- a Text element's tab (UI\AD_TextOptions.lua)
-    if Options.TextAddRows then TABS[#TABS + 1] = "Text" end
-    -- a texture's tab (UI\AD_TextureOptions.lua)
-    if Options.TextureAddRows then TABS[#TABS + 1] = "Texture" end
-    -- a wheel's tab (UI\AD_WheelOptions.lua)
-    if Options.WheelAddRows then TABS[#TABS + 1] = "Wheel" end
-    -- a Sound item's tab (UI\AD_SoundOptions.lua)
-    if Options.SoundAddRows then TABS[#TABS + 1] = "Sound" end
-    if Options.SpecialAddTab then Options.SpecialAddTab(TABS) end
     -- Opened for a Reminder group it makes a reminder: one tab, and the icon
     -- form's spell and item rows (addState.remGroupId).
-    local REM_TABS = { "Reminder" }
-    local tabRow = AT.AddRow(pg, 30)
+    local tabRow = AT.AddRow(pg, 30, function() return AW.Small() end)
     tabRow._strip = AT.TabRow(tabRow)
     tabRow._strip._openFill = COL.panel
     tabRow._strip:SetPoint("TOPLEFT", 8, 0)
     tabRow._strip:SetPoint("BOTTOMRIGHT", -8, 2)
     tabRow._sync = function()
-        local rem = addState.remGroupId ~= nil
-        -- opened from a group's "+": icons into that group, nothing else
-        local tabs = rem and REM_TABS or TABS
-        if addState.groupOnly and not rem then
-            tabs = { "Icon" }
-            for _, t in ipairs(TABS) do if t == "Arc Procs" then tabs[#tabs + 1] = t end end
+        if not AW.Small() then return end
+        local h
+        if addState.remGroupId then
+            h = tabRow._strip:Set({ "Reminder" }, "Reminder", function() end)
+        else
+            h = tabRow._strip:Set(AW.ClassicTabs(), AW.ClassicTab(), AW.PickTab)
         end
-        local h = tabRow._strip:Set(tabs, rem and "Reminder" or addState.cat, function(name)
-            if rem then return end
-            addState.cat = name
-            AT.LayoutPage(pg)
-        end)
         local want = (h or 24) + 6
         if tabRow._h ~= want then tabRow._h = want tabRow:SetHeight(want) end
     end
 
     AT.Section(pg, nil)
+    AW.TopRows(pg)
+    AW.ClassicRows(pg, addWin)
     local isCat = function(c) return function() return addState.cat == c end end
     local isIcon = function(kind)
         return function()
@@ -14304,46 +14348,8 @@ local function BuildAddWindow()
     end
 
     local UpdateSuggestions   -- forward: the autocomplete panel below
-    local UpdateCreate        -- forward: the Create button's enabled state (below)
     local rowBarMax           -- forward: the Max stacks field (its hint follows the ID)
 
-    AT.RowDropdown(pg, addWin, "Icon kind",
-        function() return addState.iconKind or "spell" end,
-        function(v)
-            addState.iconKind = v
-            AT.LayoutPage(pg)
-        end,
-        function()
-            local items = {
-                { value = "spell", text = "Spell Cooldown" },
-                { value = "aura", text = "Aura (buff / debuff)" },
-                { value = "groupbuff", text = "Group Buff (party / raid)" },
-                { value = "item", text = "Item" },
-                { value = "trinket", text = "Trinket" },
-                { value = "totem", text = "Totem / Guardian Duration" },
-            }
-            -- retail has no ammo slot
-            if NS.IsForever == true then items[#items + 1] = { value = "ammo", text = "Ammo" } end
-            items[#items + 1] = { value = "enchant", text = "Weapon Enchant" }
-            -- a Stance icon: the stance bar drives it (its driver loads first)
-            if NS.DriverStance then items[#items + 1] = { value = "stance", text = "Stance" } end
-            -- a Custom Icon: rules on plain events drive it (its engine loads first)
-            if NS.DriverCustom then items[#items + 1] = { value = "timer", text = "Custom Icon" } end
-            -- an Arc Proc (retail), the Arc Procs tab's grid under it
-            local SO = Options.Special
-            if SO and SO.On and SO.On() then items[#items + 1] = { value = "special", text = "Arc Proc" } end
-            -- opened from a group's "+": only the kinds that group takes
-            local g = addState.groupOnly and addState.destGroupId and Store.Get(addState.destGroupId)
-            if g then
-                local kept = {}
-                for _, it in ipairs(items) do
-                    if Store.GroupTakes(g, it.value) then kept[#kept + 1] = it end
-                end
-                items = kept
-            end
-            return items
-        end,
-        function() return addState.cat == "Icon" and not addState.remGroupId end)
     -- a cooldown group's "+" also fills it from the action bars
     AT.RowButton(pg, "From my action bars", function()
         local g = addState.destGroupId and Store.Get(addState.destGroupId)
@@ -14377,9 +14383,6 @@ local function BuildAddWindow()
         function() return remVis() and addState.iconKind == "enchant" end)
     AT.RowDesc(pg, "It shows beside the pulse while the aura is missing, in combat too.", 20,
         function() return remVis() and addState.iconKind == "aura" end)
-    AT.RowDesc(pg, "Your equipped ammo and its count.", 20, isIcon("ammo"))
-    AT.RowDesc(pg, "A spell's cooldown as an icon.", 20,
-        function() return isIcon("spell")() and not addState.remGroupId end)
     local rowSpell = AT.RowInput(pg, "Spell or name",
         function() return addState.spellID or "" end,
         function(v)
@@ -14388,14 +14391,7 @@ local function BuildAddWindow()
             if UpdateCreate then UpdateCreate() end
         end,
         isIcon("spell"), "Type a spell name or ID; click a suggestion to fill it.", "e.g. Stormstrike or 17364", true)
-    -- class templates (UI\AD_ItemSets.lua): a click fills the field
-    if Options.SpellTemplateAddRows then
-        Options.SpellTemplateAddRows(pg, addState, isIcon("spell"), function(v)
-            if rowSpell._colCtrl then rowSpell._colCtrl:SetText(v) end
-            if UpdateSuggestions then UpdateSuggestions() end
-            if UpdateCreate then UpdateCreate() end
-        end)
-    end
+    AW.HintRow(pg, function() return isIcon("spell")() and not addState.remGroupId end)
     -- the aura name search panel (Options.AuraSuggestPanel, above the Add
     -- window section); a pick re-judges Create
     local function AuraSuggest(visibleFn, getText, setText, multi)
@@ -14403,9 +14399,7 @@ local function BuildAddWindow()
             function() if UpdateCreate then UpdateCreate() end end)
     end
     local RefreshIconAuraSug, RefreshBarAuraSug
-    AT.RowDesc(pg, "A buff or debuff as an icon; several IDs can light one icon.", 20,
-        function() return isIcon("aura")() and not addState.remGroupId end)
-    -- the ready-made auras and your Cooldown Manager's as squares
+    -- your Cooldown Manager's auras as squares
     -- (UI\AD_AuraPicker.lua): a click fills the rows below, Create commits
     -- room: what the window can give the squares (FitAddWindow below)
     local function PickRoom() return addWin._pickRoom end
@@ -14427,6 +14421,7 @@ local function BuildAddWindow()
             if UpdateCreate then UpdateCreate() end
         end,
         isIcon("aura"), "Type the aura's NAME and click a spell ID, or type IDs separated by commas or spaces. The first sets the icon's art and name.", "e.g. Serpent Sting or 13549, 13550", true)
+    AW.HintRow(pg, function() return isIcon("aura")() and not addState.remGroupId end)
     RefreshIconAuraSug = AuraSuggest(isIcon("aura"),
         function() return addState.auraID end,
         function(v)
@@ -14472,7 +14467,6 @@ local function BuildAddWindow()
     -- a group buff: its ranks by name through the aura search, then counted on
     -- every member of your party or raid
     local RefreshGbSug
-    AT.RowDesc(pg, "How many in your party or raid have a buff.", 20, isIcon("groupbuff"))
     local rowGbIDs = AT.RowInput(pg, "Buff name or spell IDs",
         function() return addState.gbID or "" end,
         function(v)
@@ -14487,14 +14481,6 @@ local function BuildAddWindow()
             addState.gbID = v
             if rowGbIDs._colCtrl then rowGbIDs._colCtrl:SetText(v) end
         end, true)
-    AT.RowDesc(pg, "An item's cooldown and count, by item ID.", 20,
-        function() return isIcon("item")() and not addState.remGroupId end)
-    -- the ready-made item lists (UI\AD_ItemSets.lua)
-    if Options.ItemSetAddRows then
-        Options.ItemSetAddRows(pg, addWin, addState,
-            function() return isIcon("item")() and not addState.remGroupId end,
-            function() if UpdateCreate then UpdateCreate() end end)
-    end
     -- a reminder follows one item; an icon can take several
     AT.RowInput(pg, "Item ID",
         function() return addState.itemID or "" end,
@@ -14520,56 +14506,7 @@ local function BuildAddWindow()
     -- the Arc Procs tab's list (UI\AD_SpecialOptions.lua)
     if Options.SpecialAddRows then Options.SpecialAddRows(pg, addWin, addState) end
 
-    -- Bar: category, then mode (Duration / Stack) for cooldown and aura bars.
-    -- Timer and power-stack bars cannot be created here; existing ones still
-    -- edit and render dormant.
-    AT.RowDropdown(pg, addWin, "Bar category",
-        function() return addState.barKind or "cooldown" end,
-        function(v)
-            addState.barKind = v
-            AT.LayoutPage(pg)
-        end,
-        function()
-            local items = {
-                { value = "cooldown", text = "Cooldown Bar" },
-                { value = "aura", text = "Aura Bar" },
-            }
-            -- a copy of a Cooldown Manager Tracked Bar (retail; its rows load first)
-            if Options.CDMBarAddRows and NS.CDMBars then
-                items[#items + 1] = { value = "cdmbar", text = "Cooldown Manager Bar" }
-            end
-            -- a totem's time left (its rows load first)
-            if Options.TotemBarAddRows and NS.TotemBars then
-                items[#items + 1] = { value = "totembar", text = "Totem Bar" }
-            end
-            -- capability probe, never a build gate: swing bars exist only
-            -- where the client ships C_SwingTimer (WoW Forever)
-            if C_SwingTimer then
-                items[#items + 1] = { value = "swing", text = "Swing Bar" }
-            end
-            items[#items + 1] = { value = "resource", text = "Resource Bar" }
-            items[#items + 1] = { value = "health", text = "Health Bar" }
-            items[#items + 1] = { value = "cast", text = "Castbar" }
-            items[#items + 1] = { value = "enchant", text = "Weapon Enchant Bar" }
-            if C_Spell and C_Spell.IsSpellInRange then
-                items[#items + 1] = { value = "range", text = "Range Bar" }
-            end
-            -- a Custom Bar: rules on plain events drive it (its engine loads first)
-            if NS.DriverCustom then items[#items + 1] = { value = "timer", text = "Custom Bar" } end
-            -- an Arc Proc's deck bar (retail), the Arc Procs tab's grid under it
-            local SO = Options.Special
-            if SO and SO.On and SO.On() then items[#items + 1] = { value = "special", text = "Arc Proc (deck bar)" } end
-            return items
-        end,
-        isCat("Bar"))
-    AT.RowDesc(pg, "The time left on a weapon's enchant, with its charges.", 20,
-        function()
-            return addState.cat == "Bar" and addState.barKind == "enchant"
-        end)
-    AT.RowDesc(pg, "How far your target is, in colored range bands you can edit.", 20,
-        function()
-            return addState.cat == "Bar" and addState.barKind == "range"
-        end)
+    -- Bar: mode (Duration / Stack) for cooldown and aura bars.
     if Options.CDMBarAddRows then Options.CDMBarAddRows(pg, addWin, addState) end
     if Options.TotemBarAddRows then Options.TotemBarAddRows(pg, addWin, addState) end
     AT.RowDropdown(pg, addWin, "Weapon",
@@ -14586,20 +14523,12 @@ local function BuildAddWindow()
         function() return addState.enchantTemplate or "" end,
         function(v) addState.enchantTemplate = v end,
         true, function() return addState.enchantHand end)
-    AT.RowDesc(pg, "Casts of you, your target or your focus; hidden between casts.", 20,
-        function()
-            return addState.cat == "Bar" and addState.barKind == "cast"
-        end)
     AT.RowDropdown(pg, addWin, "Whose casts",
         function() return addState.castUnit or "player" end,
         function(v) addState.castUnit = v end,
         Options.CastUnitItems,
         function()
             return addState.cat == "Bar" and addState.barKind == "cast"
-        end)
-    AT.RowDesc(pg, "A unit's health, with incoming heals and shields.", 20,
-        function()
-            return addState.cat == "Bar" and addState.barKind == "health"
         end)
     AT.RowDropdown(pg, addWin, "Unit",
         function() return addState.barUnit or "player" end,
@@ -14608,10 +14537,6 @@ local function BuildAddWindow()
         function()
             return addState.cat == "Bar" and addState.barKind == "health"
         end)
-    AT.RowDesc(pg, "A power bar; Automatic follows the power you are using.", 20,
-        function()
-            return addState.cat == "Bar" and addState.barKind == "resource"
-        end)
     AT.RowDropdown(pg, addWin, "Power",
         function() return addState.barPower or POWER_AUTO end,
         function(v) addState.barPower = v end,
@@ -14619,20 +14544,23 @@ local function BuildAddWindow()
         function()
             return addState.cat == "Bar" and addState.barKind == "resource"
         end)
-    -- onSelect re-lays the form: a dropdown pick does not by itself, and the Max
-    -- stacks row must appear on the Stack pick.
+    AW.PairRow(pg, "Bar mode",
+        { { value = "duration", text = "Duration Bar" }, { value = "stack", text = "Stack Bar" } },
+        function() return addState.barMode or "duration" end,
+        function(v) addState.barMode = v end,
+        function()
+            local bk = addState.barKind or "cooldown"
+            return addState.cat == "Bar" and (bk == "cooldown" or bk == "aura" or bk == "timer")
+        end)
     AT.RowDropdown(pg, addWin, "Bar mode",
         function() return addState.barMode or "duration" end,
         function(v) addState.barMode = v end,
         function()
-            return {
-                { value = "duration", text = "Duration Bar" },
-                { value = "stack", text = "Stack Bar" },
-            }
+            return { { value = "duration", text = "Duration Bar" }, { value = "stack", text = "Stack Bar" } }
         end,
         function()
             local bk = addState.barKind or "cooldown"
-            return addState.cat == "Bar" and (bk == "cooldown" or bk == "aura" or bk == "timer")
+            return AW.Classic() and addState.cat == "Bar" and (bk == "cooldown" or bk == "aura" or bk == "timer")
         end,
         function() AT.LayoutPage(pg) end)
     -- an aura or cooldown duration bar can be a ring (fill.shape)
@@ -14665,6 +14593,7 @@ local function BuildAddWindow()
             if UpdateCreate then UpdateCreate() end
         end,
         barUsesSpell, "The tracked cooldown spell.", "e.g. Stormstrike or 17364", true)
+    AW.HintRow(pg, barUsesSpell)
     local barIsAura = function() return addState.cat == "Bar" and addState.barKind == "aura" end
     -- the same squares as an aura icon's: a click fills the bar's aura rows
     if Options.AuraPickerRow then
@@ -14688,6 +14617,7 @@ local function BuildAddWindow()
         end,
         barIsAura,
         "Type the aura's NAME and click one of its spell IDs, or type IDs separated by commas or spaces. The first names the bar.", "e.g. Serpent Sting or 13549", true)
+    AW.HintRow(pg, barIsAura)
     RefreshBarAuraSug = AuraSuggest(barIsAura,
         function() return addState.barAuraID end,
         function(v)
@@ -14764,11 +14694,17 @@ local function BuildAddWindow()
     -- every catalog spell as a square. Typing filters it, a click fills the
     -- field. The height follows the whole catalog, not the matches, so typing
     -- never moves the rows below; past SUG.rows rows it scrolls.
-    local SUG = { cell = 32, gap = 4, rows = 8, top = 14 }
+    local SUG = { cell = 32, gap = 4, top = 14 }
     SUG.pitch = SUG.cell + SUG.gap
-    -- The window is fixed-width: less the page, box and row insets (10, 6
-    -- and 6 a side) and the grid's own 8 left and 12 right.
-    SUG.cols = math.max(1, math.floor((addWin:GetWidth() - 64 + SUG.gap) / SUG.pitch))
+    -- The form is fixed-width: less the box and row insets (6 a side) and the
+    -- grid's own 8 left and 12 right. Wider than a Reminder group's small
+    -- form, so fewer rows hold the same spells and the tiles above still fit.
+    local function SugSize()
+        local page = AW.Small() and (AW.REM_W - 20) or (AW.W - AW.LIST_W - 22)
+        SUG.cols = math.max(1, math.floor((page - 44 + SUG.gap) / SUG.pitch))
+        SUG.rows = AW.Small() and 8 or 6
+    end
+    SugSize()
     local function sugVis()
         if addState.cat == "Icon" then
             return (addState.iconKind or "spell") == "spell"
@@ -14838,6 +14774,7 @@ local function BuildAddWindow()
     end
     UpdateSuggestions = function(inLayout)
         if not sugVis() then return end
+        SugSize()
         local query = (addState.cat == "Bar") and addState.barSpell or addState.spellID
         local all = NS.SpellCatalog.All()
         local want = SUG.top + SUG.pitch * math.min(SUG.rows, math.max(1, math.ceil(#all / SUG.cols)))
@@ -14884,8 +14821,6 @@ local function BuildAddWindow()
         function(v) addState.slotID = v end,
         function() return { { value = 13, text = "Trinket 1 (top)" }, { value = 14, text = "Trinket 2 (bottom)" } } end,
         isIcon("trinket"))
-    AT.RowDesc(pg, "Lit while an enchant is on the weapon: an imbue, a poison, an oil or a stone.", 20,
-        function() return isIcon("enchant")() and not addState.remGroupId end)
     AT.RowDropdown(pg, addWin, "Weapon",
         function() return addState.enchantHand or "main" end,
         function(v) addState.enchantHand = v end,
@@ -14897,8 +14832,6 @@ local function BuildAddWindow()
         function(v) addState.enchantTemplate = v end,
         true, function() return addState.enchantHand end)
     local totemVis = isIcon("totem")
-    AT.RowDesc(pg, "A totem or guardian in its slot, or one of them by the spell that puts it down.", 20,
-        totemVis)
     -- ready-made ones (UI\AD_TotemOptions.lua): a click fills the rows below
     if Options.TotemTemplateRows then Options.TotemTemplateRows(pg, addWin, addState, totemVis) end
     AT.RowInput(pg, "Spell ID",
@@ -14927,45 +14860,15 @@ local function BuildAddWindow()
     AT.RowInput(pg, "Group name",
         function() return addState.groupName or "" end,
         function(v) addState.groupName = v end,
-        isCat("Group"), nil, "e.g. Core Rotation", true)
-    AT.RowDropdown(pg, addWin, "Group kind",
-        function() return addState.groupKind or "cooldown" end,
-        function(v) addState.groupKind = v AT.LayoutPage(pg) end,
-        function()
-            local items = { { value = "cooldown", text = "Icon Group" }, { value = "aura", text = "Aura Group" } }
-            if NS.Reminders then items[#items + 1] = { value = "reminder", text = "Reminder Group" } end
-            -- an aura group made from a template (UI\AD_MissingBuffs.lua)
-            if Options.MissingBuffsAddRows then items[#items + 1] = { value = "missing", text = "Missing Buffs" } end
-            return items
-        end,
-        isCat("Group"))
-    -- an Icon Group's ready-made groups (UI\AD_CustomOptions.lua)
-    if Options.GroupTemplateRows then Options.GroupTemplateRows(pg, addState) end
-    AT.RowDesc(pg, "A spot mid-screen where your cooldowns pulse as they come back.", 20,
-        function() return addState.cat == "Group" and addState.groupKind == "reminder" end)
-    AT.RowToggle(pg, "Fill it from my action bars",
-        function() return addState.fillFromBars == true end,
-        function(v) addState.fillFromBars = v end,
-        function()
-            return addState.cat == "Group" and (addState.groupKind or "cooldown") == "cooldown" and not addState.groupTemplate
-        end,
-        "Opens a picker for this group's spells and items right after Create. Out of combat only.")
+        function() return addState.cat == "Group" and addState.groupKind ~= "fromcdm" end,
+        nil, "e.g. Core Rotation", true)
+    AW.ClassicGroupRows(pg, addWin)
     if Options.MissingBuffsAddRows then Options.MissingBuffsAddRows(pg, addWin, addState) end
     if Options.TextAddRows then Options.TextAddRows(pg, addWin, addState) end
     if Options.TextureAddRows then Options.TextureAddRows(pg, addWin, addState) end
     if Options.WheelAddRows then Options.WheelAddRows(pg, addWin, addState) end
     if Options.SoundAddRows then Options.SoundAddRows(pg, addWin, addState) end
 
-    -- only icons pick a destination: bars are always free, groups have none
-    AT.RowDropdown(pg, addWin, "Add to",
-        function() return addState.destGroupId or 0 end,
-        function(v) addState.destGroupId = v ~= 0 and v or nil AT.LayoutPage(pg) end,
-        AddDestItems,
-        function()
-            -- an Arc Procs tab pick made as a deck bar is a bar: always free
-            if addState.cat == "Arc Procs" and Options.SpecialMakesBar and Options.SpecialMakesBar(addState) then return false end
-            return (addState.cat == "Icon" or addState.cat == "Arc Procs") and not addState.remGroupId
-        end)
     -- The Dynamic aura-group play-mode limit, said before the icon is made.
     AT.RowDesc(pg, "A Dynamic aura group only tracks you, your pet and your target.", 20,
         function()
@@ -14978,13 +14881,9 @@ local function BuildAddWindow()
                 unit = addState.auraUnit or ((t == "debuff") and "target" or "player") })
         end)
 
-    local btnRow = AT.AddRow(pg, 30)
-    local create = AT.MakeSmallButton(btnRow, "Create", 84)
-    create:SetPoint("LEFT", 10, 0)
+    AW.Finish(pg)
+    local create = AW.foot._create
     create.fs:SetTextColor(COL.lead[1], COL.lead[2], COL.lead[3])
-    local cancel = AT.MakeSmallButton(btnRow, "Cancel", 64)
-    cancel:SetPoint("LEFT", create, "RIGHT", 6, 0)
-    cancel:SetScript("OnClick", function() addWin:Hide() end)
 
     -- What the click needs, mirrored so Create only lights when it will work: an
     -- aura stack bar needs the game's maximum or a typed one. A disabled Button
@@ -14994,8 +14893,8 @@ local function BuildAddWindow()
         if addState.cat == "Group" and addState.groupKind == "missing" then
             return Options.MissingBuffsCanCreate ~= nil and Options.MissingBuffsCanCreate(addState)
         end
-        -- an Arc Proc, from its tab or as an icon or bar kind
-        if addState.cat == "Arc Procs" or (addState.cat == "Icon" and addState.iconKind == "special")
+        -- an Arc Proc, as an icon or bar kind
+        if (addState.cat == "Icon" and addState.iconKind == "special")
             or (addState.cat == "Bar" and addState.barKind == "special") then
             return Options.SpecialCanCreate ~= nil and Options.SpecialCanCreate(addState)
         end
@@ -15048,6 +14947,7 @@ local function BuildAddWindow()
     end
     UpdateCreate = function()
         local on = CanCreate()
+        AW.RefreshHints()
         create:SetEnabled(on)
         create:SetBackdropColor(COL.btn[1], COL.btn[2], COL.btn[3], 1)
         if on then
@@ -15058,10 +14958,14 @@ local function BuildAddWindow()
             create:SetBackdropBorderColor(COL.line[1], COL.line[2], COL.line[3], 1)
         end
     end
-    btnRow._sync = UpdateCreate   -- every re-layout (kind / mode picks) re-judges
     create:SetScript("OnClick", function()
         AT.CloseDropdown()
         if not CanCreate() then return end
+        if addState.cat == "Group" and addState.groupKind == "fromcdm" then
+            addWin:Hide()
+            NS.CDMMirrorOptions.Pick()
+            return
+        end
         local layoutId = addState.layoutId
         if not Store.Get(layoutId) then return end
         local dest = (not addState.forceFree) and addState.destGroupId or nil
@@ -15128,7 +15032,8 @@ local function BuildAddWindow()
         if iconKind == "spell" then
             local sid = ResolveSpellInput(addState.spellID)
             if not sid then return end
-            local name = (C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or ("Spell " .. sid) -- raw-id: the Add window's typed spell
+            local name = addState.spellName
+                or (C_Spell.GetSpellName and C_Spell.GetSpellName(sid)) or ("Spell " .. sid) -- raw-id: the Add window's typed spell
             local rec = Store.NewIcon("spell", { spellID = sid }, dest, layoutId, name)
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
         elseif iconKind == "aura" then
@@ -15204,7 +15109,7 @@ local function BuildAddWindow()
         elseif iconKind == "stance" then
             local rec = Options.StanceCreate and Options.StanceCreate(addState, dest, layoutId)
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
-        elseif addState.cat == "Arc Procs" or iconKind == "special"
+        elseif iconKind == "special"
             or (addState.cat == "Bar" and addState.barKind == "special") then
             local rec = Options.SpecialCreate and Options.SpecialCreate(addState, dest, layoutId)
             if rec then addWin:Hide() Options.SelectIconHome(rec) end
@@ -15386,6 +15291,7 @@ function Options.OpenAdd(layoutId, destGroupId, forceFree)
             if k ~= "item" and k ~= "enchant" then addState.iconKind = "spell" end
         end
     end
+    Options.AddWin.Open()
     addWin:ClearAllPoints()
     addWin:SetPoint("CENTER", win, "CENTER", 0, 20)
     addWin:Show()
@@ -15399,16 +15305,7 @@ function Options.OpenAddTemplate(key)
     local lay = SelLayout() or Store.Layouts()[1]
     if not (CO and CO.Pick and lay) then return end
     Options.OpenAdd(lay.id)
-    local t = CO.Template and CO.Template(key)
-    if t and t.which == "Icon" then
-        addState.cat, addState.iconKind = "Icon", "timer"
-    elseif t and t.which == "Group" then
-        addState.cat, addState.groupKind = "Group", "cooldown"
-    else
-        addState.cat, addState.barKind = "Bar", "timer"
-    end
-    CO.Pick(addState, key)
-    AT.LayoutPage(addWin._pg)
+    Options.AddWin.OpenReady(key)
 end
 
 -- after creating an icon, land where it lives

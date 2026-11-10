@@ -505,7 +505,7 @@ function Options.TextTabs(rec)
     local tabs = { "Tracking" }
     local rules = TO.TriggerOf(rec.driver or {}) == "rules" or (T and T.HasRules and T.HasRules(rec))
     if rules then tabs[#tabs + 1] = "Triggers" end
-    for _, t in ipairs({ "Appearance", "Conditions", "Position", "Load Conditions" }) do tabs[#tabs + 1] = t end
+    for _, t in ipairs({ "Appearance", "Effects", "Position", "Load Conditions" }) do tabs[#tabs + 1] = t end
     return tabs
 end
 
@@ -681,7 +681,6 @@ function Options.TextAddRows(pg, owner, addState)
         return nil
     end
     local relayout = function() AT.LayoutPage(pg) end
-    AT.RowDesc(pg, "Pick what the text is, then what drives it.", 20, vis)
     AT.RowDropdown(pg, owner, "Text type",
         Kind,
         function(v) addState.textKind = v end,

@@ -905,6 +905,12 @@ local function FadeValue(c, k)
     return v
 end
 
+-- The Fade when list holds right now (the bar Effects tab's While).
+function Conditions.WhileHolds(rec)
+    local c = rec and rec.c
+    return c ~= nil and SetHas(c.fadeWhen) and SetMatch(c.fadeWhen, c.fadeWhenAll == true)
+end
+
 -- "Full opacity when" decides if it has entries; "Fade when" always wins.
 local function FadeTarget(rec)
     local c = rec.c or EMPTY

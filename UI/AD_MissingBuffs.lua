@@ -331,7 +331,6 @@ end
 function MB.AddRows(pg, owner, addState)
     local AT, COL = NS.AT, NS.AT.COL
     local vis = function() return addState.cat == "Group" and addState.groupKind == "missing" end
-    AT.RowDesc(pg, "Each icon shows only while its buff is missing, in combat too.", 20, vis)
     for _, sect in ipairs(MB.SECTIONS) do MB.SectionRow(pg, sect, addState, vis) end
     -- while Create reads the game's spells for the ranks
     local st = AT.AddRow(pg, 20, function() return vis() and MB.busy == true end)

@@ -90,7 +90,6 @@ function Options.CDMBarAddRows(pg, owner, addState)
     if not CO.On() then return end
     local AT = NS.AT
     local function Vis() return addState.cat == "Bar" and addState.barKind == "cdmbar" end
-    AT.RowDesc(pg, "Copies one of the Cooldown Manager's Tracked Bars, its timer and all.", 20, Vis)
     local row = AT.RowDropdown(pg, owner, "Tracked bar",
         function() return addState.cdmID end,
         function(v)

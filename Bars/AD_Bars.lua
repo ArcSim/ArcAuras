@@ -444,6 +444,20 @@ local function StackBands(rec, maxStacks)
 end
 Bars.StackBands = StackBands
 
+-- A count Lua can read (a Custom stack bar's): the colour the whole fill
+-- wears, the highest step reached, nil for the bar's own.
+function Bars.StackFlipColor(rec, count, maxStacks)
+    local M = math.max(1, tonumber(maxStacks) or 1)
+    local c
+    for _, b in ipairs(StackBands(rec, M) or {}) do
+        if count >= b.from then c = b.color end
+    end
+    if count >= M and R(rec, "stackcolors", "maxColorEnabled") == true then
+        c = R(rec, "stackcolors", "maxColor") or c
+    end
+    return c
+end
+
 -- The time bands of a duration bar, sorted ascending by fraction of the full
 -- duration (0 = expired): each { f, secs, color }; nil when off. `ref` is the
 -- full duration in seconds the values convert against (seconds mode needs it
@@ -6410,10 +6424,15 @@ function Bars.EnsureBar(rec, holder)
     if e.kind == "resource" and Bars.ResColor then Bars.ResColor.Styled(e) end
 end
 
+function Bars.EachLive(fn)
+    for _, e in pairs(live) do fn(e) end
+end
+
 function Bars.Release(barId)
     local e = live[barId]
     if not e then return end
     if e.shell then
+        if e.shell._adTint then e.shell._adTint:Hide() end
         e.shell.fill:SetScript("OnUpdate", nil)
         e.shell:Hide()
         e.shell:SetParent(UIParent)
@@ -7352,6 +7371,7 @@ end
 -- Kit: the shared helpers a bar kind in its own file uses instead of copies.
 -- Set here at the end, where every one of them exists.
 Bars.Kit = {
+    StackFlipColor = Bars.StackFlipColor,
     R = R, Px = Px, IsEditMode = IsEditMode, live = live, ForEach = ForEach,
     ApplyStyle = ApplyStyle, ApplyTexts = ApplyTexts, ApplyVisibility = ApplyVisibility,
     SetRunText = SetRunText, StyleFont = StyleFont, PlaceText = PlaceText,

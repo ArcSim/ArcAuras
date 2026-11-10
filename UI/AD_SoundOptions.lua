@@ -61,7 +61,6 @@ function Options.SoundAddRows(pg, owner, addState)
         return function() return vis() and set[D().when] == true end
     end
     local Relay = function() AT.LayoutPage(pg) end
-    AT.RowDesc(pg, "Plays a sound or speaks when something happens. Nothing shows on screen.", 20, vis)
     AT.RowInput(pg, "Sound name",
         function() return addState.soundName or "" end,
         function(v) addState.soundName = v end,

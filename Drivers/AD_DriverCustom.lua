@@ -733,7 +733,12 @@ function CU.PaintBar(st)
         else
             e.shell.fill:SetValue(shown)
         end
-        e.shell.fill:SetStatusBarColor(K.BarColorOf(rec))
+        local step = K.StackFlipColor and K.StackFlipColor(rec, shown, cap)
+        if step then
+            e.shell.fill:SetStatusBarColor(step[1], step[2], step[3], step[4] or 1)
+        else
+            e.shell.fill:SetStatusBarColor(K.BarColorOf(rec))
+        end
         K.SetRunText(e.shell, "dur", "")
         -- the timer's time left as the duration text (plain GetTime numbers on
         -- a text-only Cooldown); pushed only when the timer changes

@@ -35,8 +35,8 @@ local function Glow() return NS.Bars and NS.Bars.Glow end
 -- The Glows sub-tab is the one open: the editor preview draws every glow then.
 function Options.BarGlowsOpen()
     local ui = Options.ui
-    if not (ui and ui.barTab == "Conditions") then return false end
-    return (ui.barSec and ui.barSec.Conditions) == "Glows"
+    if not (ui and ui.barTab == "Effects") then return false end
+    return (ui.barSec and ui.barSec.Effects) == "Glows"
 end
 if NS.Bars and NS.Bars.Glow then NS.Bars.Glow.PreviewOpen = Options.BarGlowsOpen end
 
@@ -503,7 +503,7 @@ function Options.BarGlowRows(pg, ctx, win, c)
         local vis
         -- registered as a look block for the Defaults page; glows never
         -- inherit, so the layout looks leave them out
-        vis = c.BarBlock("Glow " .. k, "glows", "Conditions", fields,
+        vis = c.BarBlock("Glow " .. k, "glows", "Effects", fields,
             function(r) return k <= ((NS.Bars and NS.Bars.Glow and NS.Bars.Glow.Count(r)) or 1) end,
             "Glows", nil, { card = {
                 when = function(r)
@@ -526,7 +526,7 @@ function Options.BarGlowRows(pg, ctx, win, c)
     -- "+ Add glow" / "Remove last glow", then the push bar
     NS.AT.Section(pg, nil, { visibleFn = vis1 })
     c.SectionRows(pg, "bar", "glows", ctx, vis1, { "barGlowCount" })
-    c.SubPush("Conditions", "Glows")
+    c.SubPush("Effects", "Glows")
     -- the preview follows the sub-tab as it opens and closes
     if hooksecurefunc and not BGO.hooked then
         BGO.hooked = true

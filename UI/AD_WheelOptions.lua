@@ -35,7 +35,6 @@ local function Trim(v) return (tostring(v or ""):gsub("^%s+", ""):gsub("%s+$", "
 function Options.WheelAddRows(pg, owner, addState)
     local AT = NS.AT
     local vis = function() return addState.cat == "Wheel" and not addState.remGroupId end
-    AT.RowDesc(pg, "A ring of your spells and items: hold its key, point at one and let go to cast it.", 20, vis)
     AT.RowInput(pg, "Wheel name",
         function() return addState.wheelName or "" end,
         function(v) addState.wheelName = v end,

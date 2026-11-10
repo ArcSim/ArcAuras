@@ -108,13 +108,15 @@ local function ArcaneBlastDriver()
 end
 
 -- Ready-made Custom Bars and Icons (WoW Forever): picked in the Add window,
--- made with their rules. Every class sees every template; the tooltip names
--- the class. Rule spells are rank 1; every rank matches by name there.
+-- made with their rules. shows: the kinds whose form offers it, first its home.
+-- Rule spells are rank 1; every rank matches by name there.
 CO.TEMPLATES_FOREVER = {
     { key = "arcaneblast", class = "Mage", name = "Arcane Blast", art = 400574, showSpell = 400574, mode = "stack",
+      shows = { "Bar:timer", "Bar:cooldown", "Bar:aura" },
       tip = "Your Arcane Blast stacks: up to 4, for 18 seconds from the first cast; dying clears them.",
       driver = ArcaneBlastDriver() },
     { key = "arcaneblasticon", which = "Icon", class = "Mage", name = "Arcane Blast", art = 400574, showSpell = 400574,
+      shows = { "Icon:timer", "Icon:spell", "Icon:aura" },
       tip = "Your Arcane Blast stacks: up to 4, for 18 seconds from the first cast; dying clears them.",
       driver = ArcaneBlastDriver() },
 }
@@ -170,6 +172,7 @@ for _, t in ipairs({
       tip = "Your frost trap, Freezing or Ice: 60 seconds from laying it, then its effect on your target, its cooldown and Ready." },
 }) do
     t.which, t.class, t.o = "Icon", "Hunter", CO.TRAP_LOOKS
+    t.shows = { "Icon:timer", "Icon:spell", "Icon:aura" }
     -- one trap is its spell; Fire Trap and Frost Trap are our own words
     if not t.slot then t.showSpell = t.art end
     t.driver = t.slot and CO.TrapSlotDriver(t.slot) or CO.TrapDriver(t.art, t.rival)
@@ -242,9 +245,8 @@ function CO.TrapGroupCreate(addState, layoutId)
     Store.Dirty("tree")
     return g
 end
--- the template square under Add > Group > Icon Group
 CO.TEMPLATES_FOREVER[#CO.TEMPLATES_FOREVER + 1] = { key = "huntertraps", which = "Group", class = "Hunter",
-    name = "Hunter Traps", art = 13795, make = CO.TrapGroupCreate,
+    name = "Hunter Traps", art = 13795, make = CO.TrapGroupCreate, shows = { "Group:cooldown", "Icon:spell", "Icon:aura" },
     tip = "Your traps in a row: each shows while it is armed or burning, the rest close up." }
 
 -- Totem Durations: one icon per element slot, each showing whatever totem is
@@ -278,7 +280,7 @@ function CO.TotemGroupCreate(addState, layoutId)
     return g
 end
 CO.TEMPLATES_FOREVER[#CO.TEMPLATES_FOREVER + 1] = { key = "totemdurations", which = "Group", class = "Shaman",
-    name = "Totem Durations", art = 8071, make = CO.TotemGroupCreate,
+    name = "Totem Durations", art = 8071, make = CO.TotemGroupCreate, shows = { "Group:cooldown", "Icon:totem" },
     tip = "Any totem you drop with its time left, one per element. Greyed with a glow while its buff is not on you." }
 
 -- Ready-made Custom Icons (retail): an item's buff as a timer from its use.
@@ -286,12 +288,14 @@ CO.TEMPLATES_FOREVER[#CO.TEMPLATES_FOREVER + 1] = { key = "totemdurations", whic
 CO.TEMPLATES_RETAIL = {
     -- a second use while it runs keeps the first timer
     { key = "puzzlebox", which = "Icon", name = "Algeth'ar Puzzle Box", art = 383781, showItem = 193701,
+      shows = { "Icon:timer", "Icon:item" },
       tip ="The Algeth'ar Puzzle Box's haste: 20 seconds from its use; dying clears it.",
       driver = { duration = 20, rules = {
           { when = "cast", spellID = 383781, act = "start", mode = "idle", secs = 20 },
           { when = "cond_on", cond = "dead", timer = "running", act = "reset" },
       } } },
     { key = "lightspotential", which = "Icon", name = "Light's Potential", art = 1236616, showSpell = 1236616,
+      shows = { "Icon:timer", "Icon:item" },
       tip ="The Light's Potential potion: 30 seconds from the drink, each drink restarts it; dying clears it.",
       driver = { duration = 30, rules = {
           { when = "cast", spellID = 1236616, act = "start", mode = "restart", secs = 30 },
@@ -339,67 +343,6 @@ function CO.Copy(t)
     return c
 end
 
-CO.CELL, CO.PITCH = 32, 36
-
--- One square per template of that kind (which: "Icon" or "Bar"), on the
--- label margin: a click picks it (name, art and mode filled in, the pick
--- cyan), a second click lets it go.
-function CO.TemplateRow(pg, addState, vis, which)
-    local AT, COL = NS.AT, NS.AT.COL
-    local list = CO.Templates(which or "Bar")
-    if #list == 0 then return nil end
-    local field = (which == "Group") and "groupTemplate" or "customTemplate"
-    local row = AT.AddRow(pg, CO.PITCH + 8, vis)
-    local cells = {}
-    for i, t in ipairs(list) do
-        local b = CreateFrame("Button", nil, row, "BackdropTemplate")
-        b:SetSize(CO.CELL, CO.CELL)
-        b:SetPoint("LEFT", row, "LEFT", 10 + (i - 1) * CO.PITCH, 0)
-        AT.Skin(b, COL.well, COL.line)
-        b.tex = b:CreateTexture(nil, "ARTWORK")
-        b.tex:SetPoint("TOPLEFT", 2, -2)
-        b.tex:SetPoint("BOTTOMRIGHT", -2, 2)
-        b.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-        b.tex:SetTexture(C_Spell and C_Spell.GetSpellTexture and C_Spell.GetSpellTexture(t.art) or 134400) -- raw-id: a template's own art
-        function b.Edge(hot)
-            local c = (addState[field] == t.key and COL.arc) or (hot and COL.focus) or COL.line
-            b:SetBackdropBorderColor(c[1], c[2], c[3], 1)
-        end
-        b:SetScript("OnEnter", function()
-            b.Edge(true)
-            GameTooltip:SetOwner(b, "ANCHOR_RIGHT")
-            GameTooltip:SetText(CO.ShownName(t), COL.ink[1], COL.ink[2], COL.ink[3])
-            if t.class then
-                GameTooltip:AddLine(Tr("%s template"):format(CO.ClassWord(t.class)), COL.arc[1], COL.arc[2], COL.arc[3])
-            end
-            GameTooltip:AddLine(Tr(t.tip), COL.dim[1], COL.dim[2], COL.dim[3], true)
-            GameTooltip:Show()
-        end)
-        b:SetScript("OnLeave", function()
-            b.Edge(false)
-            if GameTooltip:IsOwned(b) then GameTooltip:Hide() end
-        end)
-        b:SetScript("OnClick", function()
-            AT.CloseDropdown()
-            if addState[field] == t.key then
-                addState[field] = nil
-                -- a group's name came with the pick and goes with it
-                if which == "Group" and addState.groupName == t.name then addState.groupName = nil end
-            else
-                CO.Pick(addState, t.key)
-            end
-            AT.LayoutPage(pg)
-        end)
-        b._adTemplate = t.key
-        cells[i] = b
-    end
-    row._cells = cells
-    row._sync = function()
-        for _, b in ipairs(cells) do b.Edge(false) end
-    end
-    return row
-end
-
 -- The Add window's rows for a Custom Icon (which = "Icon") or a Custom Bar
 -- ("Bar"): a name and an optional art spell. The rules come after, on the
 -- item's Triggers tab.
@@ -413,8 +356,6 @@ function Options.CustomAddRows(pg, owner, addState, which)
             return addState.cat == "Icon" and (addState.iconKind or "spell") == "timer" and not addState.remGroupId
         end
     end
-    AT.RowDesc(pg, "Its rules (the Triggers tab) start its timer and count its stacks from events you pick.", 20, vis)
-    CO.TemplateRow(pg, addState, vis, which)
     AT.RowInput(pg, "Name",
         function() return addState.customName or "" end,
         function(v) addState.customName = v end,
@@ -424,13 +365,6 @@ function Options.CustomAddRows(pg, owner, addState, which)
         function(v) addState.customArt = v end,
         vis, "The spell whose icon it wears. A spell ID, a link, or the name of a spell you know.",
         "Question mark until set", true)
-end
-
--- Add > Group > Icon Group: the ready-made groups' squares
-function Options.GroupTemplateRows(pg, addState)
-    CO.TemplateRow(pg, addState, function()
-        return addState.cat == "Group" and (addState.groupKind or "cooldown") == "cooldown"
-    end, "Group")
 end
 
 -- the picked group template, or nil; used once

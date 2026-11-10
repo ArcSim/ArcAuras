@@ -31,7 +31,6 @@ function Options.TotemBarAddRows(pg, owner, addState)
     if not TO.On() then return end
     local AT = NS.AT
     local function Vis() return addState.cat == "Bar" and addState.barKind == "totembar" end
-    AT.RowDesc(pg, "The time left on one of your totems or guardians, by the spell that puts it down or by its slot.", 20, Vis)
     AT.RowInput(pg, "Spell ID",
         function() return addState.totemBarSpell or "" end,
         function(v) addState.totemBarSpell = v end,

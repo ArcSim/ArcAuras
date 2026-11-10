@@ -51,7 +51,9 @@ local TAB_MASK = "common-sidetab-mask"
 local TAB_SEL  = "common-sidetab-selected"
 local TAB_HI   = "common-sidetab-hover"
 local ROW_HI   = "groupfinder-highlightbar-blue"
-local ICON     = "Interface\\AddOns\\ArcAuras_LFG\\Media\\ArcLFGFilter_Icon"
+-- The tab has art of its own, drawn full bleed for the shape a tab shows. The
+-- framed logo in Media\\ArcLFGFilter_Icon is the addon list's (toc IconTexture).
+local TAB_ICON = "Interface\\AddOns\\ArcAuras_LFG\\Media\\ArcLFGFilter_Tab"
 
 SP.strip = {}  -- the rows on the stone, above the tabs
 SP.rows = {}   -- the rows inside the body, in order
@@ -694,9 +696,14 @@ function SP.BuildSideTab()
 	local bg = tab:CreateTexture(nil, "BACKGROUND")
 	if art then bg:SetAtlas(TAB_ART, true) end
 	bg:SetAllPoints()
-	local selected = tab:CreateTexture(nil, "BORDER")
+	-- The lit ring goes OVER the icon, not under it: the template puts
+	-- SelectedTexture on OVERLAY while the icon is on ARTWORK, which is why a lit
+	-- tab of the window's own shows the ring along both inner edges of its art.
+	-- Under the icon it only surfaces where the icon stops short, which reads as
+	-- a bare strip down one side. Its own atlas size, centred, as the template has.
+	local selected = tab:CreateTexture(nil, "OVERLAY")
 	if C_Texture.GetAtlasInfo(TAB_SEL) then selected:SetAtlas(TAB_SEL, true) end
-	selected:SetAllPoints()
+	selected:SetPoint("CENTER")
 	selected:Hide()
 	-- The window's tabs do not draw their icon at its own size: LFGVanillaRightTab
 	-- sets fillToInterior, so SidePanelTabButtonMixin.UpdateIconInterior blows the
@@ -707,11 +714,11 @@ function SP.BuildSideTab()
 	local icon = tab:CreateTexture(nil, "ARTWORK")
 	icon:SetSize(50, 50)
 	icon:SetPoint("CENTER", -3, 0)
-	icon:SetTexture(ICON)
-	-- Their art is full bleed, so whatever survives the cut is picture. Ours is a
-	-- framed logo, so it is cropped to the middle third first, past its border and
-	-- the dark behind the eye, and the cut lands inside that.
-	icon:SetTexCoord(0.333, 0.667, 0.333, 0.667)
+	icon:SetTexture(TAB_ICON)
+	-- Their art is full bleed, so whatever survives the cut is picture and the
+	-- trim is only the texture's own margin. Ours is drawn the same way now, so
+	-- it takes the same trim: no crop, nothing of the file held back.
+	icon:SetTexCoord(0.03125, 0.96875, 0.03125, 0.96875)
 	local mask = C_Texture.GetAtlasInfo(TAB_MASK) and tab.CreateMaskTexture and tab:CreateMaskTexture()
 	if mask and icon.AddMaskTexture then
 		mask:SetAtlas(TAB_MASK, true)

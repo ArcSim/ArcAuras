@@ -1,5 +1,5 @@
--- AD_SpecialOptions: the Arc Procs rows (internally "special"): the Add window's Arc Procs tab, a special icon's Tracking and Text blocks, a deck bar's Tracking rows and blocks, and the set-pieces rule on every item's Load Conditions tab (retail only).
--- AD_Options calls in behind nil checks (Options.SpecialAddTab / SpecialAddRows / SpecialCanCreate / SpecialMakesBar / SpecialCreate / SpecialWhat / SpecialBarWhat / SpecialIconRows / SpecialTextBlocks / SpecialBarRows / SpecialBarBlocks / SetPiecesRows); every write goes through NS.SpecialIcon, NS.Store and NS.Conditions.
+-- AD_SpecialOptions: the Arc Procs rows (internally "special"): the Add window's Arc Proc rows, a special icon's Tracking and Text blocks, a deck bar's Tracking rows and blocks, and the set-pieces rule on every item's Load Conditions tab (retail only).
+-- AD_Options calls in behind nil checks (Options.SpecialAddRows / SpecialCanCreate / SpecialMakesBar / SpecialCreate / SpecialWhat / SpecialBarWhat / SpecialIconRows / SpecialTextBlocks / SpecialBarRows / SpecialBarBlocks / SetPiecesRows); every write goes through NS.SpecialIcon, NS.Store and NS.Conditions.
 local ADDON, NS = ...
 local Options = NS.Options
 if not Options then return end
@@ -68,10 +68,6 @@ function SO.WhoWords(def)
     return words
 end
 
-function Options.SpecialAddTab(tabs)
-    if SO.On() then tabs[#tabs + 1] = "Arc Procs" end
-end
-
 -- The Arc Procs rows show on their own tab, and under the Icon and Bar tabs'
 -- "Arc Proc" kinds.
 function SO.Showing(addState)
@@ -112,21 +108,6 @@ function Options.SpecialAddRows(pg, owner, addState)
         function() return vis() and not SO.BarMode(addState) end)
     AT.RowDesc(pg, "Pick an Arc Proc, then Create: a deck bar fills as the deck is drawn.", 20,
         function() return vis() and SO.BarMode(addState) end)
-    -- on its own tab: an icon or a deck bar, first, so the bars are in plain
-    -- sight; adding into a group is icons only. A pick with no deck lets go
-    -- as a bar.
-    local asRow = AT.RowDropdown(pg, owner, "Create as",
-        function() return (addState.specialAs == "bar") and "bar" or "icon" end,
-        function(v)
-            addState.specialAs = (v == "bar") and "bar" or nil
-            if SO.BarMode(addState) and not SO.CanBar(addState.specialId and SP.Get(addState.specialId)) then
-                addState.specialId = nil
-            end
-            AT.LayoutPage(pg)
-        end,
-        function() return { { value = "icon", text = "Icon" }, { value = "bar", text = "Deck bar" } } end,
-        function() return vis() and addState.cat == "Arc Procs" and not addState.groupOnly end)
-    AT.Tooltip(asRow, "Create as", "A deck bar fills as the deck is drawn, with a mark for each proc.")
     AT.RowToggle(pg, "Show every Arc Proc",
         function() return addState.specialAll == true end,
         function(v)
@@ -795,9 +776,9 @@ end
 function Options.SpecialBarBlocks(sub, BarBlock, PushBar, pg, ctx, owner)
     local AT = NS.AT
     if sub == "Fill & Colors" then
-        local vis = BarBlock("Deck colors", "deck", "Appearance", {
+        local vis = BarBlock("Deck colors", "deck", "Effects", {
             "stateFill", "emptyColor", "halfColor", "fullColor", "texEmptyEnabled", "texEmptyColor",
-        }, nil, "Fill & Colors", true)
+        }, nil, "Procs used", true)
         -- a counter's two ends in the tracker's own words
         local function Words()
             local r, SI = ctx(), NS.SpecialIcon

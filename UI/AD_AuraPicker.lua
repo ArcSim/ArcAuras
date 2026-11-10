@@ -1,6 +1,6 @@
--- AD_AuraPicker: the Add window's aura squares. Ready-made auras first, then
--- the auras your Cooldown Manager tracks for this spec, then the auras its
--- cooldown spells carry (NS.CDMMirror.AuraEntries). Typing in the aura's name
+-- AD_AuraPicker: the Add window's aura squares: the auras your Cooldown
+-- Manager tracks for this spec, then the auras its cooldown spells carry
+-- (NS.CDMMirror.AuraEntries); the ready-made auras are tiles (UI\AD_AddWindow.lua). Typing in the aura's name
 -- box filters them; a click fills the aura form (IDs, type, unit, who casts)
 -- and Create stays the commit. The Cooldown Manager is read out of combat only.
 local ADDON, NS = ...
@@ -76,7 +76,6 @@ function AP.Words(t)
 end
 
 AP.TITLES = {
-    tpl = "TEMPLATES",
     cdm = "TRACKED BY THE COOLDOWN MANAGER",
     spell = "AURAS ON YOUR SPELLS",
 }
@@ -108,7 +107,6 @@ function AP.Lists(fresh)
     local tracked, spells, why = {}, {}, nil
     if M and M.AuraEntries then tracked, spells, why = M.AuraEntries(fresh) end
     return {
-        { key = "tpl", list = AP.TemplateEntries() },
         { key = "cdm", list = tracked },
         { key = "spell", list = spells },
     }, why
@@ -116,7 +114,7 @@ end
 
 -- the line under the Cooldown Manager's title when it gave no aura at all
 function AP.Note(parts, why)
-    if #parts[2].list > 0 or #parts[3].list > 0 then return nil end
+    if #parts[1].list > 0 or #parts[2].list > 0 then return nil end
     if why == "combat" then return Tr("Leave combat to read your Cooldown Manager.") end
     return Tr("Your Cooldown Manager lists no auras here.")
 end
@@ -219,7 +217,7 @@ function Options.AuraPickerRow(pg, owner, addState, vis, getText, onFill, keys, 
     row._scroll:SetPoint("BOTTOMRIGHT", -12, AP.GAP)
     local grid = row._grid
     local heads = {}
-    for i, key in ipairs({ "tpl", "cdm", "spell" }) do
+    for i, key in ipairs({ "cdm", "spell" }) do
         local fs = grid:CreateFontString(nil, "OVERLAY")
         fs:SetFont(AT.FONT, 9, "")
         fs:SetTextColor(COL.dim[1], COL.dim[2], COL.dim[3])

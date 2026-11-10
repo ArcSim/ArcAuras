@@ -4223,14 +4223,15 @@ local ICON_SUB = {
         ["Labels & Keybind"] = { "Text", "Custom Text & Keybind" } },
 }
 -- a bar tab that went away: its rows' new tab and sub-tab (true: the same sub-tab)
-ET.BAR_TAB_HOME = { Thresholds = { "Appearance", "Fill & Colors" }, ["Color Changes"] = { "Appearance", "Fill & Colors" },
-    Behavior = { "Conditions", "By State" }, ["Show & Hide"] = { "Conditions", true } }
+ET.BAR_TAB_HOME = { Thresholds = { "Effects", "Time left" }, ["Color Changes"] = { "Effects", "Time left" },
+    Behavior = { "Effects", "Not active" }, ["Show & Hide"] = { "Effects", "Not active" },
+    Conditions = { "Effects", "While" } }
 local BAR_SUB = {
     Appearance = { Style = "Size & Frame", ["Bar Size"] = "Size & Frame", Scale = "Size & Frame",
         Background = "Size & Frame", Border = "Size & Frame", Fill = "Fill & Colors",
         Direction = "Fill & Colors", ["Point Colors"] = "Fill & Colors", Segments = "Fill & Colors",
         ["Cost Preview"] = "Fill & Colors", ["Off-hand"] = "Swing",
-        Spark = true, Visibility = { "Conditions", "Fade When" } },
+        Spark = true, Visibility = { "Effects", "While" } },
 }
 -- tabs that stack their blocks: no sub-tab pick
 local BAR_STACKED = { ["Heals & Shields"] = true, Castbar = true }
@@ -4253,6 +4254,7 @@ function ET.Home(fam, tab, sub, rec)
     if fam == "bar" then
         local moved = ET.BAR_TAB_HOME[tab]
         if moved then
+            if moved[2] == "Not active" and rec and rec.barKind == "cooldown" then return moved[1], "Ready" end
             if moved[2] == true then return moved[1], sub end
             return moved[1], moved[2]
         end
@@ -4333,8 +4335,8 @@ for k, v in pairs(ET.BAR_TAB_HOME) do Options.RENAMED_BAR_TABS[k] = v[1] end
 ET.BADGES = {
     icon = { Effects = "tab:effects" },
     iconSub = { ["Custom Text & Keybind"] = "sub:labelskeybind" },
-    -- the bars' Conditions tab was Show & Hide: a rename keeps its mark's id
-    bar = { Conditions = "bar:showhide" },
+    -- the bars' Effects tab was Conditions and Show & Hide: a rename keeps its mark's id
+    bar = { Effects = "bar:showhide" },
     barSub = { ["Size & Frame"] = "sub:sizeframe", ["Fill & Colors"] = "sub:fillcolors", Glows = "sub:barglows" },
     group = { Appearance = "grp:appearance", Tracking = "grp:tracking" },
     reminder = { Appearance = "rem:appearance", Sounds = "rem:sounds" },

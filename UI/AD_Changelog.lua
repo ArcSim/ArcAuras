@@ -13,6 +13,34 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.3.0",
+        intro = "A new Add New window, and bars get the Effects tab.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Add New window",
+                    desc = "Every kind is now a button with a picture, sorted into Icons, Bars, Groups, Text and Textures, Wheels and Sounds. Your class's ready-made icons and bars sit on a line at the top, and Spell and Aura show them as you fill in the form: type Arcane Blast and it offers its ready-made. Pick another class's with Ready-mades for in the title bar." },
+                { title = "Classic view",
+                    desc = "Prefer the old window? Classic view in its title bar brings back the tabs and dropdowns, and it stays that way until you pick New view." },
+                { title = "Effects tab on bars",
+                    desc = "Every bar now has the Effects tab icons have, in place of Conditions. Colors by stacks, time left, health, points and distance, glows, fades and hides are triggers in one list, each with its own steps. Your saved colors carry over." },
+                { title = "Colors by stacks on Custom Bars",
+                    desc = "A Custom Bar in stack mode can now change color at a stack count, such as the Arcane Blast bar at 3 stacks." },
+                { title = "Fill color while",
+                    desc = "A While trigger can now change a bar's fill color while its condition holds, on every bar except aura bars." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Blizzard's Bar",
+                    desc = "Its settings are now under Appearance > Size & Frame." },
+                { title = "Remove trigger",
+                    desc = "Removing a trigger that holds rows of colors asks first." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "LFG Filter tab",
+                    desc = "The filter's tab on the Looking For Group window now shows the whole eye, and a lit tab gets its ring like the tabs above it." },
+            } },
+        },
+    },
+    {
         version = "3.2.9",
         intro = "Show the icon at a stack count, Quest Lookup tells you when a quest is done, and fixes for Effects and totem timers.",
         sections = {
@@ -1612,6 +1640,30 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.3.0",
+        intro = "A new Add New window, and bars get the Effects tab.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Add New window",
+                    desc = "Every kind is now a button with a picture, sorted into Icons, Bars, Groups, Text and Textures, Wheels and Sounds. Your class's ready-made icons and bars sit on a line at the top, and Spell and Aura show them as you fill in the form. Pick another class's with Ready-mades for in the title bar." },
+                { title = "Classic view",
+                    desc = "Prefer the old window? Classic view in its title bar brings back the tabs and dropdowns, and it stays that way until you pick New view." },
+                { title = "Effects tab on bars",
+                    desc = "Every bar now has the Effects tab icons have, in place of Conditions. Colors by stacks, time left, health, points and distance, glows, fades and hides are triggers in one list, each with its own steps. Your saved colors carry over." },
+                { title = "Colors by stacks on Custom Bars",
+                    desc = "A Custom Bar in stack mode can now change color at a stack count." },
+                { title = "Fill color while",
+                    desc = "A While trigger can now change a bar's fill color while its condition holds, on every bar except aura bars." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Blizzard's Bar",
+                    desc = "Its settings are now under Appearance > Size & Frame." },
+                { title = "Remove trigger",
+                    desc = "Removing a trigger that holds rows of colors asks first." },
+            } },
+        },
+    },
     {
         version = "3.2.9",
         intro = "Show the icon at a stack count, and fixes for Effects and totem timers.",

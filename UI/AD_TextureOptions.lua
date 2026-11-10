@@ -181,7 +181,7 @@ function Options.TextureTabs(rec)
     if rec.driver and rec.driver.source == "rules" then tabs[#tabs + 1] = "Triggers" end
     -- a value's picture has no stack count or time left to write
     local valued = NS.Schema.TexValue and NS.Schema.TexValue(rec)
-    for _, t in ipairs({ "Appearance", "Conditions", "Text", "Position", "Load Conditions" }) do
+    for _, t in ipairs({ "Appearance", "Effects", "Text", "Position", "Load Conditions" }) do
         if not (t == "Text" and valued) then tabs[#tabs + 1] = t end
     end
     return tabs
@@ -661,7 +661,6 @@ function Options.TextureAddRows(pg, owner, addState)
     local function AuraUnit()
         return addState.texUnit or ((addState.texAuraType == "debuff") and "target" or "player")
     end
-    AT.RowDesc(pg, "A picture that follows an aura, a cooldown, your power, health or triggers.", 20, vis)
     AT.RowDropdown(pg, owner, "Picture driven by",
         Src,
         function(v) addState.texSource = v end,

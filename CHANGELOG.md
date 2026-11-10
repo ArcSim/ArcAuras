@@ -1,5 +1,26 @@
 # Arc Auras
 
+## 3.3.0
+
+A new Add New window, and bars get the Effects tab.
+
+### New Features
+
+- **Add New window** - Every kind is now a button with a picture, sorted into Icons, Bars, Groups, Text and Textures, Wheels and Sounds. Your class's ready-made icons and bars sit on a line at the top, and Spell and Aura show them as you fill in the form: type Arcane Blast and it offers its ready-made. Pick another class's with Ready-mades for in the title bar.
+- **Classic view** - Prefer the old window? Classic view in its title bar brings back the tabs and dropdowns, and it stays that way until you pick New view.
+- **Effects tab on bars** - Every bar now has the Effects tab icons have, in place of Conditions. Colors by stacks, time left, health, points and distance, glows, fades and hides are triggers in one list, each with its own steps. Your saved colors carry over.
+- **Colors by stacks on Custom Bars** - A Custom Bar in stack mode can now change color at a stack count, such as the Arcane Blast bar at 3 stacks.
+- **Fill color while** - A While trigger can now change a bar's fill color while its condition holds, on every bar except aura bars.
+
+### Improvements
+
+- **Blizzard's Bar** - Its settings are now under Appearance > Size & Frame.
+- **Remove trigger** - Removing a trigger that holds rows of colors asks first.
+
+### Bug Fixes
+
+- **LFG Filter tab** - The filter's tab on the Looking For Group window now shows the whole eye, and a lit tab gets its ring like the tabs above it.
+
 ## 3.2.9
 
 Show the icon at a stack count, Quest Lookup tells you when a quest is done, and fixes for Effects and totem timers.

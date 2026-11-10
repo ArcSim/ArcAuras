@@ -1,7 +1,7 @@
--- AD_ResColorOptions: a resource bar's States table, the bar editor's Conditions > By State. One row per
--- state with what it changes (fill, texts, cost mark, glow), the open row's editor under the table, and
--- Add a state. AD_Options calls Options.ResStateRows while it builds the bar pane; every edit goes through
--- NS.Bars.ResColor.
+-- AD_ResColorOptions: a resource bar's States table, the bar editor's Effects triggers Power, Spells and
+-- Auras. One row per state with what it changes (fill, texts, cost mark, glow), the open row's editor under
+-- the table, and Add a state. AD_Options calls Options.ResStateRows while it builds the bar pane; every edit
+-- goes through NS.Bars.ResColor.
 local ADDON, NS = ...
 local Options = NS.Options
 if not Options then return end
@@ -32,16 +32,33 @@ RSO.KINDS = {
     { value = "above", text = "Power at or above a value" },
     { value = "full", text = "Full power" },
 }
+-- The triggers that draw this table. A trigger only filters which rows it
+-- shows: a row keeps its place in the saved list, so what wins never changes.
+RSO.VIEWS = {
+    Power = { below = true, above = true, full = true },
+    Spells = { enough = true, usable = true, ready = true, recharging = true, cooldown = true },
+    Auras = { up = true, missing = true },
+}
+RSO.VIEW_ORDER = { "Power", "Spells", "Auras" }
+-- a power row's rule, on the row itself
+RSO.RULES = { { value = "below", text = "At or below" }, { value = "above", text = "At or above" },
+    { value = "full", text = "Full power" } }
 RSO.GLOWS = { { value = "off", text = "Off" }, { value = "pixel", text = "Pixel" }, { value = "autocast", text = "Autocast" } }
 RSO.AURA_IDS = "Aura name or spell IDs"
 RSO.NOTE = "Fill and texts: the highest row that holds wins. A glow shows while its row holds."
 -- the table's columns, measured from the row's right edge; power is the For
 -- column, on an Automatic power bar only
-RSO.COLS = { remove = { w = 22 }, glow = { w = 96 }, mark = { w = 78 }, text = { w = 56 }, fill = { w = 56 },
-    power = { w = 76 } }
-RSO.GAP = 10
+RSO.COLS = { remove = { w = 20 }, move = { w = 30 }, glow = { w = 76 }, mark = { w = 62 }, text = { w = 40 },
+    fill = { w = 40 }, power = { w = 52 } }
+RSO.GAP = 8
+-- a Power row's own controls, left of its first cell: the room beside the trigger list is tight
+RSO.RULE_W, RSO.VALUE_W, RSO.ROW_LEFT = 88, 36, 206
+-- a power row's value steps by this, and stays in 1 to 99 as a percent
+RSO.VALUE_STEP = 5
 -- the open row per bar
 RSO.sel = {}
+-- the state each trigger's Add pick is on
+RSO.addKinds = {}
 -- an Automatic bar's row for every power, and the look of a row for another
 -- power than the one previewed: still there and still clickable
 RSO.FOR_ALL = "All powers"
@@ -190,14 +207,163 @@ function RSO.AuraFills(rows, i)
     return n
 end
 
--- The By State sub-tab is the one open on a resource bar: the preview wears
--- the open row then.
+-- The trigger the table is drawn for, or nil.
+function RSO.View()
+    local ui = Options.ui
+    local s = ui and ui.barSec and ui.barSec.Effects
+    return (s ~= nil and RSO.VIEWS[s] ~= nil) and s or nil
+end
+
+local function InView(row, view)
+    local v = RSO.VIEWS[view]
+    return v ~= nil and row ~= nil and v[row.when or "enough"] == true
+end
+RSO.InView = InView
+
+function RSO.CountIn(rows, view)
+    local n = 0
+    for i = 1, #rows do
+        if InView(rows[i], view) then n = n + 1 end
+    end
+    return n
+end
+
+-- The saved place of the view's n-th row.
+function RSO.Slot(rows, view, n)
+    local k = 0
+    for i = 1, #rows do
+        if InView(rows[i], view) then
+            k = k + 1
+            if k == n then return i end
+        end
+    end
+    return nil
+end
+
+-- The view's row at saved place s, else the next one, else the last before it.
+function RSO.Near(rows, view, s)
+    for i = s, #rows do
+        if InView(rows[i], view) then return i end
+    end
+    for i = math.min(s, #rows), 1, -1 do
+        if InView(rows[i], view) then return i end
+    end
+    return nil
+end
+
+-- The view's nearest row above (dir -1) or below (dir 1) saved place i.
+function RSO.Step(rows, view, i, dir)
+    local k = i + dir
+    while rows[k] do
+        if InView(rows[k], view) then return k end
+        k = k + dir
+    end
+    return nil
+end
+
+-- Swaps a row with its nearest neighbour in the view; the rows the view does
+-- not draw stay where they are.
+function RSO.MoveInView(CR, rec, view, i, dir)
+    local to = RSO.Step(CR.List(rec), view, i, dir)
+    if not (to and CR.MoveRow(rec, i, to - i)) then return false end
+    local sel = RSO.sel[rec.id]
+    if sel == i then
+        RSO.sel[rec.id] = to
+    elseif sel == to then
+        RSO.sel[rec.id] = i
+    end
+    return true
+end
+
+-- What a trigger's Add offers: its own kinds the client can draw.
+function RSO.AddItems(view)
+    local out = {}
+    local v, S = RSO.VIEWS[view], NS.Schema
+    if not v then return out end
+    for _, it in ipairs(RSO.KINDS) do
+        local ok = v[it.value] == true
+        if ok and it.value == "up" then ok = S.BarGlowAuraOK(false) end
+        if ok and it.value == "missing" then ok = S.BarGlowAuraOK(true) end
+        if ok then out[#out + 1] = it end
+    end
+    return out
+end
+
+function RSO.AddKind(view)
+    local items = RSO.AddItems(view)
+    local k = RSO.addKinds[view]
+    for _, it in ipairs(items) do
+        if it.value == k then return k end
+    end
+    return items[1] and items[1].value or nil
+end
+
+function RSO.Has(rec, view)
+    local C = CRm()
+    return C ~= nil and RSO.CountIn(C.List(rec), view) > 0
+end
+
+-- Auras is offered where the client can draw one, or a saved row needs a home.
+function RSO.AurasOffered(rec)
+    return #RSO.AddItems("Auras") > 0 or RSO.Has(rec, "Auras")
+end
+
+-- The first trigger holding a row: where a link to the table lands.
+function RSO.FirstView(rec)
+    for _, v in ipairs(RSO.VIEW_ORDER) do
+        if rec and RSO.Has(rec, v) then return v end
+    end
+    return RSO.VIEW_ORDER[1]
+end
+
+-- Remove trigger: this trigger's rows only.
+function RSO.RemoveView(rec, view)
+    local C = CRm()
+    if not C then return end
+    local rows = C.List(rec)
+    for i = #rows, 1, -1 do
+        if InView(rows[i], view) then C.RemoveRow(rec, i) end
+    end
+end
+
+-- The Power trigger's chips: each row's rule, with its fill's dot.
+function RSO.PowerChips(rec)
+    local C = CRm()
+    local out = {}
+    for _, g in ipairs(C and C.List(rec) or {}) do
+        if InView(g, "Power") then
+            local word = (g.when == "full") and Tr("Full")
+                or Tr((g.when == "below") and "under %s" or "over %s"):format(tostring(g.value or 0))
+            out[#out + 1] = { text = word, color = type(g.fill) == "table" and g.fill or nil }
+        end
+    end
+    return out
+end
+
+do
+    local BX = Options.BarEffects
+    if BX then
+        BX.TRIGGERS["Power"] = { when = "Colors the bar at each power level", line = "Colors the bar at each power level",
+            on = function(r) return RSO.Has(r, "Power") end, chips = RSO.PowerChips,
+            remove = function(r) RSO.RemoveView(r, "Power") end }
+        BX.TRIGGERS["Spells"] = { when = "While a spell is ready, usable or affordable",
+            line = "While a spell is ready, usable or affordable",
+            on = function(r) return RSO.Has(r, "Spells") end,
+            remove = function(r) RSO.RemoveView(r, "Spells") end }
+        BX.TRIGGERS["Auras"] = { when = "While an aura is up or missing", line = "While an aura is up or missing",
+            on = function(r) return RSO.Has(r, "Auras") end,
+            remove = function(r) RSO.RemoveView(r, "Auras") end }
+    end
+end
+
+-- One of the table's triggers is open on a resource bar: the preview wears the
+-- open row then.
 function RSO.Open()
     local ui = Options.ui
-    if not (ui and ui.barTab == "Conditions" and ui.selType == "bar") then return false end
+    if not (ui and ui.barTab == "Effects" and ui.selType == "bar") then return false end
     local r = NS.Store.Get(ui.selId)
     if not (r and r.barKind == "resource") then return false end
-    return (ui.barSec and ui.barSec.Conditions) == "By State"
+    return RSO.View() ~= nil
 end
 
 -- vis: the block's own gate. owner: the window the dropdown lists open on.
@@ -216,22 +382,24 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         local r = Rec()
         return r and CRm().List(r) or {}
     end
-    local function Row(i) return Rows()[i] end
-    -- the open row, kept inside the list
+    -- a table row is the open trigger's i-th row; Raw is its place in the saved list
+    local function Raw(i) return RSO.Slot(Rows(), RSO.View(), i) end
+    local function Row(i)
+        local k = Raw(i)
+        return k and Rows()[k] or nil
+    end
+    local function Seen() return RSO.CountIn(Rows(), RSO.View()) end
+    local function PowerView() return RSO.View() == "Power" end
+    -- the open row, kept inside the open trigger; its pick is left alone, so
+    -- coming back to a trigger finds it
     local function Sel()
         local r = Rec()
         if not r then return nil end
-        local n = #Rows()
-        if n == 0 then return nil end
-        local s = RSO.sel[r.id] or 1
-        if s > n then s = n end
-        if s < 1 then s = 1 end
-        RSO.sel[r.id] = s
-        return s
+        return RSO.Near(Rows(), RSO.View(), RSO.sel[r.id] or 1)
     end
     local function SelRow()
         local s = Sel()
-        return s and Row(s), s
+        return s and Rows()[s] or nil, s
     end
     -- an edit, then the page again at once (the store's refresh comes a frame later)
     local function Edit(fn)
@@ -251,20 +419,35 @@ function Options.ResStateRows(pg, ctx, vis, owner)
     local function Kind(r) return r and r.when or "enough" end
     local function IsSpell(w) return CRm() ~= nil and CRm().SPELL[w] == true end
     local function IsAura(w) return w == "up" or w == "missing" end
-    -- found by the search; the jump lands on the table
-    local function Stamp(row, field, label)
-        row._adMeta = { family = "bar", section = "rescolors", field = field, def = { label = label }, baseVis = vis }
+    -- found by the search; the jump lands on the table. view: the trigger it
+    -- lands on (the table is one set of rows drawn for all three)
+    local function Stamp(row, field, label, view)
+        local base = vis
+        if view then base = function() return vis() and RSO.View() == view end end
+        row._adMeta = { family = "bar", section = "rescolors", field = field, def = { label = label }, baseVis = base }
     end
     local maxR = (CRm() and CRm().MaxRows()) or 12
     -- a pause point between rows: the window builds in slices
     local function Pause() if Options.BuildYield then Options.BuildYield() end end
+    -- the largest value a power row takes
+    local function UnitMax()
+        local r = Rec()
+        local K = NS.Bars.Kit
+        local e = r and K and K.live[r.id]
+        local mx = e and NS.Bars.PlainMax and NS.Bars.PlainMax(e)
+        return (mx and mx > 1) and math.floor(mx) or 200
+    end
+    -- the editor's section and the power tag on its title
+    local edSec, tag
 
     -- The table
 
-    AT.RowDesc(pg, RSO.NOTE, 20, function() return vis() and #Rows() > 0 end)
+    AT.RowDesc(pg, RSO.NOTE, 20, function() return vis() and not PowerView() and Seen() > 0 end)
+    -- Power draws its header and Normal even with no row yet
+    local function TableVis() return vis() and Rec() ~= nil and (PowerView() or Seen() > 0) end
     local C, GAP = RSO.COLS, RSO.GAP
     -- each cell's right edge, from the row's right
-    local right = {}
+    local right, powerRight = {}, {}
     do
         local x = 8
         for _, k in ipairs({ "remove", "glow", "mark", "text", "fill", "power" }) do
@@ -273,6 +456,13 @@ function Options.ResStateRows(pg, ctx, vis, owner)
             if k == "fill" then RSO.LABEL_RIGHT = x end
         end
         RSO.LABEL_RIGHT_FOR = x
+        -- Power: no cost mark, the arrows between Glow and the x
+        x = 8
+        for _, k in ipairs({ "remove", "move", "glow", "text", "fill", "power" }) do
+            powerRight[k] = x
+            x = x + C[k].w + GAP
+        end
+        RSO.POWER_RIGHT = powerRight
     end
     -- the state words end at the first cell: For on an Automatic bar, else Fill
     local function LabelRight(on) return on and RSO.LABEL_RIGHT_FOR or RSO.LABEL_RIGHT end
@@ -280,7 +470,18 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         local f = CreateFrame("Frame", nil, row)
         f:SetSize(C[k].w, 24)
         f:SetPoint("RIGHT", row, "RIGHT", -right[k], 0)
+        row._cells = row._cells or {}
+        row._cells[k] = f
         return f
+    end
+    -- a row's cells on Power's columns or the other triggers'
+    local function LayCells(row, power)
+        if row._power == power then return end
+        row._power = power
+        local at = power and powerRight or right
+        for k, f in pairs(row._cells) do
+            if at[k] then f:SetPoint("RIGHT", row, "RIGHT", -at[k], 0) end
+        end
     end
     -- a cell this row has no look for: a dash that says why
     local function Dash(cell, title, body)
@@ -314,7 +515,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
     -- Preview as: the power the table and the preview show, a chip per power
     local pv = AT.AddRow(pg, 26, function()
         local r = Rec()
-        return vis() and #Rows() > 0 and ForPower(r) and #Powers(r) > 0
+        return vis() and Seen() > 0 and ForPower(r) and #Powers(r) > 0
     end)
     do
         -- on the first line's middle: more powers than fit wrap under the chips
@@ -402,27 +603,26 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         end
     end
 
-    local head = AT.AddRow(pg, 22, function() return vis() and #Rows() > 0 end)
-    local forHead
+    local head = AT.AddRow(pg, 22, TableVis)
+    local forHead, stateHead, markHead
     do
-        local fs = Faint(head)
-        fs:SetPoint("LEFT", 44, 0)
-        fs:SetText(Upper(Tr("State")))
+        stateHead = Faint(head)
+        stateHead:SetPoint("LEFT", 44, 0)
+        stateHead:SetText(Upper(Tr("State")))
         local words = { fill = "Fill", text = "Text", mark = "Cost mark", glow = "Glow" }
         for k, word in pairs(words) do
             local h = Faint(head)
             h:SetPoint("LEFT", Cell(head, k), "LEFT", 0, 0)
             h:SetText(Upper(Tr(word)))
+            if k == "mark" then markHead = h end
         end
         forHead = Faint(head)
         forHead:SetPoint("LEFT", Cell(head, "power"), "LEFT", 0, 0)
         forHead:SetText(Upper(Tr("For")))
     end
-    Stamp(head, "resStates", "How the bar looks in each state")
-    -- the open row follows the sub-tab into the preview
-    head._sync = function()
-        forHead:SetShown(ForPower(Rec()))
-        KeepPick()
+    Stamp(head, "resStates", "How the bar looks in each state", "Power")
+    -- the open row follows the trigger into the preview
+    local function SyncPreview()
         local C2 = CRm()
         if not C2 then return end
         local r = Rec()
@@ -433,10 +633,100 @@ function Options.ResStateRows(pg, ctx, vis, owner)
             if NS.Bars.PreviewRepaint then NS.Bars.PreviewRepaint() end
         end
     end
+    -- the editor's section names the open row, and on an Automatic bar tags its
+    -- power; Power has no State row, so the header carries this
+    local function SyncTitle()
+        local g = SelRow()
+        local t = edSec and edSec.title
+        if not (g and t) then return end
+        local words = RSO.Label(g)
+        t:SetText(edSec.boxed and words or Upper(words))
+        local r = Rec()
+        local on = ForPower(r)
+        if on then
+            tag.fs:SetText(Tr((g.power ~= nil) and (PowerInfo(r, g.power)) or RSO.FOR_ALL))
+            tag:SetWidth(math.ceil(StrW(tag.fs)) + 10)
+        end
+        tag:SetShown(on)
+    end
+    head._sync = function()
+        forHead:SetShown(ForPower(Rec()))
+        local power = PowerView()
+        if head._power ~= power then
+            LayCells(head, power)
+            stateHead:SetPoint("LEFT", power and 10 or 44, 0)
+            stateHead:SetText(Upper(Tr(power and "Power" or "State")))
+        end
+        markHead:SetShown(not power)
+        KeepPick()
+        SyncPreview()
+        SyncTitle()
+    end
+
+    Pause()
+    -- the bar's own look, the Power table's first line
+    local normal = AT.AddRow(pg, 30, function() return vis() and Rec() ~= nil and PowerView() end)
+    do
+        local line = normal:CreateTexture(nil, "ARTWORK")
+        line:SetTexture(AT.WHITE)
+        line:SetVertexColor(COL.line[1], COL.line[2], COL.line[3], 1)
+        line:SetPoint("BOTTOMLEFT", 4, 0)
+        line:SetPoint("BOTTOMRIGHT", -4, 0)
+        local lbl = normal:CreateFontString(nil, "OVERLAY")
+        lbl:SetFont(AT.FONT, 13, "")
+        lbl:SetPoint("LEFT", 10, 0)
+        lbl:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+        lbl:SetText(Tr("Normal"))
+        local fillCell = Cell(normal, "fill")
+        local sub = Faint(normal, 11)
+        sub:SetPoint("LEFT", lbl, "RIGHT", 8, 0)
+        sub:SetPoint("RIGHT", fillCell, "LEFT", -8, 0)
+        sub:SetJustifyH("LEFT")
+        sub:SetText(Tr("the bar's own colors"))
+        local fillW = Faint(normal, 11)
+        fillW:SetPoint("LEFT", fillCell, "LEFT", 0, 0)
+        fillW:SetText(Tr("own"))
+        -- an Automatic bar: the fill the previewed power shows
+        local sw = AT.MakeSwatch(fillCell, 40, 16)
+        sw:SetPoint("LEFT", 0, 0)
+        sw:EnableMouse(false)
+        sw:Hide()
+        local textW = Faint(normal, 11)
+        textW:SetPoint("LEFT", Cell(normal, "text"), "LEFT", 0, 0)
+        LayCells(normal, true)
+        normal._sync = function()
+            line:SetHeight(AT.Hairline(normal))
+            local r = Rec()
+            local follow = r and Store.Resolve(r, "rescolors", "resTextFill") == true
+            textW:SetText(Tr(follow and "fill" or "own"))
+            local on = ForPower(r)
+            local cr, cg, cb, ca
+            if on then
+                local pt = PreviewPower()
+                local name, c = PowerInfo(r, pt)
+                local byPower = Store.Resolve(r, "resource", "usePowerColor") ~= false
+                sub:SetText(byPower and Tr("the power color, %s"):format(Tr(name)) or Tr("the fill color"))
+                if NS.Bars.FillColorOf then cr, cg, cb, ca = NS.Bars.FillColorOf(r, pt) end
+                if cr == nil and c then cr, cg, cb, ca = c[1], c[2], c[3], 1 end
+                if cr ~= nil then sw:SetColor({ cr, cg, cb }, ca or 1) end
+            else
+                sub:SetText(Tr("the bar's own colors"))
+            end
+            fillW:SetShown(not (on and cr ~= nil))
+            sw:SetShown(on and cr ~= nil)
+        end
+    end
+    -- the search's "Value": the values sit on Power's rows, under this one
+    Stamp(normal, "resStateValue", "Value", "Power")
 
     for i = 1, maxR do
         Pause()
         local row = AT.AddRow(pg, 30, function() return vis() and Row(i) ~= nil end)
+        -- a pick made now acts on the row it was made on, whatever the view is by then
+        local function Open(k)
+            local r = Rec()
+            if r and k then RSO.sel[r.id] = k end
+        end
         -- the open row: a raised fill and an accent edge
         local openFill = row:CreateTexture(nil, "BACKGROUND", nil, 1)
         openFill:SetTexture(AT.WHITE)
@@ -459,11 +749,8 @@ function Options.ResStateRows(pg, ctx, vis, owner)
             ch:SetDir(dir)
             b._ch = ch
             b:SetScript("OnClick", function()
-                local r = Rec()
-                local d = (dir == "up") and -1 or 1
-                if r and CRm().MoveRow(r, i, d) then
-                    if RSO.sel[r.id] == i then RSO.sel[r.id] = i + d end
-                end
+                local r, k = Rec(), Raw(i)
+                if r and k then RSO.MoveInView(CRm(), r, RSO.View(), k, (dir == "up") and -1 or 1) end
                 AT.CloseDropdown()
                 AT.LayoutPage(pg)
             end)
@@ -485,12 +772,61 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         lbl:SetJustifyH("LEFT")
         lbl:SetWordWrap(false)
         pick:SetScript("OnClick", function()
-            local r = Rec()
-            if r then RSO.sel[r.id] = i end
+            Open(Raw(i))
             AT.CloseDropdown()
             AT.LayoutPage(pg)
         end)
         AT.Tooltip(pick, "State", function() return RSO.Label(Row(i)) end)
+
+        -- Power's own cells: the rule, the value and its unit
+        local rule = AT.MakeDropdown(owner, row, RSO.RULE_W,
+            function() return RSO.RULES end,
+            function()
+                local g = Row(i)
+                return g and g.when or "below"
+            end,
+            function(v) Edit(function(S, r) S.SetRow(r, Raw(i), "when", v) end) end)
+        rule:SetPoint("LEFT", 10, 0)
+        local function PutValue(v)
+            local g, k = Row(i), Raw(i)
+            if not (g and k and v) then return end
+            local top = g.units and math.max(2, UnitMax() - 1) or 99
+            v = math.max(1, math.min(top, v))
+            Edit(function(S, r) S.SetRow(r, k, "value", v) end)
+        end
+        local dec = AT.MakeSmallButton(row, "-", 20)
+        dec:SetPoint("LEFT", rule, "RIGHT", 6, 0)
+        local box = CreateFrame("EditBox", nil, row, "BackdropTemplate")
+        box:SetSize(RSO.VALUE_W, 20)
+        AT.Skin(box, COL.well)
+        box:SetFont(AT.FONT, 11, "")
+        box:SetJustifyH("CENTER")
+        box:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
+        box:SetAutoFocus(false)
+        box:SetPoint("LEFT", dec, "RIGHT", 2, 0)
+        local inc = AT.MakeSmallButton(row, "+", 20)
+        inc:SetPoint("LEFT", box, "RIGHT", 2, 0)
+        local unit = Faint(row, 11)
+        unit:SetPoint("LEFT", inc, "RIGHT", 4, 0)
+        dec:SetScript("OnClick", function()
+            local g = Row(i)
+            if g then PutValue((g.value or 0) - RSO.VALUE_STEP) end
+        end)
+        inc:SetScript("OnClick", function()
+            local g = Row(i)
+            if g then PutValue((g.value or 0) + RSO.VALUE_STEP) end
+        end)
+        box:SetScript("OnEnterPressed", function(self)
+            local v = tonumber(self:GetText())
+            self:ClearFocus()
+            PutValue(v)
+        end)
+        box:SetScript("OnEscapePressed", function(self)
+            self:ClearFocus()
+            AT.LayoutPage(pg)
+        end)
+        AT.Tooltip(box, "Value", "A percent of the bar, or power with In power units on.")
+        row._adValueBox = box
 
         -- For: the power the row holds on, edged in its colour
         local forCell = Cell(row, "power")
@@ -525,16 +861,16 @@ function Options.ResStateRows(pg, ctx, vis, owner)
                 and Dash(cell, "Fill color", "An aura row colors one continuous fill, four rows at most: not pips, runes or essence.")
                 or Dash(cell, "Text color", "An aura row cannot color the texts.")
             sw:SetScript("OnClick", function(_, button)
-                local r = Rec()
-                local g = Row(i)
+                local r, k = Rec(), Raw(i)
+                local g = k and Rows()[k]
                 if not (r and g) then return end
                 if button == "RightButton" then
                     AT.CloseDropdown()
-                    Edit(function(S, rec) S.SetRow(rec, i, key, false) end)
+                    Edit(function(S, rec) S.SetRow(rec, k, key, false) end)
                     return
                 end
                 PickColor(g[key], true, function(v)
-                    Edit(function(S, rec) S.SetRow(rec, i, key, v) end)
+                    Edit(function(S, rec) S.SetRow(rec, k, key, v) end)
                 end)
             end)
             AT.Tooltip(sw, (key == "fill") and "Fill color" or "Text color", (key == "fill")
@@ -550,10 +886,10 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         mark:SetPoint("LEFT", 0, 0)
         local markDash = Dash(markCell, "Cost mark", "Only a spell row has a cost to mark.")
         mark:SetScript("OnClick", function()
-            local g = Row(i)
+            local g, k = Row(i), Raw(i)
             if not g then return end
             AT.CloseDropdown()
-            Edit(function(S, rec) S.SetRow(rec, i, "mark", not g.mark) end)
+            Edit(function(S, rec) S.SetRow(rec, k, "mark", not g.mark) end)
         end)
         mark:SetScript("OnEnter", function() mark:SetHover(true) end)
         mark:SetScript("OnLeave", function() mark:SetHover(false) end)
@@ -576,12 +912,15 @@ function Options.ResStateRows(pg, ctx, vis, owner)
                 return (g and type(g.glow) == "table") and (g.glow.style or "pixel") or "off"
             end,
             function(v)
+                local k = Raw(i)
+                -- the picked glow's color and tuning sit in the row's editor
+                Open(k)
                 Edit(function(S, rec)
                     if v == "off" then
-                        S.SetGlow(rec, i, "on", false)
+                        S.SetGlow(rec, k, "on", false)
                     else
-                        S.SetGlow(rec, i, "on", true)
-                        S.SetGlow(rec, i, "style", v)
+                        S.SetGlow(rec, k, "on", true)
+                        S.SetGlow(rec, k, "style", v)
                     end
                 end)
             end)
@@ -590,31 +929,69 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         local remove = AT.MakeQuietButton(Cell(row, "remove"), "x", C.remove.w)
         remove:SetPoint("LEFT", 0, 0)
         remove:SetScript("OnClick", function()
-            local r = Rec()
+            local r, k = Rec(), Raw(i)
             AT.CloseDropdown()
-            if r and CRm().RemoveRow(r, i) and (RSO.sel[r.id] or 1) > i then RSO.sel[r.id] = RSO.sel[r.id] - 1 end
+            if r and k and CRm().RemoveRow(r, k) and (RSO.sel[r.id] or 1) > k then RSO.sel[r.id] = RSO.sel[r.id] - 1 end
             AT.LayoutPage(pg)
         end)
         AT.Tooltip(remove, "Remove", "Removes this state.")
 
+        -- Power: the rule and value lead, the arrows sit by the x, and a click
+        -- on the empty row opens it
+        local function LayRow(power)
+            if row._power == power then return end
+            LayCells(row, power)
+            up:ClearAllPoints()
+            down:ClearAllPoints()
+            if power then
+                down:SetPoint("RIGHT", row, "RIGHT", -powerRight.move, 0)
+                up:SetPoint("RIGHT", down, "LEFT", 0, 0)
+                pick:SetPoint("LEFT", 0, 0)
+                pick:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+                pick:SetFrameLevel(row:GetFrameLevel())
+                pick._right = nil
+            else
+                up:SetPoint("LEFT", 8, 0)
+                down:SetPoint("LEFT", 24, 0)
+                pick:SetPoint("LEFT", 44, 0)
+                pick:SetFrameLevel(row:GetFrameLevel() + 1)
+            end
+        end
+
         row._sync = function()
             local r, g = Rec(), Row(i)
             if not (r and g) then return end
-            local open = Sel() == i
+            local k = Raw(i)
+            local power = PowerView()
+            LayRow(power)
+            local open = Sel() == k
             openFill:SetShown(open)
             edge:SetShown(open)
             local ink = open and COL.arc or COL.ink
             lbl:SetTextColor(ink[1], ink[2], ink[3])
             lbl:SetText(RSO.Label(g))
-            local n = #Rows()
+            lbl:SetShown(not power)
+            local n = Seen()
             up:SetShown(i > 1)
             down:SetShown(i < n)
             local on = ForPower(r)
             local lr = LabelRight(on)
-            if pick._right ~= lr then
+            if not power and pick._right ~= lr then
                 pick._right = lr
                 pick:SetPoint("RIGHT", row, "RIGHT", -lr, 0)
             end
+            rule:SetShown(power)
+            if power then rule.Refresh() end
+            local valued = power and g.when ~= "full"
+            dec:SetShown(valued)
+            box:SetShown(valued)
+            inc:SetShown(valued)
+            unit:SetShown(valued)
+            if valued then
+                if not box:HasFocus() then box:SetText(tostring(g.value or 0)) end
+                unit:SetText(g.units and Tr("pts") or "%")
+            end
+            markCell:SetShown(not power)
             forCell:SetShown(on)
             if on then
                 local name, c
@@ -631,7 +1008,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
             local S = NS.Schema
             local auraFillOK = S and S.ResColorsOK and S.ResColorsOK(r)
             -- the fifth aura row on would have no lane of its own
-            local fillOK = not IsAura(w) or (auraFillOK and (g.fill ~= nil or RSO.AuraFills(Rows(), i) < 4))
+            local fillOK = not IsAura(w) or (auraFillOK and (g.fill ~= nil or RSO.AuraFills(Rows(), k) < 4))
             for key, cc in pairs({ fill = fillC, text = textC }) do
                 local ok = (key == "fill") and fillOK or not IsAura(w)
                 local c = g[key]
@@ -655,85 +1032,24 @@ function Options.ResStateRows(pg, ctx, vis, owner)
             glow.Refresh()
         end
         if i == 1 then
-            Stamp(fillC.sw, "resStateFill", "Fill color")
-            Stamp(row, "resStateRow", "State")
-        end
-    end
-
-    Pause()
-    -- the bar's own look, under every row
-    local normal = AT.AddRow(pg, 30, function() return vis() and #Rows() > 0 end)
-    do
-        local line = normal:CreateTexture(nil, "ARTWORK")
-        line:SetTexture(AT.WHITE)
-        line:SetVertexColor(COL.line[1], COL.line[2], COL.line[3], 1)
-        line:SetPoint("TOPLEFT", 4, 0)
-        line:SetPoint("TOPRIGHT", -4, 0)
-        local lbl = normal:CreateFontString(nil, "OVERLAY")
-        lbl:SetFont(AT.FONT, 13, "")
-        lbl:SetPoint("LEFT", 44, 0)
-        lbl:SetTextColor(COL.ink[1], COL.ink[2], COL.ink[3])
-        lbl:SetText(Tr("Normal"))
-        local fillCell = Cell(normal, "fill")
-        local sub = Faint(normal, 11)
-        sub:SetPoint("LEFT", lbl, "RIGHT", 8, 0)
-        sub:SetPoint("RIGHT", fillCell, "LEFT", -8, 0)
-        sub:SetJustifyH("LEFT")
-        sub:SetText(Tr("the bar's own colors"))
-        local fillW = Faint(normal, 11)
-        fillW:SetPoint("LEFT", fillCell, "LEFT", 0, 0)
-        fillW:SetText(Tr("own"))
-        -- an Automatic bar: the fill the previewed power shows
-        local sw = AT.MakeSwatch(fillCell, 40, 16)
-        sw:SetPoint("LEFT", 0, 0)
-        sw:EnableMouse(false)
-        sw:Hide()
-        local textW = Faint(normal, 11)
-        textW:SetPoint("LEFT", Cell(normal, "text"), "LEFT", 0, 0)
-        normal._sync = function()
-            line:SetHeight(AT.Hairline(normal))
-            local r = Rec()
-            local follow = r and Store.Resolve(r, "rescolors", "resTextFill") == true
-            textW:SetText(Tr(follow and "fill" or "own"))
-            local on = ForPower(r)
-            local cr, cg, cb, ca
-            if on then
-                local pt = PreviewPower()
-                local name, c = PowerInfo(r, pt)
-                local byPower = Store.Resolve(r, "resource", "usePowerColor") ~= false
-                sub:SetText(byPower and Tr("the power color, %s"):format(Tr(name)) or Tr("the fill color"))
-                if NS.Bars.FillColorOf then cr, cg, cb, ca = NS.Bars.FillColorOf(r, pt) end
-                if cr == nil and c then cr, cg, cb, ca = c[1], c[2], c[3], 1 end
-                if cr ~= nil then sw:SetColor({ cr, cg, cb }, ca or 1) end
-            else
-                sub:SetText(Tr("the bar's own colors"))
-            end
-            fillW:SetShown(not (on and cr ~= nil))
-            sw:SetShown(on and cr ~= nil)
+            Stamp(fillC.sw, "resStateFill", "Fill color", "Power")
+            Stamp(row, "resStateRow", "State", "Power")
         end
     end
 
     -- Add a state: the pick, then the button, under the table's STATE column
     -- (where the state names start), so the new row's place reads at once and
-    -- no label leaves a gap before the column of the toggle below
-    RSO.addKind = RSO.addKind or "enough"
+    -- no label leaves a gap before the column of the toggle below. Power has
+    -- no pick: its rule is on the row.
     Pause()
-    local add = AT.AddRow(pg, 32, function() return vis() and Rec() ~= nil and #Rows() < maxR end)
+    local add = AT.AddRow(pg, 32, function()
+        return vis() and Rec() ~= nil and #Rows() < maxR and #RSO.AddItems(RSO.View()) > 0
+    end)
     do
         local dd = AT.MakeDropdown(owner, add, 220,
-            function()
-                local out = {}
-                local S = NS.Schema
-                for _, it in ipairs(RSO.KINDS) do
-                    local ok = true
-                    if it.value == "up" then ok = S.BarGlowAuraOK(false) end
-                    if it.value == "missing" then ok = S.BarGlowAuraOK(true) end
-                    if ok then out[#out + 1] = it end
-                end
-                return out
-            end,
-            function() return RSO.addKind end,
-            function(v) RSO.addKind = v end)
+            function() return RSO.AddItems(RSO.View()) end,
+            function() return RSO.AddKind(RSO.View()) end,
+            function(v) RSO.addKinds[RSO.View()] = v end)
         dd:SetPoint("LEFT", 44, 0)
         -- an Automatic bar: the power the new row is for, the previewed one
         -- until picked
@@ -758,7 +1074,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
                 RSO.addFor, RSO.addForId = v, r and r.id
             end)
         forDD:SetPoint("LEFT", forWord, "RIGHT", 8, 0)
-        local btn = AT.MakeSmallButton(add, "Add state", 84)
+        local btn = AT.MakeSmallButton(add, "+ Add state", 96)
         btn:SetPoint("LEFT", dd, "RIGHT", 8, 0)
         btn:SetScript("OnClick", function()
             AT.CloseDropdown()
@@ -768,25 +1084,38 @@ function Options.ResStateRows(pg, ctx, vis, owner)
                 local v = AddFor()
                 if v ~= "all" then pw = v end
             end
-            local n = r and CRm().AddRow(r, RSO.addKind, pw)
+            local n = r and CRm().AddRow(r, RSO.AddKind(RSO.View()), pw)
             if n then RSO.sel[r.id] = n end
             AT.LayoutPage(pg)
         end)
         add._sync = function()
-            dd.Refresh()
+            local power = PowerView()
+            dd:SetShown(not power)
+            if not power then dd.Refresh() end
             local on = ForPower(Rec())
             forWord:SetShown(on)
             forDD:SetShown(on)
             if on then forDD.Refresh() end
-            if btn._for ~= on then
-                btn._for = on
-                btn:SetPoint("LEFT", on and forDD or dd, "RIGHT", 8, 0)
+            local at = (power and "power" or "state") .. (on and "for" or "")
+            if btn._at ~= at then
+                btn._at = at
+                forWord:ClearAllPoints()
+                if power then forWord:SetPoint("LEFT", 10, 0) else forWord:SetPoint("LEFT", dd, "RIGHT", 8, 0) end
+                btn:ClearAllPoints()
+                if on then
+                    btn:SetPoint("LEFT", forDD, "RIGHT", 8, 0)
+                elseif power then
+                    btn:SetPoint("LEFT", 10, 0)
+                else
+                    btn:SetPoint("LEFT", dd, "RIGHT", 8, 0)
+                end
             end
         end
-        Stamp(add, "resStateAdd", "Add a state")
+        Stamp(add, "resStateAdd", "Add a state", "Power")
     end
     Pause()
     -- the texts and the fill's colour, together
+    local function FollowVis() return vis() and Rec() ~= nil and PowerView() end
     local follow = AT.RowToggle(pg, "Texts take the bar's color",
         function()
             local r = Rec()
@@ -797,17 +1126,24 @@ function Options.ResStateRows(pg, ctx, vis, owner)
             if r then Store.SetOverride(r, "rescolors", "resTextFill", v and true or false) end
             AT.LayoutPage(pg)
         end,
-        function() return vis() and Rec() ~= nil end,
+        FollowVis,
         "The resource texts wear the fill's color, the bar's own or a row's. A row's own text color wins.")
     follow._adMeta = { family = "bar", section = "rescolors", field = "resTextFill",
-        def = NS.Schema.bar.rescolors.fields.resTextFill, baseVis = vis }
+        def = NS.Schema.bar.rescolors.fields.resTextFill,
+        baseVis = function() return vis() and RSO.View() == "Power" end }
 
     -- The open row's editor
 
     Pause()
-    local edVis = function() return vis() and SelRow() ~= nil end
+    -- Power's rule and value are on the row: a row with nothing left to tune has no editor
+    local edVis = function()
+        local g = SelRow()
+        if not (vis() and g ~= nil) then return false end
+        if not PowerView() then return true end
+        return ForPower(Rec()) or g.when ~= "full" or type(g.glow) == "table"
+    end
     AT.Section(pg, "State", { visibleFn = edVis })
-    local edSec = pg._curSection
+    edSec = pg._curSection
     local spellVis = function()
         local g = SelRow()
         return edVis() and g ~= nil and IsSpell(Kind(g))
@@ -832,21 +1168,21 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         function()
             local cur = Kind((SelRow()))
             local S = NS.Schema
+            local v = RSO.VIEWS[RSO.View()] or {}
             local out = {}
             for _, it in ipairs(RSO.KINDS) do
-                local ok = true
-                if it.value == "up" then ok = S.BarGlowAuraOK(false) end
-                if it.value == "missing" then ok = S.BarGlowAuraOK(true) end
+                -- a row stays in its trigger
+                local ok = v[it.value] == true
+                if ok and it.value == "up" then ok = S.BarGlowAuraOK(false) end
+                if ok and it.value == "missing" then ok = S.BarGlowAuraOK(true) end
                 -- no aura engine here: no aura choice, unless it is the one saved
                 if ok or it.value == cur then out[#out + 1] = it end
             end
             return out
         end,
-        edVis)
+        function() return edVis() and not PowerView() end)
     AT.Tooltip(whenRow, "State",
         "Enough power: you could pay its cost now. Usable: the game would let you cast it. Ready: off cooldown.")
-    -- the section names the open row, and on an Automatic bar tags its power
-    local tag
     if edSec and edSec.title then
         tag = CreateFrame("Frame", nil, edSec.band or edSec.hit or pg, "BackdropTemplate")
         tag:SetHeight(14)
@@ -858,26 +1194,12 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         tag:SetPoint("LEFT", edSec.title, "RIGHT", 8, 0)
         tag:Hide()
     end
-    local whenSync = whenRow._sync
-    whenRow._sync = function()
-        whenSync()
-        local g = SelRow()
-        local t = edSec and edSec.title
-        if not (g and t) then return end
-        local words = RSO.Label(g)
-        t:SetText(edSec.boxed and words or Upper(words))
-        local r = Rec()
-        local on = ForPower(r)
-        if on then
-            tag.fs:SetText(Tr((g.power ~= nil) and (PowerInfo(r, g.power)) or RSO.FOR_ALL))
-            tag:SetWidth(math.ceil(StrW(tag.fs)) + 10)
-        end
-        tag:SetShown(on)
-    end
-    Stamp(whenRow, "resStateWhen", "State")
-    -- the title hides with its section: the tag goes with it
+    Stamp(whenRow, "resStateWhen", "State", "Spells")
+    -- the title hides with its section: the tag goes with it; a trigger with
+    -- no row draws no header, so the preview lets go of the row here too
     RSO.after[pg] = function()
         if tag and tag:IsShown() and not edSec.title:IsShown() then tag:Hide() end
+        SyncPreview()
     end
 
     Pause()
@@ -1009,7 +1331,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         addSpell._adSuggest = Suggest
     end
     addSpell._adCommit = SpellAdd
-    Stamp(addSpell, "resStateSpell", "Add a spell")
+    Stamp(addSpell, "resStateSpell", "Add a spell", "Spells")
     Pause()
     AT.RowToggle(pg, "Follow my rank",
         function()
@@ -1058,7 +1380,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         end)
     end
     idRow._adCommit, idRow._adAdd, idRow._adSuggest = AuraCommit, AuraAdd, AuraSuggest
-    Stamp(idRow, "resStateAura", RSO.AURA_IDS)
+    Stamp(idRow, "resStateAura", RSO.AURA_IDS, "Auras")
     Pause()
     AT.RowToggle(pg, "Follow my rank",
         function()
@@ -1110,28 +1432,11 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         function() return Options.AURA_CASTER_ITEMS end,
         auraVis)
 
-    -- a power row's value: a percent, or power units over the bar's maximum
+    -- a power row's value counts a percent, or power units over the bar's maximum
     local function Units()
         local g = SelRow()
         return g ~= nil and g.units == true
     end
-    local function UnitMax()
-        local r = Rec()
-        local K = NS.Bars.Kit
-        local e = r and K and K.live[r.id]
-        local mx = e and NS.Bars.PlainMax and NS.Bars.PlainMax(e)
-        return (mx and mx > 1) and math.floor(mx) or 200
-    end
-    Pause()
-    local valRow = AT.RowSlider(pg, "Value",
-        function()
-            local g = SelRow()
-            return (g and g.value) or 50
-        end,
-        function(v) Edit(function(S, r) S.SetRow(r, Sel(), "value", v) end) end,
-        1, function() return Units() and math.max(2, UnitMax() - 1) or 99 end, 1, false, valueVis)
-    AT.Tooltip(valRow, "Value", "A percent of the bar, or power with In power units on.")
-    Stamp(valRow, "resStateValue", "Value")
     Pause()
     AT.RowToggle(pg, "In power units",
         function() return Units() end,
@@ -1159,7 +1464,7 @@ function Options.ResStateRows(pg, ctx, vis, owner)
         end,
         function(c) GlowSet("color", { c[1], c[2], c[3], c[4] or 1 }) end,
         glowVis, { alpha = true })
-    Stamp(gcol, "resStateGlowColor", "Glow color")
+    Stamp(gcol, "resStateGlowColor", "Glow color", "Power")
     Pause()
     AT.RowToggle(pg, "Glow only in combat",
         function() return GlowGet("combat", false) == true end,

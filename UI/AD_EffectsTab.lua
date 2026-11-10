@@ -1667,6 +1667,9 @@ end
 -- left (+ Add a trigger at its foot) and the open trigger's panel to its
 -- right, or the tile picker. vis: the tab's own gate. under: the editor's
 -- tab row, the page's ground starts under it. Returns the row.
+-- the pieces the bar editor's Effects tab shares (UI\AD_BarEffects.lua)
+EF.Kit = { Edges = Edges, DashEdge = DashEdge, QuietX = QuietX }
+
 function EF.Build(pg, ctx, vis, owner, under)
     local E = ET()
     if not E then return end

@@ -1,9 +1,120 @@
--- AD_RangeOptions: a range bar's band editor, under the Preset row on the bar editor's Tracking tab.
--- AD_Options calls Options.RangeBandRows while it builds the bar pane; every edit goes through
--- NS.RangeBars, which copies a preset into the bar's own bands on the first real change.
+-- AD_RangeOptions: a range bar's band editor, under the Preset row on the bar editor's Tracking tab, and
+-- its Distance trigger on the Effects tab. AD_Options calls Options.RangeBandRows and
+-- Options.RangeDistanceRows while it builds the bar pane; every edit goes through NS.RangeBars, which
+-- copies a preset into the bar's own bands on the first real change.
 local ADDON, NS = ...
 local Options = NS.Options
 if not Options then return end
+
+-- The Distance trigger's chips: each band's words, in its colour.
+local function DistanceChips(r)
+    local out = {}
+    local RB = NS.RangeBars
+    if not RB or r._adMulti then return out end
+    for _, b in ipairs(RB.BandsOf(r)) do
+        out[#out + 1] = { text = RB.BandText(b), color = b.color }
+    end
+    return out
+end
+if Options.BarEffects then
+    Options.BarEffects.TRIGGERS["Distance"] = { when = "Colors the bar at each distance band",
+        line = "Colors the bar at each distance band", chips = DistanceChips }
+end
+
+-- The Distance table: a row per band with its words, colour and Show. The
+-- words and checks are edited on Tracking.
+function Options.RangeDistanceRows(pg, ctx, vis)
+    local AT = NS.AT
+    local COL = AT.COL
+    local Tr = AT.Tr
+    local maxB = (NS.Schema and NS.Schema.RANGE_MAX_BANDS) or 8
+    local COLOR_W, SHOW_X = 35, 45
+    local function Rec()
+        local r = ctx()
+        return (r and r.barKind == "range" and not r._adMulti and NS.RangeBars) and r or nil
+    end
+    local function Bands()
+        local r = Rec()
+        return r and NS.RangeBars.BandsOf(r) or {}
+    end
+    local function Edit(fn)
+        local r = Rec()
+        if r then fn(NS.RangeBars, r) end
+        AT.LayoutPage(pg)
+    end
+    local function Cols(row)
+        local f = CreateFrame("Frame", nil, row)
+        f:SetSize(SHOW_X + 18, 20)
+        f:SetPoint("LEFT", row._ctrlX, 0)
+        return f
+    end
+    local function Faint(parent, text)
+        local fs = parent:CreateFontString(nil, "OVERLAY")
+        fs:SetFont(AT.FONT, 10, "")
+        fs:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
+        fs:SetText(text)
+        return fs
+    end
+
+    local head = AT.AddRow(pg, 20, function() return vis() and Rec() ~= nil end)
+    do
+        local lbl = Faint(head, Tr("Band"))
+        lbl:SetPoint("LEFT", 10, 0)
+        local cols = Cols(head)
+        local colorW = Faint(cols, Tr("Color"))
+        colorW:SetPoint("LEFT", 0, 0)
+        local showW = Faint(cols, Tr("Show"))
+        showW:SetPoint("LEFT", SHOW_X, 0)
+        head._colLabel, head._colCtrl = lbl, cols
+    end
+    -- found by the search under the words the Tracking rows had
+    head._adMeta = { family = "bar", section = "range", field = "rangeBandShow",
+        def = { label = "Show this band" }, baseVis = vis }
+
+    for i = 1, maxB do
+        if Options.BuildYield then Options.BuildYield() end
+        local function Band() return Bands()[i] end
+        local row = AT.AddRow(pg, 26, function() return vis() and Band() ~= nil end)
+        local lbl = AT.RowLabel(row, "")
+        local cols = Cols(row)
+        local sw = AT.MakeSwatch(cols, COLOR_W, 16)
+        sw:SetPoint("LEFT", 0, 0)
+        cols._sw = sw
+        local show = AT.MakeCheckbox(cols)
+        cols._show = show
+        show:SetPoint("LEFT", SHOW_X, 0)
+        row._colLabel, row._colCtrl = lbl, cols
+        sw:SetScript("OnClick", function()
+            local BX = Options.BarEffects
+            if not (BX and Band()) then return end
+            BX.PickColor(function() return Band().color or { 1, 1, 1, 1 } end,
+                function(c) Edit(function(RB, r) RB.SetBandColor(r, i, c) end) end)
+        end)
+        AT.Tooltip(sw, "Band color", "The bar's color while the target is in this band.")
+        show:SetScript("OnClick", function()
+            local b = Band()
+            if not b then return end
+            AT.CloseDropdown()
+            local off = not b.off
+            Edit(function(RB, r) RB.SetBandOff(r, i, off) end)
+        end)
+        show:SetScript("OnEnter", function() show:SetHover(true) end)
+        show:SetScript("OnLeave", function() show:SetHover(false) end)
+        AT.Tooltip(show, "Show this band", "Off: the bar shows its no-band look while the target is in this band.")
+        row._sync = function()
+            local b = Band()
+            if not b then return end
+            lbl:SetText(NS.RangeBars.BandText(b))
+            local c = b.color or { 1, 1, 1, 1 }
+            sw:SetColor(c, c[4] or 1)
+            show:SetOn(not b.off)
+        end
+        if i == 1 then
+            row._adMeta = { family = "bar", section = "range", field = "rangeBandColor",
+                def = { label = "Band color" }, baseVis = vis }
+        end
+    end
+end
 
 -- vis: when the rows show (a range bar on Tracking). owner: the window the dropdown lists open on.
 function Options.RangeBandRows(pg, ctx, vis, owner)
@@ -142,20 +253,6 @@ function Options.RangeBandRows(pg, ctx, vis, owner)
             end,
             function(v) Edit(function(RB, r) RB.SetBandText(r, i, v) end) end,
             bandVis, "What the bar says while the target is in this band.")
-        AT.RowColor(pg, "Band color",
-            function()
-                local b = Band(i)
-                return (b and b.color) or { 1, 1, 1, 1 }
-            end,
-            function(c) Edit(function(RB, r) RB.SetBandColor(r, i, c) end) end,
-            bandVis, { alpha = true })
-        AT.RowToggle(pg, "Show this band",
-            function()
-                local b = Band(i)
-                return b ~= nil and not b.off
-            end,
-            function(v) Edit(function(RB, r) RB.SetBandOff(r, i, not v) end) end,
-            bandVis, "Off: the bar shows its no-band look while the target is in this band.")
         -- the band's checks in words
         local words = AT.AddRow(pg, 20, bandVis)
         local wfs = words:CreateFontString(nil, "OVERLAY")

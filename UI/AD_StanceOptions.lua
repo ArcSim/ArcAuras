@@ -136,7 +136,6 @@ function Options.StanceAddRows(pg, owner, addState, vis, changed)
     local AT = NS.AT
     local def = NS.Schema.icon.stance.fields.shows
     local function oneVis() return vis() and addState.stanceShows == "one" end
-    AT.RowDesc(pg, "The stance or form you are in, or one lit while you are in it.", 20, vis)
     local shows = AT.RowDropdown(pg, owner, "Shows",
         function() return addState.stanceShows == "one" and "one" or "current" end,
         function(v)

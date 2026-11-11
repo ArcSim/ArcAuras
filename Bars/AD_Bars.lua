@@ -747,6 +747,7 @@ local function ProvenFontPath(path, size, flags)
     local took
     if AT.FontTook then took = AT.FontTook(fontProbe, path, size, flags) else took = fontProbe:SetFont(path, size, flags) end
     if took then return path end
+    if path ~= BUILTIN_FONTS["Default"] and Bars.FontMissed then Bars.FontMissed(path) end
     return BUILTIN_FONTS["Default"]
 end
 
@@ -6070,6 +6071,64 @@ function Bars.SyncAuraUnits()
     Events.On("UNIT_AURA", "adbars", OnUnitAura, wide and AuraUnitList() or PLAYER)
 end
 
+-- Restyles every bar once (coalesced): a resource bar's style pass paints
+-- Fill color, so its power or state colour goes back on after it.
+function Bars.RestyleAll()
+    Events.Coalesce("adbars_media", function()
+        ForEach(nil, function(e)
+            ApplyStyle(e)
+            if e.kind == "resource" then ResourceEnsure(e) end
+        end)
+    end)
+end
+
+-- The first login after the game starts, a font file the client has not
+-- loaded yet does not take at the first style pass, and nothing registers
+-- later to restyle. Such a font is tried again a few times; once it takes,
+-- every bar restyles.
+Bars.FONT_TRIES = { 0.5, 2, 5, 15 }
+function Bars.FontMissed(path)
+    local m = Bars.missedFonts
+    if not m then
+        m = {}
+        Bars.missedFonts = m
+    end
+    if m[path] ~= nil then return end
+    m[path] = true
+    if not Bars.fontTry then
+        Bars.fontTry = 1
+        Bars.FontRetry()
+    end
+end
+
+function Bars.FontRetry()
+    local delay = Bars.FONT_TRIES[Bars.fontTry]
+    if not (delay and C_Timer and C_Timer.After) then
+        Bars.fontTry = nil
+        return
+    end
+    C_Timer.After(delay, function()
+        local took, left = false, false
+        for path, waiting in pairs(Bars.missedFonts) do
+            if waiting == true then
+                if ProvenFontPath(path, 12, "") == path then
+                    Bars.missedFonts[path] = false
+                    took = true
+                else
+                    left = true
+                end
+            end
+        end
+        if took then Bars.RestyleAll() end
+        if left and Bars.fontTry < #Bars.FONT_TRIES then
+            Bars.fontTry = Bars.fontTry + 1
+            Bars.FontRetry()
+        else
+            Bars.fontTry = nil
+        end
+    end)
+end
+
 local function EnsureSharedEvents()
     if sharedArmed then return end
     sharedArmed = true
@@ -6082,14 +6141,7 @@ local function EnsureSharedEvents()
         lsmHooked = true
         lsm.RegisterCallback(lsmOwner, "LibSharedMedia_Registered", function(_, mediatype)
             if mediatype ~= "font" and mediatype ~= "statusbar" and mediatype ~= "border" then return end
-            Events.Coalesce("adbars_media", function()
-                -- a resource bar's style pass paints Fill color: its power or
-                -- state colour goes back on after it
-                ForEach(nil, function(e)
-                    ApplyStyle(e)
-                    if e.kind == "resource" then ResourceEnsure(e) end
-                end)
-            end)
+            Bars.RestyleAll()
         end)
     end
 

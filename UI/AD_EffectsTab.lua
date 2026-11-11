@@ -2991,5 +2991,32 @@ function EF.Build(pg, ctx, vis, owner, under)
         local c = Find(r, label)
         return c and c.st and c.st.key or nil
     end
+    -- what else finds a hit: its card's name and line, and a pick's choices
+    -- ("equipped" finds a trinket's Show, which reads While equipped)
+    row._adWordsFor = function(label, rec)
+        local r = rec or Rec()
+        if not r then return nil end
+        local c, l = Find(r, label)
+        if not c then return nil end
+        local w, picks = {}, {}
+        local st = c.count or c.st
+        if st and st.label then w[#w + 1] = st.label end
+        if st and st.when then w[#w + 1] = st.when end
+        local fdef = l and l.fdef
+        if fdef and fdef.t == "enum" and type(fdef.values) == "table" and type(fdef.labels) == "table" then
+            for i, v in ipairs(fdef.values) do
+                local lab = fdef.labels[v] or fdef.labels[i]
+                if type(lab) == "string" then w[#w + 1] = lab end
+            end
+        end
+        if fdef and fdef.pickWords then
+            for _, k in ipairs({ "up", "worn", "missing" }) do
+                local v = (fdef.pickWords(r) or {})[k]
+                if type(v) == "string" then picks[#picks + 1] = v end
+            end
+        end
+        -- the choices are what the row reads, so they score as its label
+        return #w > 0 and table.concat(w, " ") or nil, picks, st and st.label or nil
+    end
     return row
 end

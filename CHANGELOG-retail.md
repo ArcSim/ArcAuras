@@ -1,5 +1,18 @@
 # Arc Auras
 
+## 3.3.1
+
+Search finds more of the panel, and Show while equipped on the Tracking tab.
+
+### Improvements
+
+- **Search** - Finds options by the choices they show, such as While equipped, and names the effect they sit on.
+- **Show while equipped** - Trinket and item icons now also have Show (While equipped, While in stock) on their Tracking tab.
+
+### Bug Fixes
+
+- **Bar fonts** - A bar text's font no longer falls back to the game's font on the first character you log in after starting the game.
+
 ## 3.3.0
 
 A new Add New window, and bars get the Effects tab.

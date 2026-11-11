@@ -9638,6 +9638,13 @@ local function BuildIconEditor(parent)
         local r = SelIcon()
         return trackVis() and r ~= nil and r.kind == "trinket"
     end, { "onlyOnUse" })
+    -- Show (While equipped / While in stock) also where the item is picked;
+    -- the Empty slot and Out of stock effects draw the same setting
+    Options.BuildYield()
+    SectionRows(pg, "icon", "outOfStock", SelIcon, function()
+        local r = SelIcon()
+        return trackVis() and r ~= nil and (r.kind == "trinket" or r.kind == "item")
+    end, { "hideWhenMissing" })
     Options.BuildYield()
     AT.RowInput(pg, "Item IDs",
         function()
@@ -18236,9 +18243,9 @@ Options.Search = {
     MAX_EL = 30, MAX_OPT = 60,
     FAMS = { "layout", "group", "icon", "bar" },
     FAM_WORD = { layout = "Layout", group = "Group", icon = "Icon", bar = "Bar",
-        settings = "Settings", modules = "Modules", template = "Template" },
+        settings = "Settings", modules = "Modules", template = "Template", addwin = "Add window" },
     -- result order among equal matches: the open editor's family first
-    FAM_RANK = { icon = 1, group = 2, bar = 3, layout = 4, settings = 5, modules = 6, template = 7 },
+    FAM_RANK = { icon = 1, group = 2, bar = 3, layout = 4, settings = 5, modules = 6, template = 7, addwin = 8 },
     KIND_WORD = {
         icon = { spell = "spell icons", aura = "aura icons", trinket = "trinket icons",
             item = "item icons", timer = "custom icons", totem = "totem icons",
@@ -18444,9 +18451,22 @@ function Options.Search.KeyOf(r)
     if r.type == "icon" then
         local ag, packed = InAuraGroup(r)
         local home = r.groupId and (ag and (packed and ":agp" or ":ag") or ":g") or ":f"
-        return (r.kind or "spell") .. home
+        -- shapes that draw rows of their own get a sample of their own: an
+        -- aura on the icon, only its glows, a spell with charges
+        local shape = ""
+        local ov = type(r.driver) == "table" and r.driver.overlay
+        if r.kind ~= "aura" and type(ov) == "table" and ov.on == true then
+            shape = (Store.Resolve(r, "auraActive", "activeShows") == "glows") and "+go" or "+ov"
+        end
+        local DC = NS.DriverCooldown
+        if r.kind == "spell" and DC and DC.IsCharge and DC.IsCharge(r) then shape = shape .. "+ch" end
+        return (r.kind or "spell") .. home .. shape
     end
     if r.type == "bar" then return (r.barKind or "cooldown") .. ":" .. (r.barMode or "") end
+    -- a group showing a party or raid unit's auras has the Members tab
+    if r.type == "group" and Options.UnitAuraOptions and Options.UnitAuraOptions.Members and Options.UnitAuraOptions.Members(r) then
+        return Options.Search.KindOf(r) .. "+members"
+    end
     return Options.Search.KindOf(r)
 end
 
@@ -18841,7 +18861,65 @@ function Options.Search.BuildIndex()
         local cls = t.class and CO.ClassWord and CO.ClassWord(t.class)
         if cls and cls ~= t.class then e.wordsAlt = cls end
     end
+    -- the Add window's own switch between its new and old look
+    do
+        local e = new("addwin", nil, nil, nil, nil, "Classic view", nil)
+        e.addView, e.words = true, "Add New window old tabs dropdowns New view"
+    end
     for _, e in ipairs(idx.list) do
+        -- a cell's own words on every record it was found on
+        if e.row and not e.isSection and e.row._adWordsFor and not e.words then
+            local got, seenW, cards = {}, {}, {}
+            for _, r in ipairs(e.recs) do
+                local w, picks, card = e.row._adWordsFor(e.label, r)
+                for _, v in ipairs(picks or {}) do
+                    if not seenW[v] then
+                        seenW[v] = true
+                        e.alts = e.alts or {}
+                        e.alts[#e.alts + 1] = v
+                        S.AddAlts(e.alts, v)
+                    end
+                end
+                -- the card it sits on, as the path's last step
+                if card and not seenW["card:" .. card] then
+                    seenW["card:" .. card] = true
+                    cards[#cards + 1] = S.Shown(card)
+                end
+                if w and not seenW[w] then
+                    seenW[w] = true
+                    got[#got + 1] = w
+                end
+            end
+            if #got > 0 then e.words = table.concat(got, " ") end
+            if #cards > 0 and not e.secTitle then e.secTitle = table.concat(cards, " / ") end
+        end
+        -- a dropdown is found by its choices too ("any party member" finds Unit)
+        local md = e.row and not e.isSection and e.row._adMeta and e.row._adMeta.def
+        if md and md.t == "enum" and type(md.values) == "table" and type(md.labels) == "table" then
+            local ch = {}
+            for i, v in ipairs(md.values) do
+                local lab = md.labels[v] or md.labels[i]
+                if type(lab) == "string" then ch[#ch + 1] = lab end
+            end
+            if #ch > 0 then e.words = (e.words and (e.words .. " ") or "") .. table.concat(ch, " ") end
+        end
+        -- a Show pick reads its choices (While equipped), per record it was found on
+        if md and md.pickWords then
+            local have = {}
+            for _, a in ipairs(e.alts or {}) do have[a] = true end
+            for _, r in ipairs(e.recs) do
+                local pw = md.pickWords(r) or {}
+                for _, k in ipairs({ "up", "worn", "missing" }) do
+                    local v = pw[k]
+                    if type(v) == "string" and not have[v] then
+                        have[v] = true
+                        e.alts = e.alts or {}
+                        e.alts[#e.alts + 1] = v
+                        S.AddAlts(e.alts, v)
+                    end
+                end
+            end
+        end
         e.path = S.PathOf(e)
         e.note = S.NoteOf(e, idx.famKinds[e.fam])
         -- a section entry flashes its first row; that row's dep is not the
@@ -19011,6 +19089,12 @@ function Options.Search.GoOption(e)
     if e.tpl then
         S.ClearBox()
         Options.OpenAddTemplate(e.tpl)
+        return
+    end
+    if e.addView then
+        S.ClearBox()
+        local lay = SelLayout() or Store.Layouts()[1]
+        if lay then Options.OpenAdd(lay.id) end
         return
     end
     local rec

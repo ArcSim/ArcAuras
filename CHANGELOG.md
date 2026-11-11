@@ -1,5 +1,19 @@
 # Arc Auras
 
+## 3.3.1
+
+Search finds more of the panel, Show while equipped on the Tracking tab, and the latest Item Finds data.
+
+### Improvements
+
+- **Search** - Finds options by the choices they show, such as While equipped, and names the effect they sit on.
+- **Show while equipped** - Trinket and item icons now also have Show (While equipped, While in stock) on their Tracking tab.
+- **Item Finds: item data** - Updated with Forever's latest data: 70 hidden items now have names, 300 more old items show what Forever changed, 27 newly found items including mounts, companions and cosmetic sets, and new drop places found by players. 67 mounts now show that Forever made them Bind on Pickup, and 66 quest rewards name the quest that gives them.
+
+### Bug Fixes
+
+- **Bar fonts** - A bar text's font no longer falls back to the game's font on the first character you log in after starting the game.
+
 ## 3.3.0
 
 A new Add New window, and bars get the Effects tab.

@@ -558,6 +558,7 @@ Active's opacity waits until little time is left on the aura; before that the ic
 Active: the bar shows (Hide when inactive hides it otherwise).
 Add
 Add Item ID
+Add New window old tabs dropdowns New view
 Add Spell ID
 Add Weapon Enchant
 Add a column on the left
@@ -585,6 +586,7 @@ Add the marker line
 Add the seconds
 Add to
 Add to this layout
+Add window
 Added, but switched off.
 Added, switched off
 Adds IDs to game tooltips everywhere: spell, aura, item, icon, quest, talent and Cooldown Manager IDs.

@@ -560,6 +560,7 @@ L["Active's opacity waits until little time is left on the aura; before that the
 L["Active: the bar shows (Hide when inactive hides it otherwise)."] = true
 L["Add"] = true
 L["Add Item ID"] = true
+L["Add New window old tabs dropdowns New view"] = true
 L["Add Spell ID"] = true
 L["Add Weapon Enchant"] = true
 L["Add a column on the left"] = true
@@ -587,6 +588,7 @@ L["Add the marker line"] = true
 L["Add the seconds"] = true
 L["Add to"] = true
 L["Add to this layout"] = true
+L["Add window"] = true
 L["Added, but switched off."] = true
 L["Added, switched off"] = true
 L["Adds IDs to game tooltips everywhere: spell, aura, item, icon, quest, talent and Cooldown Manager IDs."] = true

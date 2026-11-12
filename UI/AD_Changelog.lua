@@ -27,6 +27,8 @@ CL.versions = {
             { header = "Bug Fixes", items = {
                 { title = "Bar fonts",
                     desc = "A bar text's font no longer falls back to the game's font on the first character you log in after starting the game." },
+                { title = "Totem bars",
+                    desc = "The countdown now shows in combat, such as on Summon Hawk bars." },
             } },
         },
     },
@@ -1671,6 +1673,8 @@ CL.retailVersions = {
             { header = "Bug Fixes", items = {
                 { title = "Bar fonts",
                     desc = "A bar text's font no longer falls back to the game's font on the first character you log in after starting the game." },
+                { title = "Totem bars",
+                    desc = "The countdown now shows in combat." },
             } },
         },
     },

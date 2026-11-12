@@ -80,11 +80,25 @@ function TB.Untrack(e)
     e.tbPseudo = nil
 end
 
+-- In combat the slot's duration object draws no countdown numbers: a slot
+-- your own cast named is timed from when it lit at the length of the spell
+-- you cast (DT.LenFor), a plain timer. Out of combat the slot's own.
+function TB.CastTimed(e, slot)
+    local DT = NS.DriverTotem
+    local s = DT and DT.slot and DT.slot[slot]
+    if not (s and s.litAt and s.castId) then return nil end
+    if not (InCombatLockdown() or DT.ReadSlot(slot) == nil) then return nil end
+    local len = DT.LenFor(s.castId)
+    if not len or GetTime() - s.litAt >= len then return nil end
+    return DT.CastDuration(e, s.litAt, len)
+end
+
 function TB.Refresh(e)
     if e.isPreview then return end
     local DT = NS.DriverTotem
     local slot = e.tbPseudo and DT and DT.SlotFor(e.tbPseudo)
-    local dur = slot and GetTotemDuration and GetTotemDuration(slot)
+    local dur = slot and TB.CastTimed(e, slot)
+    if not dur then dur = slot and GetTotemDuration and GetTotemDuration(slot) end
     -- on its way (Show from the cast): timed from the cast until its slot lights
     if not dur and e.tbPseudo and DT and DT.Predict then
         local at, len = DT.Predict(e.tbPseudo)

@@ -66,6 +66,7 @@ DT.slot = {}       -- [slot] = { name = totem name or nil, id = its spell ID or 
 DT.cdmSpells = {}  -- [cooldownID] = the spells of that Cooldown Manager entry, read while plain
 DT.pending = {}    -- [slot] = when it lit with no cast to name it yet
 DT.waiting = {}    -- [slot] = when it lit, named, with no cast paired yet
+DT.refresh = {}    -- [slot] = when a lit secret slot updated with no cast (a recast refreshing it)
 DT.queue = {}      -- { name, id, at }: totem casts still waiting for their slot, oldest first
 DT.shadow = {}     -- [slot] = hidden Cooldown whose IsShown() says a totem is down
 DT.recs = {}       -- [iconId] = rec, the attached totem icons
@@ -177,12 +178,47 @@ function DT.Duration(name)
     return (type(d) == "number" and d > 0) and d or nil
 end
 
-function DT.Learn(name, slot)
+function DT.Learn(name, slot, castId)
     if not (name and GetTotemInfo) then return end
     local _, _, _, len = GetTotemInfo(slot)
     if type(len) == "number" and not (issecretvalue and issecretvalue(len)) and len > 0 then
         DT.Durations()[name] = len
+        -- per cast spell too: ranks of one name can last differently
+        if type(castId) == "number" then DT.Durations()["#" .. castId] = len end
     end
+end
+
+-- Forever's totem lengths per spell, from the client's data (Summon Hawk's
+-- comes from the server only, as a summon reads it), for a totem whose first
+-- summon is in combat with nothing learned yet. What a summon reads wins.
+DT.SEED_LEN = {
+    [2484] = 45, [3599] = 30, [5394] = 300, [5675] = 300, [5730] = 15, [6363] = 35, [6364] = 40,
+    [6365] = 45, [6375] = 300, [6377] = 300, [6390] = 15, [6391] = 15, [6392] = 15, [6495] = 300,
+    [8071] = 300, [8075] = 300, [8143] = 300, [8154] = 300, [8155] = 300, [8160] = 300, [8161] = 300,
+    [8166] = 300, [8170] = 300, [8177] = 45, [8181] = 300, [8184] = 300, [8190] = 20, [8227] = 300,
+    [8249] = 300, [8262] = 30, [8264] = 20, [8376] = 30, [8512] = 300, [8835] = 300, [10406] = 300,
+    [10407] = 300, [10408] = 300, [10427] = 15, [10428] = 15, [10437] = 50, [10438] = 55,
+    [10442] = 300, [10462] = 300, [10463] = 300, [10478] = 300, [10479] = 300, [10495] = 300,
+    [10496] = 300, [10497] = 300, [10526] = 300, [10537] = 300, [10538] = 300, [10585] = 20,
+    [10586] = 20, [10587] = 20, [10595] = 300, [10600] = 300, [10601] = 300, [10613] = 300,
+    [10614] = 300, [10627] = 300, [12506] = 60, [15038] = 35, [15107] = 300, [15111] = 300,
+    [15112] = 300, [15786] = 45, [15787] = 5, [15867] = 35, [16190] = 13, [16387] = 300, [17354] = 13,
+    [17359] = 13, [18975] = 60, [22047] = 30, [23419] = 5, [23420] = 60, [23422] = 60, [23423] = 90,
+    [23726] = 20, [24262] = 240, [24854] = 24, [25000] = 3, [25359] = 300, [25361] = 300, [27621] = 90,
+    [27623] = 5, [28294] = 60, [78156] = 300, [78159] = 300, [79429] = 300, [79431] = 300,
+    [414791] = 30, [425874] = 10, [425876] = 10, [436391] = 10, [446339] = 60, [467511] = 20,
+    [1213480] = 45, [1293241] = 18, [1293525] = 18, [1302352] = 20, [1325256] = 13,
+}
+
+-- The length of a totem your cast put down: learned for that spell, else the
+-- seed for that rank, else learned for its name; nil when none is known.
+function DT.LenFor(castId)
+    if type(castId) ~= "number" then return nil end
+    local d = DT.Durations()["#" .. castId]
+    if type(d) == "number" and d > 0 then return d end
+    d = NS.IsForever and DT.SEED_LEN[castId]
+    if d then return d end
+    return DT.Duration(DT.SpellName(castId)) -- raw-id: the cast the game reported, its name is the learned key
 end
 
 -- How long a cast of this spell waits for its slot: the longest wait an icon
@@ -630,6 +666,11 @@ function DT.ReadAll()
                 DT.Known()[name] = true
                 DT.pending[slot] = nil
                 if plain then s.litAt = start end
+                -- summoned in combat: the first plain read teaches its length
+                -- (only a first, so a later extension never re-teaches it)
+                if plain and type(s.castId) == "number" and not DT.Durations()["#" .. s.castId] then
+                    DT.Learn(DT.SpellName(s.castId), slot, s.castId) -- raw-id: the cast that put it down
+                end
             end
             s.litAt = s.litAt or GetTime()
         end
@@ -661,7 +702,7 @@ function DT.OnSlotUpdate(slot)
     DT.slot[slot] = s
     if not DT.Active(slot) then
         s.name, s.id, s.castId, s.litAt, s.pos, s.prev, s.paired, s.burstId = nil, nil, nil, nil, nil, nil, nil, nil
-        DT.pending[slot], DT.waiting[slot] = nil, nil
+        DT.pending[slot], DT.waiting[slot], DT.refresh[slot] = nil, nil, nil
         DT.Changed()
         return
     end
@@ -680,6 +721,10 @@ function DT.OnSlotUpdate(slot)
         if c then
             s.prev = { name = s.name, id = s.id, castId = s.castId, litAt = s.litAt, pos = s.pos, at = now, cast = c }
             s.name, s.id, s.castId, s.litAt, s.pos = c.name, c.id, c.id, now, (c.name == s.name) and s.pos or nil
+            DT.refresh[slot] = nil
+        else
+            -- the recast's cast event may land just after: it restarts the slot then
+            DT.refresh[slot] = now
         end
         DT.Changed()
         return
@@ -705,7 +750,7 @@ function DT.OnSlotUpdate(slot)
         if c then
             s.castId = c.id
             DT.waiting[slot] = nil
-            DT.Learn(c.name, slot)
+            DT.Learn(c.name, slot, c.id)
         else
             -- a burst's other slot waits for no cast of its own
             DT.waiting[slot] = not s.burstId and now or nil
@@ -762,6 +807,27 @@ function DT.LateCast(list, now, c, secret)
     return true
 end
 
+-- A recast landing after the lit slot it refreshed updated (in combat, where
+-- the slot reads secret): that slot restarts from its update. Only a slot that
+-- holds the same spell, so another totem's cast never restarts it.
+function DT.LateRefresh(now, c)
+    local best, bestAt
+    for slot, t in pairs(DT.refresh) do
+        local s = DT.slot[slot]
+        if now - t > DT.PAIR_WINDOW or not (s and s.litAt) then
+            DT.refresh[slot] = nil
+        elseif s.name == c.name and (not bestAt or t > bestAt) then
+            best, bestAt = slot, t
+        end
+    end
+    if not best then return false end
+    DT.refresh[best] = nil
+    local s = DT.slot[best]
+    s.prev = { name = s.name, id = s.id, castId = s.castId, litAt = s.litAt, pos = s.pos, at = now, cast = c }
+    s.id, s.castId, s.litAt = c.id, c.id, bestAt
+    return true
+end
+
 -- Only casts of known totems pair, so an unrelated spell landing in the same
 -- half second can never name a slot.
 function DT.OnCast(spellID)
@@ -770,7 +836,8 @@ function DT.OnCast(spellID)
     DT.Prune(now)
     if not DT.IsTotemName(name) then return end
     local c = { name = name, id = spellID, at = now }
-    if DT.LateCast(DT.pending, now, c, true) or DT.LateCast(DT.waiting, now, c, false) then
+    if DT.LateCast(DT.pending, now, c, true) or DT.LateCast(DT.waiting, now, c, false)
+        or DT.LateRefresh(now, c) then
         DT.missed[name] = nil
         DT.Changed()
         return
@@ -1008,6 +1075,8 @@ function DT.Attach(rec)
         if unit == "player" then DT.OnCast(spellID) end
     end, { "player" })
     Events.On("PLAYER_REGEN_ENABLED", "adtotem", DT.ReadAll)
+    -- a totem already down as combat starts switches to its cast's timer
+    Events.On("PLAYER_REGEN_DISABLED", "adtotem", DT.Changed)
     Events.On("PLAYER_ENTERING_WORLD", "adtotem", DT.ReadAll)
     DT.ReadAll()
 end
@@ -1022,6 +1091,7 @@ function DT.Detach(id, f)
     Events.Off("PLAYER_TOTEM_UPDATE", "adtotem")
     Events.Off("UNIT_SPELLCAST_SUCCEEDED", "adtotem")
     Events.Off("PLAYER_REGEN_ENABLED", "adtotem")
+    Events.Off("PLAYER_REGEN_DISABLED", "adtotem")
     Events.Off("PLAYER_ENTERING_WORLD", "adtotem")
     wipe(DT.tracked)
     wipe(DT.queue)

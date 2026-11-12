@@ -13,6 +13,7 @@ Search finds more of the panel, Show while equipped on the Tracking tab, and the
 ### Bug Fixes
 
 - **Bar fonts** - A bar text's font no longer falls back to the game's font on the first character you log in after starting the game.
+- **Totem bars** - The countdown now shows in combat, such as on Summon Hawk bars.
 
 ## 3.3.0
 

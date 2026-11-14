@@ -1,5 +1,30 @@
 # Arc Auras
 
+## 3.3.2
+
+Gear Value module, simpler totem tracking and a fix for the While freeze on bars.
+
+### New Features
+
+- **Gear Value** - A new module: gear tooltips show what an item is worth to stat weights you set, against what you wear. Set your own weights or paste a weights string from a simulator, and pick which scales show for each spec. Turn it on in Modules > Gear Value.
+
+### Improvements
+
+- **Follow the newest** - Totem icons, totem bars and aura icons that show their totem can move to the newest one when you cast again, as the Cooldown Manager does. It replaces Cooldown Manager sync, and icons set to it follow the newest.
+- **Totem options on aura icons** - An aura icon set to show its totem first now has Which one, Counted by, Several from one cast and Wait for its slot.
+- **Skip these items** - A trinket icon can skip trinkets by item ID: while one of them is worn in its slot, the icon hides.
+- **Bar Effects tab** - A tidier While page and trigger list, and the state table on power bars sits in its own box.
+
+### Bug Fixes
+
+- **Totem tracking** - A summon keeps its timer when you cast another spell, and totem bars follow a summon whose time is extended, such as Dreadstalkers with Summon Demonic Tyrant.
+- **Effects: While** - Opening While on a bar, or ticking one of its conditions, no longer freezes the game.
+- **Effects: While** - Remove trigger now removes a bar's While rules.
+
+### Removed
+
+- **Show from the cast** - Totem icons and bars now light when their totem lands.
+
 ## 3.3.1
 
 Search finds more of the panel, and Show while equipped on the Tracking tab.

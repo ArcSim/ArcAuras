@@ -1277,10 +1277,15 @@ local function ShowDetail(id)
     d.q = q
     d.icon:SetTexture(ItemIcon(id))
     d.iconBorder:SetColor(T.QualityHex(q))
-    -- the head's inner width, less the icon and its gap, then Link in chat and the star with their gaps, and on a
-    -- changed item the changes button with its gap
+    -- the head's inner width, less the icon and its gap, then Link in chat and the star with their gaps, and on gear
+    -- the Compare button, on a changed item the changes button, each with its gap
     local hasChanges = D.HasChanges(id)
-    d.name:SetWidth(W - U(20) - U(10) - U(30) - U(8) - U(6) - U(22) - U(6) - U(22) - U(10) - (hasChanges and (U(22) + U(6)) or 0))
+    local gear = UI.CanCompare(id, row, e)
+    d.name:SetWidth(W - U(20) - U(10) - U(30) - U(8) - U(6) - U(22) - U(6) - U(22) - U(10) - (hasChanges and (U(22) + U(6)) or 0)
+        - (gear and (U(22) + U(6)) or 0))
+    d.compare:SetShown(gear)
+    d.compare:ClearAllPoints()
+    d.compare:SetPoint("RIGHT", hasChanges and d.changes or d.link, "LEFT", -U(6), 0)
     local fav = UI.IsFavorite(id)
     d.fav.bg:SetColorTexture(T.RGB(fav and "3A2C1A" or "17120C"))
     d.fav.edge:SetColor(fav and C.title or C.frame)
@@ -1554,6 +1559,16 @@ local function ShowDetail(id)
 end
 UI.ShowDetail = ShowDetail
 
+-- gear the game can draw has something to compare with: an item worn in a slot, never a bag or quiver. A test run
+-- outside Forever draws the datamined tooltip, which has nothing of that client's gear to set beside it
+local NO_COMPARE = { [0] = true, [18] = true, [27] = true }
+function UI.CanCompare(id, row, e)
+    if not ns.isForever or not C_Item.GetItemInfo(id) then return false end
+    local inv = C_Item.GetItemInventoryTypeByID and C_Item.GetItemInventoryTypeByID(id)
+    if type(inv) ~= "number" then inv = (e and e.iv) or (row and row.inv) end
+    return type(inv) == "number" and not NO_COMPARE[inv]
+end
+
 -- what changed from Classic: the item box's button shows it for the item shown, or Settings shows it on every changed
 -- item and the button hides it for that one; a pick lasts the session, and moving the setting clears every pick
 local changesPick = {}
@@ -1608,6 +1623,31 @@ local function DeltaMark(parent, size)
         t:SetPoint("CENTER", p[1], p[2])
         t:SetRotation(math.rad(p[3]))
         bars[i] = t
+    end
+    f.bars = bars
+    function f:SetColor(hex)
+        local r, g, b = T.RGB(hex)
+        for _, t in ipairs(bars) do t:SetVertexColor(r, g, b, 1) end
+        f.hex = hex
+    end
+    f:SetColor(C.gold)
+    return f
+end
+
+-- the Compare button's mark: two cards side by side
+local function CompareMark(parent, size)
+    local f = CreateFrame("Frame", nil, parent)
+    f:SetSize(size, size)
+    local w, h, gap = size * 0.4, size * 0.62, size * 0.2
+    local bars = {}
+    for _, cx in ipairs({ -(w + gap) / 2, (w + gap) / 2 }) do
+        for _, p in ipairs({ { cx, h / 2, w, 1.5 }, { cx, -h / 2, w, 1.5 }, { cx - w / 2, 0, 1.5, h }, { cx + w / 2, 0, 1.5, h } }) do
+            local t = f:CreateTexture(nil, "OVERLAY")
+            t:SetTexture("Interface\\Buttons\\WHITE8X8")
+            t:SetSize(p[3], p[4])
+            t:SetPoint("CENTER", p[1], p[2])
+            bars[#bars + 1] = t
+        end
     end
     f.bars = bars
     function f:SetColor(hex)
@@ -1686,6 +1726,16 @@ local function BuildDetail(parent)
     end)
     changes:Hide()
     detail.changes = changes
+    -- the gear the item would replace, beside its tooltip while hovered; left of the changes button, or of Link in chat
+    -- (ShowDetail), shown only on gear the game can draw
+    local compare = SmallButton("Compare")
+    compare:SetPoint("RIGHT", detail.link, "LEFT", -U(6), 0)
+    compare.mark = CompareMark(compare, U(13))
+    compare.mark:SetPoint("CENTER")
+    compare:SetScript("OnEnter", function(self) T.ItemTip(self, selected, true) end)
+    compare:SetScript("OnLeave", function(self) T.HideItemTip(self) end)
+    compare:Hide()
+    detail.compare = compare
     detail.name = T.Text(head, 15, "FFFFFF")
     detail.name:SetPoint("LEFT", iconFrame, "RIGHT", U(8), 0)
     detail.name:SetWordWrap(true)
@@ -2752,8 +2802,18 @@ function UI.BuildSettings(body)
         { "ctrl", "While holding Ctrl" }, { "shift", "While holding Shift" } },
         function() return s.itemTipChanges end, function(v) s.itemTipChanges = v end)
     set.tipMarks:SetPoint("TOPLEFT", U(84), -cy)
-    items:SetHeight(cy + U(26) + U(12))
+    -- the gear an item would replace, beside the finder's own item tooltip (Theme.lua), always or while a key is held
+    local my = cy + U(34)
+    local compareLabel = T.Text(items, 13, C.ink)
+    compareLabel:SetPoint("TOPLEFT", U(10), -(my + U(4)))
+    compareLabel:SetText("Compare")
+    set.tipCompare = T.Dropdown(items, U(190), { { "off", "Off" }, { "always", "Always" }, { "alt", "While holding Alt" },
+        { "ctrl", "While holding Ctrl" }, { "shift", "While holding Shift" } },
+        function() return s.itemTipCompare end, function(v) s.itemTipCompare = v end)
+    set.tipCompare:SetPoint("TOPLEFT", U(84), -my)
+    items:SetHeight(my + U(26) + U(12))
     set.items, set.showChanges = items, always
+    set.controls[#set.controls + 1] = set.tipCompare
     set.controls[#set.controls + 1] = set.tipMarks
     set.controls[#set.controls + 1] = set.itemTips
 

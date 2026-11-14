@@ -89,7 +89,7 @@ BX.TRIGGERS = {
     ["Glows"] = { when = "Glows by any aura or spell", line = "Glows by any aura or spell",
         on = function(r) return GlowCount(r) > 0 end },
     ["While"] = { when = "Fades it while a condition is true", line = "Fades or shows it while a condition is true",
-        on = HasFade },
+        on = HasFade, remove = function(r) BX.ClearWhile(r) end, tab = "When" },
     ["Windup"] = { when = "While the shot winds up or waits to fire" },
     ["Channeling"] = { when = "While you channel", line = "While you channel",
         on = function(r) return On(r, "fill", "castChannelOn") end, off = { { "fill", "castChannelOn" } } },
@@ -337,8 +337,6 @@ function BX.Build(pg, ctx, vis, avail, secs, under)
         rw._miniFill:SetPoint("TOPLEFT", rw._miniBg, "TOPLEFT", 1, -1)
         rw._miniFill:SetPoint("BOTTOMRIGHT", rw._miniBg, "BOTTOMRIGHT", -1, 1)
         rw._name = Font(rw, 13)
-        rw._name:SetPoint("TOPLEFT", BX.TEXT_X, -8)
-        rw._name:SetPoint("RIGHT", -8, 0)
         rw._chipPool = {}
         rw:SetScript("OnClick", function(self)
             AT.CloseDropdown()
@@ -408,8 +406,17 @@ function BX.Build(pg, ctx, vis, avail, secs, under)
             local d = BX.Def(s)
             local list = d.chips and d.chips(r)
             local lines = LayChips(rw, type(list) == "table" and list or {}, BX.SIDE_W - BX.TEXT_X - 10)
-            local rowH = math.max(BX.ROW_H, 8 + 16 + 3 + lines * (BX.CHIP_H + 3) + 6)
+            -- the name and its chips as one block, centred on the row's height,
+            -- with the swatch on the same middle
+            local block = 16 + (lines > 0 and (3 + lines * (BX.CHIP_H + 3) - 3) or 0)
+            local rowH = math.max(BX.ROW_H, block + 16)
             rw:SetHeight(rowH)
+            local top = math.floor((rowH - block) / 2)
+            rw._name:ClearAllPoints()
+            rw._name:SetPoint("TOPLEFT", BX.TEXT_X, -top)
+            rw._name:SetPoint("RIGHT", -8, 0)
+            rw._name:SetHeight(16)
+            rw._name:SetJustifyV("MIDDLE")
             local mc = BX.MiniColor(r, s)
             rw._miniFill:SetVertexColor(mc[1], mc[2], mc[3], 1)
             local bg = on and COL.panel or COL.well
@@ -478,10 +485,15 @@ function BX.Build(pg, ctx, vis, avail, secs, under)
         head._edge:Lay()
         head._edge:Color(COL.line)
     end
-    -- the trigger's effect: a folder tab open into its panel, as on an icon
-    AT.Section(pg, nil, { visibleFn = HeadVis })
+    -- the trigger's effect: a folder tab open into its panel, as on an icon;
+    -- While's rules are the page's own sections under its head instead
+    local function FolderVis()
+        if not HeadVis() then return false end
+        return BX.Def(secs()[BX.TAB]).folder ~= false
+    end
+    AT.Section(pg, nil, { visibleFn = FolderVis })
     fxSec = pg._curSection
-    local fxRow = AT.AddRow(pg, BX.TAB_H + BX.PAD, HeadVis)
+    local fxRow = AT.AddRow(pg, BX.TAB_H + BX.PAD, FolderVis)
     BX.fxRow = fxRow
     local tab = CreateFrame("Frame", nil, fxRow)
     BX.fxTab = tab
@@ -503,7 +515,7 @@ function BX.Build(pg, ctx, vis, avail, secs, under)
     tab._glyph:SetColor(COL.arc)
     fxRow._sync = function()
         local s = secs()[BX.TAB]
-        if not (s and HeadVis()) then return end
+        if not (s and FolderVis()) then return end
         tab._fs:SetText(Tr(BX.Def(s).tab or "Look"))
         tab:SetWidth(math.ceil(27 + (tab._fs:GetStringWidth() or 0) + 12))
         tab._top:SetHeight(2 * AT.Hairline(tab))
@@ -537,7 +549,7 @@ function BX.Build(pg, ctx, vis, avail, secs, under)
         f:SetPoint(p2, rel2, rp2, x2 - dx, y2 + dy)
     end
     function BX.LayBody()
-        local open = HeadVis()
+        local open = FolderVis()
         local first, last
         if open then
             for _, sec in ipairs(pg._sections) do
@@ -555,6 +567,8 @@ function BX.Build(pg, ctx, vis, avail, secs, under)
             if BX.IsBlock(sec, fxSec) then
                 Inset(sec.box, BX.PAD, BX.GAP_FIX + BX.GAP_TAB)
                 if sec.band then Inset(sec.band, BX.PAD, BX.GAP_FIX + BX.GAP_TAB) end
+                -- a fold's header bar (While's condition lists) goes in with its box
+                if sec.hit then Inset(sec.hit, BX.PAD, BX.GAP_FIX + BX.GAP_TAB) end
             end
         end
         body:ClearAllPoints()
@@ -562,7 +576,7 @@ function BX.Build(pg, ctx, vis, avail, secs, under)
         body:SetPoint("BOTTOMRIGHT", last.box, "BOTTOMRIGHT", BX.PAD, -BX.PAD)
         body._edge:Lay()
         body._edge:Color(COL.line)
-        local top = first.band or first.box
+        local top = first.hit or first.band or first.box
         accentF:ClearAllPoints()
         accentF:SetPoint("TOPLEFT", top, "TOPLEFT", 0, 0)
         accentF:SetPoint("BOTTOMLEFT", last.box, "BOTTOMLEFT", 0, 0)
@@ -790,6 +804,21 @@ BX.STEPS = {
     health = { section = "healththresholds", prefix = "hpth", count = "hpthCount", max = 3, label = "Threshold (%)",
         base = "Normal", addWord = "+ Add threshold" },
 }
+
+-- Remove trigger on While: its conditions, both lists' Any / All, the range
+-- rule and the Fill color go; the fade's opacity and time stay as they were.
+function BX.ClearWhile(r)
+    local C = NS.Conditions
+    if not (r and r.c) then return end
+    for _, list in ipairs({ "showWhen", "fadeWhen" }) do
+        if C and C.Clear then C.Clear(r, list) else r.c[list] = nil end
+        r.c[list .. "All"] = nil
+    end
+    if C and C.SetRangeMode then C.SetRangeMode(r, "off") else r.c.rangeMode = nil end
+    r.c.fadeTint = nil
+    Store.Dirty("style", r.id)
+    if C and C.Queue then C.Queue() end
+end
 
 -- While's Look: the bar's Fill color while the conditions hold (Bars\AD_BarTint.lua).
 function BX.WhileTint(r) return r and r.c and r.c.fadeTint or nil end

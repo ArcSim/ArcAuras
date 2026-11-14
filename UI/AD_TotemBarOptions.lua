@@ -91,7 +91,7 @@ function Options.TotemBarTrackRows(pg, ctx, trackVis, owner)
             if sid == SpellOf(r.driver.spellID) then return end
             r.driver.spellID = sid
             r.driver.slot = (not sid) and (tonumber(r.driver.slot) or 1) or nil
-            if not sid then r.driver.which, r.driver.whichBy, r.driver.slotWait, r.driver.fromCast = nil, nil, nil, nil end
+            if not sid then r.driver.which, r.driver.whichBy, r.driver.slotWait, r.driver.newest = nil, nil, nil, nil end
             r.name = TO.NameFor(sid, r.driver.slot)
             Store.Dirty("tree")
             Options.RefreshAll()
@@ -141,6 +141,12 @@ function Options.TotemBarTrackRows(pg, ctx, trackVis, owner)
             local r = Rec()
             return Vis() and r ~= nil and SpellOf(r.driver.spellID) ~= nil
         end, owner)
+    end
+    if Options.TotemNewestRow then
+        Options.TotemNewestRow(pg, Rec, function()
+            local r = Rec()
+            return Vis() and r ~= nil and SpellOf(r.driver.spellID) ~= nil
+        end)
     end
     if Options.TotemMultiRow then
         Options.TotemMultiRow(pg, owner, Rec, function() local r = Rec() return r and r.driver end, function()

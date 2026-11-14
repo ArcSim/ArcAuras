@@ -13,6 +13,46 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.3.2",
+        intro = "Gear Value and Action Bar Restore modules, simpler totem tracking, a fix for the While freeze on bars, and the latest Item Finds.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Gear Value",
+                    desc = "A new module: gear tooltips show what an item is worth to stat weights you set, against what you wear. Copy a default, set your own weights or paste a weights string from a simulator, and pick which scales show for each talent group. Turn it on in Modules > Gear Value." },
+                { title = "Action Bar Restore",
+                    desc = "A new module that saves each spec's action bars, and named profiles of your bars, which bars are on and your Edit Mode layout that any character can load. Mounts, pets and flyouts come back too. When the game loads saved buttons empty after a login or spec swap, it offers to put them back." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Follow the newest",
+                    desc = "Totem icons, totem bars and aura icons that show their totem can move to the newest one when you cast again, as the Cooldown Manager does. It replaces Cooldown Manager sync, and icons set to it follow the newest." },
+                { title = "Totem options on aura icons",
+                    desc = "An aura icon set to show its totem first now has Which one, Counted by, Several from one cast and Wait for its slot." },
+                { title = "Skip these items",
+                    desc = "A trinket icon can skip trinkets by item ID: while one of them is worn in its slot, the icon hides." },
+                { title = "Bar Effects tab",
+                    desc = "A tidier While page and trigger list, and the state table on power bars sits in its own box." },
+                { title = "Item Finds: compare and prices",
+                    desc = "Compare an item with your gear (Shift over it, or the Compare button on its page), and auction add-ons now add their prices to the finder's item tooltips." },
+                { title = "Item Finds: item data",
+                    desc = "Updated with Forever's latest data: 17 hidden items now have names, 117 more old items show what Forever changed, including Upper Blackrock Spire, Scholomance, Stratholme and Dire Maul gear, and drop places for about 1,900 more items." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Totem tracking",
+                    desc = "A summon keeps its timer when you cast another spell, so another icon can no longer take it." },
+                { title = "Summon Hawk",
+                    desc = "Hawk icons and bars now light in combat without setting a wait." },
+                { title = "Effects: While",
+                    desc = "Opening While on a bar, or ticking one of its conditions, no longer freezes the game." },
+                { title = "Effects: While",
+                    desc = "Remove trigger now removes a bar's While rules." },
+            } },
+            { header = "Removed", items = {
+                { title = "Show from the cast",
+                    desc = "Totem icons and bars now light when their totem lands." },
+            } },
+        },
+    },
+    {
         version = "3.3.1",
         intro = "Search finds more of the panel, Show while equipped on the Tracking tab, and the latest Item Finds data.",
         sections = {
@@ -1660,6 +1700,38 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.3.2",
+        intro = "Gear Value module, simpler totem tracking and a fix for the While freeze on bars.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Gear Value",
+                    desc = "A new module: gear tooltips show what an item is worth to stat weights you set, against what you wear. Set your own weights or paste a weights string from a simulator, and pick which scales show for each spec. Turn it on in Modules > Gear Value." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Follow the newest",
+                    desc = "Totem icons, totem bars and aura icons that show their totem can move to the newest one when you cast again, as the Cooldown Manager does. It replaces Cooldown Manager sync, and icons set to it follow the newest." },
+                { title = "Totem options on aura icons",
+                    desc = "An aura icon set to show its totem first now has Which one, Counted by, Several from one cast and Wait for its slot." },
+                { title = "Skip these items",
+                    desc = "A trinket icon can skip trinkets by item ID: while one of them is worn in its slot, the icon hides." },
+                { title = "Bar Effects tab",
+                    desc = "A tidier While page and trigger list, and the state table on power bars sits in its own box." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Totem tracking",
+                    desc = "A summon keeps its timer when you cast another spell, and totem bars follow a summon whose time is extended, such as Dreadstalkers with Summon Demonic Tyrant." },
+                { title = "Effects: While",
+                    desc = "Opening While on a bar, or ticking one of its conditions, no longer freezes the game." },
+                { title = "Effects: While",
+                    desc = "Remove trigger now removes a bar's While rules." },
+            } },
+            { header = "Removed", items = {
+                { title = "Show from the cast",
+                    desc = "Totem icons and bars now light when their totem lands." },
+            } },
+        },
+    },
     {
         version = "3.3.1",
         intro = "Search finds more of the panel, and Show while equipped on the Tracking tab.",

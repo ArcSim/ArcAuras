@@ -1233,6 +1233,18 @@ end
 -- real one is never hidden: the game is asked for it, and its arrival
 -- re-feeds the trinket icons (GET_ITEM_INFO_RECEIVED in EnsureEvents).
 Driver.itemDataWanted = false
+-- A trinket slot set to skip some trinkets (driver.skipItems, item IDs): one
+-- of them in the slot hides the icon as a passive one does, and frees its
+-- cell in a dynamic group. A secret id is never one of them.
+function Driver.SkipsItem(rec, itemID)
+    local list = rec and rec.driver and rec.driver.skipItems
+    if type(list) ~= "table" or (issecretvalue and issecretvalue(itemID)) then return false end
+    for _, v in ipairs(list) do
+        if v == itemID then return true end
+    end
+    return false
+end
+
 function Driver.IsPassiveItem(itemID)
     if not (C_Item and C_Item.GetItemSpell) then return false end
     if C_Item.GetItemSpell(itemID) ~= nil then return false end
@@ -1387,8 +1399,8 @@ local function FeedItem(a)
         -- plain false, so this is legal either way.
         local iid = GetInventoryItemID("player", d.slotID or 13)
         a.frame._adItemEmpty = (iid == nil) or nil
-        a.frame._adPassive = (iid ~= nil and Store.Resolve(rec, "trinket", "onlyOnUse") == true
-            and Driver.IsPassiveItem(iid)) or nil
+        a.frame._adPassive = (iid ~= nil and ((Store.Resolve(rec, "trinket", "onlyOnUse") == true
+            and Driver.IsPassiveItem(iid)) or Driver.SkipsItem(rec, iid))) or nil
         -- the art follows the item worn (Driver.FollowArt)
         if not (issecretvalue and issecretvalue(iid)) then Driver.FollowArt(a, iid) end
     end
@@ -1654,11 +1666,6 @@ local function FeedTotem(a)
     local slot
     if DT then slot = DT.SlotFor(a.rec) else slot = (a.rec.driver and a.rec.driver.slot) or 1 end
     local dur = slot and GetTotemDuration and GetTotemDuration(slot)
-    -- on its way (Show from the cast): timed from the cast until its slot lights
-    if not dur and DT and DT.Predict then
-        local at, len = DT.Predict(a.rec)
-        if at then dur = DT.CastDuration(a, at, len) end
-    end
     if dur and a.shadow.SetCooldownFromDurationObject then
         a.shadow:SetCooldownFromDurationObject(dur, true)
         a.frame.cooldown:SetCooldownFromDurationObject(dur, true)

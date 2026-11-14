@@ -3043,13 +3043,35 @@ local function CondGrid(pg, ctx, visible, list)
         end
         row._sync = function() place() end
         -- a pane resize can change the column count, and with it the height
-        row:SetScript("OnSizeChanged", function()
-            if row._adPlacing then return end
+        row:SetScript("OnSizeChanged", function(_, w)
+            if row._adPlacing or not Options.WidthMoved(row, w) then return end
             row._adPlacing = true
-            if place() then AT.LayoutPage(pg) end
+            if place() then Options.Relayout(pg) end
             row._adPlacing = nil
         end)
     end
+end
+
+-- A grid row's size hook: only a new width can change its columns (its own
+-- height moves on every placing), and the page is laid again once, the next
+-- frame. Laid at once, each of a page's grids relaid the whole page inside
+-- the last one's layout, and the game hung on every click (Effects > While).
+function Options.WidthMoved(row, w)
+    w = tonumber(w) or (row.GetWidth and row:GetWidth()) or 0
+    w = math.floor(w + 0.5)
+    if row._adSeenW == w then return false end
+    row._adSeenW = w
+    return true
+end
+
+function Options.Relayout(pg)
+    local E = NS.Events
+    if not (E and E.Coalesce) then
+        AT.LayoutPage(pg)
+        return
+    end
+    pg._adRelayoutKey = pg._adRelayoutKey or ("adopt_relayout_" .. tostring(pg))
+    E.Coalesce(pg._adRelayoutKey, function() AT.LayoutPage(pg) end)
 end
 
 local function CondMatchRow(pg, ctx, visible, list)
@@ -3289,10 +3311,10 @@ local function ConditionRows(pg, ctx, tabVisible)
                 tb.SetCount(Options.TalentClassCounts(r)[cls.tag])
             end
             -- a pane resize can change one line into two, and with it the height
-            row:SetScript("OnSizeChanged", function()
-                if row._adPlacing then return end
+            row:SetScript("OnSizeChanged", function(_, w)
+                if row._adPlacing or not Options.WidthMoved(row, w) then return end
                 row._adPlacing = true
-                if PlaceClassRows() then AT.LayoutPage(pg) end
+                if PlaceClassRows() then Options.Relayout(pg) end
                 row._adPlacing = nil
             end)
         end
@@ -3363,10 +3385,10 @@ local function ConditionRows(pg, ctx, tabVisible)
             row:SetHeight(want)
             return true
         end
-        row:SetScript("OnSizeChanged", function()
-            if row._adPlacing then return end
+        row:SetScript("OnSizeChanged", function(_, w)
+            if row._adPlacing or not Options.WidthMoved(row, w) then return end
             row._adPlacing = true
-            if place() then AT.LayoutPage(pg) end
+            if place() then Options.Relayout(pg) end
             row._adPlacing = nil
         end)
         row._sync = function()
@@ -9465,8 +9487,9 @@ local function BuildIconEditor(parent)
         end,
         auraVis,
         "While a totem or guardian from the first spell is out, the icon shows its time instead of the aura.")
-    if Options.TotemMultiRow then
-        Options.TotemMultiRow(pg, win, SelIcon, function() local r = SelIcon() return r and r.driver end, function()
+    -- the same picks a totem icon has (UI\AD_TotemOptions.lua)
+    if Options.TotemPickRows then
+        Options.TotemPickRows(pg, win, SelIcon, function()
             local r = SelIcon()
             return auraVis() and r ~= nil and r.driver.totem == true
         end)
@@ -9638,6 +9661,30 @@ local function BuildIconEditor(parent)
         local r = SelIcon()
         return trackVis() and r ~= nil and r.kind == "trinket"
     end, { "onlyOnUse" })
+    -- trinkets this slot never shows (driver.skipItems): hidden like a passive one
+    Options.BuildYield()
+    AT.RowInput(pg, "Skip these items",
+        function()
+            local r = SelIcon()
+            local t = {}
+            for _, v in ipairs(r and type(r.driver.skipItems) == "table" and r.driver.skipItems or {}) do
+                t[#t + 1] = tostring(v)
+            end
+            return table.concat(t, ", ")
+        end,
+        function(v)
+            local r = SelIcon()
+            if not r then return end
+            local ids = Options.ParseSpellIDs(v)
+            r.driver.skipItems = (#ids > 0) and ids or nil
+            Store.Dirty("style", r.id)
+        end,
+        function()
+            local r = SelIcon()
+            return trackVis() and r ~= nil and r.kind == "trinket"
+        end,
+        "Item IDs this slot never shows: while one of them is worn here, the icon hides.",
+        "Item IDs, comma separated")
     -- Show (While equipped / While in stock) also where the item is picked;
     -- the Empty slot and Out of stock effects draw the same setting
     Options.BuildYield()
@@ -13861,9 +13908,10 @@ local function BuildBarPane()
     -- Effects > Power, Spells, Auras (resource bars): the States table, one row
     -- per state with what it changes: fill, texts, cost mark, glow
     -- (UI\AD_ResColorOptions.lua). One set of rows, filtered per trigger. The
-    -- rows are the bar's own: no push bar, never over several.
+    -- rows are the bar's own: no push bar, never over several. Titled, so the
+    -- table sits in a box under its band as the open state's rows below it do.
     local statesVis = BarBlock("How the bar looks in each state", "rescolors", "Effects", { "resTextFill" },
-        nil, "Power", true, { noTitle = true, alsoSubs = {
+        nil, "Power", true, { alsoSubs = {
             { sub = "Spells", perItem = true },
             { sub = "Auras", perItem = true, when = function(r)
                 local RSO = Options.ResStateOptions

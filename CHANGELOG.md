@@ -1,5 +1,34 @@
 # Arc Auras
 
+## 3.3.2
+
+Gear Value and Action Bar Restore modules, simpler totem tracking, a fix for the While freeze on bars, and the latest Item Finds.
+
+### New Features
+
+- **Gear Value** - A new module: gear tooltips show what an item is worth to stat weights you set, against what you wear. Copy a default, set your own weights or paste a weights string from a simulator, and pick which scales show for each talent group. Turn it on in Modules > Gear Value.
+- **Action Bar Restore** - A new module that saves each spec's action bars, and named profiles of your bars, which bars are on and your Edit Mode layout that any character can load. Mounts, pets and flyouts come back too. When the game loads saved buttons empty after a login or spec swap, it offers to put them back.
+
+### Improvements
+
+- **Follow the newest** - Totem icons, totem bars and aura icons that show their totem can move to the newest one when you cast again, as the Cooldown Manager does. It replaces Cooldown Manager sync, and icons set to it follow the newest.
+- **Totem options on aura icons** - An aura icon set to show its totem first now has Which one, Counted by, Several from one cast and Wait for its slot.
+- **Skip these items** - A trinket icon can skip trinkets by item ID: while one of them is worn in its slot, the icon hides.
+- **Bar Effects tab** - A tidier While page and trigger list, and the state table on power bars sits in its own box.
+- **Item Finds: compare and prices** - Compare an item with your gear (Shift over it, or the Compare button on its page), and auction add-ons now add their prices to the finder's item tooltips.
+- **Item Finds: item data** - Updated with Forever's latest data: 17 hidden items now have names, 117 more old items show what Forever changed, including Upper Blackrock Spire, Scholomance, Stratholme and Dire Maul gear, and drop places for about 1,900 more items.
+
+### Bug Fixes
+
+- **Totem tracking** - A summon keeps its timer when you cast another spell, so another icon can no longer take it.
+- **Summon Hawk** - Hawk icons and bars now light in combat without setting a wait.
+- **Effects: While** - Opening While on a bar, or ticking one of its conditions, no longer freezes the game.
+- **Effects: While** - Remove trigger now removes a bar's While rules.
+
+### Removed
+
+- **Show from the cast** - Totem icons and bars now light when their totem lands.
+
 ## 3.3.1
 
 Search finds more of the panel, Show while equipped on the Tracking tab, and the latest Item Finds data.

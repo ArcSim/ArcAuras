@@ -52,26 +52,22 @@ function TB.Track(e)
     local sid = TB.SpellID(e.rec)
     local list = (sid and type(d.spellIDs) == "table") and d.spellIDs or nil
     -- a spell with several out at once: which one the bar times and how they
-    -- count; its wait for the slot and Show from the cast ride along
+    -- count; its wait for the slot rides along
     local only = sid and DT.Which(d) or nil
     local by = (only and DT.ByOrder(d)) and "order" or nil
+    local newest = (sid and DT.Newest(d)) or nil
     local wait = sid and tonumber(d.slotWait) or nil
-    local fromCast = (sid and d.fromCast == true) or nil
     local multi = sid and d.multiSlot or nil
     local p = e.tbPseudo
     if p and p.driver.spellID == sid and p.driver.slot == TB.Slot(e.rec) then -- raw-id: the same pick, not a match
         local pd = p.driver
-        pd.spellIDs, pd.which, pd.whichBy, pd.slotWait, pd.fromCast = list, only, by, wait, fromCast
-        if pd.multiSlot ~= multi then
-            pd.multiSlot = multi
-            DT.CdmRefresh()
-        end
+        pd.spellIDs, pd.which, pd.whichBy, pd.slotWait, pd.multiSlot, pd.newest = list, only, by, wait, multi, newest
         return
     end
     -- re-pointed under the same key: no detach, so the slots are not re-read
     e.tbPseudo = { id = TB.KEY .. tostring(e.rec.id), driver = { spellID = sid, spellIDs = list,
-        slot = TB.Slot(e.rec), which = only, whichBy = by, slotWait = wait, fromCast = fromCast,
-        multiSlot = multi } }
+        slot = TB.Slot(e.rec), which = only, whichBy = by, slotWait = wait, multiSlot = multi,
+        newest = newest } }
     DT.Attach(e.tbPseudo)
 end
 
@@ -80,13 +76,16 @@ function TB.Untrack(e)
     e.tbPseudo = nil
 end
 
--- In combat the slot's duration object draws no countdown numbers: a slot
--- your own cast named is timed from when it lit at the length of the spell
--- you cast (DT.LenFor), a plain timer. Out of combat the slot's own.
+-- Forever: in combat the slot's duration object draws no countdown numbers,
+-- so a slot your own cast named is timed from when it lit at the length of
+-- the spell you cast (DT.LenFor), a plain timer. Once the game changes the
+-- slot's time (s.moved, an extension) only the slot knows it: the slot's own
+-- from then on, as out of combat and on retail always.
 function TB.CastTimed(e, slot)
     local DT = NS.DriverTotem
+    if not NS.IsForever then return nil end
     local s = DT and DT.slot and DT.slot[slot]
-    if not (s and s.litAt and s.castId) then return nil end
+    if not (s and s.litAt and s.castId) or s.moved then return nil end
     if not (InCombatLockdown() or DT.ReadSlot(slot) == nil) then return nil end
     local len = DT.LenFor(s.castId)
     if not len or GetTime() - s.litAt >= len then return nil end
@@ -99,11 +98,6 @@ function TB.Refresh(e)
     local slot = e.tbPseudo and DT and DT.SlotFor(e.tbPseudo)
     local dur = slot and TB.CastTimed(e, slot)
     if not dur then dur = slot and GetTotemDuration and GetTotemDuration(slot) end
-    -- on its way (Show from the cast): timed from the cast until its slot lights
-    if not dur and e.tbPseudo and DT and DT.Predict then
-        local at, len = DT.Predict(e.tbPseudo)
-        if at then dur = DT.CastDuration(e, at, len) end
-    end
     local shell = e.shell
     if dur then
         local drain = (R(e.rec, "fill", "fillMode") or "drain") == "drain"

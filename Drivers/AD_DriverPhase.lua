@@ -306,19 +306,18 @@ function PH.TrackTotem(e)
     local key = "adphase" .. tostring(e.rec.id)
     -- its own spell brings the icon's listed ones, as a slot may carry a linked spell
     local list = not (type(ov.spells) == "table" and #ov.spells > 0) and type(ov.spellIDs) == "table" and ov.spellIDs or nil
-    -- one cast putting several down: which one it follows (DT.Multi)
-    local multi = ov.multiSlot
+    -- one cast putting several down: which one it follows (DT.Multi); several
+    -- out at once: which of them, how they count, and the wait for its slot
+    local multi, which, by, wait = ov.multiSlot, ov.which, ov.whichBy, tonumber(ov.slotWait)
+    local newest = DT.Newest(ov) or nil
     if e.pseudo and e.pseudo.driver.spellID == sid then -- raw-id: the same pick, not a match
         local pd = e.pseudo.driver
-        pd.spellIDs = list
-        if pd.multiSlot ~= multi then
-            pd.multiSlot = multi
-            DT.CdmRefresh()
-        end
+        pd.spellIDs, pd.multiSlot, pd.which, pd.whichBy, pd.slotWait, pd.newest = list, multi, which, by, wait, newest
         return
     end
     -- re-pointed under the same key: no detach, so the slots are not re-read
-    e.pseudo = { id = key, driver = { spellID = sid, spellIDs = list, multiSlot = multi } }
+    e.pseudo = { id = key, driver = { spellID = sid, spellIDs = list, multiSlot = multi,
+        which = which, whichBy = by, slotWait = wait, newest = newest } }
     DT.Attach(e.pseudo)
 end
 

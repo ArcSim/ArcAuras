@@ -50,6 +50,9 @@ local DEFAULTS = {
     -- the game's item tooltips mark what changed from Classic, as the item box does: off / always / alt / ctrl / shift
     -- (while that key is held)
     itemTipChanges = "alt",
+    -- the finder's own item tooltip shows the gear it would replace: off / always / alt / ctrl / shift (while that key
+    -- is held, as the game's tooltips do on Shift)
+    itemTipCompare = "shift",
     -- favorites on the game's maps (FavPins.lua): both (World Map and minimap) / world / off; starring an item is
     -- already the player asking for it, so this starts on
     favPins = "both",
@@ -117,6 +120,7 @@ ns.On("ADDON_LOADED", function(name)
     db.settings = db.settings or {}
     -- only a named choice is read here; anything else falls back to the default
     if type(db.settings.itemTipChanges) ~= "string" then db.settings.itemTipChanges = nil end
+    if type(db.settings.itemTipCompare) ~= "string" then db.settings.itemTipCompare = nil end
     Fill(db.settings, DEFAULTS)
     -- an older save keeps "off" as its quality choice: that means pop-ups off; the old filter keys go
     if db.settings.popFor == "off" then db.settings.popOn = false end

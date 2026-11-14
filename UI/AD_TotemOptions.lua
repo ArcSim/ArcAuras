@@ -15,7 +15,7 @@ local MODIFIERS = { LSHIFT = true, RSHIFT = true, LCTRL = true, RCTRL = true,
 
 -- A spell-tracked totem that lands a moment after the cast (Summon Hawk flies
 -- in first): how long a cast waits for its slot (driver.slotWait, nil = the
--- short default) and Show from the cast (driver.fromCast), in
+-- short default, its spell's own where it has one), in
 -- Drivers\AD_DriverTotem.lua. Rec: the icon or bar being edited; vis: its spell
 -- rows show. Shared by the totem bars.
 -- Ready-made totem icons, picked in the Add window ("TEMPLATE - click one,
@@ -169,7 +169,6 @@ end
 Options.TOTEM_MULTI_ITEMS = {
     { value = "first", text = "First summoned" },
     { value = "last", text = "Last summoned" },
-    { value = "cdm", text = "Cooldown Manager sync" },
 }
 function Options.TotemMultiRow(pg, owner, Rec, Holder, vis)
     local AT, Store = NS.AT, NS.Store
@@ -180,8 +179,7 @@ function Options.TotemMultiRow(pg, owner, Rec, Holder, vis)
         function(v)
             local r, h = Rec(), Holder()
             if not (r and h) then return end
-            h.multiSlot = (v == "last" or v == "cdm") and v or nil
-            DT.CdmRefresh()
+            h.multiSlot = (v == "last") and "last" or nil
             Store.Dirty("style", r.id)
         end,
         function() return Options.TOTEM_MULTI_ITEMS end,
@@ -190,7 +188,62 @@ function Options.TotemMultiRow(pg, owner, Rec, Holder, vis)
             return vis() and h ~= nil and DT.Which(h) == nil
         end)
     AT.Tooltip(row, "Several from one cast",
-        "When one cast summons more than one: the first or the last. Cooldown Manager sync follows its icon for the spell and hides it.")
+        "When one cast summons more than one: the first or the last.")
+end
+
+-- Follow the newest (driver.newest, Drivers\AD_DriverTotem.lua DT.Newest):
+-- with several of its spell out and no Which pick, the one summoned last, as
+-- the Cooldown Manager's icon shows. Off: the one already shown stays.
+function Options.TotemNewestRow(pg, Rec, vis)
+    local AT, Store = NS.AT, NS.Store
+    local DT = NS.DriverTotem
+    if not DT then return end
+    AT.RowToggle(pg, "Follow the newest",
+        function()
+            local r = Rec()
+            return r ~= nil and DT.Newest(r.driver)
+        end,
+        function(v)
+            local r = Rec()
+            if not r then return end
+            r.driver.newest = v and true or nil
+            -- the retired Cooldown Manager sync read as on: the toggle replaces it
+            if r.driver.multiSlot == "cdm" then r.driver.multiSlot = nil end
+            Store.Dirty("style", r.id)
+        end,
+        function()
+            local r = Rec()
+            return vis() and r ~= nil and DT.Which(r.driver) == nil
+        end,
+        "Cast it again while one is out and this moves to the new one, as the Cooldown Manager's icon does. Off: it stays on the first.")
+end
+
+-- The picks of a totem followed by its spell, the same on a totem icon and on
+-- an aura icon that shows its totem first: which of several out at once, how
+-- the numbered ones count, following the newest, the one of a cast's several,
+-- the wait for its slot.
+function Options.TotemPickRows(pg, owner, Rec, vis)
+    local AT, Store = NS.AT, NS.Store
+    local inSlot = AT.RowDropdown(pg, owner, "Which one",
+        function()
+            local r = Rec()
+            local DT = NS.DriverTotem
+            return (r and DT and DT.Which(r.driver)) or 0
+        end,
+        function(v)
+            local r = Rec()
+            if not r then return end
+            v = tonumber(v) or 0
+            r.driver.which = (v >= 1) and v or nil
+            Store.Dirty("style", r.id)
+        end,
+        function() return Options.TotemWhichItems() end,
+        vis)
+    AT.Tooltip(inSlot, "Which one", Options.TOTEM_WHICH_TIP)
+    Options.TotemWhichByRow(pg, Rec, vis, owner)
+    Options.TotemNewestRow(pg, Rec, vis)
+    Options.TotemMultiRow(pg, owner, Rec, function() local r = Rec() return r and r.driver end, vis)
+    Options.TotemTimingRows(pg, Rec, function() return vis() and Rec().driver.spellID ~= nil end, owner)
 end
 
 function Options.TotemTimingRows(pg, Rec, vis, owner)
@@ -214,26 +267,15 @@ function Options.TotemTimingRows(pg, Rec, vis, owner)
             Store.Dirty("style", r.id)
         end,
         function()
-            local out = { { value = 0, text = Secs(DT.PAIR_WINDOW), raw = true } }
+            local r = Rec()
+            local sid = r and r.driver.spellID and Store.RecordSpellID(r.driver)
+            local out = { { value = 0, text = Secs(DT.DefaultWait(sid and DT.SpellName(sid))), raw = true } }
             for _, s in ipairs(DT.WAITS) do out[#out + 1] = { value = s, text = Secs(s), raw = true } end
             return out
         end,
         vis)
     AT.Tooltip(wait, "Wait for its slot",
-        "How long after your cast it may land and still light this in combat. One that flies in first needs longer (Summon Hawk: 1.5 s).")
-
-    AT.RowToggle(pg, "Show from the cast",
-        function()
-            local r = Rec()
-            return r ~= nil and r.driver.fromCast == true
-        end,
-        function(v)
-            local r = Rec()
-            if not r then return end
-            r.driver.fromCast = v and true or nil
-            Store.Dirty("style", r.id)
-        end,
-        vis, "Lights the moment you cast, timed from the cast, until it lands in its slot. Needs one cast out of combat to learn its time.")
+        "How long after your cast it may land and still light this in combat. One that flies in first needs longer.")
 end
 
 -- ctx: the selected icon. vis: the Tracking tab shows. owner: the window the
@@ -278,9 +320,9 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
             if v == "spell" then
                 d.bar, d.follow = nil, "spell"
             elseif v == "bar" then
-                d.bar, d.follow, d.spellID, d.which, d.whichBy, d.slotWait, d.fromCast = true, nil, nil, nil, nil, nil, nil
+                d.bar, d.follow, d.spellID, d.which, d.whichBy, d.slotWait, d.newest = true, nil, nil, nil, nil, nil, nil
             else
-                d.bar, d.follow, d.spellID, d.which, d.whichBy, d.slotWait, d.fromCast = nil, nil, nil, nil, nil, nil, nil
+                d.bar, d.follow, d.spellID, d.which, d.whichBy, d.slotWait, d.newest = nil, nil, nil, nil, nil, nil, nil
             end
             if DT then DT.Track(r) end
             Store.Dirty("tree")
@@ -321,26 +363,8 @@ function Options.TotemTrackRows(pg, ctx, vis, owner, refresh)
         spellVis,
         "The spell that puts it down: the icon follows that totem or guardian, any rank, into whatever slot it lands.",
         "Type the spell ID")
-    -- a spell with several out at once: one icon per slot
-    local inSlot = AT.RowDropdown(pg, owner, "Which one",
-        function()
-            local r = Rec()
-            return (r and DT and DT.Which(r.driver)) or 0
-        end,
-        function(v)
-            local r = Rec()
-            if not r then return end
-            v = tonumber(v) or 0
-            r.driver.which = (v >= 1) and v or nil
-            Store.Dirty("style", r.id)
-        end,
-        function() return Options.TotemWhichItems() end,
-        spellVis)
-    AT.Tooltip(inSlot, "Which one", Options.TOTEM_WHICH_TIP)
-    Options.TotemWhichByRow(pg, Rec, spellVis, owner)
-    Options.TotemMultiRow(pg, owner, Rec, function() local r = Rec() return r and r.driver end, spellVis)
-    -- when it lands after the cast: measured, waited for, or shown from the cast
-    Options.TotemTimingRows(pg, Rec, function() return spellVis() and Rec().driver.spellID ~= nil end, owner)
+    -- a spell with several out at once, one cast's several, and its wait
+    Options.TotemPickRows(pg, owner, Rec, spellVis)
 
     local slotRow = AT.RowDropdown(pg, owner, "Totem slot",
         function() local r = Rec() return r and (r.driver.slot or 1) end,

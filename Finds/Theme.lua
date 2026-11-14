@@ -50,32 +50,143 @@ function T.Solid(parent, layer, hex, sub)
     return t
 end
 
--- one tooltip of our own for hovering an item: the game's GameTooltip adds comparisons with equipped gear
+-- one tooltip of our own for hovering an item: the game's GameTooltip adds comparisons with equipped gear. A name
+-- starting NotGameTooltip is the one price add-ons look for when they add their lines to an addon's tooltip
+T.TIP_NAME = "NotGameTooltipForeverItemFinder"
 local itemTip
-function T.ItemTip(owner, id)
+
+-- the gear an item would replace, in two tooltips of our own beside it, while the key picked in Settings > Items is
+-- held, always, or while the item box's Compare button is hovered. They are filled from the game's comparison data
+-- directly: the game's own comparison keeps its state in a shared table that a call from here would taint
+local HELD = { alt = "IsAltKeyDown", ctrl = "IsControlKeyDown", shift = "IsShiftKeyDown" }
+function T.CompareHeld()
+    local m = ns.settings and ns.settings.itemTipCompare
+    if m == "always" then return true end
+    local held = HELD[m] and _G[HELD[m]]
+    return held ~= nil and held() == true
+end
+local compareTips = {}
+local function CompareTip(i)
+    local t = compareTips[i]
+    if not t then
+        t = CreateFrame("GameTooltip", "ForeverItemFinderShoppingTooltip" .. i, UIParent, "ShoppingTooltipTemplate")
+        t:SetFrameStrata("TOOLTIP")
+        t:SetClampedToScreen(true)
+        compareTips[i] = t
+    end
+    return t
+end
+function T.HideCompare()
+    for _, t in ipairs(compareTips) do t:Hide() end
+end
+-- shown: the equipped item; delta: the game's stat change lines; header: the label over the tooltip
+local function FillCompare(t, shown, header, delta, deltaHeader, pairedLine)
+    t:SetOwner(itemTip, "ANCHOR_NONE")
+    t:ClearAllPoints()
+    if shown.guid then t:SetItemByGUID(shown.guid) else t:SetHyperlink(shown.hyperlink) end
+    if t.CompareHeader and t.CompareHeader.Label then
+        t.CompareHeader.Label:SetText(header)
+        t.CompareHeader:SetWidth(t.CompareHeader.Label:GetWidth() + 30)
+        t.CompareHeader:Show()
+    end
+    if delta and #delta > 0 then
+        t:AddLine(" ")
+        t:AddLine(deltaHeader, 1, 0.82, 0)
+        if pairedLine then
+            t:AddLine(" ")
+            t:AddLine(pairedLine, 1, 0.82, 0)
+        end
+        for _, line in ipairs(delta) do t:AddLine(line, 1, 1, 1) end
+    end
+    t:Show()
+end
+local function ShowCompare(id)
+    T.HideCompare()
+    local api = C_TooltipComparison
+    if not (api and api.GetItemComparisonInfo and api.GetItemComparisonDelta) then return end
+    local _, link = C_Item.GetItemInfo(id)
+    if type(link) ~= "string" then return end
+    local item = { hyperlink = link }
+    local info = api.GetItemComparisonInfo(item)
+    local first = info and info.item
+    if not (first and (first.guid or first.hyperlink)) then return end
+    local M = (Enum and Enum.TooltipComparisonMethod) or {}
+    local method = info.method
+    local single = method == nil or method == M.Single
+    local paired = method ~= nil and (method == M.WithBagMainHandItem or method == M.WithBagOffHandItem)
+    local second = info.additionalItems and info.additionalItems[1]
+    if second and not (second.guid or second.hyperlink) then second = nil end
+    local equipped = EQUIPPED or "Equipped"
+    local deltaHeader = (not single and method == M.WithBothHands and ITEM_DELTA_MULTIPLE_COMPARISON_DESCRIPTION)
+        or ITEM_DELTA_DESCRIPTION or "If you replace this item, the following stat changes will occur:"
+    local pairedLine
+    if paired and second then
+        local fmt = method == M.WithBagOffHandItem and ITEM_DELTA_DUAL_WIELD_COMPARISON_OFFHAND_DESCRIPTION
+            or ITEM_DELTA_DUAL_WIELD_COMPARISON_MAINHAND_DESCRIPTION
+        local key = second.guid or second.hyperlink
+        local name = C_Item.GetItemNameByID and C_Item.GetItemNameByID(key)
+        if fmt and name then pairedLine = fmt:format("ff" .. T.QualityHex(C_Item.GetItemQualityByID and C_Item.GetItemQualityByID(key)), name) end
+    end
+    local tips = {}
+    FillCompare(CompareTip(1), first, equipped, api.GetItemComparisonDelta(item, first, (not single) and second or nil, paired),
+        deltaHeader, pairedLine)
+    tips[1] = compareTips[1]
+    if second then
+        FillCompare(CompareTip(2), second, (paired and IF_EQUIPPED_TOGETHER) or equipped,
+            single and api.GetItemComparisonDelta(item, second, nil, false) or nil, ITEM_DELTA_DESCRIPTION or deltaHeader)
+        tips[2] = compareTips[2]
+    end
+    -- the side with room, the item's own side first; the first equipped item sits next to the item
+    local width = 0
+    for _, t in ipairs(tips) do width = width + (t:GetWidth() or 0) end
+    local left, right = itemTip:GetLeft(), itemTip:GetRight()
+    local onLeft = left ~= nil and right ~= nil and (GetScreenWidth() - right) < width and left > (GetScreenWidth() - right)
+    local prev = itemTip
+    for _, t in ipairs(tips) do
+        if onLeft then t:SetPoint("TOPRIGHT", prev, "TOPLEFT") else t:SetPoint("TOPLEFT", prev, "TOPRIGHT") end
+        prev = t
+    end
+end
+-- the compare tooltips follow the item's tooltip, its Compare button and the key
+function T.RefreshCompare()
+    if not (itemTip and itemTip:IsShown() and itemTip.itemID and not itemTip.dataTipFor) then
+        T.HideCompare()
+    elseif itemTip.compareOn or T.CompareHeld() then
+        ShowCompare(itemTip.itemID)
+    else
+        T.HideCompare()
+    end
+end
+ns.On("MODIFIER_STATE_CHANGED", function() T.RefreshCompare() end)
+
+-- compare: the item box's Compare button shows the gear it would replace without a key
+function T.ItemTip(owner, id, compare)
     if not id then return end
     if not itemTip then
-        itemTip = CreateFrame("GameTooltip", "ForeverItemFinderTip", UIParent, "GameTooltipTemplate")
+        itemTip = CreateFrame("GameTooltip", T.TIP_NAME, UIParent, "GameTooltipTemplate")
         itemTip:SetFrameStrata("TOOLTIP")
         itemTip:SetClampedToScreen(true)
+        itemTip:HookScript("OnHide", function() T.HideCompare() end)
     end
     itemTip:SetOwner(owner, "ANCHOR_RIGHT")
-    itemTip.itemID, itemTip.dataTipFor = id, nil
+    itemTip.itemID, itemTip.dataTipFor, itemTip.compareOn = id, nil, compare and true or nil
     -- an item the game cannot draw yet gets the datamined tooltip (Tooltip.lua) until the server sends it; a test run
     -- outside Forever always does, since that client's copy of an old item is not Forever's
     if (not ns.isForever or not C_Item.GetItemInfo(id)) and T.DataTip and T.DataTip(itemTip, id) then
         if C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(id) end
         itemTip:Show()
+        T.HideCompare()
         return itemTip
     end
     itemTip:SetItemByID(id)
     itemTip:Show()
+    T.RefreshCompare()
     return itemTip
 end
 -- the datamined tooltip up for an item the server just sent: the game's own takes over
 function T.ItemArrived(id)
     if ns.isForever and itemTip and itemTip:IsShown() and itemTip.dataTipFor == id and C_Item.GetItemInfo(id) then
-        T.ItemTip(itemTip:GetOwner(), id)
+        T.ItemTip(itemTip:GetOwner(), id, itemTip.compareOn)
     end
 end
 -- owner: hide only the tip that frame put up (a pop-up timing out leaves a hovered row's tip alone)

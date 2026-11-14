@@ -17,10 +17,11 @@ NS.DriverTotem = DT
 
 -- retail has 8 slots (a Demonology warlock fills more than 4); Forever's shaman 4
 DT.SLOTS = (not NS.IsForever and GetNumTotemSlots and math.max(4, tonumber(GetNumTotemSlots()) or 4)) or 4
--- A cast and the slot update it causes land within this many seconds, unless
--- an icon following the spell waits longer (driver.slotWait, DT.Window): a
--- guardian that flies in first (Summon Hawk) lights its slot later.
-DT.PAIR_WINDOW = 0.5
+-- A cast and the slot update it causes land together (a few milliseconds
+-- apart at most), so they pair within this many seconds: room for a slow
+-- frame, no more. A spell that lands later has its own wait (DT.SPELL_WAIT),
+-- or the one an icon following it picks (driver.slotWait, DT.Window).
+DT.PAIR_WINDOW = 0.25
 -- Out of combat a slot is plain, so a cast this many seconds old still pairs
 -- it: one of its own spell, or the one totem spell cast in that time (a
 -- guardian's slot names the guardian, not the spell).
@@ -29,12 +30,12 @@ DT.WAIT_MAX = 5
 -- A slot's plain start within this many seconds of when its update came is
 -- the same totem: every new one lighting the slot moves litAt again.
 DT.SAME_LIT = 1
--- Updates of one cast's slots land together: a fresh slot this close after a
--- lit one took a cast takes it back (DT.Reclaim). Frame times, so a slow
--- frame splits one burst; two casts are a global cooldown apart.
+-- Updates of one cast's slots land together: a lower slot lighting this close
+-- after a higher one took the cast takes it over (DT.TakeBurst). Frame times,
+-- so a slow frame splits one burst; two casts are a global cooldown apart.
 DT.SAME_BURST = 0.25
 -- the longer waits a player may pick (driver.slotWait), in seconds
-DT.WAITS = { 1, 1.5, 2, 3, 4, 5 }
+DT.WAITS = { 0.5, 1, 1.5, 2, 3, 4, 5 }
 DT.QUEUE_MAX = 8
 -- An icon can follow a spell that summons nothing (a buff's cast with its
 -- totem ticked). While another cast waits too, one that has lit nothing gives
@@ -62,8 +63,7 @@ DT.ELEMENTS = { "Fire", "Earth", "Water", "Air" }
 
 DT.slot = {}       -- [slot] = { name = totem name or nil, id = its spell ID or nil,
                    --   castId = the cast that put it down or nil, litAt = GetTime(),
-                   --   prev = what it held before a cast renamed it while lit (DT.Reclaim) }
-DT.cdmSpells = {}  -- [cooldownID] = the spells of that Cooldown Manager entry, read while plain
+                   --   moved = the game changed its time since (an update with no cast of its own) }
 DT.pending = {}    -- [slot] = when it lit with no cast to name it yet
 DT.waiting = {}    -- [slot] = when it lit, named, with no cast paired yet
 DT.refresh = {}    -- [slot] = when a lit secret slot updated with no cast (a recast refreshing it)
@@ -165,8 +165,8 @@ function DT.ReadSlot(slot)
     return name, (type(sid) == "number" and sid > 0) and sid or nil
 end
 
--- A totem's time, per spell name, learned from a plain read out of combat:
--- Show from the cast times the icon with it before the slot lights.
+-- A totem's time, per spell name and per cast spell, learned from a plain
+-- read out of combat (DT.LenFor).
 function DT.Durations()
     local u = Store.UI()
     u.totemDurs = u.totemDurs or {}
@@ -221,6 +221,28 @@ function DT.LenFor(castId)
     return DT.Duration(DT.SpellName(castId)) -- raw-id: the cast the game reported, its name is the learned key
 end
 
+-- A summon that lands after its cast lights its slot later than the short
+-- default, so its casts wait longer with nothing picked: Forever's Summon
+-- Hawk flies in for a second, retail's Force of Nature takes up to a third.
+DT.SPELL_WAIT = NS.IsForever and { [1293241] = 1.5, [1293525] = 1.5 } or { [205636] = 0.5 }
+function DT.DefaultWait(name)
+    local map, left = DT.waitNames, DT.waitLeft
+    if not map then
+        map, left = {}, {}
+        for id in pairs(DT.SPELL_WAIT) do left[id] = true end
+        DT.waitNames, DT.waitLeft = map, left
+    end
+    -- a name not loaded yet is asked again until the client has it
+    for id in pairs(left) do
+        local nm = DT.SpellName(id) -- raw-id: the table's own spell
+        if nm then
+            map[nm] = math.max(map[nm] or 0, DT.SPELL_WAIT[id])
+            left[id] = nil
+        end
+    end
+    return math.max(DT.PAIR_WINDOW, (name and map[name]) or 0)
+end
+
 -- How long a cast of this spell waits for its slot: the longest wait an icon
 -- or bar following it picks, else the short default. rec: one more record
 -- counted (the one being edited, loaded or not).
@@ -235,13 +257,13 @@ function DT.Window(name, rec)
     end
     for _, r in pairs(DT.recs) do Hand(r) end
     Hand(rec)
-    return math.max(DT.PAIR_WINDOW, hand or 0)
+    return math.max(DT.DefaultWait(name), hand or 0)
 end
 
--- A spell the player set to wait for its slot, or to show from the cast, is a
--- summon by their word: it never counts as lighting nothing.
+-- A spell the player set to wait for its slot is a summon by their word: it
+-- never counts as lighting nothing.
 function DT.NoteMiss(name)
-    if DT.Window(name) > DT.PAIR_WINDOW or DT.Predicting(name) then return end
+    if DT.Window(name) > DT.PAIR_WINDOW then return end
     DT.missed[name] = (DT.missed[name] or 0) + 1
 end
 
@@ -265,14 +287,15 @@ end
 function DT.TakeCast(now, name, sid, slot)
     DT.Prune(now)
     local q = DT.queue
-    -- a cast that gives way goes, or it would take the burst's next slot
+    -- a cast that gives way goes, however old, or it would take the burst's
+    -- next slot (out of combat a plain slot takes a cast seconds old)
     local function Take(i)
         local c = table.remove(q, i)
         if DT.missed[c.name] then
             DT.missed[c.name] = nil
         else
             for j = #q, 1, -1 do
-                if DT.missed[q[j].name] and now - q[j].at <= DT.Window(q[j].name) then table.remove(q, j) end
+                if DT.missed[q[j].name] then table.remove(q, j) end
             end
         end
         return c
@@ -309,6 +332,29 @@ function DT.TakeCast(now, name, sid, slot)
         if c.name ~= q[1].name then return nil end
     end
     return Take(1)
+end
+
+-- Whether a cast owns a lit slot: a recast of the spell it holds, or on
+-- Forever a totem that replaces the one standing there (its element's slot;
+-- any slot while the client's lists do not name its element yet).
+function DT.Owns(c, s, slot)
+    if s.name ~= nil and c.name == s.name then return true end
+    if not NS.IsForever then return false end
+    local h = DT.HomeSlot(c.name)
+    return h == nil or h == slot
+end
+
+-- The oldest waiting cast that owns a lit slot, taken; any other cast keeps
+-- waiting for the slot it lights itself.
+function DT.TakeOwn(now, s, slot)
+    DT.Prune(now)
+    for i, c in ipairs(DT.queue) do
+        if DT.Owns(c, s, slot) and now - c.at <= DT.Window(c.name) then
+            DT.missed[c.name] = nil
+            return table.remove(DT.queue, i)
+        end
+    end
+    return nil
 end
 
 -- Forever: the slot an element totem drops into, by spell name, from the
@@ -389,21 +435,6 @@ function DT.Changed()
     if TB and TB.OnTotems then Events.Coalesce("adtotembar_all", TB.OnTotems) end
 end
 
--- A lit slot a cast renamed in the same burst gives that cast back to a slot
--- lighting fresh, and is what it was again: Summon Demonic Tyrant extends the
--- demons out (their slots update) and lights its own slot, in either order.
-function DT.Reclaim(now)
-    for slot = 1, DT.SLOTS do
-        local s = DT.slot[slot]
-        local p = s and s.prev
-        if p and now - p.at <= DT.SAME_BURST then
-            s.name, s.id, s.castId, s.litAt, s.pos, s.prev = p.name, p.id, p.castId, p.litAt, p.pos, nil
-            return p.cast
-        end
-    end
-    return nil
-end
-
 -- One cast lighting several fresh slots in one burst: the cast is the lowest
 -- slot's, the one the game filled first (Call Dreadstalkers in slot 1, the
 -- Charhound with them in slot 2, whose update can land first). A higher slot
@@ -436,221 +467,32 @@ function DT.BurstSibling(slot, now)
 end
 
 -- What an icon picks when one cast puts down several (driver.multiSlot):
--- nil = First summoned, "last" = Last summoned, "cdm" = Cooldown Manager sync.
+-- nil = First summoned, "last" = Last summoned.
 function DT.Multi(d)
-    local m = d and d.multiSlot
-    if m == "last" or m == "cdm" then return m end
+    if d and d.multiSlot == "last" then return "last" end
     return "first"
 end
 
--- The Cooldown Manager's own pairing: each of its icons keeps the slot whose
--- update matched its spell (preferredTotemUpdateSlot, plain in combat) and
--- holds that totem while its totemData is there (a secret table in combat:
--- only that it is there is read). One cast can light several slots at once
--- (Call Dreadstalkers and the Charhound with them), which no cast timing tells
--- apart, so an icon whose spell it lists follows its pick.
-DT.CDM_VIEWERS = { "EssentialCooldownViewer", "UtilityCooldownViewer", "BuffIconCooldownViewer", "BuffBarCooldownViewer" }
+-- Follow the newest (driver.newest): of several of its spell out at once,
+-- the one summoned last, as the Cooldown Manager's icon shows. An icon saved
+-- with the retired Cooldown Manager sync follows it too.
+function DT.Newest(d)
+    if not d then return false end
+    return d.newest == true or d.multiSlot == "cdm"
+end
 
 local function PlainNum(v)
     if type(v) == "number" and not (issecretvalue and issecretvalue(v)) then return v end
     return nil
 end
 
--- an entry's spells (its own, override, tooltip override, linked), kept once
--- read; nil while the game hands them back secret (inside instances)
-function DT.CdmSpells(cdID)
-    local have = DT.cdmSpells[cdID]
-    if have then return have end
-    local CV = C_CooldownViewer
-    local info = CV and CV.GetCooldownViewerCooldownInfo and CV.GetCooldownViewerCooldownInfo(cdID)
-    if type(info) ~= "table" or (issecretvalue and issecretvalue(info)) then return nil end
-    local ids = {}
-    local function Add(v)
-        v = PlainNum(v)
-        if v and v > 0 then ids[#ids + 1] = v end
-    end
-    Add(info.spellID)
-    Add(info.overrideSpellID)
-    Add(info.overrideTooltipSpellID)
-    local linked = info.linkedSpellIDs
-    if type(linked) == "table" and not (issecretvalue and issecretvalue(linked)) then
-        for _, v in ipairs(linked) do Add(v) end
-    end
-    if #ids == 0 then return nil end
-    DT.cdmSpells[cdID] = ids
-    return ids
-end
-
--- Cooldown Manager sync hides the Cooldown Manager's icon it follows:
--- the item is hidden (its data keeps updating) and hooks hide it again
--- whenever the game shows it or hands it that cooldown. Our marks live here,
--- never on the game's frames.
-DT.cdmHidden = setmetatable({}, { __mode = "k" }) -- [item frame] = the cooldownID hidden on it
-DT.cdmHooked = setmetatable({}, { __mode = "k" })
-DT.cdmWant = nil                                   -- [cooldownID] = true, nil = not worked out yet
-
--- whether an icon set to Cooldown Manager sync follows this entry
-function DT.CdmWanted(id)
-    local want = DT.cdmWant
-    if not want then
-        want = {}
-        DT.cdmWant = want
-    end
-    if want[id] ~= nil then return want[id] end
-    local hit = false
-    local ids = DT.CdmSpells(id)
-    for _, r in pairs(DT.recs) do
-        local d = r.driver
-        local sid = d and d.spellID and DT.Multi(d) == "cdm" and Store.RecordSpellID(d)
-        if sid then
-            for _, v in ipairs(ids or {}) do
-                if DT.IdMatch(d, sid, v) then hit = true break end
-            end
-        end
-        if hit then break end
-    end
-    -- unreadable spells (secret) are asked again next time
-    if ids then want[id] = hit end
-    return hit
-end
-
-local function CdmItemID(f)
-    return PlainNum(f.cooldownID)
-end
-
--- A Show while our own Hide runs is someone answering that Hide (an addon
--- that keeps the item shown): it stands, or the two would call each other
--- without end.
-local cdmHiding = false
-local function CdmHide(f)
-    if cdmHiding then return end
-    cdmHiding = true
-    f:Hide()
-    cdmHiding = false
-end
-DT.CdmHide = CdmHide
-
-local function CdmHook(f)
-    if DT.cdmHooked[f] then return end
-    DT.cdmHooked[f] = true
-    local function Keep(self)
-        local id = DT.cdmHidden[self]
-        if not id then return end
-        local now = CdmItemID(self)
-        if now and now ~= id then
-            DT.cdmHidden[self] = nil
-            return
-        end
-        CdmHide(self)
-    end
-    hooksecurefunc(f, "Show", Keep)
-    -- the game shows its icons through SetShown(true), which skips Show
-    hooksecurefunc(f, "SetShown", function(self, shown) if shown then Keep(self) end end)
-    if f.SetCooldownID then
-        -- a re-layout hands a cooldown to another item
-        hooksecurefunc(f, "SetCooldownID", function(self, id)
-            id = PlainNum(id)
-            if id and DT.CdmWanted(id) then
-                DT.cdmHidden[self] = id
-                CdmHide(self)
-            elseif DT.cdmHidden[self] then
-                DT.cdmHidden[self] = nil
-            end
-        end)
-    end
-end
-
--- one Cooldown Manager item: hidden while a sync icon follows its entry
-function DT.CdmSyncItem(f, id)
-    if not (hooksecurefunc and f.Hide) then return end
-    -- every item: a re-layout can hand it the cooldown later
-    CdmHook(f)
-    if DT.CdmWanted(id) then
-        DT.cdmHidden[f] = id
-        if f:IsShown() then CdmHide(f) end
-    elseif DT.cdmHidden[f] then
-        -- let go: the game shows it again on its next update
-        DT.cdmHidden[f] = nil
-    end
-end
-
--- after a sync pick changes: the wanted entries are worked out again, the
--- items let go of or hidden on the next read, and released ones now
-function DT.CdmRefresh()
-    DT.cdmWant, DT.cdmAt = nil, nil
-    for f in pairs(DT.cdmHidden) do
-        local id = CdmItemID(f)
-        if not (id and DT.CdmWanted(id)) then DT.cdmHidden[f] = nil end
-    end
-    for _, r in pairs(DT.recs) do
-        if DT.Multi(r.driver) == "cdm" then DT.CdmPicks() break end
-    end
-end
-
-local function CdmWalk(fr, depth, out)
-    if depth > 2 then return end
-    for _, c in ipairs({ fr:GetChildren() }) do
-        if type(c) == "table" and not (c.IsForbidden and c:IsForbidden()) then
-            local id = PlainNum(c.cooldownID)
-            if id then
-                DT.CdmSyncItem(c, id)
-                local on = type(c.totemData) ~= "nil"
-                local p = out[id]
-                if not p or (on and not p.on) then out[id] = { slot = PlainNum(c.preferredTotemUpdateSlot), on = on } end
-            elseif c.GetChildren then
-                CdmWalk(c, depth + 1, out)
-            end
-        end
-    end
-end
-
--- [cooldownID] = { slot, on } per Cooldown Manager icon, read once a frame
--- (fields and widget getters only, never a mixin method)
-function DT.CdmPicks()
-    local t = GetTime()
-    if DT.cdmAt == t and DT.cdmPicks then return DT.cdmPicks end
-    local out = {}
-    for _, name in ipairs(DT.CDM_VIEWERS) do
-        local v = _G[name]
-        if type(v) == "table" and v.GetChildren then CdmWalk(v, 1, out) end
-    end
-    DT.cdmAt, DT.cdmPicks = t, out
-    return out
-end
-
--- The slot the Cooldown Manager shows this spell's totem in; false while its
--- icons for the spell hold none; nil when it has no say (no icon for the
--- spell, or a pick it does not let us read), and our own pairing decides.
-function DT.CdmSlot(d, sid)
-    local none = false
-    for id, p in pairs(DT.CdmPicks()) do
-        local ids = DT.CdmSpells(id)
-        local mine = false
-        for _, v in ipairs(ids or {}) do
-            if DT.IdMatch(d, sid, v) then mine = true break end
-        end
-        if mine then
-            if not p.on then
-                none = true
-            elseif p.slot and DT.Active(p.slot) then
-                return p.slot
-            else
-                return nil
-            end
-        end
-    end
-    if none then return false end
-    return nil
-end
-
 -- Every slot from scratch, from plain reads where the game allows them.
 function DT.ReadAll()
-    DT.cdmAt = nil
     for slot = 1, DT.SLOTS do
         local s = DT.slot[slot] or {}
         DT.slot[slot] = s
         if not DT.Active(slot) then
-            s.name, s.id, s.castId, s.litAt, s.pos, s.prev, s.paired, s.burstId = nil, nil, nil, nil, nil, nil, nil, nil
+            s.name, s.id, s.castId, s.litAt, s.pos, s.moved, s.paired, s.burstId = nil, nil, nil, nil, nil, nil, nil, nil
             DT.pending[slot], DT.waiting[slot] = nil, nil
         else
             local name, sid = DT.ReadSlot(slot)
@@ -697,11 +539,10 @@ function DT.OnSlotUpdate(slot)
     slot = tonumber(slot)
     if not slot or slot < 1 or slot > DT.SLOTS then return end
     local now = GetTime()
-    DT.cdmAt = nil
     local s = DT.slot[slot] or {}
     DT.slot[slot] = s
     if not DT.Active(slot) then
-        s.name, s.id, s.castId, s.litAt, s.pos, s.prev, s.paired, s.burstId = nil, nil, nil, nil, nil, nil, nil, nil
+        s.name, s.id, s.castId, s.litAt, s.pos, s.moved, s.paired, s.burstId = nil, nil, nil, nil, nil, nil, nil, nil
         DT.pending[slot], DT.waiting[slot], DT.refresh[slot] = nil, nil, nil
         DT.Changed()
         return
@@ -709,29 +550,31 @@ function DT.OnSlotUpdate(slot)
     local name, sid = DT.ReadSlot(slot)
     if name then
         -- the same totem lit when the slot says: refreshed (an extension), kept whole
-        local _, _, start = GetTotemInfo(slot)
+        local _, _, start, len = GetTotemInfo(slot)
         if s.name == name and s.litAt and PlainNum(start) and math.abs(start - s.litAt) < DT.SAME_LIT then
+            -- no longer the length its cast gives: the game changed its time
+            local own = s.castId and DT.LenFor(s.castId)
+            if own and PlainNum(len) and math.abs(len - own) > 0.5 then s.moved = true end
             DT.Changed()
             return
         end
     elseif s.litAt then
-        -- secret, already lit (named or not): refreshed in place unless a cast
-        -- renames it, and a slot lighting fresh in the same burst takes that back
-        local c = DT.TakeCast(now, nil, nil, slot)
+        -- secret, already lit: it stays what it is. Only a cast that owns the
+        -- slot restarts it (DT.TakeOwn); any other update is the game changing
+        -- its time (an extension), which the feeds re-read from the slot
+        local c = DT.TakeOwn(now, s, slot)
         if c then
-            s.prev = { name = s.name, id = s.id, castId = s.castId, litAt = s.litAt, pos = s.pos, at = now, cast = c }
             s.name, s.id, s.castId, s.litAt, s.pos = c.name, c.id, c.id, now, (c.name == s.name) and s.pos or nil
-            DT.refresh[slot] = nil
+            s.moved, DT.refresh[slot] = nil, nil
         else
             -- the recast's cast event may land just after: it restarts the slot then
-            DT.refresh[slot] = now
+            s.moved, DT.refresh[slot] = true, now
         end
         DT.Changed()
         return
     end
-    s.litAt, s.paired, s.burstId = now, nil, nil
+    s.litAt, s.paired, s.burstId, s.moved = now, nil, nil, nil
     local c = DT.TakeCast(now, name, sid, slot)
-    if not name and not c then c = DT.Reclaim(now) end
     if not c then c = DT.TakeBurst(slot, now) end
     if c then
         s.paired = { cast = c, at = now, secret = not name }
@@ -808,23 +651,23 @@ function DT.LateCast(list, now, c, secret)
 end
 
 -- A recast landing after the lit slot it refreshed updated (in combat, where
--- the slot reads secret): that slot restarts from its update. Only a slot that
--- holds the same spell, so another totem's cast never restarts it.
+-- the slot reads secret): that slot restarts from its update. Only a slot the
+-- cast owns (DT.Owns), so another spell's cast never restarts it.
 function DT.LateRefresh(now, c)
     local best, bestAt
     for slot, t in pairs(DT.refresh) do
         local s = DT.slot[slot]
         if now - t > DT.PAIR_WINDOW or not (s and s.litAt) then
             DT.refresh[slot] = nil
-        elseif s.name == c.name and (not bestAt or t > bestAt) then
+        elseif DT.Owns(c, s, slot) and (not bestAt or t > bestAt) then
             best, bestAt = slot, t
         end
     end
     if not best then return false end
     DT.refresh[best] = nil
     local s = DT.slot[best]
-    s.prev = { name = s.name, id = s.id, castId = s.castId, litAt = s.litAt, pos = s.pos, at = now, cast = c }
-    s.id, s.castId, s.litAt = c.id, c.id, bestAt
+    if s.name ~= c.name then s.pos = nil end
+    s.name, s.id, s.castId, s.litAt, s.moved = c.name, c.id, c.id, bestAt, nil
     return true
 end
 
@@ -845,63 +688,6 @@ function DT.OnCast(spellID)
     local q = DT.queue
     q[#q + 1] = { name = name, id = spellID, at = now }
     while #q > DT.QUEUE_MAX do table.remove(q, 1) end
-    -- an icon shown from the cast lights now, and goes dark if its wait ends
-    -- with no slot (one timer per such cast)
-    if DT.Predicting(name) then
-        DT.Changed()
-        C_Timer.After(DT.Window(name) + 0.05, DT.Changed)
-    end
-end
-
--- Whether an icon or bar following this spell shows from the cast.
-function DT.Predicting(name)
-    for _, r in pairs(DT.recs) do
-        local d = r.driver
-        if d and d.fromCast == true and d.spellID and DT.SpellName(Store.RecordSpellID(d)) == name then return true end
-    end
-    return false
-end
-
--- Show from the cast (driver.fromCast): a cast of the record's spell still
--- waiting for its slot lights it, its time from the cast at the totem's
--- learned length. Returns that cast's time and the length, or nil. With a
--- Which pick, the casts on their way count after the ones already out (the
--- Second with one out: the first cast on its way); the real slot takes over
--- the moment it lights.
-function DT.Predict(rec)
-    local d = rec and rec.driver
-    if not (d and d.fromCast == true and d.spellID) then return nil end
-    local sid = Store.RecordSpellID(d)
-    local want = sid and DT.SpellName(sid)
-    local len = want and DT.Duration(want)
-    if not len then return nil end
-    local now = GetTime()
-    local list = {}
-    for _, c in ipairs(DT.queue) do
-        if (DT.IdMatch(d, sid, c.id) or c.name == want) and now - c.at <= DT.Window(c.name) then
-            list[#list + 1] = c
-        end
-    end
-    if #list == 0 then return nil end
-    local which = DT.Which(d)
-    if not which then return list[1].at, len end
-    if DT.ByOrder(d) then
-        -- the casts on their way take the free places lowest first
-        local held = DT.Places(d, sid, want)
-        if held[which] then return nil end
-        local i = 0
-        for p = 1, which do
-            if not held[p] then i = i + 1 end
-        end
-        local c = list[i]
-        if c then return c.at, len end
-        return nil
-    end
-    -- by the slots in use: that rank already out takes no cast (an index of 0
-    -- or below finds none)
-    local c = list[which - #DT.InUse(d, sid, want)]
-    if c then return c.at, len end
-    return nil
 end
 
 -- A duration object running from the cast, kept on holder (one per icon or bar).
@@ -950,27 +736,27 @@ function DT.SlotFor(rec)
         if DT.ByOrder(d) then return DT.Places(d, sid, want)[which], true end
         return DT.InUse(d, sid, want)[which], true
     end
-    local multi = DT.Multi(d)
-    -- Cooldown Manager sync: its icon for the spell, when there is one
-    if multi == "cdm" then
-        local cdm = DT.CdmSlot(d, sid)
-        if cdm then return cdm, true end
-        if cdm == false then return nil, true end
-    end
+    local multi, newest = DT.Multi(d), DT.Newest(d)
+    local best, bestAt
     for slot = 1, DT.SLOTS do
         -- its spell first, as the Cooldown Manager matches; else its name
         if SlotMatches(d, sid, want, DT.slot[slot]) then
-            if multi ~= "last" then return slot, true end
-            -- Last summoned: the highest slot the same cast lit
-            local cast, last = DT.slot[slot].castId, slot
-            for h = slot + 1, DT.SLOTS do
-                local s = DT.slot[h]
-                if cast and s and s.burstId == cast then last = h end
+            local pick = slot
+            if multi == "last" then
+                -- Last summoned: the highest slot the same cast lit
+                local cast = DT.slot[slot].castId
+                for h = slot + 1, DT.SLOTS do
+                    local s = DT.slot[h]
+                    if cast and s and s.burstId == cast then pick = h end
+                end
             end
-            return last, true
+            if not newest then return pick, true end
+            -- Newest: the one lit last of every one out
+            local at = DT.slot[slot].litAt or 0
+            if not bestAt or at > bestAt then best, bestAt = pick, at end
         end
     end
-    return nil, true
+    return best, true
 end
 
 function DT.Track(rec)
@@ -1065,7 +851,6 @@ end
 
 function DT.Attach(rec)
     DT.recs[rec.id] = rec
-    DT.CdmRefresh()
     DT.Track(rec)
     if DT.IsBar(rec) and DT.HasBar() then DT.ArmBar() else DT.DisarmBar() end
     if DT.live then return end
@@ -1083,7 +868,6 @@ end
 
 function DT.Detach(id, f)
     DT.recs[id] = nil
-    DT.CdmRefresh()
     if f then DT.StopPulse(f) end
     DT.DisarmBar()
     if next(DT.recs) or not DT.live then return end

@@ -331,11 +331,12 @@ end
 -- Ring bars (fill.shape "ring", Schema.BarRing): the fill is a ring picture
 -- the game fills radially (StatusBar Radial mode) from the same timer; the
 -- background is that picture dimmed. No border, ticks, bands or sheen.
-Bars.RING_ART = {
-    thin = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Rings\\AD_Ring_thin",
-    medium = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Rings\\AD_Ring_medium",
-    thick = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Rings\\AD_Ring_thick",
-}
+-- inner / outer radius per thickness, as ring_bars.lua draws them (thin to thick)
+Bars.RING_RATIO = { xthin = 0.93, thin = 0.86, slim = 0.82, narrow = 0.78, medium = 0.72, bold = 0.63, thick = 0.54 }
+Bars.RING_ART = {}
+for key in pairs(Bars.RING_RATIO) do
+    Bars.RING_ART[key] = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Rings\\AD_Ring_" .. key
+end
 function Bars.RingOn(rec)
     local RM = Enum and Enum.StatusBarRenderMode
     return RM ~= nil and RM.Radial ~= nil and NS.Schema.BarRing(rec)
@@ -350,7 +351,8 @@ end
 -- ring). RING_INNER: inner / outer radius, as ring_bars.lua draws them.
 Bars.RING_DIR = "Interface\\AddOns\\" .. ADDON .. "\\Textures\\Rings\\"
 Bars.RING_DISC = Bars.RING_DIR .. "AD_RingDisc"
-Bars.RING_INNER = { thin = 0.86 * 127 / 128, medium = 0.72 * 127 / 128, thick = 0.54 * 127 / 128 }
+Bars.RING_INNER = {}
+for key, k in pairs(Bars.RING_RATIO) do Bars.RING_INNER[key] = k * 127 / 128 end
 function Bars.RingEdge(frame)
     local t = frame:CreateTexture(nil, "BACKGROUND", nil, -1)
     t:SetTexture(WHITE)

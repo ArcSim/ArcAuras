@@ -333,7 +333,7 @@ end
 function D.ResetField(family, px, section, field)
     local batch = D.Batch(px)
     for _, k in ipairs(Store.DefaultKinds(family, KindsOf(px), section, field)) do
-        Store.SetDefaultValue(family, k, section, field, nil, batch)
+        Store.SetDefaultValue(family, k, section, field, nil, batch, true)
     end
 end
 
@@ -357,15 +357,28 @@ end
 -- The ask in words: "N changes. M spell icons use the old values." Each
 -- sentence is one whole line per count, so a translation can reorder it.
 function D.AskText(p, w)
-    local c, n = p.changes, p.items
-    local first = (c == 1 and Tr("%d change.") or Tr("%d changes.")):format(c)
-    local line
-    if n == 1 then
-        line = c == 1 and Tr("%d %s uses the old value.") or Tr("%d %s uses the old values.")
-    else
-        line = c == 1 and Tr("%d %s use the old value.") or Tr("%d %s use the old values.")
+    local c, own = p.changes, p.own or 0
+    local n = p.items - own
+    local out = (c == 1 and Tr("%d change.") or Tr("%d changes.")):format(c)
+    if n > 0 then
+        local line
+        if n == 1 then
+            line = c == 1 and Tr("%d %s uses the old value.") or Tr("%d %s uses the old values.")
+        else
+            line = c == 1 and Tr("%d %s use the old value.") or Tr("%d %s use the old values.")
+        end
+        out = out .. " " .. line:format(n, Tr(n == 1 and w.one or w.many))
     end
-    return first .. " " .. line:format(n, Tr(n == 1 and w.one or w.many))
+    if own > 0 then
+        local line
+        if own == 1 then
+            line = c == 1 and Tr("%d %s has its own value.") or Tr("%d %s has its own values.")
+        else
+            line = c == 1 and Tr("%d %s have their own value.") or Tr("%d %s have their own values.")
+        end
+        out = out .. " " .. line:format(own, Tr(own == 1 and w.one or w.many))
+    end
+    return out
 end
 
 -- The words for a batch's items: the kind's while it reached one kind.
@@ -1188,7 +1201,7 @@ function D.BuildHead(parent)
         D.Refresh()
     end)
     AT.Tooltip(h.resetAll, "Reset all", "Every default of this kind back to Arc's. It asks first, then whether the items you have change too.")
-    AT.Tooltip(h.too, "Change them too", "The items that used the old values take the new ones.")
+    AT.Tooltip(h.too, "Change them too", "Every item counted here takes the new values, own values too.")
     AT.Tooltip(h.only, "Only new", "The items you have keep their look; only new ones start with these. Leaving the page does the same.")
     return h
 end

@@ -426,20 +426,20 @@ local function BuildFrame(rec)
     f:SetScript("OnEnter", function(self)
         local editing = NS.LayoutEngine and NS.LayoutEngine.IsEditMode
             and NS.LayoutEngine.IsEditMode()
-        -- Edit-only tooltips: on hover while the options window is open, never
-        -- with a mouse button held (a drag is starting).
-        if Store.GetSetting("tooltipsEditOnly") == true then
-            if not editing or IsMouseButtonDown() then return end
+        -- With the options window open only an icon set to "Only while this
+        -- window is open" shows one, never with a mouse button held (a drag
+        -- is starting); in play only one set On.
+        if editing then
+            if IsMouseButtonDown() then return end
             local er = Store.Get(self._adRecId)
-            if not er then return end
-            if (Factory.MouseTips(er)) == false then return end
-            Factory.ShowTooltip(self, er)
+            if er and Factory.TipMode(er) == "edit" then Factory.ShowTooltip(self, er) end
             return
         end
-        if editing then return end
-        -- ApplyMouse's tier result; nil falls back to the addon setting.
+        -- ApplyMouse's tier result; nil falls back to the addon settings.
         local tipsOn = self._adTipsOn
-        if tipsOn == nil then tipsOn = Store.GetSetting("showTooltips") ~= false end
+        if tipsOn == nil then
+            tipsOn = Store.GetSetting("showTooltips") ~= false and Store.GetSetting("tooltipsEditOnly") ~= true
+        end
         if tipsOn == false then return end
         local r = Store.Get(self._adRecId)
         if r then Factory.ShowTooltip(self, r) end
@@ -559,9 +559,13 @@ function Factory.TimerRounding()
 end
 
 -- An icon's own rounding (Text > Duration Text > Round timer numbers), else
--- the Settings one. Bars resolve theirs in AD_Bars and pass it as roundMode.
+-- its group's (Appearance > Icons > Timers), else the Settings one. Bars
+-- resolve theirs in AD_Bars and pass it as roundMode.
 function Factory.IconRounding(rec)
     local v = rec and Store.Resolve(rec, "text", "durationRounding")
+    if v == "up" or v == "down" then return v end
+    local g = rec and rec.groupId and Store.Get(rec.groupId)
+    v = g and Store.Resolve(g, "timers", "rounding")
     if v == "up" or v == "down" then return v end
     return Factory.TimerRounding()
 end
@@ -2356,15 +2360,20 @@ function Factory.StockHidden(f, rec)
 end
 
 -- The one frame-alpha writer: the icon's opacity times the conditions module's
--- (0 while inert, else its fade), and 0 for an item its stock hides, except in
--- edit mode so it stays grabbable.
+-- (0 while inert, else its fade), and 0 for an item its stock hides. With the
+-- options window open it shows at the preview opacity instead: still
+-- grabbable, and a hide just switched on shows at once.
 function Factory.ApplyFrameAlpha(f, rec)
     local a = Store.Resolve(rec, "appearance", "alpha") or 1
     -- _adPassive: a passive trinket in a slot set to on-use trinkets only
-    if (Factory.StockHidden(f, rec) or (rec.kind == "trinket" and f._adPassive))
-        and not (NS.LayoutEngine and NS.LayoutEngine.IsEditMode
-            and NS.LayoutEngine.IsEditMode()) then
-        a = 0
+    if Factory.StockHidden(f, rec) or (rec.kind == "trinket" and f._adPassive) then
+        if NS.LayoutEngine and NS.LayoutEngine.IsEditMode and NS.LayoutEngine.IsEditMode() then
+            local pv = Store.GetSetting("previewAlpha")
+            if pv == nil then pv = 0.35 end
+            a = math.min(a, pv)
+        else
+            a = 0
+        end
     end
     if NS.Conditions then a = a * NS.Conditions.AlphaFor(rec) end
     f:SetAlpha(a)
@@ -3632,6 +3641,13 @@ function Factory.FeedChargeGate(f, ch)
     local bar = f and f._adChargeBar
     if not bar then return end
     if ch == nil then
+        -- a totem icon's count: its totems out, from our own slot table
+        local tr = Store.Get(f._adRecId)
+        if tr and tr.kind == "totem" then
+            local DT = NS.DriverTotem
+            bar:SetValue(DT and DT.Count(tr) or 0)
+            return
+        end
         local sid = f._adEffSid
         if not sid then
             local rec = Store.Get(f._adRecId)
@@ -7236,6 +7252,38 @@ function Factory.MouseTips(rec)
     return tips, thru
 end
 
+-- An icon's tooltip: "on" (while you play), "edit" (only while the options
+-- window is open) or "off", through its tiers (Store.TipMode).
+function Factory.TipMode(rec)
+    local m = Store.TipMode and Store.TipMode(rec)
+    if not m then
+        if Store.GetSetting("showTooltips") == false then m = "off"
+        elseif Store.GetSetting("tooltipsEditOnly") == true then m = "edit"
+        else m = "on" end
+    end
+    -- an Arc Proc icon through click-through or with its art hidden: none
+    if m ~= "off" and rec.kind == "special" then
+        local thru = Store.MouseFor and select(2, Store.MouseFor(rec))
+        if thru == nil then thru = Store.GetSetting("clickThrough") ~= false end
+        if thru or Store.Resolve(rec, "appearance", "forceHideIcon") == true then m = "off" end
+    end
+    return m
+end
+
+-- The game's aura button shows the aura's own tooltip on hover, in combat
+-- too. Hover follows the icon's tooltip setting and clicks always pass to
+-- what lies under it. A hidden look takes no hover.
+function Factory.AuraButtonMouse(b, rec)
+    if not b then return end
+    local tips = false
+    if rec and Store.Resolve(rec, "appearance", "forceHideIcon") ~= true
+        and Factory.AuraActiveAlpha(rec) > 0 then
+        tips = (Factory.MouseTips(rec)) == true
+    end
+    b:EnableMouse(tips)
+    if tips and b.SetMouseClickEnabled then b:SetMouseClickEnabled(false) end
+end
+
 -- The one mouse-state writer. Edit mode gets the full mouse (dragging needs
 -- clicks); otherwise Store.MouseFor's tiers set hover and click-through.
 -- EnableMouse(true) re-enables both channels, so the split always follows it.
@@ -7262,11 +7310,11 @@ function Factory.ApplyMouse(f, editMode, rec)
     if rec then
         tips, thru = Factory.MouseTips(rec)
     else
-        tips = Store.GetSetting("showTooltips") ~= false
+        tips = Store.GetSetting("showTooltips") ~= false and Store.GetSetting("tooltipsEditOnly") ~= true
         thru = Store.GetSetting("clickThrough") ~= false
     end
-    -- Edit-only tooltips: no hover in play, so click-through passes the mouse.
-    if Store.GetSetting("tooltipsEditOnly") == true then tips = false end
+    -- tips: a tooltip while you play (an edit-only one has no hover in play,
+    -- so click-through passes the mouse)
     f._adTipsOn = tips
     if not tips and thru then
         f:EnableMouse(false)   -- nothing wants the mouse: fully transparent

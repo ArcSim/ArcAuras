@@ -772,6 +772,13 @@ function TP.DurFormatter(rec)
     local decTo = (R(rec, "pictext", "ptTimeDecimals") == true) and (tonumber(R(rec, "pictext", "ptTimeDecTo")) or 5) or 0
     return F.TimerFormatter(decTo, nil, 0, "down", K.BarRounding(rec))
 end
+-- What the countdown's formatter is made from: a change hands it over again.
+function TP.DurSig(rec)
+    local F = NS.Factory
+    local decTo = (R(rec, "pictext", "ptTimeDecimals") == true) and (tonumber(R(rec, "pictext", "ptTimeDecTo")) or 5) or 0
+    return tostring(decTo) .. "|" .. tostring(K.BarRounding(rec)) .. "|g"
+        .. tostring(F and F.TimerGap and F.TimerGap() or 0)
+end
 
 -- Aura pictures: one slot on a container of our own, the aura icons' shape.
 -- The engine shows the button with the aura and hides it without; the picture
@@ -1104,8 +1111,10 @@ function TP.StyleAuraTexts(e, sub)
             TP.PlaceTextOn(fs, th, rec, def.key, e)
             fs:SetAlpha(1)
             local bound = def.field .. "Bound"
-            if not sub[bound] then
-                sub[bound] = true
+            -- the countdown again whenever its rounding or tenths change
+            local want = (def.field == "dur") and TP.DurSig(rec) or true
+            if sub[bound] ~= want then
+                sub[bound] = want
                 if def.field == "stk" then
                     local f = TP.CountFormatter()
                     local o = {}

@@ -360,6 +360,8 @@ local CDST = { spell = true, item = true, trinket = true, timer = true, totem = 
 local USE_CD = { spell = true, item = true, trinket = true, timer = true, enchant = true }
 local USE = { spell = true, item = true, trinket = true, timer = true, enchant = true, special = true }
 local SP  = { spell = true }
+-- the charges state's rows: a spell's charges, an Any totem icon's totems out
+local SPT = { spell = true, totem = true }
 -- the Can't use it look and the usable glow: spells, and items (while the
 -- game says you can't use the item now, as Blizzard's buttons tint it)
 local SPI = { spell = true, item = true }
@@ -381,9 +383,10 @@ local NA  = { spell = true, item = true, trinket = true, timer = true, totem = t
     enchant = true, special = true, stance = true }
 -- Stack text: only kinds something writes a count for (spell charges, item and
 -- ammo bag counts, aura applications, timer stacks, enchant charges, a deck's
--- position, a group buff's have / total). Trinkets have none.
+-- position, a group buff's have / total, an Any totem icon's totems out).
+-- Trinkets have none.
 local STK = { spell = true, item = true, timer = true, aura = true, ammo = true, enchant = true, special = true,
-    groupbuff = true }
+    groupbuff = true, totem = true }
 -- The two-state dim: the cooldown kinds, a group buff (someone lacks it /
 -- everyone has it, Drivers\AD_DriverGroupBuff.lua) and a stance icon.
 local CDGB = { spell = true, item = true, trinket = true, timer = true, totem = true, enchant = true, special = true,
@@ -658,6 +661,15 @@ end
 
 -- A totem icon set to one totem by its spell: it has one buff to be out of
 -- range of. A slot icon holds whatever lands in its slot.
+-- A totem bar that counts its totems out: by spell, Which one: Any (a First /
+-- Second pick times one totem and has no count).
+function Schema.TotemBarCounts(rec)
+    local d = rec and rec.barKind == "totembar" and type(rec.driver) == "table" and rec.driver
+    if not (d and tonumber(d.spellID)) then return false end
+    local w = tonumber(d.which)
+    return not (w and w >= 1 and w <= 4)
+end
+
 function Schema.TotemBySpell(rec)
     if not (rec and rec.kind == "totem" and type(rec.driver) == "table") then return false end
     return tonumber(rec.driver.spellID) ~= nil
@@ -1295,20 +1307,20 @@ Schema.icon = {
         -- that count, the swipe and texts over them; its glow shows only then.
         -- In a Dynamic group the icon keeps its place: a count can't move it.
         chargesRule = { d = "any", t = "enum", values = Schema.COUNT_RULES, labels = Schema.COUNT_RULE_LABELS,
-            kinds = SP, showIf = ChargeCountShows, label = "Charges",
+            kinds = SPT, showIf = ChargeCountShows, label = "Charges",
             desc = "Holds while the spell has this many charges. Its effects apply only then; in a Dynamic group it keeps its place." },
-        chargesA = { d = 2, t = "int", min = 0, max = 99, input = true, kinds = SP, showIf = ChargeCountShows,
+        chargesA = { d = 2, t = "int", min = 0, max = 99, input = true, kinds = SPT, showIf = ChargeCountShows,
             label = "Charge count", dep = { field = "chargesRule", notValue = "any" } },
-        chargesB = { d = 3, t = "int", min = 0, max = 99, input = true, kinds = SP, showIf = ChargeCountShows,
+        chargesB = { d = 3, t = "int", min = 0, max = 99, input = true, kinds = SPT, showIf = ChargeCountShows,
             label = "Up to charges", dep = { field = "chargesRule", value = "between" } },
-        chargesAlpha = { d = 1, t = "num", min = 0, max = 1, kinds = SP, showIf = ChargeCountShows,
+        chargesAlpha = { d = 1, t = "num", min = 0, max = 1, kinds = SPT, showIf = ChargeCountShows,
             label = "Opacity at that count", dep = { field = "chargesRule", notValue = "any" },
             desc = "The icon's art and border at this opacity while the rule holds. 0% hides the whole icon, texts and glows too." },
-        chargesDesaturate = { d = false, t = "bool", kinds = SP, showIf = ChargeCountShows,
+        chargesDesaturate = { d = false, t = "bool", kinds = SPT, showIf = ChargeCountShows,
             label = "Desaturate at that count", dep = { field = "chargesRule", notValue = "any" } },
-        chargesTintEnabled = { d = false, t = "bool", kinds = SP, showIf = ChargeCountShows,
+        chargesTintEnabled = { d = false, t = "bool", kinds = SPT, showIf = ChargeCountShows,
             label = "Tint at that count", dep = { field = "chargesRule", notValue = "any" } },
-        chargesTintColor = { d = { 1, 0.3, 0.3, 1 }, t = "color", kinds = SP, showIf = ChargeCountShows,
+        chargesTintColor = { d = { 1, 0.3, 0.3, 1 }, t = "color", kinds = SPT, showIf = ChargeCountShows,
             label = "Tint color at that count",
             dep = { { field = "chargesRule", notValue = "any" }, { field = "chargesTintEnabled" } } },
         -- Recharging: a charge spell with a charge left and another on its way,
@@ -1745,7 +1757,8 @@ Schema.icon = {
     mouse = { push = true, fields = {
         clickThrough = { d = "inherit", t = "enum", values = { "inherit", "on", "off" },
             label = "Click-through" },
-        showTooltip = { d = "inherit", t = "enum", values = { "inherit", "on", "off" },
+        showTooltip = { d = "inherit", t = "enum", values = { "inherit", "on", "off", "edit" },
+            labels = { inherit = "Inherit", on = "On", off = "Off", edit = "Only while this window is open" },
             label = "Show tooltip" },
     } },
     -- Anchoring (Core\AD_Anchor.lua), free icons only: a group member's cell
@@ -2056,9 +2069,9 @@ Schema.icon = {
     } },
     text = { push = true, inherit = true, fields = {
         durationText = { kinds = DUR, d = true, t = "bool", label = "Duration text", short = "Show" },
-        -- "global" follows Settings > Timers.
+        -- "global" follows its group's, then Settings > Timers.
         durationRounding = { kinds = DUR, d = "global", t = "enum", values = { "global", "up", "down" },
-            labels = { global = "Same as Settings", up = "Round up", down = "Round down" },
+            labels = { global = "Same as group or Settings", up = "Round up", down = "Round down" },
             label = "Round timer numbers", dep = { field = "durationText" } },
         -- spaces between the number and its unit; empty follows Settings > Timers
         durationUnitGap = { kinds = DUR, d = "", t = "text", label = "Space before units",
@@ -2392,7 +2405,7 @@ do
         for k, x in pairs(v) do t[k] = copy(x) end
         return t
     end
-    local counts = { { "states", "charges", SP, ChargeCountShows } }
+    local counts = { { "states", "charges", SPT, ChargeCountShows } }
     for n = Schema.STACK_SLOTS, 1, -1 do table.insert(counts, 1, { "auraActive", Schema.StackPre(n), AAX, CountGateShows }) end
     for _, st in ipairs(counts) do
         local fields, pre = Schema.icon[st[1]].fields, st[2]
@@ -3026,8 +3039,16 @@ Schema.iconGroup = {
     mouse = { push = true, kinds = { cooldown = true, aura = true }, fields = {
         clickThrough = { d = "inherit", t = "enum", values = { "inherit", "on", "off" },
             label = "Click-through" },
-        showTooltip = { d = "inherit", t = "enum", values = { "inherit", "on", "off" },
+        showTooltip = { d = "inherit", t = "enum", values = { "inherit", "on", "off", "edit" },
+            labels = { inherit = "Inherit", on = "On", off = "Off", edit = "Only while this window is open" },
             label = "Show tooltips" },
+    } },
+    -- How its icons' countdowns round; an icon's own choice wins, "global"
+    -- follows Settings > Timers (Factory.IconRounding).
+    timers = { push = true, kinds = { cooldown = true, aura = true }, fields = {
+        rounding = { d = "global", t = "enum", values = { "global", "up", "down" },
+            labels = { global = "Same as Settings", up = "Round up", down = "Round down" },
+            label = "Round timer numbers" },
     } },
 }
 
@@ -3235,7 +3256,8 @@ function Schema.HasBlizzardBar(rec)
     return pt ~= nil and RC ~= nil and RC.HasBlizzardBar(pt)
 end
 -- Timer (custom) bars write their rule-driven stacks as the stack text.
-local BK_CST  = { cooldown = true, stack = true, aura = true, enchant = true, timer = true }
+-- A totem bar set to Which one: Any writes how many of its totems are out.
+local BK_CST  = { cooldown = true, stack = true, aura = true, enchant = true, timer = true, totembar = true }
 -- Hide-at-zero needs our own writer to pass the count through the secret-safe
 -- truncator; the engine writes an aura bar's stack text, so its "0" is a piece
 -- of ours that shows while the aura is missing.
@@ -3536,8 +3558,10 @@ Schema.bar = {
             onSet = function(rec, v)
                 if NS.Store and NS.Store.SetBarShape then NS.Store.SetBarShape(rec, v, true) end
             end },
-        ringThick = { inherit = false, d = "medium", t = "enum", values = { "thin", "medium", "thick" },
-            labels = { thin = "Thin", medium = "Medium", thick = "Thick" }, kinds = Schema.RING_KINDS,
+        ringThick = { inherit = false, d = "medium", t = "enum",
+            values = { "xthin", "thin", "slim", "narrow", "medium", "bold", "thick" },
+            labels = { xthin = "Extra thin", thin = "Thin", slim = "Slim", narrow = "Narrow", medium = "Medium",
+                bold = "Bold", thick = "Thick" }, kinds = Schema.RING_KINDS,
             modes = { duration = true }, label = "Ring thickness", dep = { field = "shape", value = "ring" } },
         ringStart = { inherit = false, d = 0, t = "int", min = 0, max = 359, kinds = Schema.RING_KINDS,
             modes = { duration = true }, label = "Ring starts at (degrees from the top)",
@@ -4148,7 +4172,7 @@ Schema.bar = {
     -- bars (the editor shows it for pips only). A continuous bar flips the
     -- whole fill, a segmented one colours its cells, all as extra engine-driven
     -- fills shown by count, which is never read.
-    stackcolors = { push = true, kinds = { aura = true, resource = true, timer = true }, modes = { stack = true }, fields = {
+    stackcolors = { push = true, kinds = { aura = true, resource = true, timer = true, totembar = true }, modes = { stack = true }, fields = {
         -- On: each cell keeps its band's colour by position. Off (default): the
         -- whole fill takes a band's colour once the count reaches it.
         scPosition = { d = false, t = "bool", kinds = { aura = true }, appWindow = true,
@@ -5123,7 +5147,8 @@ Schema.layout = {
     mouse = { fields = {
         clickThrough = { d = "inherit", t = "enum", values = { "inherit", "on", "off" },
             label = "Click-through" },
-        showTooltip = { d = "inherit", t = "enum", values = { "inherit", "on", "off" },
+        showTooltip = { d = "inherit", t = "enum", values = { "inherit", "on", "off", "edit" },
+            labels = { inherit = "Inherit", on = "On", off = "Off", edit = "Only while this window is open" },
             label = "Show tooltips" },
     } },
 }

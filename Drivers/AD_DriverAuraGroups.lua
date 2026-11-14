@@ -106,6 +106,7 @@ local function StyleSlotButton(b, rt)
     -- look whose button draws every glow but a Missing one (a type's full look)
     Factory.StyleAuraButton(b, rec, h, { w = w, h = h, ghost = false, erase = rt.erase == true,
         rowGlows = rt.rowGlows == true or rec._adRowGlows == true, rowLanes = rt.rowLanes })
+    Factory.AuraButtonMouse(b, rec)
     -- a runtime's own parts after the look (a show-all group's type looks)
     if rt.afterStyle then rt.afterStyle(b, rt, rec, w, h) end
 end

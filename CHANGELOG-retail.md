@@ -1,5 +1,27 @@
 # Arc Auras
 
+## 3.3.3
+
+A count of your totems out, aura tooltips, rounding per group, more ring thicknesses and Arc UI import fixes.
+
+### New Features
+
+- **Totems out** - A totem icon or totem bar set to Which one: Any shows how many of its totems are out. Icons can change their look at a count, and bars can color by it under Effects > Stacks.
+
+### Improvements
+
+- **Aura tooltips** - Aura icons and Aura Groups show the aura's own tooltip on hover, Close gaps included. It follows your Show tooltip setting.
+- **Show tooltip** - Now on an icon's Tracking tab and a group's Appearance > Icons, so one group or icon can show tooltips, hide them, or show them only while the options window is open.
+- **Round timer numbers per group** - A group can round its icons' timers up or down (Appearance > Icons > Timers). An icon can still pick its own.
+- **Ring thickness** - Rings come in seven thicknesses, from Extra thin to Thick.
+- **Only on-use trinkets** - A passive trinket now dims while the options window is open, so you can see the option take effect.
+
+### Bug Fixes
+
+- **Arc UI import** - Buffs watched on you and your target import as buffs, and custom tick values carry over on every bar.
+- **Defaults page** - A font set there now reaches icons brought in from Arc UI, and Change them too now also changes icons and bars that hold their own value for that row, such as a keybind size.
+- **Texture timers** - A texture's countdown follows a new rounding right away.
+
 ## 3.3.2
 
 Gear Value module, simpler totem tracking and a fix for the While freeze on bars.

@@ -110,7 +110,16 @@ function TB.Refresh(e)
         if e.durCD then e.durCD:Clear() end
         e.tbRunning = false
     end
-    shell.fill:SetStatusBarColor(K.BarColorOf(e.rec))
+    -- Which one: Any counts its totems out (two hawks: "2", the stack text)
+    -- and colours the fill at that count (Effects > Stacks)
+    local n = e.tbPseudo and DT and DT.Count and DT.Count(e.tbPseudo)
+    K.SetRunText(shell, "stk", (n and n > 1) and n or "")
+    local c = n and Bars.StackFlipColor(e.rec, n, DT.SLOTS)
+    if c then
+        shell.fill:SetStatusBarColor(c[1], c[2], c[3], c[4] or 1)
+    else
+        shell.fill:SetStatusBarColor(K.BarColorOf(e.rec))
+    end
     e.stateHidden = (not e.tbRunning) and R(e.rec, "behavior", "hideWhenInactive") == true
     K.ApplyVisibility(e)
 end

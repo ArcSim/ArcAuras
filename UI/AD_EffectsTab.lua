@@ -175,7 +175,22 @@ local function CountHasWords(key, kind, one)
         if kind == "most" then return one and Tr("%d charge or fewer") or Tr("%d charges or fewer") end
         if kind == "exactly" then return one and Tr("exactly %d charge") or Tr("exactly %d charges") end
         if kind == "between" then return Tr("%d to %d charges") end
+    elseif key == "totems" then
+        if kind == "least" then return Tr("%d+ totems out") end
+        if kind == "most" then return one and Tr("%d totem out or fewer") or Tr("%d totems out or fewer") end
+        if kind == "exactly" then return one and Tr("exactly %d totem out") or Tr("exactly %d totems out") end
+        if kind == "between" then return Tr("%d to %d totems out") end
     end
+end
+-- A totem icon set to Any counts its totems out on the charges state's rows:
+-- the card says so. part: "label", "tile" or "line".
+local function CountWord(r, C, part)
+    if C.key == "charges" and r and r.kind == "totem" then
+        if part == "label" then return Tr("Totems out") end
+        if part == "tile" then return Tr("Totems out at a count") end
+        return Tr("While this many of its totems are out")
+    end
+    return Tr(C[part])
 end
 
 local function FieldDef(section, field)
@@ -991,7 +1006,7 @@ function EF.Summary(r, c, fx)
     if c.isCount and fx == "when" then
         local _, rule = EF.CardWords(r, c)
         -- the name as it reads (a German noun keeps its capital)
-        return Tr(c.count.label) .. rule
+        return CountWord(r, c.count, "label") .. rule
     end
     if fx == "look" then
         local rule = not c.i and RULES[c.st.key]
@@ -1037,7 +1052,7 @@ function EF.CardWords(r, c)
     if c.isCount then
         local kind, a, b = CountRule(r, c.count)
         local f = CountRuleWords(kind)
-        return Tr(c.count.label), f and f:format(a, b) or ""
+        return CountWord(r, c.count, "label"), f and f:format(a, b) or ""
     end
     local name = Tr(E.StateWord(r, c.st))
     if c.i then
@@ -1060,7 +1075,9 @@ end
 -- a count state's: "While it has 5+ stacks", "While it has 1 charge or fewer"
 function EF.CountWhen(r, c)
     local kind, a, b = CountRule(r, c.count)
-    local f = CountHasWords(c.count.base or c.count.key, kind, a == 1)
+    local key = c.count.base or c.count.key
+    if key == "charges" and r and r.kind == "totem" then key = "totems" end
+    local f = CountHasWords(key, kind, a == 1)
     if not f then return "" end
     return Tr("While it has %s"):format(f:format(a, b))
 end
@@ -1136,7 +1153,7 @@ function EF.Offers(r)
     local counts, stackTile = {}, nil
     for _, c in ipairs(AllCards(r)) do
         if c.isCount then
-            local t = { key = c.key, card = c, name = Tr(c.count.tile), line = Tr(c.count.line),
+            local t = { key = c.key, card = c, name = CountWord(r, c.count, "tile"), line = CountWord(r, c.count, "line"),
                 added = listed[c.key] == true, count = true }
             -- the stacks states share one tile: it adds the first one not in use,
             -- and is done once every one is

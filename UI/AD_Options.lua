@@ -10920,12 +10920,18 @@ local function BuildIconEditor(parent)
             local _, packed = InAuraGroup(r)
             return r ~= nil and r.kind == "aura" and packed
         end)
-    local mouseDef = Block("Position", "Position", "Mouse", "mouse", {
-        "clickThrough", "showTooltip",
-    })
+    local mouseDef = Block("Position", "Position", "Mouse", "mouse", { "clickThrough" })
     Options.BuildYield()
     AT.RowDesc(pg, "Inherit follows the group, then the layout, then Settings.", 20, mouseDef.vis)
     SubPush("Position", "Position")
+    -- Tooltip sits on Tracking, where players look first; a Special Aura has
+    -- its own tooltip row there
+    local tipDef = Block("Tracking", nil, "Tooltip", "mouse", { "showTooltip" },
+        { applies = function(r) return r.kind ~= "special" end, noLook = true })
+    -- layouts and the Defaults page keep it beside Click-through
+    Options.LookBlock("icon", "Position", "Mouse", "mouse", { "showTooltip" }, "Position")
+    Options.BuildYield()
+    AT.RowDesc(pg, "Inherit follows the group, then the layout, then Settings.", 20, tipDef.vis)
     -- Position > Anchor: free icons only; a group member's cell places it.
     Options.BuildYield()
     Options.AnchorPickRows(pg, "icon", SelIcon, Pane("Position", "Anchor",
@@ -11435,13 +11441,41 @@ local function BuildGroupPane()
     Options.LookBlock("iconGroup", "Appearance", "Keybinds", "keybind", { "showKeybinds" }, "Icons")
     Options.BuildYield()
     AT.RowDesc(pg, "Each icon's Text > Custom Text & Keybind sets the text's size, color and position.", 20, kbGrpVis)
+    -- Tooltip: every icon in the group, a show-all group's auras included
+    local tipGrpVis = function()
+        local g = SelGroup()
+        return iconsVis() and g ~= nil and g.groupKind ~= "reminder"
+    end
+    Options.BuildYield()
+    AT.Section(pg, "Tooltip", { visibleFn = tipGrpVis })
+    Options.BuildYield()
+    AT.RowDesc(pg, "Applies to every icon in this group; an icon can override it.", 20, tipGrpVis)
+    Options.BuildYield()
+    SectionRows(pg, "iconGroup", "mouse", SelGroup, tipGrpVis, { "showTooltip" })
+    Options.BuildYield()
+    Options.LookBlock("iconGroup", "Appearance", "Tooltip", "mouse", { "showTooltip" }, "Icons",
+        { kindOnly = { cooldown = true, aura = true } })
+    -- Timers: how its icons' countdowns round, unless an icon picks its own
+    Options.BuildYield()
+    AT.Section(pg, "Timers", { visibleFn = tipGrpVis })
+    Options.BuildYield()
+    AT.RowDesc(pg, "Applies to every icon in this group; an icon can override it.", 20, tipGrpVis)
+    Options.BuildYield()
+    SectionRows(pg, "iconGroup", "timers", SelGroup, tipGrpVis, { "rounding" })
+    Options.BuildYield()
+    Options.LookBlock("iconGroup", "Appearance", "Timers", "timers", { "rounding" }, "Icons",
+        { kindOnly = { cooldown = true, aura = true } })
     Options.BuildYield()
     AT.Section(pg, nil, { visibleFn = iconsVis })
     PushBar(pg, SelGroup, function()
         local parts = { { section = "arrangement", fields = ICON_FIELDS } }
         local g = SelGroup()
         if g and g.groupKind ~= "aura" then
-            parts[2] = { section = "keybind", fields = { "showKeybinds" } }
+            parts[#parts + 1] = { section = "keybind", fields = { "showKeybinds" } }
+        end
+        if g and g.groupKind ~= "reminder" then
+            parts[#parts + 1] = { section = "mouse", fields = { "showTooltip" } }
+            parts[#parts + 1] = { section = "timers", fields = { "rounding" } }
         end
         return parts
     end, iconsVis)
@@ -11502,11 +11536,11 @@ local function BuildGroupPane()
     Options.BuildYield()
     AT.RowDesc(pg, "Applies to every icon in this group; an icon can override it.", 20, grpMouseVis)
     Options.BuildYield()
-    SectionRows(pg, "iconGroup", "mouse", SelGroup, grpMouseVis, { "clickThrough", "showTooltip" })
+    SectionRows(pg, "iconGroup", "mouse", SelGroup, grpMouseVis, { "clickThrough" })
     Options.BuildYield()
-    Options.LookBlock("iconGroup", "Position", "Mouse", "mouse", { "clickThrough", "showTooltip" }, "Position",
+    Options.LookBlock("iconGroup", "Position", "Mouse", "mouse", { "clickThrough" }, "Position",
         { kindOnly = { cooldown = true, aura = true } })
-    PushBar(pg, SelGroup, "mouse", grpMouseVis, { "clickThrough", "showTooltip" })
+    PushBar(pg, SelGroup, "mouse", grpMouseVis, { "clickThrough" })
     -- Position > Anchor: the rows bars and free icons use too. They open their
     -- own section; without one they would land in the Mouse box.
     Options.BuildYield()
@@ -13436,6 +13470,8 @@ local function BuildBarPane()
         "scEnabled", "sc2Value", "sc2Color", "sc3Value", "sc3Color",
         "sc4Value", "sc4Color", "scCount", "maxColorEnabled", "maxColor", "scPosition",
     }, function(r)
+        -- a totem bar colours by its totems out, when it counts them
+        if r.barKind == "totembar" then return r._adDefaults ~= nil or Schema.TotemBarCounts(r) end
         return r.barKind ~= "resource"
     end, "Stacks", nil, { rows = function(vis)
         if Options.BarEffects then Options.BarEffects.StepsRows(pg, SelBar, vis, Options.BarEffects.STEPS.stacks) end
@@ -13758,6 +13794,8 @@ local function BuildBarPane()
     -- A cooldown bar writes its stack text only for a charge spell
     -- (maxCharges > 1); every other kind always has one.
     local function StackTextExists(r)
+        -- the Defaults page's totem bar has no spell to ask: it shows them
+        if r.barKind == "totembar" then return r._adDefaults ~= nil or Schema.TotemBarCounts(r) end
         if r.barKind ~= "cooldown" then return true end
         -- the spell the bar reads (its rank, its override)
         local sid = Store.RecordSpellID(r.driver)

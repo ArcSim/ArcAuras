@@ -475,9 +475,18 @@ function Driver.CountCutsLook(rec)
     return false
 end
 
--- The charges state: spell icons whose spell has charges.
+-- The charges state: spell icons whose spell has charges, and a totem icon
+-- set to Any, whose count is how many of its totems are out.
+function Driver.TotemCountOK(rec)
+    local S = NS.Schema
+    if not (rec and rec.kind == "totem" and S and S.TotemBySpell and S.TotemBySpell(rec)) then return false end
+    local DT = NS.DriverTotem
+    return DT ~= nil and DT.Which(rec.driver) == nil
+end
 function Driver.ChargeGateOK(rec)
-    if not (FB_OK and IS_121 and rec and rec.kind == "spell") then return false end
+    if not (FB_OK and IS_121 and rec) then return false end
+    if rec.kind == "totem" then return Driver.TotemCountOK(rec) end
+    if rec.kind ~= "spell" then return false end
     local DC = NS.DriverCooldown
     return DC ~= nil and DC.IsCharge ~= nil and DC.IsCharge(rec) == true
 end
@@ -492,7 +501,13 @@ function Driver.ChargesState(rec)
     local a = math.max(0, math.floor(tonumber(R("chargesA")) or 2))
     local b = (kind == "between") and math.max(a, math.floor(tonumber(R("chargesB")) or 3)) or a
     local DC = NS.DriverCooldown
-    local cap = DC and DC.ChargeMax and DC.ChargeMax(rec)
+    local cap
+    if rec.kind == "totem" then
+        -- every slot could hold one of them
+        cap = NS.DriverTotem and NS.DriverTotem.SLOTS
+    else
+        cap = DC and DC.ChargeMax and DC.ChargeMax(rec)
+    end
     if not cap or cap < 2 then return nil end
     return { kind = kind, a = a, b = b, max = math.max(cap, math.max(a, b) + 1),
         look = Driver.CountLook(rec, "states", "charges") }
@@ -1301,7 +1316,7 @@ local function EnsureSlots(iconId, rec, startParked)
                             if e.stage and not e.fbOn then e.stage:Hide() end
                         end
                     end
-                    b:EnableMouse(false)
+                    Factory.AuraButtonMouse(b, r)
                 end,
                 candidateFilters = { includeSpellIDs = ids },
             })
@@ -1386,7 +1401,7 @@ local function AddSharedSlots(iconId, entry, rec)
                     opts.erase = false
                     Factory.StyleAuraButton(b, r, HolderPx(e), opts)
                 end
-                b:EnableMouse(false)
+                Factory.AuraButtonMouse(b, r)
             end,
             candidateFilters = { includeSpellIDs = never },
         })
@@ -1714,6 +1729,7 @@ local function RestyleEntry(entry)
                         so.erase = false
                     end
                     Factory.StyleAuraButton(b, entry.rec, px, so)
+                    Factory.AuraButtonMouse(b, entry.rec)
                 elseif list == entry.subs then
                     entry.stylePending = true
                     locked = true
@@ -1810,6 +1826,12 @@ local function SyncGate(rec, f)
     if AnchorStage(entry) then StageLook(entry, true) end
     SyncEraser(entry)
     SyncEntryAlpha(entry)
+end
+
+-- A totem icon's count look (Totems at a count): built, moved or dropped at its attach.
+function Driver.SyncCountGate(rec, f)
+    if not (IS_121 and rec and f) then return end
+    SyncGate(rec, f)
 end
 
 -- A spell's charge cap moved (a talent): the cut's range and pieces follow.

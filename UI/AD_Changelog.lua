@@ -13,6 +13,34 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.3.3",
+        intro = "A count of your totems out, aura tooltips, rounding per group and more ring thicknesses.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Totems out",
+                    desc = "A totem icon or totem bar set to Which one: Any shows how many of its totems are out, such as 2 hawks. Icons can change their look at a count, and bars can color by it under Effects > Stacks." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Aura tooltips",
+                    desc = "Aura icons and Aura Groups show the aura's own tooltip on hover, Close gaps included. It follows your Show tooltip setting." },
+                { title = "Show tooltip",
+                    desc = "Now on an icon's Tracking tab and a group's Appearance > Icons, so one group or icon can show tooltips, hide them, or show them only while the options window is open." },
+                { title = "Round timer numbers per group",
+                    desc = "A group can round its icons' timers up or down (Appearance > Icons > Timers). An icon can still pick its own." },
+                { title = "Ring thickness",
+                    desc = "Rings come in seven thicknesses, from Extra thin to Thick." },
+                { title = "Only on-use trinkets",
+                    desc = "A passive trinket now dims while the options window is open, so you can see the option take effect." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Defaults page",
+                    desc = "Change them too now also changes icons and bars that hold their own value for that row, such as a keybind size." },
+                { title = "Texture timers",
+                    desc = "A texture's countdown follows a new rounding right away." },
+            } },
+        },
+    },
+    {
         version = "3.3.2",
         intro = "Gear Value and Action Bar Restore modules, simpler totem tracking, a fix for the While freeze on bars, and the latest Item Finds.",
         sections = {
@@ -1700,6 +1728,36 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.3.3",
+        intro = "A count of your totems out, aura tooltips, rounding per group, more ring thicknesses and Arc UI import fixes.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Totems out",
+                    desc = "A totem icon or totem bar set to Which one: Any shows how many of its totems are out. Icons can change their look at a count, and bars can color by it under Effects > Stacks." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Aura tooltips",
+                    desc = "Aura icons and Aura Groups show the aura's own tooltip on hover, Close gaps included. It follows your Show tooltip setting." },
+                { title = "Show tooltip",
+                    desc = "Now on an icon's Tracking tab and a group's Appearance > Icons, so one group or icon can show tooltips, hide them, or show them only while the options window is open." },
+                { title = "Round timer numbers per group",
+                    desc = "A group can round its icons' timers up or down (Appearance > Icons > Timers). An icon can still pick its own." },
+                { title = "Ring thickness",
+                    desc = "Rings come in seven thicknesses, from Extra thin to Thick." },
+                { title = "Only on-use trinkets",
+                    desc = "A passive trinket now dims while the options window is open, so you can see the option take effect." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Arc UI import",
+                    desc = "Buffs watched on you and your target import as buffs, and custom tick values carry over on every bar." },
+                { title = "Defaults page",
+                    desc = "A font set there now reaches icons brought in from Arc UI, and Change them too now also changes icons and bars that hold their own value for that row, such as a keybind size." },
+                { title = "Texture timers",
+                    desc = "A texture's countdown follows a new rounding right away." },
+            } },
+        },
+    },
     {
         version = "3.3.2",
         intro = "Gear Value module, simpler totem tracking and a fix for the While freeze on bars.",

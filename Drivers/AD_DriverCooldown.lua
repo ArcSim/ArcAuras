@@ -1681,6 +1681,10 @@ local function FeedTotem(a)
     if DT then DT.Pulse(a.frame, a.rec, slot, active) end
     -- the Out of range look shows only while the totem is out
     if NS.TotemRange then NS.TotemRange.Feed(a.rec, a.frame, active) end
+    -- an Any icon counts every one of its totems out (two hawks: "2"), and
+    -- the count drives its Totems at a count look
+    Factory.SetStack(a.frame, DT and DT.Count(a.rec) or nil)
+    Factory.FeedChargeGate(a.frame)
 end
 
 -- Whether a totem icon's slot is live, from its shadow (a plain boolean); nil
@@ -2026,6 +2030,8 @@ function Driver.Attach(rec, f)
             if NS.TotemRange then NS.TotemRange.Attach(rec, f) end
             -- a click or a key that drops the totem bar's pick
             if NS.TotemButton then NS.TotemButton.Attach(rec, f) end
+            -- a Totems at a count look gets its stage before the first feed
+            if NS.DriverAura and NS.DriverAura.SyncCountGate then NS.DriverAura.SyncCountGate(rec, f) end
             FeedTotem(at)
             ApplyKeybind(at)
         elseif rec.kind == "enchant" and NS.DriverEnchant then

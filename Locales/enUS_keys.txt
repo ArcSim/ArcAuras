@@ -47,7 +47,11 @@
 %MARKER% becomes your marker's icon in chat.
 %b %d, %Y
 %d %s has its own value for a row on this page. Reset it so it follows your defaults?
+%d %s has its own value.
+%d %s has its own values.
+%d %s have their own value.
 %d %s have their own values for a row on this page. Reset them so they follow your defaults?
+%d %s have their own values.
 %d %s in '%s' keep their own %s. Make them follow the layout?
 %d %s in '%s' keeps its own %s. Make it follow the layout?
 %d %s use the old value.
@@ -176,9 +180,13 @@
 %d ticks
 %d to %d charges
 %d to %d stacks
+%d to %d totems out
+%d totem out or fewer
+%d totems out or fewer
 %d unchanged
 %d+ charges
 %d+ stacks
+%d+ totems out
 %s  (ID %s)
 %s  (yours)
 %s  -  not loaded here
@@ -1055,6 +1063,7 @@ Blizzard border with badge
 Blizzard's Bar
 Blizzard's Edit Mode is open. The frame moves back when it closes.
 Bloodlust / Heroism
+Bold
 Border
 Border and background
 Border color
@@ -1872,6 +1881,7 @@ Every group, bar and icon in this layout lets go of its anchor and stays where i
 Every icon
 Every icon in the group as the game's Cooldown Manager draws it: rounded corners, border, shadow and swipe.
 Every icon in this layout uses these looks unless it sets its own.
+Every item counted here takes the new values, own values too.
 Every item of this kind: the icon follows the one you last used, as the Cooldown Manager's does.
 Every other kind
 Every other kind of %s (%d)
@@ -1902,6 +1912,7 @@ Export selection
 Extend it by the seconds
 Extra colors (after the fill color)
 Extra features for the whole addon. Switch one on to use it; its settings open from its card.
+Extra thin
 FREE ICONS  (%d)
 FROM YOUR SPELLBOOK - click one, then Create Reminder
 FROM YOUR SPELLBOOK - click to fill
@@ -2538,6 +2549,7 @@ Incoming heals
 Incoming mana
 Indoors
 Info text
+Inherit
 Inherit follows the group, then the layout, then Settings.
 Insanity
 Inset
@@ -2952,6 +2964,7 @@ Named frame...
 Named frame: no name entered yet, so it stays free.
 Nameplate stand-in
 Nameplates covered
+Narrow
 Nature spell power
 Nature's Guardian
 Nearest first: the target is in the first band whose checks all hold.
@@ -3196,6 +3209,7 @@ Off: this trigger plays its sound or speech only, with no pulse.
 Off: this trigger pulses silently. A new trigger starts silent.
 Offset X
 Offset Y
+On
 On %s.
 On a key, or by ear
 On a nameplate the bar hides while this window is open; the preview shows it.
@@ -3989,6 +4003,7 @@ Safe Mythic+ Reset
 Safe Mythic+ reset
 Same as Settings
 Same as fill
+Same as group or Settings
 Same setup on every character
 Same size when empty
 Sample
@@ -4237,6 +4252,7 @@ Skyriding
 Slate
 Slide into place
 Slide time (s)
+Slim
 Slot
 Slot 
 Slot %d
@@ -4711,7 +4727,6 @@ The internal cooldown as a timer: 45 s, less with Natural Harmony.
 The item
 The item's own stacks, before this rule acts. Empty = no such condition.
 The item, or several: the icon shows the first one you carry and can use.
-The items that used the old values take the new ones.
 The items you have keep their look; only new ones start with these. Leaving the page does the same.
 The kinds that take this page's rows, each where it has the row. Nothing happens until you press Copy.
 The label's own color
@@ -4979,6 +4994,7 @@ Toggled-on tint
 Toggled-on tint color
 Tokens: {left} {drawn} {size} {procs} {procsLeft} {max} {chance} {viol} {count}.
 Tokens: {left} {drawn} {size} {procs} {procsLeft} {max} {chance} {viol} {count}. Empty: the Arc Proc's own.
+Tooltip
 Tooltip IDs
 Tooltip on hover
 Top
@@ -5005,6 +5021,8 @@ Totem icons
 Totem only
 Totem or aura up
 Totem slot
+Totems out
+Totems out at a count
 Toy Item ID
 Tracked Bars
 Tracked Buffs
@@ -5445,6 +5463,7 @@ While the timer is idle at 0 stacks, the count shows this many: a pool reads ful
 While the timer runs
 While this bar is not loaded, its count stops until the next reset.
 While this icon is not loaded, its count stops until the next reset.
+While this many of its totems are out
 While this page is open the window can be dragged, locked or not.
 While this window is open a dim icon marks the spot; drag its name tab to move it.
 While this window is open the outline marks the spot; drag its name tab to move it.
@@ -5725,6 +5744,8 @@ exactly %d charge
 exactly %d charges
 exactly %d stack
 exactly %d stacks
+exactly %d totem out
+exactly %d totems out
 excluded
 excluded, taken
 fill

@@ -154,7 +154,40 @@ function Store.Init()
         DB.settings.unloadedShow = nil
         DB.eyesReset = true
     end
+    -- An import stored the game's own font as each text's own empty value, so
+    -- the Defaults page's and the layout's font never reached those texts:
+    -- once per saved table, an imported item's empty font follows again.
+    if not DB.importFontsFreed then
+        Store.FreeImportedFonts()
+        DB.importFontsFreed = true
+    end
     Store.Normalize()
+end
+
+-- Drops every empty font an imported item holds as its own (the game's font
+-- is also what an unset font reads, so nothing changes until a default or a
+-- layout sets one). Returns how many it dropped.
+function Store.FreeImportedFonts()
+    local n = 0
+    for _, r in pairs(DB.records or {}) do
+        local fam = r.imported ~= nil and type(r.o) == "table" and Schema[Store.FamilyOf(r)]
+        if fam then
+            for section, vals in pairs(r.o) do
+                local sec = fam[section]
+                if type(vals) == "table" and sec and sec.fields then
+                    for field, v in pairs(vals) do
+                        local def = sec.fields[field]
+                        if v == "" and def and def.font then
+                            vals[field] = nil
+                            n = n + 1
+                        end
+                    end
+                    if next(vals) == nil then r.o[section] = nil end
+                end
+            end
+        end
+    end
+    return n
 end
 
 -- Called at PLAYER_LOGIN. If the client (re)assigns the SavedVariables global
@@ -1761,9 +1794,9 @@ function Store.SetOverride(rec, section, field, value)
     -- kind's saved default, or every kind's on an All row, under the page's batch
     if rec._adDefaults then
         if rec._adKinds then
-            Store.SetDefaultAll(rec._adFamily, rec._adKinds, section, field, value, rec._adBatch)
+            Store.SetDefaultAll(rec._adFamily, rec._adKinds, section, field, value, rec._adBatch, true)
         else
-            Store.SetDefaultValue(rec._adFamily, rec._adKind, section, field, value, rec._adBatch)
+            Store.SetDefaultValue(rec._adFamily, rec._adKind, section, field, value, rec._adBatch, true)
         end
         return
     end
@@ -1895,14 +1928,31 @@ local function MouseTri(rec, field)
     return nil
 end
 
+-- The tooltip through the same tiers: "on" (while you play), "edit" (only
+-- while the options window is open) or "off"; the Settings pair last.
+local function TipTier(rec)
+    if not rec then return nil end
+    local v = Store.Resolve(rec, "mouse", "showTooltip")
+    if v == "on" or v == "off" or v == "edit" then return v end
+    return nil
+end
+function Store.TipMode(rec)
+    local grp = rec.groupId and DB.records[rec.groupId] or nil
+    local lid = rec.layoutId or (grp and grp.layoutId)
+    local lay = lid and DB.records[lid] or nil
+    local m = TipTier(rec) or TipTier(grp) or TipTier(lay)
+    if m then return m end
+    if Store.GetSetting("showTooltips") == false then return "off" end
+    if Store.GetSetting("tooltipsEditOnly") == true then return "edit" end
+    return "on"
+end
+
+-- tips: a tooltip while you play
 function Store.MouseFor(rec)
     local grp = rec.groupId and DB.records[rec.groupId] or nil
     local lid = rec.layoutId or (grp and grp.layoutId)
     local lay = lid and DB.records[lid] or nil
-    local tips = MouseTri(rec, "showTooltip")
-    if tips == nil then tips = MouseTri(grp, "showTooltip") end
-    if tips == nil then tips = MouseTri(lay, "showTooltip") end
-    if tips == nil then tips = Store.GetSetting("showTooltips") ~= false end
+    local tips = Store.TipMode(rec) == "on"
     local thru = MouseTri(rec, "clickThrough")
     if thru == nil then thru = MouseTri(grp, "clickThrough") end
     if thru == nil then thru = MouseTri(lay, "clickThrough") end
@@ -2193,7 +2243,7 @@ do
         if not name then return nil end
         local b = DF.batches[name]
         if not b then
-            b = { pins = {}, pinned = {}, fields = {}, nFields = 0, kinds = {}, nKinds = 0 }
+            b = { pins = {}, pinned = {}, owned = {}, fields = {}, nFields = 0, kinds = {}, nKinds = 0 }
             DF.batches[name] = b
         end
         return b
@@ -2272,8 +2322,11 @@ do
     -- a noDefault field (only dropping an old one), stored only where it
     -- differs from the shipped value. Each item of the kind whose look it would
     -- change keeps its old value as its own, filed under `batch`. True when it
-    -- changed.
-    function Store.SetDefaultValue(family, kind, section, field, value, batch)
+    -- changed. With `own` (a row of the Defaults page) the batch also pins the
+    -- items that hold their own other value for the row, and the items that
+    -- read other than the kind with nothing of their own (born before their
+    -- kind's starting value), so Change them too reaches every item.
+    function Store.SetDefaultValue(family, kind, section, field, value, batch, own)
         local def, sec = DF.Field(family, section, field)
         if not (def and sec.push and kind) then return false end
         if def.noDefault and value ~= nil then return false end
@@ -2282,7 +2335,8 @@ do
         local old = bucket and bucket[section] and bucket[section][field]
         local new = value
         if new ~= nil and SameValue(new, Store.ArcDefault(family, kind, section, field)) then new = nil end
-        if SameValue(old, new) then return false end
+        local changed = not SameValue(old, new)
+        if not (changed or own) then return false end
         -- what every item reads now; a value an item was born with (its
         -- template's) follows the kind while nothing is saved, so it lets go
         -- here and is pinned below like any follower (not where its layout
@@ -2302,7 +2356,9 @@ do
                 end
             end
         end
-        if new == nil then
+        if not changed then
+            -- nothing to store: only the own and unborn items below
+        elseif new == nil then
             bucket[section][field] = nil
             if next(bucket[section]) == nil then bucket[section] = nil end
             if next(bucket) == nil then DB.newDefaults[key] = nil end
@@ -2313,17 +2369,41 @@ do
             bucket[section][field] = DF.Copy(new)
         end
         local b = DF.Batch(batch)
+        -- what the page shows for the kind now
+        local pageV = new
+        if pageV == nil then pageV = Store.ArcDefault(family, kind, section, field) end
+        local pinned = false
         for i, r in ipairs(recs) do
+            local o, li = r.o[section], own and InhOf(r)
+            li = li and li[section]
+            local mine = o and o[field]
+            local free = not (li and li[field] ~= nil)
+            local pin
             if not SameValue(Store.Resolve(r, section, field), before[i]) then
                 r.o[section] = r.o[section] or {}
                 r.o[section][field] = DF.Copy(before[i])
+                pin = { v = DF.Copy(before[i]) }
+            elseif own and free and mine ~= nil and not SameValue(mine, pageV) then
+                pin = { v = DF.Copy(mine), own = true }
+            elseif own and free and mine == nil and tv ~= nil and def.dyn == nil
+                and not SameValue(before[i], pageV) then
+                -- born before its kind's starting value: pinned as it reads now
+                r.o[section] = r.o[section] or {}
+                r.o[section][field] = DF.Copy(before[i])
+                pin = { v = DF.Copy(before[i]) }
+            end
+            if pin then
+                pinned = true
                 if b then
-                    b.pins[#b.pins + 1] = { id = r.id, section = section, field = field, v = DF.Copy(before[i]),
-                        family = family, kind = kind, tv = tv }
+                    pin.id, pin.section, pin.field = r.id, section, field
+                    pin.family, pin.kind, pin.tv = family, kind, tv
+                    b.pins[#b.pins + 1] = pin
                     b.pinned[r.id] = true
+                    if pin.own then b.owned[r.id] = true end
                 end
             end
         end
+        if not (changed or pinned) then return false end
         if b then
             local fk = key .. "|" .. section .. "." .. field
             if not b.fields[fk] then
@@ -2340,28 +2420,32 @@ do
     end
 
     -- An All row's write: every kind of `kinds` the field applies to.
-    function Store.SetDefaultAll(family, kinds, section, field, value, batch)
+    function Store.SetDefaultAll(family, kinds, section, field, value, batch, own)
         local n = 0
         for _, k in ipairs(Store.DefaultKinds(family, kinds, section, field)) do
-            if Store.SetDefaultValue(family, k, section, field, DF.Copy(value), batch) then n = n + 1 end
+            if Store.SetDefaultValue(family, k, section, field, DF.Copy(value), batch, own) then n = n + 1 end
         end
         return n
     end
 
-    -- What a batch waits on: { changes, items, kinds }, nil when nothing does
-    -- (a batch that pinned no item is done at once).
+    -- What a batch waits on: { changes, items, own, kinds }, nil when nothing
+    -- does (a batch that pinned no item is done at once). `own`: how many of
+    -- the items hold their own value for a changed row.
     function Store.DefaultsPending(name)
         local b = name and DF.batches[name]
         if not b then return nil end
-        local items = 0
+        local items, own = 0, 0
         for id in pairs(b.pinned) do
-            if DB.records[id] then items = items + 1 end
+            if DB.records[id] then
+                items = items + 1
+                if b.owned[id] then own = own + 1 end
+            end
         end
         if items == 0 then
             DF.batches[name] = nil
             return nil
         end
-        return { changes = b.nFields, items = items, kinds = b.nKinds }
+        return { changes = b.nFields, items = items, own = own, kinds = b.nKinds }
     end
 
     -- The answer: follow (Change them too) drops every pin the item still
@@ -7043,7 +7127,7 @@ local PART_OF_SECTION = {
         text = "text", textel = "text",
         thresholds = "appearance", ticks = "appearance", wheel = "appearance" },
     iconGroup = { anchor = "position", arrangement = "arrange", audio = "sounds", frame = "position",
-        keybind = "text", look = "appearance", mouse = "position", pulse = "appearance",
+        keybind = "text", look = "appearance", mouse = "position", timers = "text", pulse = "appearance",
         typeLook = "appearance", unitAuras = "tracking" },
     layout = { mouse = "position" },
     reminder = { pulse = "appearance" },

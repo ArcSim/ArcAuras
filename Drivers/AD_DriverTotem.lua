@@ -722,6 +722,18 @@ function DT.Which(d)
     return nil
 end
 
+-- How many of an Any icon's totems are out now (two hawks: 2), from our own
+-- slot table, so plain in combat; nil for a First / Second pick or a fixed
+-- slot, which show one totem each.
+function DT.Count(rec)
+    local d = rec and rec.driver
+    if not (d and d.spellID) or DT.Which(d) then return nil end
+    local sid = Store.RecordSpellID(d)
+    local want = sid and DT.SpellName(sid)
+    if not want then return nil end
+    return #DT.InUse(d, sid, want)
+end
+
 -- The slot an icon shows: a spell-tracked icon follows its totem into
 -- whichever slot holds it (with a Which pick, the slot of that rank among the
 -- ones in use; nil while it is not down), else its own slot.

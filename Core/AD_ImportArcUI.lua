@@ -143,9 +143,10 @@ IA.CONV = {
     barAnchor = function(v) if v == "FREE" then return nil end return v end,
     dec = function(v) return (tonumber(v) or 0) > 0 end,
     strata = function(v) return IA.GLOW_STRATA[v] and v or "inherit" end,
-    -- the game's own face needs no media name
+    -- the game's own face is what an unset font reads: none is written, so the
+    -- text follows the Defaults page and its layout
     font = function(v)
-        if type(v) ~= "string" or v == "Friz Quadrata TT" then return "" end
+        if type(v) ~= "string" or v == "" or v == "Friz Quadrata TT" then return nil end
         return v
     end,
     num = function(v) return tonumber(v) end,
@@ -1523,7 +1524,11 @@ function IA.ResolveArc(arcID, arcDB, specKey, classID, cov, opts)
         local d = { spellID = sid, unit = lanes[1].unit, auraType = lanes[1].harmful and "debuff" or "buff" }
         if #lanes == 2 and lanes[1].unit == "player" and not lanes[1].harmful and lanes[2].unit == "target" then
             d.unit2 = "target"
-            d.auraType = lanes[2].harmful and "debuff" or "buff"
+            -- one aura type serves both units: v1's your buff + the target's debuff keeps the
+            -- side of the spell itself, so a self buff stays a buff
+            local harmful = lanes[2].harmful and opts ~= nil and opts.spellHarmful ~= nil
+                and opts.spellHarmful(sid) == true
+            d.auraType = harmful and "debuff" or "buff"
         elseif #lanes > 1 then
             local units, seen = {}, {}
             for _, l in ipairs(lanes) do
@@ -2517,11 +2522,13 @@ function IA.MapBarLook(B, cfg, map, ctx)
         Put(o, "ticks", "tickSpells", table.concat(ids, ","))
         Put(o, "ticks", "ticksShow", true)
     end
-    if kind == "resource" and #costs > 0 and d.tickMode == "custom" then
+    -- every bar kind keeps its typed list there (a stack bar's "12" too); a
+    -- resource bar's are power units, the others follow v1's percent switch
+    if #costs > 0 and d.tickMode == "custom" then
         table.sort(costs)
         for i, v in ipairs(costs) do costs[i] = (v == math.floor(v)) and tostring(math.floor(v)) or tostring(v) end
         Put(o, "ticks", "tickValues", table.concat(costs, ","))
-        Put(o, "ticks", "tickAsPercent", false)
+        if kind == "resource" then Put(o, "ticks", "tickAsPercent", false) end
     end
     -- the cast forecast follows v1's Show prediction switch (its spell list is seeded on
     -- every soul shard bar, switched on or not)

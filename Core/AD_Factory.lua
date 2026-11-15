@@ -5497,6 +5497,8 @@ function Factory.ApplyMissingGlows(f, rec, w, h, combat)
     local D = NS.DriverAura
     local ok = rec ~= nil and rec.kind == "aura" and D ~= nil and D.MissingGlowOK ~= nil
         and D.MissingGlowOK(rec) and Store.Resolve(rec, "appearance", "forceHideIcon") ~= true
+    -- a glow on a layer of its own paints there first, and is left out here
+    if D and D.MissLaneSync then D.MissLaneSync(f, rec, combat) end
     if not ok and not host then return end
     local lvl = f:GetFrameLevel()
     if type(lvl) ~= "number" or (issecretvalue and issecretvalue(lvl)) then lvl = nil end
@@ -5505,6 +5507,7 @@ function Factory.ApplyMissingGlows(f, rec, w, h, combat)
         local suf = (k > 1) and tostring(k) or ""
         local want = ok and Factory.MissingGlowOn(rec, k) and Factory.LookGlow(f, "missing", true)
             and (combat == true or Store.Resolve(rec, "auraActive", "activeGlowCombatOnly" .. suf) ~= true)
+            and not (D.MissLaneDraws and D.MissLaneDraws(rec, k, f))
         if want and not host then
             host = CreateFrame("Frame", nil, f._adStage or f)
             host:SetAllPoints(f)

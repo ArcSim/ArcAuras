@@ -2033,12 +2033,14 @@ Schema.icon = {
             dep = { field = "activeGlow" } },
         activeGlowMoveY = { adv = "glow", d = 0, t = "int", min = -20, max = 20, label = "Active glow move Y",
             dep = { field = "activeGlow" } },
-        -- a Missing glow keeps its place on the aura icon's ladder: these two
-        -- do not apply to it
+        -- a Missing glow takes them on a layer of its own (DriverAura MG),
+        -- which a Dynamic group's rows do not have
         activeGlowStrata = { adv = "glow", d = "inherit", t = "enum", values = { "inherit", "LOW", "MEDIUM", "HIGH", "DIALOG" }, label = "Active glow strata",
-            dep = { { field = "activeGlow" }, { field = "activeGlowWhen", notValue = "missing" } } },
+            showIf = function(rec) return Schema.GlowLayerOK(rec, "") end,
+            dep = { field = "activeGlow" } },
         activeGlowLevel = { adv = "glow", d = 7, t = "int", min = 1, max = 30, label = "Active glow frame level",
-            dep = { { field = "activeGlow" }, { field = "activeGlowWhen", notValue = "missing" } } },
+            showIf = function(rec) return Schema.GlowLayerOK(rec, "") end,
+            dep = { field = "activeGlow" } },
     } },
     -- The engine button's swipe is our own Cooldown widget, so its look is
     -- plain writes; spell icons with the aura overlay use it too.
@@ -2482,6 +2484,17 @@ do
     end
 end
 
+-- A glow's Strata and Level rows. A Missing glow takes them on a layer of its
+-- own, which needs the icon's own button (not a Dynamic group's rows).
+function Schema.GlowLayerOK(rec, suf)
+    local S = NS.Store
+    if not (rec and S and S.Resolve) then return true end
+    if S.Resolve(rec, "auraActive", "activeGlowWhen" .. (suf or "")) ~= "missing" then return true end
+    local DA = NS.DriverAura
+    return DA ~= nil and DA.GlowLaneOK ~= nil and DA.GlowLaneOK(rec) == true
+        and DA.MissingGlowOK ~= nil and DA.MissingGlowOK(rec) == true
+end
+
 Schema.AURA_GLOW_SLOTS = 4
 Schema.AURA_GLOW_FIELDS = {
     "activeGlow", "activeGlowFor", "activeGlowCombatOnly",
@@ -2533,6 +2546,9 @@ do
                 for i, d in ipairs(src.dep) do def.dep[i] = own(d) end
             end
             def.showIf = src.showIf or glowOK
+            if name == "activeGlowStrata" or name == "activeGlowLevel" then
+                def.showIf = function(rec) return glowOK(rec) and Schema.GlowLayerOK(rec, suf) end
+            end
             -- the game's own colour hides this slot's colour
             local nl = Schema.GLOW_NATIVE_GATED[name]
             if nl then

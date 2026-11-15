@@ -21,6 +21,8 @@ A count of your totems out, aura tooltips, rounding per group and more ring thic
 - **Defaults page** - Change them too now also changes icons and bars that hold their own value for that row, such as a keybind size.
 - **Texture timers** - A texture's countdown follows a new rounding right away.
 - **Fonts** - A font from another addon now shows on every icon and bar, even when it loads late.
+- **Missing glows** - A glow shown while the aura is missing now has its own Strata and Level, so it can sit above other frames.
+- **Aura over a spell** - A spell icon that shows an aura no longer blinks out for a moment when it comes off cooldown or the aura procs.
 
 ## 3.3.2
 

@@ -26,6 +26,7 @@ local allContainers = {}  -- { {unit=, frame=} } for target-swap refresh
 local pendingCreate = {}  -- [iconId] = true, deferred while auras are secret
 local combatQueue = {}    -- [entry] = parked flag, filter edits queued in combat
 local loadWindowOver = false
+local MG = {}             -- Missing glows on a layer of their own (entry.mlanes)
 
 -- A frame of ours born on UIParent (a stage, a container) takes the holder's
 -- layout scale (Engine.FollowScale; written only on a change).
@@ -595,6 +596,8 @@ function Driver.RowGlowIDs(rec, slot) return LaneIDs(rec, slot, true) end
 local function AnyGlowWanted(rec)
     for k = 1, GlowSlots() do
         if GlowIDs(rec, k) then return true end
+        -- a Missing glow on a layer of its own (MG below)
+        if Driver.MissGlowLayered(rec, k) and Factory.MissingGlowOn(rec, k) then return true end
     end
     return false
 end
@@ -1093,6 +1096,12 @@ end
 -- restyle (a raise, a drag, a new layer); locked in combat, the next restyle does it.
 function Driver.FollowHolder(f)
     local e = f and f._adRecId and entries[f._adRecId]
+    -- a Missing glow's own layer counts from its holder's too
+    if e and e.holder == f and e.mlanes then
+        for _, ml in pairs(e.mlanes) do
+            if not MG.Place(e, ml) then e.stylePending = true end
+        end
+    end
     if not (e and e.stage and e.holder == f and e.staged) or StageLocked(e.stage) then return end
     local s, l = f:GetFrameStrata(), f:GetFrameLevel()
     if issecretvalue and (issecretvalue(s) or issecretvalue(l)) then return end
@@ -1203,6 +1212,107 @@ local function SlotOn(c, key, on, harmful, ids, unit)
 end
 Driver.SlotOn = SlotOn
 
+-- Missing glows on a layer of their own
+-- A glow set to "While the aura is missing" with a strata or level of its own
+-- leaves the icon's stage for one of its own at that layer: the glow, and one
+-- button per lane over it carrying the piece that covers it while the aura is
+-- up. Its layer moves only while every one of its buttons can be written, so
+-- the glow never ends up over its buttons. Kept once made: a glow back on the
+-- icon's layer parks it, and the icon's stage draws the glow again.
+local MG_LEVEL_D = 7   -- the level field's own default
+
+-- This glow (`k`) asks for a layer of its own.
+function Driver.MissGlowLayered(rec, k)
+    local suf = (k and k > 1) and tostring(k) or ""
+    local s = Store.Resolve(rec, "auraActive", "activeGlowStrata" .. suf)
+    local l = Store.Resolve(rec, "auraActive", "activeGlowLevel" .. suf)
+    return (s ~= nil and s ~= "inherit") or (l ~= nil and l ~= MG_LEVEL_D)
+end
+
+function MG.Want(rec, k)
+    return FB_OK and rec ~= nil and rec.kind == "aura" and Driver.GlowLaneOK(rec)
+        and Driver.MissingGlowOK(rec) and Factory.MissingGlowOn(rec, k) == true
+        and Driver.MissGlowLayered(rec, k)
+end
+
+-- The piece: as far as the glow can reach (MG.Paint sizes its frame), so a
+-- glow restyled in combat needs no write to the button.
+function MG.Piece(b, ml)
+    if b._adMGPiece then return end
+    local t = b:CreateTexture(nil, "BACKGROUND", nil, -8)
+    t:SetColorTexture(0, 0, 0, 0)
+    t:SetBlendMode("DISABLE")
+    t:SetAllPoints(ml.reach)
+    b._adMGPiece = t
+end
+
+-- A button over its glow: the stage's strata, two rungs over the glow's host.
+function MG.Rung(b, ml)
+    b:ClearAllPoints()
+    b:SetAllPoints(ml.base)
+    b:SetFrameStrata(ml.strata)
+    b:SetFrameLevel(ml.level + 3)
+end
+
+function MG.Make(iconId, entry, k, startParked)
+    local d = ShapeFor(entry.rec) or {}
+    local st = CreateFrame("Frame", nil, UIParent)
+    st:SetSize(1, 1)
+    st:SetPoint("TOP", UIParent, "TOP", 0, -80)
+    st:SetFlattensRenderLayers(true)
+    st:SetAlpha(0)
+    st:Hide()
+    -- the layer kept as plain copies: a read inside the create window can be secret
+    local ml = { slot = k, stage = st, subs = {}, strata = "MEDIUM", level = 1 }
+    st:SetFrameStrata(ml.strata)
+    st:SetFrameLevel(ml.level)
+    -- the fade rides this inner frame; the stage only shows or hides
+    ml.dim = CreateFrame("Frame", nil, st)
+    ml.dim:SetAllPoints(st)
+    ml.base = CreateFrame("Frame", nil, ml.dim)
+    ml.base:SetAllPoints(st)
+    ml.base:EnableMouse(false)
+    -- drawn in its stage (Factory.GlowBlend)
+    ml.base._adFlat = true
+    ml.reach = CreateFrame("Frame", nil, ml.dim)
+    ml.reach:SetAllPoints(st)
+    entry.mlanes = entry.mlanes or {}
+    entry.mlanes[k] = ml
+    local ids = startParked and { [0] = true } or IncludeMap(d)
+    for _, lane in ipairs(LanesFor(d)) do
+        local c = CreateIconContainer(lane.unit, ml.dim)
+        if c then
+            local key = "admg" .. k .. "_" .. tostring(iconId) .. "_" .. lane.unit
+                .. (lane.harmful and "_h" or "_b") .. "_g" .. (entry.gen or 0)
+            local s = { unit = lane.unit, key = key, container = c, harmful = lane.harmful,
+                filterSig = FilterSig(ids), ids = ids, off = true }
+            ml.subs[#ml.subs + 1] = s
+            c:AddAuraSlot(key, FilterForLane(d, lane), {
+                maxFrameCount = 1,
+                initializeFrame = function(b)
+                    b:EnableMouse(false)
+                    s.frame = b
+                    MG.Piece(b, ml)
+                    MG.Rung(b, ml)
+                end,
+                candidateFilters = { includeSpellIDs = ids },
+            })
+            -- off until its stage holds its picture (MG.Alpha)
+            SlotOn(c, key, false, lane.harmful, ids, lane.unit)
+        end
+    end
+    return ml
+end
+
+-- Every Missing glow that wants a layer of its own and has none yet.
+function MG.Wanted(entry)
+    local out = {}
+    for k = 1, ((NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1) do
+        if MG.Want(entry.rec, k) and not (entry.mlanes and entry.mlanes[k]) then out[#out + 1] = k end
+    end
+    return out
+end
+
 -- The glow lanes, made the same way, one per glow that wants one and has none
 -- yet (a lane is kept once made: a glow switched off parks it). Their buttons
 -- are never wired: the game draws nothing on them, and the glow is all we add.
@@ -1215,12 +1325,14 @@ local function EnsureGlowSlots(iconId, entry, startParked)
     for k = 1, GlowSlots() do
         if GlowIDs(rec, k) and not HasGlowLane(entry, k) then want[#want + 1] = k end
     end
-    if #want == 0 then return true end
+    local miss = MG.Wanted(entry)
+    if #want == 0 and #miss == 0 then return true end
     if loadWindowOver and AurasSecretNow() then
         entry.glowPending = true
         return false
     end
     entry.glowPending = nil
+    for _, k in ipairs(miss) do MG.Make(iconId, entry, k, startParked) end
     entry.glows = entry.glows or {}
     local d = ShapeFor(rec) or {}
     for _, slot in ipairs(want) do
@@ -1488,6 +1600,24 @@ local function ApplySlotFilters(entry, parked)
         g.ids = ids
         SlotOn(c, g.key, gids ~= nil and not g.quiet, g.harmful, ids, g.unit)
     end
+    -- Missing glow lanes: the icon's ids while their glow wants its layer
+    for _, ml in pairs(entry.mlanes or {}) do
+        local on = not parked and MG.Want(entry.rec, ml.slot)
+        for _, s in ipairs(ml.subs) do
+            local c = s.container
+            if on and c.SetAuraSlotFilterString then
+                c:SetAuraSlotFilterString(s.key, FilterForLane(d, s))
+            end
+            local ids = on and IncludeMap(d) or { [0] = true }
+            local sig = FilterSig(ids)
+            if s.filterSig ~= sig then
+                s.filterSig = sig
+                c:SetAuraSlotCandidateFilters(s.key, { includeSpellIDs = ids })
+            end
+            s.ids = ids
+            SlotOn(c, s.key, on and not s.off, s.harmful, ids, s.unit)
+        end
+    end
     entry.parked = parked and true or false
 end
 
@@ -1574,7 +1704,9 @@ end
 
 -- A slot that can show nothing (its icon hidden or at 0) is switched off, so
 -- it stops reading its unit's auras; on again, the game reads them afresh.
-local function SetQuiet(entry, sub, quiet)
+-- lit: the missing look was on screen already (a spell state stepped the aura
+-- aside), so holding it back would blank the icon instead of hiding a flash.
+local function SetQuiet(entry, sub, quiet, lit)
     quiet = quiet == true
     -- never set reads as not quiet: a first pass that keeps it on changes nothing
     if (sub.quiet == true) == quiet then return end
@@ -1582,7 +1714,164 @@ local function SetQuiet(entry, sub, quiet)
     -- parked: its slot is off already, and the unpark reads sub.quiet
     if entry.parked then return end
     SlotOn(sub.container, sub.key, not quiet, sub.harmful, sub.ids, sub.unit)
-    if not quiet and not sub.slot then HoldReveal(entry) end
+    if not quiet and not sub.slot and not lit then HoldReveal(entry) end
+end
+
+-- Missing glow lanes at run time (MG above)
+
+-- The layer glow `k` asks for: its strata (the icon's while it inherits) and
+-- its level over the icon's button, as a live glow counts it.
+local function MGTarget(entry, k)
+    local h, rec = entry.holder, entry.rec
+    local suf = (k > 1) and tostring(k) or ""
+    local s = Store.Resolve(rec, "auraActive", "activeGlowStrata" .. suf) or "inherit"
+    if s == "inherit" then s = h:GetFrameStrata() end
+    local hl = h:GetFrameLevel()
+    if issecretvalue and (issecretvalue(s) or issecretvalue(hl)) then return nil end
+    if type(s) ~= "string" or type(hl) ~= "number" then return nil end
+    local lvl = Store.Resolve(rec, "auraActive", "activeGlowLevel" .. suf) or MG_LEVEL_D
+    return s, math.max(1, math.min(9990, hl + Factory.AURA_LADDER.button + lvl))
+end
+
+-- On its holder, at its layer. False when something waits (a locked stage,
+-- a button that cannot be written): the old layer stays whole meanwhile.
+function MG.Place(entry, ml)
+    local st, h = ml.stage, entry.holder
+    if not h or StageLocked(st) then return false end
+    st:ClearAllPoints()
+    st:SetPoint("TOPLEFT", h, "TOPLEFT", 0, 0)
+    st:SetPoint("BOTTOMRIGHT", h, "BOTTOMRIGHT", 0, 0)
+    FollowScale(st, h)
+    local s, l = MGTarget(entry, ml.slot)
+    if not s then return false end
+    if s == ml.strata and l == ml.level then return true end
+    for _, sub in ipairs(ml.subs) do
+        if sub.frame and not IsAccessible(sub.frame) then return false end
+    end
+    ml.strata, ml.level = s, l
+    st:SetFrameStrata(s)
+    st:SetFrameLevel(l)
+    for _, f in ipairs({ ml.dim, ml.base, ml.reach }) do f:SetFrameLevel(l) end
+    for _, sub in ipairs(ml.subs) do
+        if sub.frame then MG.Rung(sub.frame, ml) end
+    end
+    return true
+end
+
+-- The glow on its stage, a rung under the buttons; the piece's reach with it.
+function MG.Paint(entry, ml, combat)
+    local f, rec, k = entry.holder, entry.rec, ml.slot
+    local suf = (k > 1) and tostring(k) or ""
+    local want = f ~= nil and not entry.off and MG.Want(rec, k)
+        and Factory.LookGlow(f, "missing", true)
+        and Store.Resolve(rec, "appearance", "forceHideIcon") ~= true
+        and (combat == true or Store.Resolve(rec, "auraActive", "activeGlowCombatOnly" .. suf) ~= true)
+    ml.want = want == true
+    if not f then return end
+    local o = AuraButtonOpts(entry)
+    -- a glow at its largest size, offset and move, with its sparkles
+    local m = math.max(o.w or 36, o.h or 36) + 64
+    ml.reach:ClearAllPoints()
+    ml.reach:SetPoint("TOPLEFT", ml.stage, "TOPLEFT", -m, m)
+    ml.reach:SetPoint("BOTTOMRIGHT", ml.stage, "BOTTOMRIGHT", m, -m)
+    ml.base:SetAlpha(f._adShownAlpha or f._adStateAlpha or 1)
+    Factory.SetAuraButtonGlow(ml.base, rec, ml.want, o.w, o.h, 1, k, ml.level + 1)
+end
+
+-- Its picture while its glow shows, given back (hidden first) when not.
+function MG.Buffer(entry, ml)
+    local st = ml.stage
+    if StageLocked(st) then return end
+    local use = ml.want == true and entry.holder ~= nil and not entry.off and not entry.parked
+    if use and not ml.fbOn then
+        ml.fbOn = Factory.TakeBuffer(st)
+    elseif not use and ml.fbOn then
+        st:SetAlpha(0)
+        st:Hide()
+        Factory.GiveBuffer(st)
+        ml.fbOn = false
+    end
+    st:SetShown(ml.fbOn == true)
+end
+
+-- A slot coming on fills on its container's next pass: the glow waits as long.
+function MG.Hold(entry, ml)
+    if ml.hold then return end
+    ml.hold = true
+    ml.stage:SetAlpha(0)
+    C_Timer.After(0.05, function()
+        ml.hold = nil
+        if entry.holder and not entry.off then SyncEntryAlpha(entry) end
+    end)
+end
+
+function MG.Quiet(entry, ml, s, quiet)
+    quiet = quiet == true
+    if s.off == quiet then return end
+    s.off = quiet
+    if entry.parked then return end
+    SlotOn(s.container, s.key, not quiet and MG.Want(entry.rec, ml.slot), s.harmful, s.ids, s.unit)
+    if not quiet then MG.Hold(entry, ml) end
+end
+
+-- The stage shows while it holds its picture and its glow is wanted; its
+-- slots listen only then.
+function MG.Alpha(entry, ea, a, vis)
+    for _, ml in pairs(entry.mlanes or {}) do
+        local live = ml.fbOn == true and ml.want == true and not entry.off and not entry.parked
+        ml.stage:SetAlpha((live and vis and not ml.hold) and 1 or 0)
+        ml.dim:SetAlpha(ea)
+        for _, s in ipairs(ml.subs) do
+            local sa = a
+            if LaneBlind(s.unit, s.harmful, entry.rec) then sa = 0 end
+            s.container:SetAlpha(sa > 0 and 1 or 0)
+            MG.Quiet(entry, ml, s, not (live and vis) or sa <= 0)
+        end
+    end
+end
+
+-- Detached or its holder hidden: nothing shows, nothing listens.
+function MG.Park(entry, give)
+    for _, ml in pairs(entry.mlanes or {}) do
+        ml.stage:SetAlpha(0)
+        for _, s in ipairs(ml.subs) do MG.Quiet(entry, ml, s, true) end
+        if give and ml.fbOn and not StageLocked(ml.stage) then
+            ml.stage:Hide()
+            Factory.GiveBuffer(ml.stage)
+            ml.fbOn = false
+        end
+    end
+end
+
+-- The Missing glows' painter asks first (Factory.ApplyMissingGlows): each lane
+-- of this holder paints and takes or gives its picture.
+function Driver.MissLaneSync(f, rec, combat)
+    local e = rec and entries[rec.id]
+    if not (e and e.mlanes and e.holder == f) then return end
+    for _, ml in pairs(e.mlanes) do
+        MG.Paint(e, ml, combat)
+        MG.Buffer(e, ml)
+    end
+    if SyncEntryAlpha then SyncEntryAlpha(e) end
+end
+
+-- Glow `k` of this holder is drawn by its own lane, so its stage leaves it out.
+function Driver.MissLaneDraws(rec, k, f)
+    local e = rec and entries[rec.id]
+    local ml = e and e.mlanes and e.mlanes[k]
+    return ml ~= nil and e.holder == f and not e.off and ml.fbOn == true and ml.want == true
+end
+
+-- Every lane placed, then the Missing glows painted again (they choose the lane or the stage).
+function MG.Sync(entry)
+    if not (entry.mlanes and entry.holder and entry.rec) then return true end
+    local ok = true
+    for _, ml in pairs(entry.mlanes) do
+        if not MG.Place(entry, ml) then ok = false end
+    end
+    local o = AuraButtonOpts(entry)
+    Factory.ApplyMissingGlows(entry.holder, entry.rec, o.w, o.h, GlowsForCombat())
+    return ok
 end
 
 -- A shared member at an opacity of its own: back to its own containers.
@@ -1622,6 +1911,12 @@ SyncEntryAlpha = function(entry)
         vis = holder:IsVisible()
         if issecretvalue and issecretvalue(vis) then vis = true end
     end
+    -- read before this pass writes it: was the missing look on screen
+    local lit = false
+    if entry.stage then
+        local st = entry.stage
+        lit = st:IsShown() and (st:GetAlpha() or 0) > 0 and (st._adDim:GetAlpha() or 0) > 0
+    end
     if entry.stage then
         entry.stage:SetAlpha((vis and entry.staged and not entry.revealHold) and 1 or 0)
         entry.stage._adDim:SetAlpha(ea)
@@ -1639,7 +1934,7 @@ SyncEntryAlpha = function(entry)
         else
             sub.container:SetAlpha(sa)
         end
-        SetQuiet(entry, sub, sa <= 0 or not vis)
+        SetQuiet(entry, sub, sa <= 0 or not vis, lit and vis)
     end
     -- the glow lanes: the icon's alpha while their glow wants them, and a
     -- combat-only glow also waits for combat
@@ -1656,6 +1951,7 @@ SyncEntryAlpha = function(entry)
         g.container:SetAlpha(ga)
         SetQuiet(entry, g, ga <= 0 or not vis)
     end
+    if entry.mlanes then MG.Alpha(entry, ea, a, vis) end
 end
 
 -- The icon's aura again after its holder's step-aside mark changed.
@@ -1704,6 +2000,10 @@ local function RestyleEntry(entry)
     local px = HolderPx(entry)
     local opts = AuraButtonOpts(entry)
     opts.glowElsewhere = GlowMoved(entry)
+    -- Missing glows on a layer of their own: placed before they are painted
+    for _, ml in pairs(entry.mlanes or {}) do
+        if not MG.Place(entry, ml) then entry.stylePending = true end
+    end
     -- the Missing and Always glows are the holder's: our frames, never locked
     if entry.holder and entry.rec and entry.rec.kind == "aura" then
         Factory.ApplyMissingGlows(entry.holder, entry.rec, opts.w, opts.h, GlowsForCombat())
@@ -1770,6 +2070,7 @@ local function HookHolder(f)
             -- a shared container stays up for the rest: this icon's slots go quiet
             for _, sub in ipairs(e.subs) do SetQuiet(e, sub, true) end
             for _, g in ipairs(e.glows or {}) do SetQuiet(e, g, true) end
+            MG.Park(e, false)
         end
     end)
     f:HookScript("OnShow", function(self)
@@ -1892,6 +2193,16 @@ local function AttachEntry(rec, f, d)
                 g.container:Hide()
                 entry.retired[#entry.retired + 1] = g
             end
+            -- Missing glow lanes: parked above; their stages give their pictures back
+            MG.Park(entry, true)
+            for _, ml in pairs(entry.mlanes or {}) do
+                ml.stage:Hide()
+                for _, s in ipairs(ml.subs) do
+                    s.container:Hide()
+                    entry.retired[#entry.retired + 1] = s
+                end
+            end
+            entry.mlanes = nil
             entry.subs = {}
             entry.glows = {}
             entry.gen = (entry.gen or 0) + 1
@@ -1923,6 +2234,8 @@ local function AttachEntry(rec, f, d)
         SetParked(entry, false)
         if AurasSecretNow() then entry.stylePending = true else RestyleEntry(entry) end
     end
+    -- our own frames: a Missing glow's layer and paint, in combat too
+    if entry.mlanes and not MG.Sync(entry) then entry.stylePending = true end
     SyncEntryAlpha(entry)
 end
 
@@ -1987,6 +2300,7 @@ function Driver.Detach(id)
         end
         if entry.share and entry.subs == entry.share then entry.share[1].dom.members[entry] = nil end
     end
+    MG.Park(entry, true)
     -- the missing look goes home for the editor preview; the stage empties
     StageLook(entry, false)
     SyncChargeGate(entry)

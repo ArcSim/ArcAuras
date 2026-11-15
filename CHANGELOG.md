@@ -1,5 +1,18 @@
 # Arc Auras
 
+## 3.3.4
+
+Pick which aura an icon shows when several are up, a trigger for each aura, and smooth mana bars.
+
+### New Features
+
+- **When several are up** - An icon that lists several auras can pick which one shows while more than one is up: the first one up, the newest, by time left, or in list order, where the first aura listed always wins.
+- **A trigger for each aura** - In list order, Effects > + Add a trigger also offers a trigger for each listed aura, each with its own glow.
+
+### Bug Fixes
+
+- **Mana bars** - Mana regeneration fills the bar and its text smoothly instead of in steps.
+
 ## 3.3.3
 
 A count of your totems out, aura tooltips, rounding per group and more ring thicknesses.

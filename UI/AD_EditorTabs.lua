@@ -383,11 +383,65 @@ local UNUSABLE = { key = "unusable", label = "Can't use it", when = "while it ca
     alphaTip = "Never brighter than Ready's opacity." }
 -- What shows over the cooldown ("On this icon": an aura, a totem, a set
 -- duration), on a spell, item or trinket icon: its two rows while it is on.
+-- In list order (DriverAura.ListRanks) a cooldown icon's aura has glow
+-- slots 1-4, each for any listed aura (Glow for 0, here) or one of them (its
+-- own trigger below); then the first one off, which is how one is added.
+local function ListOrder(r)
+    local DA = NS.DriverAura
+    local sh = r and r.kind ~= "aura" and DA and DA.ShapeFor and DA.ShapeFor(r)
+    return sh and DA.ListRanks(sh) ~= nil and DA.OverlayOn(r) == true and sh or nil
+end
+ET.ListOrder = ListOrder
+local function SlotGlowKeys(r, pick)
+    local out, spare = {}, nil
+    for k = 1, Schema.AURA_GLOW_SLOTS do
+        local sfx = (k > 1) and tostring(k) or ""
+        local key = A .. ".activeGlow" .. sfx
+        if Store.Resolve(r, A, "activeGlow" .. sfx) == true then
+            local f = tonumber(Store.Resolve(r, A, "activeGlowFor" .. sfx)) or 0
+            if (pick == 0 and f <= 0) or (pick > 0 and f > 0 and Store.SameAura(pick, f)) then out[#out + 1] = key end
+        elseif not spare then
+            spare = key
+        end
+    end
+    if spare then out[#out + 1] = spare end
+    return out
+end
 local OVERLAY = { key = "overlay", label = "Aura active", when = "while its aura is up", overlay = true,
     alpha = { A, "activeAlpha" },
     grey = { A, "activeDesaturate" }, tint = { A, "activeTintColor", on = "activeTintEnabled" },
     labelFn = function(r) return ET.OverlayWords(r, "Aura active", "Totem down", "Duration running", "Totem or aura up") end,
-    fx = { glow = { "auraActive.activeGlow" }, art = { "art.active" } } }
+    -- in list order it covers every listed aura (each has a trigger of its own too)
+    whenFn = function(r) return ListOrder(r) and "while any of its auras shows" or nil end,
+    fx = { glow = function(r)
+        if ListOrder(r) then return SlotGlowKeys(r, 0) end
+        return { "auraActive.activeGlow" }
+    end, art = { "art.active" } } }
+-- In list order, one trigger per listed aura (its ranks together): its
+-- glows show while that aura is the one on the icon (DriverAura RankOpts).
+local PER_AURA = {}
+function ET.PerAuraStates(r)
+    local sh = ListOrder(r)
+    if not sh then return nil end
+    local groups = NS.DriverAura.GlowSpellGroups(sh)
+    if #groups < 2 then return nil end
+    local out = {}
+    for _, g in ipairs(groups) do
+        local key = "aurafor" .. g.id
+        local st = PER_AURA[key]
+        if not st then
+            local id = g.id
+            st = { key = key, overlay = true, perAura = id, label = "An aura is up", when = "while it shows",
+                fx = { glow = function(rec) return SlotGlowKeys(rec, id) end } }
+            PER_AURA[key] = st
+        end
+        local name = g.name
+        st.labelFn = function() return Tr("%s is up"):format(name) end
+        st.whenFn = function() return Tr("while %s shows"):format(name) end
+        out[#out + 1] = st
+    end
+    return out
+end
 local OVERLAY_MISSING = { key = "overlayMissing", label = "Aura missing", when = "while its aura is down", overlay = true,
     grey = { A, "overlayDesatInactive" },
     labelFn = function(r) return ET.OverlayWords(r, "Aura missing", "Totem gone", "Duration over", "Totem and aura gone") end }
@@ -702,7 +756,13 @@ function ET.StatesFor(rec)
     if not list then return nil end
     local out = {}
     for _, st in ipairs(list) do
-        if RowShows(st, rec) then out[#out + 1] = st end
+        if RowShows(st, rec) then
+            out[#out + 1] = st
+            -- a trigger per listed aura, after the aura's own
+            if st.key == "overlay" and not rec._adDefaults then
+                for _, p in ipairs(ET.PerAuraStates(rec) or {}) do out[#out + 1] = p end
+            end
+        end
     end
     return out
 end
@@ -923,9 +983,17 @@ end
 -- A numbered aura glow switched on under Missing glows while the aura is
 -- missing; under Active, one left on "missing" goes back to "while up".
 function ET.AuraGlowAdded(rec, sfx)
-    if not (rec and rec.kind == "aura") then return end
+    if not rec then return end
     local st = ET.Open(rec)
     if not st then return end
+    -- a cooldown icon's aura in list order: the glow is for that trigger's
+    -- aura, or for any of them under Aura active
+    if rec.kind ~= "aura" then
+        if ListOrder(rec) and (st.perAura or st.key == "overlay") then
+            Store.SetOverride(rec, A, "activeGlowFor" .. (sfx or ""), st.perAura or 0)
+        end
+        return
+    end
     local field = "activeGlowWhen" .. (sfx or "")
     local when = Store.Resolve(rec, A, field)
     if st.key == "missing" and when ~= "missing" and when ~= "both" then

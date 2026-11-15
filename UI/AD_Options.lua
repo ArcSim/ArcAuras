@@ -968,6 +968,36 @@ function Options.SetOverlayOn(rec, on)
     Store.Dirty("style", rec.id)
 end
 
+-- When several listed auras are up, which one the icon shows (its shape's
+-- sort): the game's own pick on the icon's slot (DriverAura.SORTS), or the
+-- list's order.
+Options.AURA_SORT_PICKS = {
+    { value = "first", text = "The first one up" },
+    { value = "newest", text = "The newest" },
+    { value = "soonest", text = "Ends soonest" },
+    { value = "last", text = "Ends last" },
+    -- one button per listed aura, the first over the rest (DriverAura.ListRanks)
+    { value = "list", text = "In list order" },
+}
+function Options.AuraSortRow(pg, win, shapeOf, vis)
+    local row = AT.RowDropdown(pg, win, "When several are up, show",
+        function()
+            local d = shapeOf(SelIcon())
+            return (d and NS.DriverAura.SortOf(d)) or "first"
+        end,
+        function(v)
+            local r = SelIcon()
+            local d = shapeOf(r)
+            if not d then return end
+            d.sort = (v ~= "first") and v or nil
+            Store.Dirty("style", r.id)
+        end,
+        function() return Options.AURA_SORT_PICKS end,
+        function() return vis() and NS.DriverAura.SortOK(SelIcon()) end)
+    AT.Tooltip(row, "When several are up, show",
+        "Which listed aura the icon shows while more than one is up. In list order: the first ID listed wins.")
+end
+
 -- What shows over a spell icon's cooldown: nothing, the aura (the engine's),
 -- its totem, its totem while down else the aura (overlay.totem, the Cooldown
 -- Manager's order) or a set duration on cast (Drivers\AD_DriverPhase.lua). The
@@ -1030,13 +1060,14 @@ function Options.AuraSummary(d)
     return AT.Tr("aura %s"):format(tostring(ids[1] or "?"))
 end
 
--- "Glow for" on an aura icon: any of its spells, or one of them with its
+-- "Glow for" on an aura icon (or a cooldown icon's aura in list order): any of its spells, or one of them with its
 -- ranks (DriverAura.GlowSpellGroups, each keyed by its first id).
 function Options.AuraGlowForItems(rec)
     local items = { { value = 0, text = "Any of its spells" } }
     local DA = NS.DriverAura
     if not (rec and DA and DA.GlowSpellGroups) then return items end
-    for _, g in ipairs(DA.GlowSpellGroups(rec.driver)) do
+    -- a cooldown icon's aura: its own list
+    for _, g in ipairs(DA.GlowSpellGroups(DA.ShapeFor(rec) or rec.driver)) do
         items[#items + 1] = { value = g.id, raw = true,
             text = (g.n > 1) and AT.Tr("%s (%d ranks)"):format(g.name, g.n) or g.name }
     end
@@ -1049,7 +1080,7 @@ function Options.AuraGlowForValue(rec, section, field)
     local v = rec and tonumber(Store.Resolve(rec, section, field)) or 0
     local DA = NS.DriverAura
     if v <= 0 or not (DA and DA.GlowSpellGroups) then return 0 end
-    for _, g in ipairs(DA.GlowSpellGroups(rec.driver)) do
+    for _, g in ipairs(DA.GlowSpellGroups(DA.ShapeFor(rec) or rec.driver)) do
         if Store.SameAura(g.id, v) then return g.id end
     end
     return 0
@@ -9307,6 +9338,8 @@ local function BuildIconEditor(parent)
         function() return auraVis() and NS.IsForever == true end,
         Options.FOLLOW_RANK_DESC)
     Options.BuildYield()
+    Options.AuraSortRow(pg, win, function(r) return r and r.driver end, auraVis)
+    Options.BuildYield()
     AT.RowDropdown(pg, win, "Aura type",
         function()
             local r = SelIcon()
@@ -9989,6 +10022,8 @@ local function BuildIconEditor(parent)
         function() return ovVis() and NS.IsForever == true end,
         Options.FOLLOW_RANK_DESC)
     Options.BuildYield()
+    Options.AuraSortRow(pg, win, Options.OverlayOf, ovVis)
+    Options.BuildYield()
     AT.RowDropdown(pg, win, "Aura type",
         function()
             local ov = Options.OverlayOf(SelIcon())
@@ -10593,7 +10628,17 @@ local function BuildIconEditor(parent)
         -- glow sits under Active or Missing by its Glow when; one switched on
         -- under Missing glows while the aura is missing.
         Card("Aura active", "auraActive", "activeGlow", nil, "Glow while the aura is up", W.overlay,
-            { kindOnly = { spell = true, item = true, trinket = true, timer = true }, noLook = true })
+            { kindOnly = { spell = true, item = true, trinket = true, timer = true }, noLook = true,
+                onOn = function(r) ET.AuraGlowAdded(r, nil) end })
+        -- in list order a cooldown icon's aura has glows 2-4 too, each for any
+        -- of its auras or one of them (EditorTabs ListOrder)
+        for k = 2, Schema.AURA_GLOW_SLOTS do
+            local sfx = tostring(k)
+            Card("Glow " .. k, "auraActive", "activeGlow", sfx, "Glow while the aura is up", W.overlay,
+                { kindOnly = { spell = true, item = true, trinket = true, timer = true }, noLook = true,
+                    applies = function(r) return ET.ListOrder(r) ~= nil end,
+                    onOn = function(r) ET.AuraGlowAdded(r, sfx) end })
+        end
         Card("Glow 1", "auraActive", "activeGlow", nil, "Glow while active", ET.AuraGlowWhen(nil),
             { kindOnly = "aura", onOn = function(r) ET.AuraGlowAdded(r, nil) end })
         for k = 2, Schema.AURA_GLOW_SLOTS do

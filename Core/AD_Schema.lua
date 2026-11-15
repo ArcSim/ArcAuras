@@ -1959,11 +1959,18 @@ Schema.icon = {
         -- The gates ride a lane: the icon's own (DriverAura) or its Dynamic
         -- row's (AD_DriverAuraRows). The pick is one of the icon's spells, its
         -- ranks by name; 0 = any of them.
+        -- A cooldown icon's aura in list order has it too: each listed aura's
+        -- own button draws the glows set for it (DriverAura RankOpts).
         activeGlowFor = { noDefault = true, inherit = false, d = 0, t = "id", auraSpellPick = true,
-            kinds = AU, label = "Glow for",
+            kinds = AAX, label = "Glow for",
             showIf = function(rec)
                 local DA = NS.DriverAura
-                return DA ~= nil and DA.GlowGateOK(rec) and #DA.GlowSpellGroups(rec.driver) > 1
+                if DA == nil then return false end
+                if rec.kind ~= "aura" then
+                    local sh = DA.ShapeFor(rec)
+                    return sh ~= nil and DA.ListRanks(sh) ~= nil and #DA.GlowSpellGroups(sh) > 1
+                end
+                return DA.GlowGateOK(rec) and #DA.GlowSpellGroups(rec.driver) > 1
             end,
             desc = "Any of the icon's spells, or only one of them (its ranks together). Works in combat.",
             dep = { { field = "activeGlow" }, { field = "activeGlowWhen", notValue = "missing" },
@@ -2534,7 +2541,8 @@ do
             for key, v in pairs(src) do def[key] = v end
             def.d = copy(src.d)
             def.inherit = false
-            def.kinds = AU
+            -- a cooldown icon's aura has them in list order (Schema.RankGlowShows)
+            def.kinds = AAX
             local lbl = src.label or name
             local numbered = lbl:gsub("^Active glow", "Glow " .. suf, 1)
             if numbered == lbl then numbered = lbl:gsub("^Glow ", "Glow " .. suf .. " ", 1) end
@@ -2555,9 +2563,31 @@ do
                 local on = Schema.NativeGlowOn(nl.sec, nl.pre .. "GlowNative" .. suf, nl.pre .. "GlowType" .. suf)
                 def.showIf = function(rec) return not on(rec) and glowOK(rec) end
             end
+            local auraShows = def.showIf
+            def.showIf = function(rec)
+                if rec and rec.kind ~= "aura" then return Schema.RankGlowShows(rec, name, src, suf) end
+                return auraShows(rec)
+            end
             fields[name .. suf] = def
         end
     end
+end
+
+-- Glows 2-4 on a cooldown icon's aura: in list order only, each drawn on the
+-- listed auras' own buttons, so no lane of its own (no Glow only in combat,
+-- strata or level), and only the fields glow 1 shows there.
+local RANK_SLOT_SKIP = { activeGlowCombatOnly = true, activeGlowStrata = true, activeGlowLevel = true }
+function Schema.RankGlowShows(rec, name, src, suf)
+    if RANK_SLOT_SKIP[name] or (src.kinds and not src.kinds[rec.kind]) then return false end
+    local DA = NS.DriverAura
+    local sh = DA and DA.ShapeFor and DA.ShapeFor(rec)
+    if not (sh and DA.ListRanks(sh)) then return false end
+    if name == "activeGlowFor" and src.showIf then return src.showIf(rec) end
+    local gate = Schema.GLOW_NATIVE_GATED[name]
+    if gate then
+        return not Schema.NativeGlowOn(gate.sec, gate.pre .. "GlowNative" .. suf, gate.pre .. "GlowType" .. suf)(rec)
+    end
+    return true
 end
 
 -- A special icon's own texts (Core\AD_SpecialIcon.lua): label slots 4 to 6,

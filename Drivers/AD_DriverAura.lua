@@ -177,33 +177,117 @@ local function UnitList(d)
 end
 Driver.UnitList = UnitList
 
--- more than one button: you, then your target, or several units
+-- In list order (d.sort "list"): one button per listed aura, the first over
+-- the rest, so it covers them whenever it is up; presence is never read. The
+-- ranks: one aura each, the last of LIST_MAX taking any left over; nil
+-- unless two or more.
+Driver.LIST_MAX = 6
+local function ListRanks(d)
+    if type(d) ~= "table" or d.sort ~= "list" then return nil end
+    local ids = Store.AuraIDList(d)
+    if #ids < 2 then return nil end
+    local out = {}
+    for i, id in ipairs(ids) do
+        if i < Driver.LIST_MAX then
+            out[i] = { id }
+        else
+            out[Driver.LIST_MAX] = out[Driver.LIST_MAX] or {}
+            table.insert(out[Driver.LIST_MAX], id)
+        end
+    end
+    return out
+end
+Driver.ListRanks = ListRanks
+
+-- more than one button: you, then your target, several units, or list order
 local function MultiUnit(d)
-    return TwoUnits(d) or UnitList(d) ~= nil
+    return TwoUnits(d) or UnitList(d) ~= nil or ListRanks(d) ~= nil
 end
 Driver.MultiUnit = MultiUnit
 
-local function LanesFor(d)
+-- When several of its auras are up, which one the game shows (d.sort): its
+-- own order (nil), the newest, or by time left. Set when the slot is made, so
+-- a new pick is a lane change. The numbers stand in for a client that has
+-- not loaded the aura engine yet.
+Driver.SORTS = { newest = { "AuraInstanceIDOnly", "Reverse" }, soonest = { "ExpirationOnly", "Normal" },
+    last = { "ExpirationOnly", "Reverse" } }
+Driver.SORT_IDS = { AuraInstanceIDOnly = 8, ExpirationOnly = 5, Normal = 0, Reverse = 1 }
+function Driver.SortOf(d)
+    if type(d) ~= "table" then return nil end
+    if d.sort == "list" or Driver.SORTS[d.sort] then return d.sort end
+    return nil
+end
+function Driver.SortArgs(sort)
+    local p = sort and Driver.SORTS[sort]
+    if not p then return nil end
+    local E, D = AuraContainerSortMethod, AuraContainerSortDirection
+    return (E and E[p[1]]) or Driver.SORT_IDS[p[1]], (D and D[p[2]]) or Driver.SORT_IDS[p[2]]
+end
+-- Offered where the icon has its own slot and lists two or more auras: a
+-- Dynamic aura group's rows place every member from one flow.
+function Driver.SortOK(rec)
+    if not rec then return false end
+    if rec.kind == "aura" then
+        local g = rec.groupId and Store.Get(rec.groupId)
+        if g and g.groupKind == "aura" and Store.Resolve(g, "arrangement", "dynamicLayout") == true then
+            return false
+        end
+    end
+    local d = Driver.ShapeFor and Driver.ShapeFor(rec)
+    return d ~= nil and Driver.SpellIDList ~= nil and #Driver.SpellIDList(d) >= 2
+end
+-- a slot's options with its lane's pick
+local function SlotSort(opts, lane)
+    local m, dir = Driver.SortArgs(lane.sort)
+    if m then opts.sortMethod, opts.sortDirection = m, dir end
+    return opts
+end
+
+-- One lane per unit (the glow lanes' set).
+local function UnitLanes(d)
     local unit, harmful = LaneOf(d)
+    local sort = Driver.SortOf(d)
     if TwoUnits(d) then
-        return { { unit = "player", harmful = false, rise = RISE }, { unit = "target", harmful = harmful } }
+        return { { unit = "player", harmful = false, rise = RISE, sort = sort },
+            { unit = "target", harmful = harmful, sort = sort } }
     end
     local list = UnitList(d)
     if list then
         local out = {}
         for i, u in ipairs(list) do
-            out[i] = { unit = u, harmful = harmful, rise = (#list - i) * RISE }
+            out[i] = { unit = u, harmful = harmful, rise = (#list - i) * RISE, sort = sort }
         end
         return out
     end
-    return { { unit = unit, harmful = harmful } }
+    return { { unit = unit, harmful = harmful, sort = sort } }
+end
+Driver.UnitLanes = UnitLanes
+
+-- The icon's buttons: one per unit, or in list order one per unit and rank,
+-- yours over the target's, each unit's first rank highest.
+local function LanesFor(d)
+    local base = UnitLanes(d)
+    local ranks = ListRanks(d)
+    if not ranks then return base end
+    local out = {}
+    for _, l in ipairs(base) do
+        for r, ids in ipairs(ranks) do
+            out[#out + 1] = { unit = l.unit, harmful = l.harmful, sort = "list", rank = r, rankIDs = ids }
+        end
+    end
+    for i, l in ipairs(out) do l.rise = (#out - i) * RISE end
+    return out
 end
 Driver.LanesFor = LanesFor
 
--- one string per lane set, so a switch between one and two units rewires
+-- one string per lane set, so a switch between one and two units (or a new
+-- pick of which aura shows) rewires
 local function LaneSig(list)
     local t = {}
-    for i, l in ipairs(list) do t[i] = l.unit .. (l.harmful and ":h" or ":b") end
+    for i, l in ipairs(list) do
+        t[i] = l.unit .. (l.harmful and ":h" or ":b") .. ":" .. (l.sort or "")
+            .. (l.rankIDs and (":" .. table.concat(l.rankIDs, "+")) or "")
+    end
     return table.concat(t, ",")
 end
 
@@ -232,6 +316,13 @@ Driver.TrackedIDs = TrackedIDs
 -- never an empty set: a HELPFUL slot with no id filter shows an arbitrary buff.
 local IncludeMap = Store.AuraIncludeMap
 Driver.IncludeMap = IncludeMap
+-- A lane's own ids: its rank's in list order, else every tracked id.
+local function LaneMap(d, lane)
+    if lane.rankIDs then
+        return IncludeMap({ spellID = lane.rankIDs[1], spellIDs = lane.rankIDs, followRank = d.followRank })
+    end
+    return IncludeMap(d)
+end
 
 -- An id map as a comparable string. A container rebuilds on every candidate
 -- filter it is sent, changed or not, and each rebuild restarts what its
@@ -568,8 +659,14 @@ local function LaneIDs(rec, slot, row)
     local d = Driver.ShapeFor(rec) or {}
     local ids = TrackedIDs(d)
     local m, n = {}, 0
-    -- an overlay has no Glow for: its glow follows every id it tracks
-    local pick = overlay and 0 or (tonumber(R("activeGlowFor")) or 0)
+    local listed = not row and ListRanks(d) ~= nil
+    -- an overlay has Glow for only in list order: else its glow follows every id it tracks
+    local pick = (overlay and not listed) and 0 or (tonumber(R("activeGlowFor")) or 0)
+    -- in list order each aura's own button draws its glow (RankOpts); a lane
+    -- only for what a button cannot do: wait for combat, or its own strata
+    if listed and R("activeGlowCombatOnly") ~= true and not timed and not OwnGlowStrata(rec, suf) then
+        return nil
+    end
     if pick > 0 then
         for _, id in ipairs(ids) do
             if Store.SameAura(pick, id) then
@@ -612,6 +709,20 @@ end
 -- True when glow 1's lane carries it, so the icon's button drops it.
 local function GlowMoved(entry)
     return HasGlowLane(entry, 1) and GlowIDs(entry.rec, 1) ~= nil
+end
+
+-- A button in list order draws the glows set for its own aura (Glow for) or
+-- for any, save those riding a lane.
+local function RankOpts(entry, opts, sub)
+    if not sub.rankIDs then return opts end
+    local o = {}
+    for k, v in pairs(opts) do o[k] = v end
+    o.rankIDs = sub.rankIDs
+    o.rankLanes = {}
+    for k = 1, GlowSlots() do
+        if HasGlowLane(entry, k) and GlowIDs(entry.rec, k) ~= nil then o.rankLanes[k] = true end
+    end
+    return o
 end
 
 -- The glow button's style options for one lane.
@@ -1279,7 +1390,7 @@ function MG.Make(iconId, entry, k, startParked)
     entry.mlanes = entry.mlanes or {}
     entry.mlanes[k] = ml
     local ids = startParked and { [0] = true } or IncludeMap(d)
-    for _, lane in ipairs(LanesFor(d)) do
+    for _, lane in ipairs(UnitLanes(d)) do
         local c = CreateIconContainer(lane.unit, ml.dim)
         if c then
             local key = "admg" .. k .. "_" .. tostring(iconId) .. "_" .. lane.unit
@@ -1335,9 +1446,11 @@ local function EnsureGlowSlots(iconId, entry, startParked)
     for _, k in ipairs(miss) do MG.Make(iconId, entry, k, startParked) end
     entry.glows = entry.glows or {}
     local d = ShapeFor(rec) or {}
+    -- one lane per unit; in list order over the top button
+    local listTop = ListRanks(d) and ((#LanesFor(d) - 1) * RISE) or nil
     for _, slot in ipairs(want) do
         local gids = GlowIDs(rec, slot)
-        for _, lane in ipairs(LanesFor(d)) do
+        for _, lane in ipairs(UnitLanes(d)) do
             local c = CreateIconContainer(lane.unit)
             if c then
                 c:SetAlpha(0)
@@ -1346,7 +1459,7 @@ local function EnsureGlowSlots(iconId, entry, startParked)
                     .. (lane.harmful and "_h" or "_b") .. "_g" .. (entry.gen or 0)
                 local ids = (startParked or not gids) and { [0] = true } or gids
                 local g = { slot = slot, unit = lane.unit, key = key, container = c,
-                    harmful = lane.harmful, rise = lane.rise, filterSig = FilterSig(ids), ids = ids }
+                    harmful = lane.harmful, rise = listTop or lane.rise, filterSig = FilterSig(ids), ids = ids }
                 entry.glows[#entry.glows + 1] = g
                 c:AddAuraSlot(key, FilterForLane(d, lane), {
                     maxFrameCount = 1,
@@ -1400,13 +1513,14 @@ local function EnsureSlots(iconId, rec, startParked)
             -- generation-suffixed key: slots can never be removed; a rewire
             -- parks the old keys and adds fresh ones
             local key = "ad" .. tostring(iconId) .. "_" .. lane.unit
-                .. (lane.harmful and "_h" or "_b") .. "_g" .. entry.gen
+                .. (lane.harmful and "_h" or "_b") .. (lane.rank and ("_r" .. lane.rank) or "") .. "_g" .. entry.gen
             -- Parked creation bakes in the never-matching id.
-            local ids = startParked and { [0] = true } or IncludeMap(d)
+            local ids = startParked and { [0] = true } or LaneMap(d, lane)
             local sub = { unit = lane.unit, key = key, container = c, harmful = lane.harmful,
-                rise = lane.rise, filterSig = FilterSig(ids), ids = ids, inStage = stage ~= nil }
+                rise = lane.rise, filterSig = FilterSig(ids), ids = ids, inStage = stage ~= nil, sort = lane.sort,
+                rank = lane.rank, rankIDs = lane.rankIDs }
             entry.subs[#entry.subs + 1] = sub
-            c:AddAuraSlot(key, FilterForLane(d, lane), {
+            c:AddAuraSlot(key, FilterForLane(d, lane), SlotSort({
                 maxFrameCount = 1,
                 initializeFrame = function(b)
                     WireButton(b)
@@ -1422,7 +1536,7 @@ local function EnsureSlots(iconId, rec, startParked)
                     if r then
                         local opts = AuraButtonOpts(e)
                         opts.glowElsewhere = GlowMoved(e)
-                        Factory.StyleAuraButton(b, r, HolderPx(e), opts)
+                        Factory.StyleAuraButton(b, r, HolderPx(e), RankOpts(e, opts, sub))
                         if opts.erase then
                             e.inked = true
                             if e.stage and not e.fbOn then e.stage:Hide() end
@@ -1431,7 +1545,7 @@ local function EnsureSlots(iconId, rec, startParked)
                     Factory.AuraButtonMouse(b, r)
                 end,
                 candidateFilters = { includeSpellIDs = ids },
-            })
+            }, lane))
             SlotOn(c, key, not startParked, lane.harmful, ids, lane.unit)
         end
     end
@@ -1459,6 +1573,8 @@ local function ShareOK(rec)
     -- Dynamic group rows and type looks draw their own
     if not Driver.GlowLaneOK(rec) then return false end
     if Driver.NeedsEraser(rec) or AnyGlowWanted(rec) or Driver.CountGates(rec) then return false end
+    -- in list order its buttons stack on their own containers
+    if ListRanks(rec.driver) then return false end
     local a = Store.Resolve(rec, "appearance", "alpha") or 1
     if a ~= 1 and a ~= 0 then return false end
     local C = NS.Conditions
@@ -1496,9 +1612,9 @@ local function AddSharedSlots(iconId, entry, rec)
         local key = "ads" .. tostring(iconId) .. "_" .. lane.unit
             .. (lane.harmful and "_h" or "_b") .. "_g" .. (entry.gen or 0)
         local sub = { unit = lane.unit, key = key, container = c, harmful = lane.harmful,
-            rise = lane.rise, filterSig = FilterSig(never), ids = never, dom = dom }
+            rise = lane.rise, filterSig = FilterSig(never), ids = never, dom = dom, sort = lane.sort }
         share[#share + 1] = sub
-        c:AddAuraSlot(key, FilterForLane(d, lane), {
+        c:AddAuraSlot(key, FilterForLane(d, lane), SlotSort({
             maxFrameCount = 1,
             initializeFrame = function(b)
                 WireButton(b)
@@ -1516,7 +1632,7 @@ local function AddSharedSlots(iconId, entry, rec)
                 Factory.AuraButtonMouse(b, r)
             end,
             candidateFilters = { includeSpellIDs = never },
-        })
+        }, lane))
         SlotOn(c, key, false, lane.harmful, never, lane.unit)
     end
     entry.share = share
@@ -1570,7 +1686,7 @@ local function ApplySubs(entry, list, parked)
         if not parked and c.SetAuraSlotFilterString then
             c:SetAuraSlotFilterString(sub.key, FilterForLane(d, sub))
         end
-        local ids = parked and { [0] = true } or IncludeMap(d)
+        local ids = parked and { [0] = true } or LaneMap(d, sub)
         local sig = FilterSig(ids)
         if sub.filterSig ~= sig then
             sub.filterSig = sig
@@ -2028,7 +2144,7 @@ local function RestyleEntry(entry)
                         for k, v in pairs(opts) do so[k] = v end
                         so.erase = false
                     end
-                    Factory.StyleAuraButton(b, entry.rec, px, so)
+                    Factory.StyleAuraButton(b, entry.rec, px, RankOpts(entry, so, sub))
                     Factory.AuraButtonMouse(b, entry.rec)
                 elseif list == entry.subs then
                     entry.stylePending = true

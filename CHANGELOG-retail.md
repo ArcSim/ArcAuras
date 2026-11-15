@@ -1,5 +1,14 @@
 # Arc Auras
 
+## 3.3.4
+
+Pick which aura an icon shows when several are up, and a trigger for each aura.
+
+### New Features
+
+- **When several are up** - An icon that lists several auras can pick which one shows while more than one is up: the first one up, the newest, by time left, or in list order, where the first aura listed always wins.
+- **A trigger for each aura** - In list order, Effects > + Add a trigger also offers a trigger for each listed aura, each with its own glow.
+
 ## 3.3.3
 
 A count of your totems out, aura tooltips, rounding per group, more ring thicknesses and Arc UI import fixes.

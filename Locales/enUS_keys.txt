@@ -1847,6 +1847,8 @@ Enchant icons
 End it
 Ends at the value
 Ends early when you cast
+Ends last
+Ends soonest
 Ends when you die
 Enemy nameplates
 Enemy nameplates show debuffs in this version.
@@ -2520,6 +2522,7 @@ In combat the game hides buffs, so the count stops; this shows the icon, without
 In combat: ping key changes apply when combat ends.
 In it
 In it, then not in it, then in it again.
+In list order
 In or out
 In or out of combat
 In or out of melee range (%s yards), any class. A spell typed here replaces it.
@@ -4685,6 +4688,7 @@ The end of your cast that your connection's delay covers: start the next cast on
 The fill behind this group while the options window is open; opacity 0 means none.
 The fill shows how many of this deck's procs are used: none, some or all. Off: the Fill color.
 The filter button sits beside Refresh in the Looking For Group window.
+The first one up
 The first time you log in after Arc Auras updates, a window opens once with what changed in the new version.
 The full look starts out of combat, or after a /reload.
 The game does not let addons match this aura type on that unit by spell ID.
@@ -4750,6 +4754,7 @@ The mirror is not loaded.
 The move did not run.
 The nearest band that shows, standing still.
 The new look shows after a reload
+The newest
 The next tick
 The number beside a marker that comes back in a later swing.
 The numeric item ID.
@@ -5332,6 +5337,7 @@ When queued: while it waits to go off with your next swing. After cast: from the
 When ready
 When ready (cooldown done)
 When recharging starts
+When several are up, show
 When states overlap
 When texts stay bright
 When the aura appears
@@ -5405,6 +5411,7 @@ Where this sub-panel's rows go: all of this type, one layout, one group, one ite
 Where to find the pack or you, a page or a Discord. It shows as text to copy.
 Which Casts
 Which casts
+Which listed aura the icon shows while more than one is up. In list order: the first ID listed wins.
 Which of the game's volume sliders the sounds follow. Spoken words use WoW's text to speech volume.
 Which one
 Which other windows the feed sits above or below.
@@ -5978,7 +5985,9 @@ wheel
 when
 when no skin applies
 while %s is ready
+while %s shows
 while a charge comes back
+while any of its auras shows
 while every proc is used, or its timer runs
 while it can still proc
 while it can't be used
@@ -5989,6 +5998,7 @@ while it is not active
 while it is on cooldown
 while it is ready
 while it is toggled on
+while it shows
 while its aura is down
 while its aura is up
 while no totem is out

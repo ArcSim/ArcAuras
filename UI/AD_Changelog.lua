@@ -13,6 +13,22 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.3.4",
+        intro = "Pick which aura an icon shows when several are up, a trigger for each aura, and smooth mana bars.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "When several are up",
+                    desc = "An icon that lists several auras can pick which one shows while more than one is up: the first one up, the newest, by time left, or in list order, where the first aura listed always wins." },
+                { title = "A trigger for each aura",
+                    desc = "In list order, Effects > + Add a trigger also offers a trigger for each listed aura, each with its own glow." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Mana bars",
+                    desc = "Mana regeneration fills the bar and its text smoothly instead of in steps." },
+            } },
+        },
+    },
+    {
         version = "3.3.3",
         intro = "A count of your totems out, aura tooltips, rounding per group and more ring thicknesses.",
         sections = {
@@ -1734,6 +1750,18 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.3.4",
+        intro = "Pick which aura an icon shows when several are up, and a trigger for each aura.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "When several are up",
+                    desc = "An icon that lists several auras can pick which one shows while more than one is up: the first one up, the newest, by time left, or in list order, where the first aura listed always wins." },
+                { title = "A trigger for each aura",
+                    desc = "In list order, Effects > + Add a trigger also offers a trigger for each listed aura, each with its own glow." },
+            } },
+        },
+    },
     {
         version = "3.3.3",
         intro = "A count of your totems out, aura tooltips, rounding per group, more ring thicknesses and Arc UI import fixes.",

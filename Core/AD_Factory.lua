@@ -3954,18 +3954,32 @@ function Factory.StyleAuraButton(b, rec, px, opts)
         end
         return Factory.HolderGlowOn(rec, k)
     end
+    -- opts.rankIDs: a button of an icon in list order, which draws every glow
+    -- set for its own aura (Glow for) or for any, save those on a lane
+    -- (opts.rankLanes, by slot)
+    local rank = opts.rankIDs
+    local function ForRank(k)
+        if not rank then return true end
+        if opts.rankLanes and opts.rankLanes[k] then return false end
+        local pick = tonumber(R("auraActive", "activeGlowFor" .. ((k > 1) and k or ""))) or 0
+        if pick <= 0 then return true end
+        for _, id in ipairs(rank) do
+            if Store.SameAura(pick, id) then return true end
+        end
+        return false
+    end
     -- opts.glowElsewhere: a glow gate moved the glow onto its own button, as
     -- the time gate always does but on the editor's stand-in
     Factory.SetAuraButtonGlow(b, rec, (not forceHide) and not opts.glowElsewhere
         and not (timed and opts.previewGlows ~= true)
-        and R("auraActive", "activeGlow") == true and not Elsewhere(1),
+        and R("auraActive", "activeGlow") == true and not Elsewhere(1) and ForRank(1),
         opts.w or px, opts.h or px, gA)
     -- Glows 2-4 ride their own buttons in play; the editor preview's one
     -- stand-in draws them all (opts.previewGlows) and drops them otherwise,
     -- as it also serves spell icons.
     for k = 2, (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1 do
-        Factory.SetAuraButtonGlow(b, rec, (opts.previewGlows == true or row) and (not forceHide)
-            and R("auraActive", "activeGlow" .. k) == true and not Elsewhere(k),
+        Factory.SetAuraButtonGlow(b, rec, (opts.previewGlows == true or row or rank ~= nil) and (not forceHide)
+            and R("auraActive", "activeGlow" .. k) == true and not Elsewhere(k) and ForRank(k),
             opts.w or px, opts.h or px, gA, k)
     end
     -- Show only when little time is left (opts.erase), at Before that's

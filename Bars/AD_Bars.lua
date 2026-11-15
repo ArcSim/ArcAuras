@@ -2330,7 +2330,8 @@ end
 -- the fast-regen rate. The runtime reads POWER_ALL, so a record synced from
 -- another machine keeps its colour where that power does not exist locally.
 local POWER_ALL = {
-    [0] = { token = "MANA",        name = "Mana",        color = { 0, 0.5, 1 },                     classic = true },
+    -- mana: frequent on Forever only (Bars.PowerFrequent)
+    [0] = { token = "MANA",        name = "Mana",        color = { 0, 0.5, 1 },     foreverFrequent = true, classic = true },
     [1] = { token = "RAGE",        name = "Rage",        color = { 1, 0, 0 },      frequent = true, classic = true },
     [2] = { token = "FOCUS",       name = "Focus",       color = { 1, 0.5, 0.25 }, frequent = true },
     [3] = { token = "ENERGY",      name = "Energy",      color = { 1, 1, 0 },      frequent = true, classic = true },
@@ -3581,9 +3582,18 @@ function Bars.FormChanged(entry)
     end
 end
 
+-- Which of the two power events serves this power. Forever regenerates mana
+-- between the server's updates (its own player frame redraws it every frame),
+-- so mana fills smoothly there only on the frequent event.
+function Bars.PowerFrequent(pt)
+    local info = POWER_ALL[pt]
+    if not info then return false end
+    if info.foreverFrequent and NS.IsForever == true then return true end
+    return info.frequent == true
+end
+
 local function ResourceIsFrequent(entry)
-    local info = POWER_ALL[entry.powerType]
-    return (info and info.frequent) == true
+    return Bars.PowerFrequent(entry.powerType)
 end
 
 -- Spell costs: plain numbers (GetSpellPowerCost is not secret)

@@ -1269,8 +1269,7 @@ function TX.Needs()
         local rec = e.rec
         local s = TX.Source(rec)
         if s == "power" then
-            local info = Bars.POWER_ALL and Bars.POWER_ALL[TX.PowerType(rec)]
-            n[(info and info.frequent) and "UNIT_POWER_FREQUENT" or "UNIT_POWER_UPDATE"] = true
+            n[(Bars.PowerFrequent and Bars.PowerFrequent(TX.PowerType(rec))) and "UNIT_POWER_FREQUENT" or "UNIT_POWER_UPDATE"] = true
             n.UNIT_MAXPOWER = true
             if (rec.driver.powerType or -1) < 0 then
                 n.UNIT_DISPLAYPOWER, n.UPDATE_SHAPESHIFT_FORM = true, true

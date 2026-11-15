@@ -1924,8 +1924,8 @@ Factory.ApplyShadow = ApplyShadow
 
 -- Icon fonts by name ("" = the default face) through the bars' resolver, which
 -- loads after this file and is only reached at call time. A font an LSM addon
--- registers later shows the default until then; each later registration
--- restyles the icons (hooked the first time a named font is asked for).
+-- registers later, or a file the client has not loaded yet, shows the default
+-- until it takes; the bars' font tries then restyle the icons too.
 local fontHooked = false
 local function IconFont(key, default)
     local fallback = default or STANDARD_TEXT_FONT
@@ -1943,6 +1943,7 @@ local function IconFont(key, default)
             end)
         end
     end
+    if B.FontFor then return B.FontFor(key) or fallback end
     return B.ResolveFont(key) or fallback
 end
 Factory.IconFont = IconFont

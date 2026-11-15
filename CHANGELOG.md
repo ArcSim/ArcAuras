@@ -20,6 +20,7 @@ A count of your totems out, aura tooltips, rounding per group and more ring thic
 
 - **Defaults page** - Change them too now also changes icons and bars that hold their own value for that row, such as a keybind size.
 - **Texture timers** - A texture's countdown follows a new rounding right away.
+- **Fonts** - A font from another addon now shows on every icon and bar, even when it loads late.
 
 ## 3.3.2
 

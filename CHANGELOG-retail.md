@@ -21,6 +21,7 @@ A count of your totems out, aura tooltips, rounding per group, more ring thickne
 - **Arc UI import** - Buffs watched on you and your target import as buffs, and custom tick values carry over on every bar.
 - **Defaults page** - A font set there now reaches icons brought in from Arc UI, and Change them too now also changes icons and bars that hold their own value for that row, such as a keybind size.
 - **Texture timers** - A texture's countdown follows a new rounding right away.
+- **Fonts** - A font from another addon now shows on every icon and bar, even when it loads late.
 
 ## 3.3.2
 

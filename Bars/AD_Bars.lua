@@ -168,6 +168,8 @@ local function ResolveFont(key)
         local path = lsm:Fetch("font", key, true)
         if path then return path end
     end
+    -- a name no media addon has registered yet: asked again later
+    if Bars.FontMissed then Bars.FontMissed(key, true) end
     return BUILTIN_FONTS["Default"]
 end
 -- Also used by the icon texts.
@@ -740,6 +742,8 @@ local function FontObjectFor(entry, runKey)
 end
 
 local function ProvenFontPath(path, size, flags)
+    -- a file that took once stays loaded
+    if Bars.fontOK[path] then return path end
     if not fontProbe then
         fontProbe = UIParent:CreateFontString(nil, "OVERLAY")
         fontProbe:Hide()
@@ -748,9 +752,17 @@ local function ProvenFontPath(path, size, flags)
     -- back instead (a theme without the reader keeps the answer)
     local took
     if AT.FontTook then took = AT.FontTook(fontProbe, path, size, flags) else took = fontProbe:SetFont(path, size, flags) end
-    if took then return path end
+    if took then
+        Bars.fontOK[path] = true
+        return path
+    end
     if path ~= BUILTIN_FONTS["Default"] and Bars.FontMissed then Bars.FontMissed(path) end
     return BUILTIN_FONTS["Default"]
+end
+-- A named font for any text (icons too): the resolved file once it took,
+-- else the default face while it is asked again.
+function Bars.FontFor(key)
+    return ProvenFontPath(ResolveFont(key), 12, "")
 end
 
 -- the recipe written to the run's Font object (or, on a client without
@@ -6085,22 +6097,65 @@ function Bars.RestyleAll()
 end
 
 -- The first login after the game starts, a font file the client has not
--- loaded yet does not take at the first style pass, and nothing registers
--- later to restyle. Such a font is tried again a few times; once it takes,
--- every bar restyles.
-Bars.FONT_TRIES = { 0.5, 2, 5, 15 }
-function Bars.FontMissed(path)
+-- loaded yet does not take at the first style pass, and a media addon can
+-- register a name after a text asked for it. Each such font or name is asked
+-- again on a timer, at every loading screen, when any addon loads and when
+-- the media library registers a font; once one takes, every bar and icon
+-- restyles. A restyle that misses again starts the tries over.
+Bars.FONT_TRIES = { 0.5, 2, 5, 15, 30, 60 }
+Bars.fontOK = {}
+function Bars.FontMissed(what, isName)
     local m = Bars.missedFonts
     if not m then
         m = {}
         Bars.missedFonts = m
+        if Events and Events.On then
+            Events.On("PLAYER_ENTERING_WORLD", "adfonts", Bars.FontRecheck)
+            Events.On("ADDON_LOADED", "adfonts", Bars.FontRecheck)
+        end
     end
-    if m[path] ~= nil then return end
-    m[path] = true
+    if isName then m[what] = "name" else m[what] = "path" end
+    Bars.FontHookLSM()
     if not Bars.fontTry then
         Bars.fontTry = 1
         Bars.FontRetry()
     end
+end
+
+function Bars.FontHookLSM()
+    if Bars.fontLSMHooked then return end
+    local lsm = GetLSM()
+    if not (lsm and lsm.RegisterCallback) then return end
+    Bars.fontLSMHooked = true
+    Bars.fontLSMOwner = {}
+    lsm.RegisterCallback(Bars.fontLSMOwner, "LibSharedMedia_Registered", function(_, mediatype)
+        if mediatype == "font" then Bars.FontRecheck() end
+    end)
+end
+
+-- Every waiting font that takes now leaves the list; true when any did. A
+-- path that still fails is put back by the prover.
+function Bars.FontRecheck()
+    local m = Bars.missedFonts
+    if not (m and next(m)) then return false end
+    Bars.FontHookLSM()
+    local lsm = GetLSM()
+    local list = {}
+    for what in pairs(m) do list[#list + 1] = what end
+    local took = false
+    for _, what in ipairs(list) do
+        local path = what
+        if m[what] == "name" then path = lsm and lsm:Fetch("font", what, true) end
+        if path then
+            m[what] = nil
+            if ProvenFontPath(path, 12, "") == path then took = true end
+        end
+    end
+    if took then
+        Bars.RestyleAll()
+        if Store and Store.Dirty then Store.Dirty("style") end
+    end
+    return took
 end
 
 function Bars.FontRetry()
@@ -6110,19 +6165,8 @@ function Bars.FontRetry()
         return
     end
     C_Timer.After(delay, function()
-        local took, left = false, false
-        for path, waiting in pairs(Bars.missedFonts) do
-            if waiting == true then
-                if ProvenFontPath(path, 12, "") == path then
-                    Bars.missedFonts[path] = false
-                    took = true
-                else
-                    left = true
-                end
-            end
-        end
-        if took then Bars.RestyleAll() end
-        if left and Bars.fontTry < #Bars.FONT_TRIES then
+        Bars.FontRecheck()
+        if next(Bars.missedFonts) and Bars.fontTry < #Bars.FONT_TRIES then
             Bars.fontTry = Bars.fontTry + 1
             Bars.FontRetry()
         else

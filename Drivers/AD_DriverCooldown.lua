@@ -2010,6 +2010,7 @@ function Driver.Attach(rec, f)
             -- what shows over an item's or a trinket's cooldown, as on a spell icon
             if rec.kind ~= "ammo" then
                 if NS.DriverAura and NS.DriverAura.AttachOverlay then NS.DriverAura.AttachOverlay(rec, f) end
+                if NS.AuraSounds then NS.AuraSounds.Attach(rec) end
                 if NS.DriverPhase then NS.DriverPhase.Attach(rec, f) end
             end
         elseif rec.kind == "totem" then
@@ -2100,6 +2101,8 @@ function Driver.Attach(rec, f)
     if NS.DriverAura and NS.DriverAura.AttachOverlay then
         NS.DriverAura.AttachOverlay(rec, f)
     end
+    -- the aura's sounds, played by the game (Drivers\AD_AuraSounds.lua)
+    if NS.AuraSounds then NS.AuraSounds.Attach(rec) end
     -- its totem or a set duration instead: our own button (Drivers\AD_DriverPhase.lua)
     if NS.DriverPhase then NS.DriverPhase.Attach(rec, f) end
 end

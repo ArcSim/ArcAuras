@@ -41,8 +41,10 @@ end
 local function RGB(hex) return AT.RGB(hex) end
 local GREEN, GREEN_EDGE = { 0.482, 0.847, 0.561 }, { 0.243, 0.478, 0.267 }
 local ICON_INK = RGB("B58CF2")
-local FX_ORDER = { "look", "glow", "sound", "art" }
-local FX_WORD = { look = "Look", glow = "Glow", sound = "Sound", art = "Icon", when = "When" }
+local SWIPE_INK = RGB("F2C14E")
+local FX_ORDER = { "look", "glow", "sound", "art", "swipe", "border" }
+local FX_WORD = { look = "Look", glow = "Glow", sound = "Sound", art = "Icon", swipe = "Swipe", border = "Border",
+    when = "When" }
 EF.FX_WORD = FX_WORD
 -- between the idle tab's words and the open one's
 local function MidInk()
@@ -995,6 +997,15 @@ function EF.Chips(r, c)
                     break
                 end
             end
+        elseif fx == "swipe" or fx == "border" then
+            for _, k in ipairs(KeysOf(r, c.st, fx)) do
+                if KeyOn(r, k) then
+                    -- the border's chip carries its colour
+                    Chip(fx, Tr(FX_WORD[fx]), nil,
+                        fx == "border" and Store.Resolve(r, "auraActive", "activeBorderColor") or nil)
+                    break
+                end
+            end
         end
     end
     return out
@@ -1042,6 +1053,8 @@ function EF.Summary(r, c, fx)
     if not first then return "" end
     if fx == "glow" then return GlowWords(r, first) end
     if fx == "sound" then return SoundWords(r, first) end
+    if fx == "swipe" then return Tr("its own swipe") end
+    if fx == "border" then return Tr("its own colour") end
     return Tr("its own art")
 end
 
@@ -1370,6 +1383,11 @@ local function FxInk(r, c, fx)
     if fx == "sound" then return GREEN end
     if fx == "when" then return COL.title end
     if fx == "art" then return AT.Mute(ICON_INK) end
+    if fx == "swipe" then return AT.Mute(SWIPE_INK) end
+    if fx == "border" then
+        local bc = Store.Resolve(r, "auraActive", "activeBorderColor")
+        return type(bc) == "table" and { bc[1], bc[2], bc[3], 1 } or COL.arc
+    end
     return COL.arc
 end
 EF.FxInk = FxInk
@@ -2190,6 +2208,9 @@ function EF.Build(pg, ctx, vis, owner, under)
             EF.PickTab(r, c, self._fx)
             Relay()
         end)
+        -- a glyph-only tab names its effect on hover
+        AT.Tooltip(t, function() return t._bareWord end,
+            function() return t._bareWord and "Opens its settings." or nil end)
         tabs[i] = t
         return t
     end
@@ -2419,7 +2440,11 @@ function EF.Build(pg, ctx, vis, owner, under)
     end
 
     -- a tab's width at a padding
-    local function TabW(t, padX) return padX + 12 + 6 + Measure(t._fs) + padX end
+    -- a glyph-only tab (its word on hover) where the words would not fit
+    local function TabW(t, padX, bare)
+        if bare then return padX + 12 + padX end
+        return padX + 12 + 6 + Measure(t._fs) + padX
+    end
     -- Lays the open trigger's body under its head, from y, pw wide: its
     -- folder tabs, + Add effect, the picked effect's panel. Returns its height.
     local function LayBody(r, c, y, pw)
@@ -2444,12 +2469,16 @@ function EF.Build(pg, ctx, vis, owner, under)
         end
         -- the board's padding, tighter where the tabs would not fit
         local padX = 9
+        local bareAll = false
+        local function Bare(i) return bareAll and have[i] ~= picked end
         local function RowW(p)
             local s = 0
-            for i = 1, #have do s = s + TabW(tabs[i], p) + (i > 1 and 3 or 0) end
+            for i = 1, #have do s = s + TabW(tabs[i], p, Bare(i)) + (i > 1 and 3 or 0) end
             return s
         end
         if RowW(padX) > inner then padX = 5 end
+        -- still too wide: the tabs not open keep only their glyphs
+        if RowW(padX) > inner then bareAll = true end
         local tabsW = RowW(padX)
         -- + Add effect after the tabs, or above them where they leave it no room
         local left = EF.CanAddFx(r, c)
@@ -2478,7 +2507,10 @@ function EF.Build(pg, ctx, vis, owner, under)
             g:SetColor(fxc)
             t._fs:ClearAllPoints()
             t._fs:SetPoint("LEFT", padX + 12 + 6, 0)
-            local tw = TabW(t, padX)
+            local bare = Bare(i)
+            t._fs:SetShown(not bare)
+            t._bareWord = bare and FX_WORD[fx] or nil
+            local tw = TabW(t, padX, bare)
             t:SetSize(tw, h + (on and 1 or 0))
             t:ClearAllPoints()
             -- the open tab reaches one line into the panel, over its top edge

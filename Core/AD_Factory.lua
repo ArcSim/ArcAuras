@@ -415,6 +415,8 @@ Factory.KindTexture = KindTexture
 -- Bands in percent of the duration: a bound copy of the countdown (the Pct
 -- functions below StyleCountdownText).
 local Pct = {}
+-- a cooldown icon's own countdown over its aura (text.cdTextOwn)
+local CdNum = {}
 
 local function BuildFrame(rec)
     local f = CreateFrame("Frame", nil, UIParent)
@@ -468,7 +470,9 @@ local function BuildFrame(rec)
     -- takes; only an icon with them holds a binding.
     if hooksecurefunc then
         hooksecurefunc(f.cooldown, "SetCooldownFromDurationObject", function(_, d)
-            if f._adPctBind and d then f._adPctBind:SetDuration(d) end
+            if not d then return end
+            if f._adPctBind then f._adPctBind:SetDuration(d) end
+            if f._adCdNumBind then f._adCdNumBind:SetDuration(d) end
         end)
         hooksecurefunc(f.cooldown, "SetCooldown", function(_, start, dur) Pct.Plain(f, start, dur) end)
         hooksecurefunc(f.cooldown, "Clear", function() Pct.Plain(f, 0, 0) end)
@@ -961,8 +965,8 @@ local function TimedValue(f, late, before)
 end
 
 local function ApplySwipeAlpha(f)
-    -- The shown alpha (with the editing floor), not the raw state value.
-    local a = f._adShownAlpha or f._adStateAlpha or 1
+    -- The art's alpha (with the editing floor), not the raw state value.
+    local a = f._adArtAlpha or f._adShownAlpha or f._adStateAlpha or 1
     local T = f._adTimed
     -- kept bright: its own opacity whenever the icon shows at all
     local bright = f._adSwipeBright
@@ -971,7 +975,11 @@ local function ApplySwipeAlpha(f)
             if T then return TimedValue(f, T.late > 0 and own or 0, T.before > 0 and own or 0) end
             return a > 0 and own or 0
         end
-        if T then return TimedValue(f, own * T.late, own * T.before) end
+        -- the curve's answer can be secret: scale its plain ends, never it
+        if T then
+            local u = f._adUnderDim or 1
+            return TimedValue(f, own * T.late * u, own * T.before * u)
+        end
         return own * a
     end
     local sc = f._adSwipeColor
@@ -1027,19 +1035,24 @@ local function DimSkin(f, a)
     end
 end
 
-local function ApplyStateAlpha(f, a, preserveText)
+-- under: a cooldown icon's look while its aura is down (Factory.AuraCovers),
+-- on the art, shadow, border, skin and swipe; never the texts.
+local function ApplyStateAlpha(f, a, preserveText, under)
     -- f._adStateAlpha keeps the real value for the dynamic-group signature;
     -- the shown one has the editing floor. Later writers on the same art
-    -- (tint, swipe) must use f._adShownAlpha; a raw 0 would undo the preview.
+    -- (tint, swipe) must use f._adArtAlpha; a raw 0 would undo the preview.
     f._adStateAlpha = a
+    f._adUnderDim = under
     local shown = EditFloor(a)
     f._adShownAlpha = shown
+    local la = under and EditFloor(a * under) or shown
+    f._adArtAlpha = la
     a = shown
-    f.icon:SetAlpha(a)
-    if f._adShadow then f._adShadow:SetAlpha(a) end
+    f.icon:SetAlpha(la)
+    if f._adShadow then f._adShadow:SetAlpha(la) end
     ApplySwipeAlpha(f)
-    if f._adBorderHost then f._adBorderHost:SetAlpha(a) end
-    DimSkin(f, a)
+    if f._adBorderHost then f._adBorderHost:SetAlpha(la) end
+    DimSkin(f, la)
     -- A fully hidden icon hides its texts too, whatever preserveText says.
     local ta = (a > 0 and preserveText) and 1 or a
     if f.textHost then f.textHost:SetAlpha(ta) end
@@ -1070,7 +1083,9 @@ end
 local function TimedPaint(f)
     local T = f._adTimed
     if not (T and f._adTimedDur) then return end
-    local a = TimedValue(f, T.late, T.before)
+    -- the curve's answer can be secret: the aura-down dim scales its plain ends
+    local u = f._adUnderDim or 1
+    local a = TimedValue(f, T.late * u, T.before * u)
     local tc = T.tint or { 1, 1, 1 }
     f.icon:SetVertexColor(tc[1], tc[2], tc[3], a)
     if f._adShadow then f._adShadow:SetAlpha(a) end
@@ -2189,15 +2204,14 @@ function Pct.Curve(rec)
     return curve, sig
 end
 
--- A plain start and length (or none) into the bound copy's duration.
-function Pct.Plain(f, start, dur)
-    local bnd = f._adPctBind
+-- A plain start and length (or none) into a bound copy's duration.
+local function BindPlain(f, bnd, key, start, dur)
     if not bnd then return end
     if issecretvalue and (issecretvalue(start) or issecretvalue(dur)) then return end
-    local d = f._adPctDur
+    local d = f[key]
     if not d then
         d = C_DurationUtil.CreateDuration()
-        f._adPctDur = d
+        f[key] = d
     end
     if type(start) == "number" and type(dur) == "number" and dur > 0 then
         d:SetTimeFromStart(start, dur)
@@ -2205,6 +2219,10 @@ function Pct.Plain(f, start, dur)
         d:Reset()
     end
     bnd:SetDuration(d)
+end
+function Pct.Plain(f, start, dur)
+    BindPlain(f, f._adPctBind, "_adPctDur", start, dur)
+    BindPlain(f, f._adCdNumBind, "_adCdNumDur", start, dur)
 end
 
 -- Shown while the bands are on, the duration text shows, and no GCD-only spin
@@ -2217,7 +2235,8 @@ end
 -- The holder's bound copy: our binding on a text of the text host, styled as
 -- the countdown; the cooldown's own numbers step aside (ApplyDurationVis).
 function Pct.Apply(f, rec, kS)
-    local curve = Pct.Curve(rec)
+    -- the cooldown's number at its own spot carries the spell's countdown instead
+    local curve = not CdNum.On(rec) and Pct.Curve(rec) or nil
     if not curve then
         if f._adPctBind then f._adPctBind:SetEnabled(false) end
         f._adPctOn = nil
@@ -2245,6 +2264,101 @@ function Pct.Apply(f, rec, kS)
     bnd:SetEnabled(true)
     f._adPctOn = true
     StyleCountdownText(fs, rec, kS, f, STANDARD_TEXT_FONT, f, "countdownPct")
+end
+
+-- A cooldown icon's own countdown over its aura: a bound copy on the text
+-- host, which draws over the aura's button, at a spot of its own; it takes
+-- every duration the swipe takes (the hooks in Factory.Ensure), and the
+-- swipe's own numbers step aside (ApplyDurationVis). The duration rows then
+-- style the aura's number alone.
+function CdNum.On(rec)
+    if not rec or rec.kind == "aura" then return false end
+    if Store.Resolve(rec, "text", "cdTextOwn") ~= true or Store.Resolve(rec, "text", "durationText") == false then
+        return false
+    end
+    local DA = NS.DriverAura
+    return DA ~= nil and DA.ButtonOver ~= nil and DA.ButtonOver(rec) == true
+        and C_DurationUtil ~= nil and C_DurationUtil.CreateDurationTextBinding ~= nil
+end
+Factory.CdNumOn = CdNum.On
+
+-- shown while on and the duration text shows, never for a GCD-only spin
+function CdNum.Show(f)
+    local fs = f._adCdNumText
+    if fs then fs:SetShown(f._adCdNumOn == true and not f._adDurHidden and not f._adPureGCD) end
+end
+
+function CdNum.Apply(f, rec, kS)
+    if not CdNum.On(rec) then
+        if f._adCdNumBind then f._adCdNumBind:SetEnabled(false) end
+        f._adCdNumOn = nil
+        CdNum.Show(f)
+        return
+    end
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    local fs = f._adCdNumText
+    if not fs then
+        fs = f.textHost:CreateFontString(nil, "OVERLAY")
+        fs:SetDrawLayer("OVERLAY", 7)
+        f._adCdNumText = fs
+    end
+    local bnd = f._adCdNumBind
+    local fresh = bnd == nil
+    if fresh then
+        bnd = C_DurationUtil.CreateDurationTextBinding()
+        bnd:SetFontString(fs)
+        if bnd.SetZeroDurationText then bnd:SetZeroDurationText("") end
+        if bnd.SetExpiredText then bnd:SetExpiredText("") end
+        f._adCdNumBind = bnd
+    end
+    local fmt = CountdownFormatterFor(rec)
+    fmt = fmt or PlainTimerFormatter(Factory.IconRounding(rec), false, Factory.IconGap(rec))
+    if fmt then bnd:SetFormatter(fmt) end
+    bnd:SetEnabled(true)
+    f._adCdNumOn = true
+    local outline = R("text", "durationOutline") or "OUTLINE"
+    if outline == "NONE" then outline = "" end
+    fs:SetFont(IconFont(R("text", "durationFont"), STANDARD_TEXT_FONT),
+        math.max(6, math.floor((R("text", "cdTextSize") or 12) * kS + 0.5)), outline)
+    fs._adTextRGBA = R("text", "cdTextColor") or { 1, 1, 1, 1 }
+    PaintText(fs)
+    local an = R("text", "cdTextAnchor") or "TOP"
+    fs:ClearAllPoints()
+    fs:SetPoint(an, f, an, (R("text", "cdTextX") or 0) * kS, (R("text", "cdTextY") or 0) * kS)
+    local TD = NS.TextDrag
+    if TD then TD.Note(fs, rec, "icon", "text", "cdTextX", "cdTextY", kS, f) end
+    local dsc = R("text", "durationShadowColor") or { 0, 0, 0, 1 }
+    fs:SetShadowColor(dsc[1], dsc[2], dsc[3], R("text", "durationShadow") == true and (dsc[4] or 1) or 0)
+    fs:SetShadowOffset(R("text", "durationShadowX") or 1, R("text", "durationShadowY") or -1)
+    -- turned on mid-cooldown: what the swipe runs now, when it can be read
+    if fresh and f.cooldown.GetCooldownTimes then
+        local s, d = f.cooldown:GetCooldownTimes()
+        if type(s) == "number" and type(d) == "number" and not (issecretvalue and (issecretvalue(s) or issecretvalue(d))) then
+            BindPlain(f, bnd, "_adCdNumDur", s / 1000, d / 1000)
+        end
+    end
+    CdNum.Show(f)
+end
+
+-- A charge spell's count at a spot of its own (text.chargeTextOwn), apart
+-- from its aura's stack count, which keeps the stack rows. True when it took it.
+function Factory.StyleChargeSpot(fs, rec, kS, f)
+    local R = function(s, k) return Store.Resolve(rec, s, k) end
+    if not (rec and rec.kind == "spell" and R("text", "chargeTextOwn") == true) then return false end
+    local DA = NS.DriverAura
+    if not (DA and DA.ButtonOver and DA.ButtonOver(rec) == true) then return false end
+    local outline = R("text", "stackOutline") or "OUTLINE"
+    if outline == "NONE" then outline = "" end
+    fs:SetFont(IconFont(R("text", "stackFont")),
+        math.max(6, math.floor((R("text", "chargeSize") or 14) * kS + 0.5)), outline)
+    fs._adTextRGBA = R("text", "chargeColor") or { 1, 1, 1, 1 }
+    PaintText(fs)
+    local an = R("text", "chargeAnchor") or "BOTTOMLEFT"
+    fs:ClearAllPoints()
+    fs:SetPoint(an, f, an, (R("text", "chargeX") or 0) * kS, (R("text", "chargeY") or 0) * kS)
+    local TD = NS.TextDrag
+    if TD then TD.Note(fs, rec, "icon", "text", "chargeX", "chargeY", kS, f) end
+    return true
 end
 
 -- An aura button's bound copy: the engine's own binding (SetDurationText) with
@@ -2505,12 +2619,12 @@ function Factory.ApplyStyle(f, rec)
         local pad = (R("appearance", "padding") or 0) * kS
         ApplyShadow(f, "_adShadow", f.icon, rec,
             math.max(1, (fwS or 36) - 2 * pad), math.max(1, (fhS or 36) - 2 * pad),
-            f._adShownAlpha or f._adStateAlpha or 1,
+            f._adArtAlpha or f._adShownAlpha or f._adStateAlpha or 1,
             R("appearance", "shadowEnabled") == true and not forceHide and rec.kind ~= "aura")
     end
     -- Missing glows ride the missing look, Always glows the holder; a preview
     -- and the options window show those that wait for combat
-    if rec.kind == "aura" or f._adMissGlow or f._adAlwaysGlow then
+    if rec.kind == "aura" or f._adMissGlow or f._adAlwaysGlow or Factory.HasMissingGlow(rec) then
         local D = NS.DriverAura
         local combat = (D ~= nil and D.InCombat ~= nil and D.InCombat()) or f._adPreview == true
             or (NS.LayoutEngine ~= nil and NS.LayoutEngine.IsEditMode ~= nil and NS.LayoutEngine.IsEditMode())
@@ -2559,7 +2673,7 @@ function Factory.ApplyStyle(f, rec)
     end
     local back = f.icon:GetParent()
     Factory.SkinLayers(plan, back, top or back, f, f.icon, fwS or 36, fhS or 36,
-        f._adShownAlpha or f._adStateAlpha or 1, forceHide, f._adBorderLive and Factory.ActiveBorderColor(rec) or nil)
+        f._adArtAlpha or f._adShownAlpha or f._adStateAlpha or 1, forceHide, f._adBorderLive and Factory.ActiveBorderColor(rec) or nil)
 
     local hasSwipe = NS.Schema.Applies(nil, NS.Schema.icon.swipe, rec.kind)
     if hasSwipe then
@@ -2607,6 +2721,7 @@ function Factory.ApplyStyle(f, rec)
     end
     -- the hide after the formatter: handing one over shows the numbers
     Pct.Apply(f, rec, kS)
+    CdNum.Apply(f, rec, kS)
     Factory.ApplyDurationVis(f, rec)
     if f.cooldown.GetCountdownFontString then
         local cfs = f.cooldown:GetCountdownFontString()
@@ -2622,7 +2737,10 @@ function Factory.ApplyStyle(f, rec)
     local stacks = NS.Schema.Applies(NS.Schema.icon.text.fields.stackText, NS.Schema.icon.text, rec.kind)
         and R("text", "stackText") ~= false
     if stacks then
-        StyleStackText(f.stackText, rec, kS, f, rec.kind ~= "aura" and f or nil)
+        -- a charge spell's count may take a spot apart from its aura's stacks
+        if not Factory.StyleChargeSpot(f.stackText, rec, kS, f) then
+            StyleStackText(f.stackText, rec, kS, f, rec.kind ~= "aura" and f or nil)
+        end
         if rec.kind == "ammo" then Factory.AmmoCountColor(f.stackText, rec, "stackColor") end
         f.stackText:Show()
     else
@@ -3084,6 +3202,15 @@ function Factory.AuraGlowOnly(rec)
     if not rec or rec.kind == "aura" or Store.Resolve(rec, "auraActive", "activeShows") ~= "glows" then return false end
     local DA = NS.DriverAura
     return DA ~= nil and DA.ButtonOver ~= nil and DA.ButtonOver(rec) == true
+end
+
+-- A cooldown icon whose aura's look covers it while up (not Only its glows,
+-- not at 0%): its own look shows only while the aura is down.
+function Factory.AuraCovers(rec)
+    if not rec or rec.kind == "aura" then return false end
+    local DA = NS.DriverAura
+    if not (DA and DA.ButtonOver and DA.ButtonOver(rec) == true) then return false end
+    return Factory.AuraActiveAlpha(rec) > 0
 end
 
 function Factory.AuraActiveAlpha(rec)
@@ -3978,7 +4105,8 @@ function Factory.StyleAuraButton(b, rec, px, opts)
     -- stand-in draws them all (opts.previewGlows) and drops them otherwise,
     -- as it also serves spell icons.
     for k = 2, (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1 do
-        Factory.SetAuraButtonGlow(b, rec, (opts.previewGlows == true or row or rank ~= nil) and (not forceHide)
+        Factory.SetAuraButtonGlow(b, rec, (opts.previewGlows == true or row or rank ~= nil or rec.kind ~= "aura")
+            and (not forceHide)
             and R("auraActive", "activeGlow" .. k) == true and not Elsewhere(k) and ForRank(k),
             opts.w or px, opts.h or px, gA, k)
     end
@@ -5363,11 +5491,19 @@ function Factory.SetAuraButtonGlow(b, rec, on, w, h, alphaMul, slot, levelTo, ca
 end
 
 -- A glow set to "While the aura is missing" (an aura icon's glow `slot`).
+-- On a cooldown icon's aura (DriverAura MissingGlowOK) it is drawn on a layer
+-- of its own (DriverAura MG).
 function Factory.MissingGlowOn(rec, slot)
-    if not (rec and rec.kind == "aura") then return false end
+    if not rec then return false end
+    local cd = rec.kind ~= "aura"
+    if cd then
+        local D = NS.DriverAura
+        if not (D and D.MissingGlowOK and D.MissingGlowOK(rec)) then return false end
+    end
     local suf = (slot and slot > 1) and tostring(slot) or ""
     if Store.Resolve(rec, "auraActive", "activeGlow" .. suf) ~= true then return false end
     local when = Store.Resolve(rec, "auraActive", "activeGlowWhen" .. suf)
+    if cd then return when == "missing" end
     -- under the time gate an Always glow is this half and a lane's
     return when == "missing" or (when == "both" and Factory.TimeGateFrac(rec) ~= nil)
 end
@@ -6082,7 +6218,11 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     -- preserveDurationText (on by default) keeps the texts out of the dim.
     f._adLabelsBright = R("states", "labelsFullOpacity") == true
     f._adSwipeBright = R("states", "preserveSwipe") == true
-    ApplyStateAlpha(f, f._adStateAlpha, keepText)
+    -- its look while the aura is down: the aura's button covers it while up,
+    -- so nothing is read
+    local under = Factory.AuraCovers(rec) and (R("auraActive", "overlayAlphaInactive") or 1) or 1
+    if under < 0 then under = 0 end
+    ApplyStateAlpha(f, f._adStateAlpha, keepText, under < 1 and under or nil)
     local desatOK = not keepBright or R("appearance", "keepBrightAllowDesat") == true
     -- an own look's grey stands in for its state's (nil: the state's own)
     local lookG = LB and LB.grey
@@ -6167,9 +6307,14 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     elseif R("states", "cooldownTintEnabled") == true then
         tc = R("states", "cooldownTintColor")
     end
+    -- Tint while the aura is down: on the art under the aura's button, so it
+    -- reads tinted exactly while the aura is down. Wins over every other tint.
+    if R("auraActive", "overlayTintInactiveOn") == true and Factory.AuraCovers(rec) then
+        tc = R("auraActive", "overlayTintInactiveColor") or { 1, 0.35, 0.35, 1 }
+    end
     -- Vertex alpha is the texture's alpha: a literal 1 would undo the state
-    -- dim's SetAlpha on the art, so every tint carries the shown alpha.
-    local va = f._adShownAlpha or f._adStateAlpha or 1
+    -- dim's SetAlpha on the art, so every tint carries the art's alpha.
+    local va = f._adArtAlpha or f._adShownAlpha or f._adStateAlpha or 1
     if tc then
         f.icon:SetVertexColor(tc[1], tc[2], tc[3], va)
     else
@@ -6195,12 +6340,12 @@ function Factory.SetState(f, rec, onCooldown, desatState)
             or (R("outOfStock", "outAlphaEnabled") == true and (R("outOfStock", "outAlpha") or 0.4)) or nil
         if outA then
             -- preserveDurationText applies: items and ammo have a States tab.
-            ApplyStateAlpha(f, outA, keepText)
+            ApplyStateAlpha(f, outA, keepText, f._adUnderDim)
         end
         local tintO = LO and LO.tint
         if tintO == true or (tintO == nil and R("outOfStock", "outTintEnabled") == true) then
             local oc = (tintO and LO.tintColor) or R("outOfStock", "outTintColor") or { 0.5, 0.5, 0.5, 1 }
-            f.icon:SetVertexColor(oc[1], oc[2], oc[3], f._adShownAlpha or f._adStateAlpha or 1)
+            f.icon:SetVertexColor(oc[1], oc[2], oc[3], f._adArtAlpha or f._adShownAlpha or f._adStateAlpha or 1)
         end
     end
     StateTail(f, rec, onCooldown)
@@ -7104,8 +7249,9 @@ function Factory.ApplyDurationVis(f, rec)
     end
     f._adDurHidden = hide
     -- the bands in percent: the bound copy shows the numbers instead
-    f.cooldown:SetHideCountdownNumbers(hide or f._adPctOn == true)
+    f.cooldown:SetHideCountdownNumbers(hide or f._adPctOn == true or f._adCdNumOn == true)
     Pct.Show(f)
+    CdNum.Show(f)
 end
 
 -- A key's words as the icon writes them: its replacements (FIND=REPL, on the
@@ -7191,6 +7337,7 @@ function Factory.SetGCDPresentation(f, rec, pure, recharging, wand)
     f._adRecharging = recharging
     f._adPureWand = wand
     Pct.Show(f)
+    CdNum.Show(f)
     ApplyCdPresentation(f, rec)
 end
 

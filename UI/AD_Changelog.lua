@@ -13,6 +13,38 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.3.5",
+        intro = "More triggers for the aura on a cooldown icon, its cooldown text over the aura, swipe and border effects, gear goals and upgrades from the auction house.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Aura missing on cooldown icons",
+                    desc = "A spell, item or trinket icon with an aura on it can fade, tint, glow or play a sound while that aura is missing, so a spell can glow while your target lacks your debuff." },
+                { title = "Aura sounds on cooldown icons",
+                    desc = "The aura on a cooldown icon can play a sound when it appears, gains a stack or drops." },
+                { title = "Swipe and Border effects",
+                    desc = "Effects > + Add effect can change an aura's swipe and its border color while the aura is up, on aura icons and cooldown icons." },
+                { title = "Four glows",
+                    desc = "The aura on a cooldown icon has four glows, as an aura icon does." },
+                { title = "Cooldown text over the aura",
+                    desc = "A cooldown icon with an aura on it can show its cooldown's number at a spot of its own, over the aura too, so the aura's time and the cooldown show at once." },
+                { title = "Charges at their own spot",
+                    desc = "A charge spell with an aura on it can show its charges apart from the aura's stack count." },
+                { title = "Gear goals",
+                    desc = "Each Gear Value scale can carry goals (regen, hit, crit and more): set what your gear should give, see how close your worn gear is, and the stat stops counting once you reach it. Goals travel with the scale's export, and tooltips can show them." },
+                { title = "Effects and set bonuses",
+                    desc = "A Gear Value scale can count an item's special effect or a set bonus: add the item or the set, then type its value or let it be read." },
+                { title = "Find upgrades",
+                    desc = "With Gear Value on, the auction house gets a Find Upgrades tab: pick your scales and slots, and it lists only the gear that beats what you wear, best first, by points, DPS or DPS %." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Gear Value page",
+                    desc = "Pick at the top which scales your tooltips show; below it, a scale editor with Weights, Goals and Extras tabs beside the preview." },
+                { title = "Gear Value import",
+                    desc = "Paste one or more weights strings at once; a scale with the same name is updated in place, goals included." },
+            } },
+        },
+    },
+    {
         version = "3.3.4",
         intro = "Pick which aura an icon shows when several are up, a trigger for each aura, and smooth mana bars.",
         sections = {
@@ -1750,6 +1782,38 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.3.5",
+        intro = "More triggers for the aura on a cooldown icon, its cooldown text over the aura, swipe and border effects, gear goals and upgrades from the auction house.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Aura missing on cooldown icons",
+                    desc = "A spell, item or trinket icon with an aura on it can fade, tint, glow or play a sound while that aura is missing, so a spell can glow while your target lacks your debuff." },
+                { title = "Aura sounds on cooldown icons",
+                    desc = "The aura on a cooldown icon can play a sound when it appears, gains a stack or drops." },
+                { title = "Swipe and Border effects",
+                    desc = "Effects > + Add effect can change an aura's swipe and its border color while the aura is up, on aura icons and cooldown icons." },
+                { title = "Four glows",
+                    desc = "The aura on a cooldown icon has four glows, as an aura icon does." },
+                { title = "Cooldown text over the aura",
+                    desc = "A cooldown icon with an aura on it can show its cooldown's number at a spot of its own, over the aura too, so the aura's time and the cooldown show at once." },
+                { title = "Charges at their own spot",
+                    desc = "A charge spell with an aura on it can show its charges apart from the aura's stack count." },
+                { title = "Gear goals",
+                    desc = "Each Gear Value scale can carry goals (critical strike, haste, mastery, versatility): set what your gear should give, see how close your worn gear is, and the stat stops counting once you reach it. Goals travel with the scale's export, and tooltips can show them." },
+                { title = "Effects and set bonuses",
+                    desc = "A Gear Value scale can count an item's special effect or a set bonus: add the item or the set, then type its value or let it be read." },
+                { title = "Find upgrades",
+                    desc = "With Gear Value on, the auction house gets a Find Upgrades tab: pick your scales and slots, and it lists only the gear that beats what you wear, best first, by points, DPS or DPS %." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Gear Value page",
+                    desc = "Pick at the top which scales your tooltips show; below it, a scale editor with Weights, Goals and Extras tabs beside the preview." },
+                { title = "Gear Value import",
+                    desc = "Paste one or more weights strings at once; a scale with the same name is updated in place, goals included." },
+            } },
+        },
+    },
     {
         version = "3.3.4",
         intro = "Pick which aura an icon shows when several are up, and a trigger for each aura.",

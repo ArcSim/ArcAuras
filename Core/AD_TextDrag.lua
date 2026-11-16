@@ -13,7 +13,7 @@ NS.TextDrag = TD
 -- [family][section][Y field] = X field: every text offset pair a drag writes
 TD.PAIRS = {
     icon = {
-        text = { durationY = "durationX", stackY = "stackX", ammoY = "ammoX" },
+        text = { durationY = "durationX", stackY = "stackX", ammoY = "ammoX", cdTextY = "cdTextX", chargeY = "chargeX" },
         label = { labelY = "labelX", labelY2 = "labelX2", labelY3 = "labelX3", labelY4 = "labelX4",
             labelY5 = "labelX5", labelY6 = "labelX6" },
         keybind = { keybindY = "keybindX" },

@@ -549,9 +549,28 @@ Schema.CustomCdShows = CdShows
 
 -- An aura icon's appear sound, and a Custom Icon's while it shows an aura.
 local function AuraSoundShows(rec)
-    if rec == nil or rec.kind ~= "timer" then return true end
+    if rec == nil or rec.kind == "aura" then return true end
     local ov = type(rec.driver) == "table" and rec.driver.overlay
-    return type(ov) == "table" and ov.on == true
+    if rec.kind == "timer" then return type(ov) == "table" and ov.on == true end
+    -- a cooldown icon's aura on the icon (DriverAura ButtonOver)
+    local DA = NS.DriverAura
+    return DA ~= nil and DA.ButtonOver ~= nil and DA.ButtonOver(rec) == true
+end
+-- a cooldown icon's aura also gains stacks and drops (a Custom Icon's only appears)
+local AU_CD = { aura = true, spell = true, item = true, trinket = true }
+-- a cooldown icon that can carry an aura, and the rows that need one on it
+local CD_AURA = { spell = true, item = true, trinket = true }
+local function ButtonOverShows(rec)
+    if rec == nil or rec._adDefaults then return true end
+    local DA = NS.DriverAura
+    return DA ~= nil and DA.ButtonOver ~= nil and DA.ButtonOver(rec) == true
+end
+
+-- A cooldown icon's own look while its aura is down: only while the aura's
+-- look covers it (not Only its glows, not at 0%).
+local function AuraCovers(rec)
+    local F = NS.Factory
+    return rec == nil or (F ~= nil and F.AuraCovers ~= nil and F.AuraCovers(rec) == true)
 end
 
 -- The sound channel steers sound files only: the game's speech takes a volume
@@ -1638,14 +1657,14 @@ Schema.icon = {
             dep = { field = "usableSoundEnabled" } },
         -- An aura icon's moments, played by the game (Drivers\AD_AuraSounds.lua):
         -- in combat too, for any caster's copy; `files`: a sound file, no kit.
-        auraGainSoundEnabled = { d = false, t = "bool", kinds = AU_TIM, showIf = AuraSoundShows, label = "Play a sound when the aura appears" },
-        auraGainSound = { d = "", t = "sound", files = true, kinds = AU_TIM, showIf = AuraSoundShows, label = "Appear sound",
+        auraGainSoundEnabled = { d = false, t = "bool", kinds = AAX, showIf = AuraSoundShows, label = "Play a sound when the aura appears" },
+        auraGainSound = { d = "", t = "sound", files = true, kinds = AAX, showIf = AuraSoundShows, label = "Appear sound",
             dep = { field = "auraGainSoundEnabled" } },
-        auraStackSoundEnabled = { d = false, t = "bool", kinds = { aura = true }, label = "Play a sound when it gains a stack" },
-        auraStackSound = { d = "", t = "sound", files = true, kinds = { aura = true }, label = "Stack sound",
+        auraStackSoundEnabled = { d = false, t = "bool", kinds = AU_CD, showIf = AuraSoundShows, label = "Play a sound when it gains a stack" },
+        auraStackSound = { d = "", t = "sound", files = true, kinds = AU_CD, showIf = AuraSoundShows, label = "Stack sound",
             dep = { field = "auraStackSoundEnabled" } },
-        auraLostSoundEnabled = { d = false, t = "bool", kinds = { aura = true }, label = "Play a sound when the aura drops" },
-        auraLostSound = { d = "", t = "sound", files = true, kinds = { aura = true }, label = "Drop sound",
+        auraLostSoundEnabled = { d = false, t = "bool", kinds = AU_CD, showIf = AuraSoundShows, label = "Play a sound when the aura drops" },
+        auraLostSound = { d = "", t = "sound", files = true, kinds = AU_CD, showIf = AuraSoundShows, label = "Drop sound",
             dep = { field = "auraLostSoundEnabled" } },
     } },
     -- The key bound to the spell's action button, found by walking the bars.
@@ -1863,6 +1882,14 @@ Schema.icon = {
         -- the aura is down. It wins over every other desaturation.
         overlayDesatInactive = { d = false, t = "bool", kinds = SPX,
             label = "Desaturate while the aura is down" },
+        -- The same way, its art, border and swipe at an opacity and a tint of
+        -- their own; the texts keep theirs (they show over the aura too).
+        overlayAlphaInactive = { d = 1, t = "num", min = 0, max = 1, kinds = SPX, showIf = AuraCovers,
+            label = "Opacity while the aura is down" },
+        overlayTintInactiveOn = { d = false, t = "bool", kinds = SPX, showIf = AuraCovers,
+            label = "Tint while the aura is down" },
+        overlayTintInactiveColor = { d = { 1, 0.35, 0.35, 1 }, t = "color", kinds = SPX, showIf = AuraCovers,
+            label = "Tint color while the aura is down", dep = { field = "overlayTintInactiveOn" } },
         -- 0 falls back to Appearance's Custom icon, then the aura's art. It is
         -- our texture on the engine button, so it holds in combat.
         activeIconFrom = { noDefault = true, inherit = false, d = "icon", t = "enum", values = ICON_FROM, labels = ICON_FROM_LABELS,
@@ -2130,6 +2157,24 @@ Schema.icon = {
         -- Whether a charge is left comes from the shadow.
         hideDurWithCharges = { d = false, t = "bool", kinds = SP, label = "Hide duration while charges remain",
             dep = { field = "durationText" } },
+        -- A cooldown icon's own countdown over its aura, at a spot of its own
+        -- (Factory CdNum, a bound copy on the text host); the rows above then
+        -- style the aura's number alone. Font and outline as above.
+        cdTextOwn = { d = false, t = "bool", kinds = CD_AURA, showIf = ButtonOverShows,
+            label = "Cooldown text always shows",
+            desc = "The cooldown's number shows over the aura too, at its own spot. The rows above then style the aura's number.",
+            dep = { field = "durationText" } },
+        cdTextAnchor = { d = "TOP", t = "enum", kinds = CD_AURA, showIf = ButtonOverShows,
+            values = { "CENTER", "TOP", "BOTTOM", "TOPLEFT", "TOPRIGHT", "BOTTOMLEFT", "BOTTOMRIGHT", "LEFT", "RIGHT" },
+            label = "Cooldown text anchor", short = "Anchor", dep = { { field = "durationText" }, { field = "cdTextOwn" } } },
+        cdTextX = { d = 0, t = "int", min = -50, max = 50, kinds = CD_AURA, showIf = ButtonOverShows,
+            label = "Cooldown text X", short = "Offset X", dep = { { field = "durationText" }, { field = "cdTextOwn" } } },
+        cdTextY = { d = 0, t = "int", min = -50, max = 50, kinds = CD_AURA, showIf = ButtonOverShows,
+            label = "Cooldown text Y", short = "Offset Y", dep = { { field = "durationText" }, { field = "cdTextOwn" } } },
+        cdTextSize = { d = 12, t = "int", min = 6, max = 32, kinds = CD_AURA, showIf = ButtonOverShows,
+            label = "Cooldown text size", short = "Size", dep = { { field = "durationText" }, { field = "cdTextOwn" } } },
+        cdTextColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, kinds = CD_AURA, showIf = ButtonOverShows,
+            label = "Cooldown text color", short = "Color", dep = { { field = "durationText" }, { field = "cdTextOwn" } } },
         -- Bands bake into the countdown formatter as color escapes, so the
         -- engine colors the text from the real remaining time. A band colors
         -- values under its seconds (0 = off); above them, the plain color.
@@ -2185,6 +2230,23 @@ Schema.icon = {
             kinds = STK, label = "Stack text anchor", short = "Anchor", dep = { field = "stackText" } },
         stackX = { adv = "text", d = 0, t = "int", min = -200, max = 200, kinds = STK, label = "Stack text X", short = "Offset X", dep = { field = "stackText" } },
         stackY = { adv = "text", d = 0, t = "int", min = -200, max = 200, kinds = STK, label = "Stack text Y", short = "Offset Y", dep = { field = "stackText" } },
+        -- A charge spell's count apart from its aura's stack count, which keeps
+        -- the rows above (Factory.StyleChargeSpot).
+        chargeTextOwn = { d = false, t = "bool", kinds = SP, showIf = ButtonOverShows,
+            label = "Charges at their own spot",
+            desc = "The charge count takes a spot of its own. The rows above then style the aura's stack count.",
+            dep = { field = "stackText" } },
+        chargeAnchor = { d = "BOTTOMLEFT", t = "enum", kinds = SP, showIf = ButtonOverShows,
+            values = { "BOTTOMRIGHT", "BOTTOMLEFT", "TOPRIGHT", "TOPLEFT", "TOP", "BOTTOM", "CENTER", "LEFT", "RIGHT" },
+            label = "Charge text anchor", short = "Anchor", dep = { { field = "stackText" }, { field = "chargeTextOwn" } } },
+        chargeX = { d = 0, t = "int", min = -200, max = 200, kinds = SP, showIf = ButtonOverShows,
+            label = "Charge text X", short = "Offset X", dep = { { field = "stackText" }, { field = "chargeTextOwn" } } },
+        chargeY = { d = 0, t = "int", min = -200, max = 200, kinds = SP, showIf = ButtonOverShows,
+            label = "Charge text Y", short = "Offset Y", dep = { { field = "stackText" }, { field = "chargeTextOwn" } } },
+        chargeSize = { d = 14, t = "int", min = 6, max = 32, kinds = SP, showIf = ButtonOverShows,
+            label = "Charge text size", short = "Size", dep = { { field = "stackText" }, { field = "chargeTextOwn" } } },
+        chargeColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, kinds = SP, showIf = ButtonOverShows,
+            label = "Charge text color", short = "Color", dep = { { field = "stackText" }, { field = "chargeTextOwn" } } },
         stackStrata = { adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, kinds = { spell = true, item = true, timer = true,
             ammo = true, enchant = true, special = true, groupbuff = true }, label = "Stack text strata", short = "Strata",
             showIf = function(r) return Schema.TextStrataShows(r, "text", "stackPinTo") end, dep = { field = "stackText" } },
@@ -2498,7 +2560,8 @@ function Schema.GlowLayerOK(rec, suf)
     if not (rec and S and S.Resolve) then return true end
     if S.Resolve(rec, "auraActive", "activeGlowWhen" .. (suf or "")) ~= "missing" then return true end
     local DA = NS.DriverAura
-    return DA ~= nil and DA.GlowLaneOK ~= nil and DA.GlowLaneOK(rec) == true
+    -- a cooldown icon's Missing glow always has a layer of its own
+    return DA ~= nil and DA.GlowLaneOK ~= nil and (rec.kind ~= "aura" or DA.GlowLaneOK(rec) == true)
         and DA.MissingGlowOK ~= nil and DA.MissingGlowOK(rec) == true
 end
 
@@ -2573,15 +2636,20 @@ do
     end
 end
 
--- Glows 2-4 on a cooldown icon's aura: in list order only, each drawn on the
--- listed auras' own buttons, so no lane of its own (no Glow only in combat,
--- strata or level), and only the fields glow 1 shows there.
+-- Glows 2-4 on a cooldown icon's aura (DriverAura ButtonOver): each drawn on
+-- the aura's own buttons, so no lane of its own (no Glow only in combat,
+-- strata or level), save a Missing one, which has a layer of its own (MG);
+-- and only the fields glow 1 shows there.
 local RANK_SLOT_SKIP = { activeGlowCombatOnly = true, activeGlowStrata = true, activeGlowLevel = true }
 function Schema.RankGlowShows(rec, name, src, suf)
-    if RANK_SLOT_SKIP[name] or (src.kinds and not src.kinds[rec.kind]) then return false end
+    if src.kinds and not src.kinds[rec.kind] then return false end
     local DA = NS.DriverAura
-    local sh = DA and DA.ShapeFor and DA.ShapeFor(rec)
-    if not (sh and DA.ListRanks(sh)) then return false end
+    if not (DA and DA.ButtonOver and DA.ButtonOver(rec) == true) then return false end
+    if RANK_SLOT_SKIP[name] then
+        local S = NS.Store
+        if not (S and S.Resolve(rec, "auraActive", "activeGlowWhen" .. suf) == "missing") then return false end
+        return name == "activeGlowCombatOnly" or Schema.GlowLayerOK(rec, suf)
+    end
     if name == "activeGlowFor" and src.showIf then return src.showIf(rec) end
     local gate = Schema.GLOW_NATIVE_GATED[name]
     if gate then

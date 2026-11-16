@@ -370,6 +370,10 @@ local function AuraGlowKeys(missing)
     end
 end
 
+-- A cooldown icon's aura outside list order: Aura active's glows and Aura
+-- missing's (DriverAura MG), as an aura icon's Active and Missing.
+local ActiveGlowKeys, MissGlowKeys = AuraGlowKeys(false), AuraGlowKeys(true)
+
 local READY = { key = "ready", label = "Ready", when = "while it is ready", alpha = { S, "readyAlpha" },
     grey = { S, "readyDesaturate" }, tint = { S, "readyTintColor", on = "readyTintEnabled" },
     alphaTip = "0 hides it; the rules under the table can bring it back.",
@@ -399,7 +403,11 @@ local function SlotGlowKeys(r, pick)
         local key = A .. ".activeGlow" .. sfx
         if Store.Resolve(r, A, "activeGlow" .. sfx) == true then
             local f = tonumber(Store.Resolve(r, A, "activeGlowFor" .. sfx)) or 0
-            if (pick == 0 and f <= 0) or (pick > 0 and f > 0 and Store.SameAura(pick, f)) then out[#out + 1] = key end
+            -- a Missing glow is Aura missing's
+            if Store.Resolve(r, A, "activeGlowWhen" .. sfx) ~= "missing"
+                and ((pick == 0 and f <= 0) or (pick > 0 and f > 0 and Store.SameAura(pick, f))) then
+                out[#out + 1] = key
+            end
         elseif not spare then
             spare = key
         end
@@ -415,8 +423,9 @@ local OVERLAY = { key = "overlay", label = "Aura active", when = "while its aura
     whenFn = function(r) return ListOrder(r) and "while any of its auras shows" or nil end,
     fx = { glow = function(r)
         if ListOrder(r) then return SlotGlowKeys(r, 0) end
-        return { "auraActive.activeGlow" }
-    end, art = { "art.active" } } }
+        return ActiveGlowKeys(r)
+    end, sound = { "alerts.auraGainSoundEnabled", "alerts.auraStackSoundEnabled" }, art = { "art.active" },
+        swipe = { "auraSwipe.look" }, border = { "auraActive.activeBorderOn" } } }
 -- In list order, one trigger per listed aura (its ranks together): its
 -- glows show while that aura is the one on the icon (DriverAura RankOpts).
 local PER_AURA = {}
@@ -442,16 +451,25 @@ function ET.PerAuraStates(r)
     end
     return out
 end
+-- Its own look under the aura's button, and glows on a layer of their own
+-- (DriverAura MG), show only while the aura is down: nothing is read.
 local OVERLAY_MISSING = { key = "overlayMissing", label = "Aura missing", when = "while its aura is down", overlay = true,
-    grey = { A, "overlayDesatInactive" },
-    labelFn = function(r) return ET.OverlayWords(r, "Aura missing", "Totem gone", "Duration over", "Totem and aura gone") end }
+    alpha = { A, "overlayAlphaInactive" },
+    grey = { A, "overlayDesatInactive" }, tint = { A, "overlayTintInactiveColor", on = "overlayTintInactiveOn" },
+    labelFn = function(r) return ET.OverlayWords(r, "Aura missing", "Totem gone", "Duration over", "Totem and aura gone") end,
+    fx = { glow = function(r)
+        local DA = NS.DriverAura
+        if not (DA and DA.MissingGlowOK and DA.MissingGlowOK(r)) then return {} end
+        return MissGlowKeys(r)
+    end, sound = { "alerts.auraLostSoundEnabled" } } }
 -- A Custom Icon showing an aura (Tracking's "Aura on this icon"): the same
 -- look as a spell's, named Aura up, with the sound the game plays as it appears.
 local TIMER_AURA = {}
 for k, v in pairs(OVERLAY) do TIMER_AURA[k] = v end
 TIMER_AURA.labelFn = nil
 TIMER_AURA.label = "Aura up"
-TIMER_AURA.fx = { glow = { "auraActive.activeGlow" }, sound = { "alerts.auraGainSoundEnabled" }, art = { "art.active" } }
+TIMER_AURA.fx = { glow = { "auraActive.activeGlow" }, sound = { "alerts.auraGainSoundEnabled" }, art = { "art.active" },
+    swipe = { "auraSwipe.look" }, border = { "auraActive.activeBorderOn" } }
 -- A Custom Icon with an aura or a cooldown on it, and one with a cooldown.
 function ET.CustomPhased(r)
     return Options.CustomPhased ~= nil and Options.CustomPhased(r) == true
@@ -608,7 +626,7 @@ ET.STATES = {
                   return DA ~= nil and DA.TimeGateOK ~= nil and DA.TimeGateOK(r) == true
               end },
           fx = { glow = AuraGlowKeys(false), sound = { "alerts.auraGainSoundEnabled", "alerts.auraStackSoundEnabled" },
-              art = { "art.active" } } },
+              art = { "art.active" }, swipe = { "auraSwipe.look" }, border = { "auraActive.activeBorderOn" } } },
         { key = "missing", label = "Missing", when = "while the aura is missing", alpha = { M, "missingAlpha" },
           grey = { M, "missingDesaturate" }, tint = { M, "missingTintColor", on = "missingTintEnabled" },
           fx = { glow = AuraGlowKeys(true), sound = { "alerts.auraLostSoundEnabled" }, art = { "art.missing" } } },
@@ -844,8 +862,10 @@ end
 -- files each effect block (a glow or sound moment, an art block) under its key
 -- (ET.FxBlock) and the rows every state's effect shares (the sound channel)
 -- under the effect (ET.FxKindBlock); the editor under a table row draws them.
-ET.FX_ORDER = { "glow", "sound", "art" }
-ET.FX_WORD = { glow = "Glow", sound = "Sound", art = "Icon" }
+ET.FX_ORDER = { "glow", "sound", "art", "swipe", "border" }
+ET.FX_WORD = { glow = "Glow", sound = "Sound", art = "Icon", swipe = "Swipe", border = "Border" }
+-- the Defaults page's state table: its columns (its Swipe and Border pages draw those)
+ET.TABLE_FX = { "glow", "sound", "art" }
 -- a sound field's width in an editor line (it narrows on a short line)
 ET.SOUND_W = 220
 -- a slider's Default button (fdef.resetTo): the quiet button grows to its words
@@ -989,6 +1009,12 @@ function ET.AuraGlowAdded(rec, sfx)
     -- a cooldown icon's aura in list order: the glow is for that trigger's
     -- aura, or for any of them under Aura active
     if rec.kind ~= "aura" then
+        local when = "activeGlowWhen" .. (sfx or "")
+        if st.key == "overlayMissing" then
+            Store.SetOverride(rec, A, when, "missing")
+            return
+        end
+        if Store.Resolve(rec, A, when) == "missing" then Store.SetOverride(rec, A, when, "always") end
         if ListOrder(rec) and (st.perAura or st.key == "overlay") then
             Store.SetOverride(rec, A, "activeGlowFor" .. (sfx or ""), st.perAura or 0)
         end
@@ -1213,6 +1239,13 @@ local GLYPH = {
         { 1.5, 3, 3, 1.9, 21 }, { 1.5, 3, 3, -1.9, -21 } },
     art = { { 12, 1.5, 0, 4 }, { 12, 1.5, 0, -4 }, { 1.5, 8, -5.25, 0 }, { 1.5, 8, 5.25, 0 },
         { 4.6, 1.5, -2.4, -1.3, 49 }, { 5.3, 1.5, 1.1, -1.3, -41 } },
+    -- a dial with a wedge cut from it: the swipe
+    swipe = { { 3.8, 1.2, 4.6, 0, 90 }, { 3.8, 1.2, 3.25, -3.25, 45 }, { 3.8, 1.2, 0, -4.6 },
+        { 3.8, 1.2, -3.25, -3.25, 135 }, { 3.8, 1.2, -4.6, 0, 90 }, { 3.8, 1.2, -3.25, 3.25, 45 },
+        { 1.3, 5.2, 0, 2.6 }, { 1.3, 5.2, 1.85, 1.85, -45 } },
+    -- a frame inside a frame: the border
+    border = { { 11, 1.5, 0, 4.75 }, { 11, 1.5, 0, -4.75 }, { 1.5, 8, -4.75, 0 }, { 1.5, 8, 4.75, 0 },
+        { 5, 1, 0, 1.8 }, { 5, 1, 0, -1.8 }, { 1, 2.6, -2, 0 }, { 1, 2.6, 2, 0 } },
     add = { { 8, 1.5, 0, 0 }, { 1.5, 8, 0, 0 } },
     -- a funnel: a count state's rule (the Effects tab's When)
     when = { { 10.5, 1.4, 0, 4.4 }, { 6.1, 1.4, -3.1, 2, -51.6 }, { 6.1, 1.4, 3.1, 2, 51.6 }, { 2.2, 4.6, 0, -2.6 } },
@@ -2812,7 +2845,7 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
 
     -- the effect cells, one per effect column
     local fxCells = {}
-    for _, fk in ipairs(ET.FX_ORDER) do
+    for _, fk in ipairs(ET.TABLE_FX) do
         local b = CreateFrame("Button", nil, row, "BackdropTemplate")
         b:SetSize(32, 24)
         AT.Skin(b, COL.box, COL.line)
@@ -2879,7 +2912,7 @@ local function StateRow(pg, T, ctx, vis, kind, st, owner)
         local xs = { alpha = T.c1, grey = T.c2, tint = T.c3 }
         local ws = { alpha = T.w1, grey = T.w2, tint = T.w3 }
         -- effects
-        for _, fk in ipairs(ET.FX_ORDER) do fxCells[fk]:Hide() end
+        for _, fk in ipairs(ET.TABLE_FX) do fxCells[fk]:Hide() end
         for _, f in ipairs(ET.FxFor(r, st)) do
             local b = fxCells[f.kind]
             local x = T.fxX and T.fxX[f.kind]
@@ -4132,7 +4165,7 @@ function ET.StateTable(pg, ctx, vis, owner)
     end
     -- an effect column's head: its glyph over its word
     local fxHeads = {}
-    for _, fk in ipairs(ET.FX_ORDER) do
+    for _, fk in ipairs(ET.TABLE_FX) do
         local g = ET.Glyph(head, fk)
         g:SetColor(COL.faint)
         local fs = head:CreateFontString(nil, "OVERLAY")
@@ -4189,7 +4222,7 @@ function ET.StateTable(pg, ctx, vis, owner)
         T.w1, T.w2, T.w3 = w1, w2, w3
         local x = T.c3 + w3 + 12
         T.fxX, T.hasFx = {}, false
-        for _, fk in ipairs(ET.FX_ORDER) do
+        for _, fk in ipairs(ET.TABLE_FX) do
             local H = fxHeads[fk]
             if has[fk] then
                 T.fxX[fk] = x

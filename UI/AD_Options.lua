@@ -10627,16 +10627,25 @@ local function BuildIconEditor(parent)
         -- an aura icon, the aura phase's glow on a spell icon. An aura icon's
         -- glow sits under Active or Missing by its Glow when; one switched on
         -- under Missing glows while the aura is missing.
-        Card("Aura active", "auraActive", "activeGlow", nil, "Glow while the aura is up", W.overlay,
+        -- a cooldown icon's aura glow sits under Aura active or Aura missing
+        -- by its Glow when
+        local function OverlayWhen(sfx)
+            local field = "activeGlowWhen" .. (sfx or "")
+            return function(r)
+                if Store.Resolve(r, "auraActive", field) == "missing" then return "the aura is missing" end
+                return W.overlay(r)
+            end
+        end
+        Card("Aura active", "auraActive", "activeGlow", nil, "Glow while the aura is up", OverlayWhen(nil),
             { kindOnly = { spell = true, item = true, trinket = true, timer = true }, noLook = true,
                 onOn = function(r) ET.AuraGlowAdded(r, nil) end })
-        -- in list order a cooldown icon's aura has glows 2-4 too, each for any
-        -- of its auras or one of them (EditorTabs ListOrder)
+        -- a cooldown icon's aura has glows 2-4 too: under Aura active or
+        -- Aura missing, and in list order each for any of its auras or one
         for k = 2, Schema.AURA_GLOW_SLOTS do
             local sfx = tostring(k)
-            Card("Glow " .. k, "auraActive", "activeGlow", sfx, "Glow while the aura is up", W.overlay,
+            Card("Glow " .. k, "auraActive", "activeGlow", sfx, "Glow while the aura is up", OverlayWhen(sfx),
                 { kindOnly = { spell = true, item = true, trinket = true, timer = true }, noLook = true,
-                    applies = function(r) return ET.ListOrder(r) ~= nil end,
+                    applies = function(r) return NS.DriverAura.ButtonOver(r) == true end,
                     onOn = function(r) ET.AuraGlowAdded(r, sfx) end })
         end
         Card("Glow 1", "auraActive", "activeGlow", nil, "Glow while active", ET.AuraGlowWhen(nil),
@@ -10662,9 +10671,14 @@ local function BuildIconEditor(parent)
         local TIMER = { timer = true }
         local function CdOn(r) return ET.CustomCd(r) end
         local function CdOff(r) return r.kind == "timer" and not ET.CustomCd(r) end
-        local function AuraUp(r) return r.kind == "aura" or (r.kind == "timer" and NS.DriverAura.OverlayOn(r) == true) end
+        local function AuraUp(r) return r.kind == "aura" or (r.kind == "timer" and NS.DriverAura.OverlayOn(r) == true)
+            or NS.DriverAura.ButtonOver(r) == true end
+        -- a cooldown icon's aura gains stacks and drops too (a Custom Icon's only appears)
+        local function AuraOn(r) return r.kind == "aura" or (r.kind ~= "timer" and NS.DriverAura.ButtonOver(r) == true) end
+        local AURA_ICONS = { aura = true, timer = true, spell = true, item = true, trinket = true }
+        local AURA_CD = { aura = true, spell = true, item = true, trinket = true }
         local function AuraSoundNote(r)
-            return r.kind == "aura" and "The game plays aura sounds itself, so they work in combat, for anyone's copy of the aura."
+            return r.kind ~= "timer" and "The game plays aura sounds itself, so they work in combat, for anyone's copy of the aura."
                 or nil
         end
         for _, s in ipairs({
@@ -10682,9 +10696,9 @@ local function BuildIconEditor(parent)
             { "When it falls off", "cooldownSound", "enchant" },
             { "On proc", "procSound", "special" },
             { "When the next draw is guaranteed", "sureSound", "special" },
-            { "When the aura appears", "auraGainSound", { aura = true, timer = true }, AuraUp, true },
-            { "When it gains a stack", "auraStackSound", "aura", nil, true },
-            { "When the aura drops", "auraLostSound", "aura", nil, true },
+            { "When the aura appears", "auraGainSound", AURA_ICONS, AuraUp, true },
+            { "When it gains a stack", "auraStackSound", AURA_CD, AuraOn, true },
+            { "When the aura drops", "auraLostSound", AURA_CD, AuraOn, true },
         }) do
             local en, snd = s[2] .. "Enabled", s[2]
             -- an aura's moment is the game's to play: a sound, never words
@@ -10714,6 +10728,39 @@ local function BuildIconEditor(parent)
         return (tonumber(Store.Resolve(r, "auraActive", "activeIcon")) or 0) ~= 0
             or (r.kind ~= "aura" and NS.Schema.OverlayArtShows(r) and Store.Resolve(r, "auraActive", "overlayArt") == "spell")
     end })
+    -- The aura's swipe and its border's colour while it is up, as effects of
+    -- the aura's trigger: the rows the Swipe and Border tabs already draw,
+    -- lit while not as they come.
+    local SWIPE_LIT = { "swipeShow", "swipeColor", "overlaySwipeColor", "swipeReverse", "overlaySwipeReverse",
+        "swipeEdge", "swipeBling" }
+    local function Differs(v, d)
+        if type(v) == "table" and type(d) == "table" then
+            for i = 1, 4 do
+                if math.abs((v[i] or 1) - (d[i] or 1)) > 0.001 then return true end
+            end
+            return false
+        end
+        return v ~= d
+    end
+    Block(CT, nil, "Aura swipe", "auraSwipe", {
+        "swipeShow", "swipeColor", "overlaySwipeColor", "swipeReverse", "overlaySwipeReverse",
+        "swipeEdge", "edgeColor", "swipeBling",
+    }, { fx = "auraSwipe.look", lineName = false, noLook = true,
+        labels = { swipeShow = "Show", swipeColor = "Color", overlaySwipeColor = "Color", swipeReverse = "Reverse",
+            overlaySwipeReverse = "Reverse", swipeEdge = "Edge", edgeColor = "Edge color", swipeBling = "Finish flash" },
+        lit = function(r)
+            local sec = Schema.icon.auraSwipe
+            for _, f in ipairs(SWIPE_LIT) do
+                local def = sec.fields[f]
+                if def and Schema.Applies(def, sec, r.kind) and Differs(Store.Resolve(r, "auraSwipe", f), def.d) then
+                    return true
+                end
+            end
+            return false
+        end })
+    Block(CT, nil, "Border while active", "auraActive", { "activeBorderOn", "activeBorderColor" },
+        { fx = "auraActive.activeBorderOn", card = {}, lineName = false, noLook = true,
+            labels = { activeBorderOn = "Border", activeBorderColor = "Color" } })
     Block(CT, nil, "Art while missing", "auraMissing", { "missingIconFrom", "missingIcon" },
         { fx = "art.missing", lineName = false, labels = { missingIconFrom = "Icon from", missingIcon = "ID" },
             lit = function(r)
@@ -10781,6 +10828,15 @@ local function BuildIconEditor(parent)
     Sub(durDef, "Format", "text", {
         "durationAbbrev", "durationDecimals", "durationDecimalThreshold", "durationShowBelow", "hideDurWithCharges",
     })
+    -- a cooldown icon with an aura on it: the cooldown's number at its own
+    -- spot, over the aura too (Factory CdNum)
+    local function AuraOnIcon(kind)
+        local r = SelIcon()
+        return r ~= nil and (kind == nil or r.kind == kind) and NS.DriverAura ~= nil
+            and NS.DriverAura.ButtonOver(r) == true
+    end
+    Sub(durDef, "Cooldown text", "text", { "cdTextOwn", "cdTextAnchor", "cdTextX", "cdTextY", "cdTextSize", "cdTextColor" },
+        { vis = function() return durDef.vis() and AuraOnIcon() end })
     -- One band when switched on; "+ Add band" (durBandCount) under the bands
     Sub(durDef, "Color by time left", "text", {
         "durationColorBands", "durationBandsPercent",
@@ -10819,6 +10875,9 @@ local function BuildIconEditor(parent)
             return stackDef.vis() and r ~= nil and r.kind ~= "aura" and Store.Resolve(r, "text", "stackText") ~= false
         end, "icon", "text", "stackPinTo", "stackPinTarget", win, "Stack text")
     end
+    -- a charge spell with an aura on it: the charges apart from the aura's stacks
+    Sub(stackDef, "Charges", "text", { "chargeTextOwn", "chargeAnchor", "chargeX", "chargeY", "chargeSize", "chargeColor" },
+        { vis = function() return stackDef.vis() and AuraOnIcon("spell") end })
     Sub(stackDef, "Color by count", "text", {
         "stackColorBands",
         "stkBand1Min", "stkBand1Color", "stkBand2Min", "stkBand2Color",

@@ -1,5 +1,26 @@
 # Arc Auras
 
+## 3.3.5
+
+More triggers for the aura on a cooldown icon, its cooldown text over the aura, swipe and border effects, gear goals and upgrades from the auction house.
+
+### New Features
+
+- **Aura missing on cooldown icons** - A spell, item or trinket icon with an aura on it can fade, tint, glow or play a sound while that aura is missing, so a spell can glow while your target lacks your debuff.
+- **Aura sounds on cooldown icons** - The aura on a cooldown icon can play a sound when it appears, gains a stack or drops.
+- **Swipe and Border effects** - Effects > + Add effect can change an aura's swipe and its border color while the aura is up, on aura icons and cooldown icons.
+- **Four glows** - The aura on a cooldown icon has four glows, as an aura icon does.
+- **Cooldown text over the aura** - A cooldown icon with an aura on it can show its cooldown's number at a spot of its own, over the aura too, so the aura's time and the cooldown show at once.
+- **Charges at their own spot** - A charge spell with an aura on it can show its charges apart from the aura's stack count.
+- **Gear goals** - Each Gear Value scale can carry goals (critical strike, haste, mastery, versatility): set what your gear should give, see how close your worn gear is, and the stat stops counting once you reach it. Goals travel with the scale's export, and tooltips can show them.
+- **Effects and set bonuses** - A Gear Value scale can count an item's special effect or a set bonus: add the item or the set, then type its value or let it be read.
+- **Find upgrades** - With Gear Value on, the auction house gets a Find Upgrades tab: pick your scales and slots, and it lists only the gear that beats what you wear, best first, by points, DPS or DPS %.
+
+### Improvements
+
+- **Gear Value page** - Pick at the top which scales your tooltips show; below it, a scale editor with Weights, Goals and Extras tabs beside the preview.
+- **Gear Value import** - Paste one or more weights strings at once; a scale with the same name is updated in place, goals included.
+
 ## 3.3.4
 
 Pick which aura an icon shows when several are up, and a trigger for each aura.

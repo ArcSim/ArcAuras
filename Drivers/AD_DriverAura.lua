@@ -394,7 +394,10 @@ end
 
 -- A type's look on a group showing every aura (_adNoHolder: its button draws
 -- every glow, as a row's does) has nothing under the button for a Missing one.
+-- A cooldown icon's aura has them too, each on a layer of its own (MG): the
+-- icon's stage holds the cooldown's look.
 function Driver.MissingGlowOK(rec)
+    if rec ~= nil and rec.kind ~= "aura" then return FB_OK and IS_121 and Driver.ButtonOver(rec) == true end
     return FB_OK and Driver.HolderGlowOK(rec) and not rec._adNoHolder
 end
 
@@ -694,7 +697,7 @@ local function AnyGlowWanted(rec)
     for k = 1, GlowSlots() do
         if GlowIDs(rec, k) then return true end
         -- a Missing glow on a layer of its own (MG below)
-        if Driver.MissGlowLayered(rec, k) and Factory.MissingGlowOn(rec, k) then return true end
+        if MG.Want(rec, k) then return true end
     end
     return false
 end
@@ -1341,9 +1344,11 @@ function Driver.MissGlowLayered(rec, k)
 end
 
 function MG.Want(rec, k)
-    return FB_OK and rec ~= nil and rec.kind == "aura" and Driver.GlowLaneOK(rec)
-        and Driver.MissingGlowOK(rec) and Factory.MissingGlowOn(rec, k) == true
-        and Driver.MissGlowLayered(rec, k)
+    if not (FB_OK and rec ~= nil) then return false end
+    -- a cooldown icon's always takes one (Driver.MissingGlowOK)
+    if rec.kind ~= "aura" then return Driver.MissingGlowOK(rec) and Factory.MissingGlowOn(rec, k) == true end
+    return Driver.MissGlowLayered(rec, k) and Driver.GlowLaneOK(rec) and Driver.MissingGlowOK(rec)
+        and Factory.MissingGlowOn(rec, k) == true
 end
 
 -- The piece: as far as the glow can reach (MG.Paint sizes its frame), so a
@@ -1890,7 +1895,9 @@ function MG.Paint(entry, ml, combat)
     ml.reach:ClearAllPoints()
     ml.reach:SetPoint("TOPLEFT", ml.stage, "TOPLEFT", -m, m)
     ml.reach:SetPoint("BOTTOMRIGHT", ml.stage, "BOTTOMRIGHT", m, -m)
-    ml.base:SetAlpha(f._adShownAlpha or f._adStateAlpha or 1)
+    -- an aura icon's rides its missing look's opacity; a cooldown icon's is
+    -- at full, as its other glows are
+    ml.base:SetAlpha(rec.kind == "aura" and (f._adShownAlpha or f._adStateAlpha or 1) or 1)
     Factory.SetAuraButtonGlow(ml.base, rec, ml.want, o.w, o.h, 1, k, ml.level + 1)
 end
 
@@ -1938,7 +1945,9 @@ function MG.Alpha(entry, ea, a, vis)
         ml.stage:SetAlpha((live and vis and not ml.hold) and 1 or 0)
         ml.dim:SetAlpha(ea)
         for _, s in ipairs(ml.subs) do
-            local sa = a
+            -- a cooldown icon's aura stepping aside is still up: its button
+            -- keeps covering the glow
+            local sa = (entry.rec and entry.rec.kind ~= "aura") and ea or a
             if LaneBlind(s.unit, s.harmful, entry.rec) then sa = 0 end
             s.container:SetAlpha(sa > 0 and 1 or 0)
             MG.Quiet(entry, ml, s, not (live and vis) or sa <= 0)
@@ -2124,6 +2133,9 @@ local function RestyleEntry(entry)
     if entry.holder and entry.rec and entry.rec.kind == "aura" then
         Factory.ApplyMissingGlows(entry.holder, entry.rec, opts.w, opts.h, GlowsForCombat())
         Factory.ApplyAlwaysGlows(entry.holder, entry.rec, opts.w, opts.h, GlowsForCombat())
+    elseif entry.holder and entry.rec and entry.mlanes then
+        -- a cooldown icon's: on their layers only
+        Factory.ApplyMissingGlows(entry.holder, entry.rec, opts.w, opts.h, GlowsForCombat())
     end
     -- both sets, so a switch between them finds its buttons ready
     local other = entry.share and ((entry.subs == entry.share) and entry.own or entry.share) or nil
@@ -2524,7 +2536,7 @@ local function OnCombatEdge(state)
             SyncEntryAlpha(entry)
         end
         -- the holder's glows are our own frames: they follow here directly
-        if entry.holder and not entry.off and entry.rec and entry.rec.kind == "aura" then
+        if entry.holder and not entry.off and entry.rec and (entry.rec.kind == "aura" or entry.mlanes) then
             local o = AuraButtonOpts(entry)
             Factory.ApplyMissingGlows(entry.holder, entry.rec, o.w, o.h, GlowsForCombat())
             Factory.ApplyAlwaysGlows(entry.holder, entry.rec, o.w, o.h, GlowsForCombat())

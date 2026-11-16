@@ -1,5 +1,6 @@
 -- AD_AuraSounds: an aura icon's sounds (the aura appears, gains a stack,
--- drops), and a Sound item's aura rules (Bars\AD_SoundItem.lua says which).
+-- drops), a cooldown icon's for the aura on it, and a Sound item's aura
+-- rules (Bars\AD_SoundItem.lua says which).
 -- The game plays them itself (C_UnitAuras.AddAuraSound), so they
 -- sound in combat with nothing read; this file only registers them: one per
 -- tracked spell ID and moment, on the icon's unit, while the icon is attached.
@@ -72,8 +73,9 @@ function AS.Wanted(rec)
     local D = NS.DriverAura
     if not (D and D.ShapeOf) then return out end
     local d = rec.driver or {}
-    -- a Custom Icon sounds for the aura it shows, only while it shows one
-    if rec.kind == "timer" then
+    -- a Custom Icon or a cooldown icon sounds for the aura on it, only while
+    -- it shows one
+    if rec.kind ~= "aura" then
         d = D.ShapeFor and D.ShapeFor(rec)
         if not d then return out end
     end
@@ -161,11 +163,12 @@ end
 -- next frame: a rebuild detaches and re-attaches in one go, which changes nothing
 function AS.Queue() Events.Coalesce("adaurasnd_sync", AS.Sync) end
 
--- the cooldown driver's attach and detach, for every aura icon; a Sound item's
--- runtime the same for its aura rules
+-- the cooldown driver's attach and detach, for every aura icon and icon that
+-- can show an aura; a Sound item's runtime the same for its aura rules
+local TAKES = { aura = true, timer = true, spell = true, item = true, trinket = true }
 function AS.Attach(rec)
     local SN = NS.SoundItems
-    local takes = rec ~= nil and ((rec.type == "icon" and (rec.kind == "aura" or rec.kind == "timer"))
+    local takes = rec ~= nil and ((rec.type == "icon" and TAKES[rec.kind] == true)
         or (SN ~= nil and SN.Is(rec)))
     if not (takes and Store.Get(rec.id) == rec) then return end
     AS.live[rec.id] = rec

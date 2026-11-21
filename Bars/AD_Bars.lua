@@ -169,7 +169,7 @@ local function ResolveFont(key)
         if path then return path end
     end
     -- a name no media addon has registered yet: asked again later
-    if Bars.FontMissed then Bars.FontMissed(key, true) end
+    if Bars.FontMissed then Bars.FontMissed(key) end
     return BUILTIN_FONTS["Default"]
 end
 -- Also used by the icon texts.
@@ -772,11 +772,8 @@ for _, def in ipairs(TEXT_DEFS) do TEXT_DEF_BY_KEY[def.key] = def end
 -- shadow are written to the object, so every string using it re-renders. That
 -- reaches engine-bound aura texts while their buttons are forbidden in combat,
 -- and the Cooldown widget, which re-applies its countdown font on every start,
--- takes ours through SetCountdownFont. A bad font file fails silently, so the
--- path is proved first on a hidden string, whose SetFont reports success (an
--- object's does not).
+-- takes ours through SetCountdownFont.
 local fontObjects = {}      -- [name] = Font
-local fontProbe
 local function FontObjectFor(entry, runKey)
     if not CreateFont then return nil end
     local name = "ArcUIv2BarFont_" .. tostring(entry.rec.id) .. "_" .. runKey
@@ -788,26 +785,16 @@ local function FontObjectFor(entry, runKey)
     return fo
 end
 
-local function ProvenFontPath(path, size, flags)
-    -- a file that took once stays loaded
-    if Bars.fontOK[path] then return path end
-    if not fontProbe then
-        fontProbe = UIParent:CreateFontString(nil, "OVERLAY")
-        fontProbe:Hide()
-    end
-    -- SetFont's answer can be false for a font that loads: the theme reads
-    -- back instead (a theme without the reader keeps the answer)
-    local took
-    if AT.FontTook then took = AT.FontTook(fontProbe, path, size, flags) else took = fontProbe:SetFont(path, size, flags) end
-    if took then
-        Bars.fontOK[path] = true
-        return path
-    end
-    if path ~= BUILTIN_FONTS["Default"] and Bars.FontMissed then Bars.FontMissed(path) end
+-- The game loads a font file only once a shown text draws with it, so the path
+-- goes straight onto our texts: a test on a hidden string reads the old face
+-- for a file nothing has drawn yet, and waiting on that answer would keep the
+-- file from ever loading.
+local function ProvenFontPath(path)
+    if type(path) == "string" and path ~= "" then return path end
     return BUILTIN_FONTS["Default"]
 end
--- A named font for any text (icons too): the resolved file once it took,
--- else the default face while it is asked again.
+-- A named font for any text (icons too): its file, or the default face while
+-- the name waits for its media addon.
 function Bars.FontFor(key)
     return ProvenFontPath(ResolveFont(key), 12, "")
 end
@@ -6258,15 +6245,12 @@ function Bars.RestyleAll()
     end)
 end
 
--- The first login after the game starts, a font file the client has not
--- loaded yet does not take at the first style pass, and a media addon can
--- register a name after a text asked for it. Each such font or name is asked
--- again on a timer, at every loading screen, when any addon loads and when
--- the media library registers a font; once one takes, every bar and icon
--- restyles. A restyle that misses again starts the tries over.
+-- A media addon can register a font name after a text asked for it. Each
+-- such name is asked again on a timer, at every loading screen, when any addon
+-- loads and when the media library registers a font; once one is known, every
+-- bar and icon restyles. A restyle that misses again starts the tries over.
 Bars.FONT_TRIES = { 0.5, 2, 5, 15, 30, 60 }
-Bars.fontOK = {}
-function Bars.FontMissed(what, isName)
+function Bars.FontMissed(what)
     local m = Bars.missedFonts
     if not m then
         m = {}
@@ -6276,7 +6260,7 @@ function Bars.FontMissed(what, isName)
             Events.On("ADDON_LOADED", "adfonts", Bars.FontRecheck)
         end
     end
-    if isName then m[what] = "name" else m[what] = "path" end
+    m[what] = true
     Bars.FontHookLSM()
     if not Bars.fontTry then
         Bars.fontTry = 1
@@ -6295,8 +6279,7 @@ function Bars.FontHookLSM()
     end)
 end
 
--- Every waiting font that takes now leaves the list; true when any did. A
--- path that still fails is put back by the prover.
+-- Every waiting name the media library knows now leaves the list; true when any did.
 function Bars.FontRecheck()
     local m = Bars.missedFonts
     if not (m and next(m)) then return false end
@@ -6306,11 +6289,9 @@ function Bars.FontRecheck()
     for what in pairs(m) do list[#list + 1] = what end
     local took = false
     for _, what in ipairs(list) do
-        local path = what
-        if m[what] == "name" then path = lsm and lsm:Fetch("font", what, true) end
-        if path then
+        if lsm and lsm:Fetch("font", what, true) then
             m[what] = nil
-            if ProvenFontPath(path, 12, "") == path then took = true end
+            took = true
         end
     end
     if took then

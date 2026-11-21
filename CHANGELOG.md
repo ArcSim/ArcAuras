@@ -15,6 +15,7 @@ Count text for reagents and items, time left colors on stack bars, a new look fo
 - **Bar Effects tab** - Works like the icon Effects tab: each trigger in the list shows a small picture of how it paints the bar, its effects sit on tabs with + Add effect, and on an aura stack bar arrows pick whether Time left or Stacks wins.
 - **Red remove buttons** - Remove trigger and the other remove buttons on both Effects tabs are red, so they stand apart.
 - **Gain in percent** - Find upgrades and item tooltips can show a gain as a percent of the piece you wear; no simulator needed. Turn it on for tooltips under Gear value in tooltips.
+- **Fonts** - Fonts from media addons and the options window's own font load more reliably on the first login after starting the game.
 
 ### Bug Fixes
 

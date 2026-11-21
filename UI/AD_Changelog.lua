@@ -31,6 +31,8 @@ CL.versions = {
                     desc = "Remove trigger and the other remove buttons on both Effects tabs are red, so they stand apart." },
                 { title = "Gain in percent",
                     desc = "Find upgrades and item tooltips can show a gain as a percent of the piece you wear; no simulator needed. Turn it on for tooltips under Gear value in tooltips." },
+                { title = "Fonts",
+                    desc = "Fonts from media addons and the options window's own font load more reliably on the first login after starting the game." },
             } },
             { header = "Bug Fixes", items = {
                 { title = "Bar editor",
@@ -1829,6 +1831,8 @@ CL.retailVersions = {
                     desc = "Remove trigger and the other remove buttons on both Effects tabs are red, so they stand apart." },
                 { title = "Gain in percent",
                     desc = "Find upgrades and item tooltips can show a gain as a percent of the piece you wear; no simulator needed. Turn it on for tooltips under Gear value in tooltips." },
+                { title = "Fonts",
+                    desc = "Fonts from media addons and the options window's own font load more reliably on the first login after starting the game." },
             } },
             { header = "Bug Fixes", items = {
                 { title = "Bar editor",

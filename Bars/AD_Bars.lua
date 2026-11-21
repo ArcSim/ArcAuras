@@ -498,6 +498,18 @@ local function DurationBands(rec, ref)
 end
 Bars.DurationBands = DurationBands
 
+-- Time left's Fill color effect: off leaves the fill to the other colours
+-- while the steps still colour the text.
+function Bars.TimeFillOn(rec)
+    return R(rec, "thresholds", "threshFill") ~= false
+end
+
+-- An aura stack bar ordered Stacks above Time left: a stack colour beats a
+-- time band while both hold.
+function Bars.StacksAbove(rec)
+    return Store.BarFxFirst(rec, "Stacks", "Time left") == true
+end
+
 -- Aura stack composition: the extra engine-driven fills a bar needs and where
 -- they sit. Each layer: { kind, minA, maxA (the engine's applications window),
 -- x0, x1 (fractions of the bar), color, imm }; every layer starts at count 0,
@@ -613,6 +625,41 @@ local function DurationLayerPlan(bands, drain, baseColor)
     return layers
 end
 Bars.DurationLayerPlan = DurationLayerPlan
+
+-- Time left colours on a stack bar, over its stack colours: per band, the
+-- stack fill in the band's colour (kind "tcover"), seen through a mask that a
+-- hidden time step opens once the time left is under the band. The least
+-- urgent band first, so the most urgent draws on top.
+-- Stacks above Time left (second return true): the covers go under every
+-- layer that paints a stack colour. Flip: under all of them, so a time band
+-- shows only while no step holds. Position: the base fill wears the top
+-- colour, so the covers ride over the base-coloured cells under the first
+-- step only (a saturating window like that step's own overlay), under the
+-- max colour's segment.
+function Bars.TimeCoverPlan(layers, rec, M, segmented)
+    if not Bars.TimeFillOn(rec) then return layers end
+    local bands = DurationBands(rec, R(rec, "thresholds", "threshRef") or 30)
+    if not bands then return layers end
+    local above = #layers > 0 and Bars.StacksAbove(rec)
+    local top, x1, at = M, 1, #layers + 1
+    if above then
+        at = 1
+        if segmented then
+            local sb = StackBands(rec, M)
+            top = (sb and sb[1].from or M) - 1
+            -- no cell keeps the base colour: a stack colour always wins
+            if top < 1 then return layers, true end
+            x1 = top / M
+            while layers[at] and layers[at].kind == "band" do at = at + 1 end
+        end
+    end
+    for i = #bands, 1, -1 do
+        table.insert(layers, at, { kind = "tcover", f = bands[i].f, minA = 0, maxA = top,
+            x0 = 0, x1 = x1, color = bands[i].color })
+        at = at + 1
+    end
+    return layers, above
+end
 
 -- tick positions as fractions of the bar (0 < p < 1) from the ticks section.
 -- unitMax = the bar's full value in its own unit (stacks / seconds / power)
@@ -1486,6 +1533,8 @@ end
 local function BuildCooldownCurve(entry)
     local rec = entry.rec
     if R(rec, "thresholds", "threshEnabled") ~= true then return nil, nil end
+    -- the curve only colours the fill; the text bands are TextBands'
+    if not Bars.TimeFillOn(rec) then return nil, nil end
     -- Probe the table, not just the method: indexing a missing table errors.
     if not (C_CurveUtil and C_CurveUtil.CreateColorCurve and CreateColor) then
         return nil, nil
@@ -2205,11 +2254,15 @@ local function BuildPlainBands(rec)
         end
     end
     if #bands == 0 then return nil end
+    local fill = Bars.TimeFillOn(rec)
+    -- neither the fill nor the text takes a step: nothing to colour
+    if not fill and R(rec, "thresholds", "threshText") ~= true then return nil end
     table.sort(bands, function(a, b) return a.value < b.value end)
     return {
         asSeconds = R(rec, "thresholds", "threshAsSeconds") ~= false,
         base = R(rec, "fill", "color") or { 0.247, 0.788, 0.949, 1 },
         bands = bands,
+        fill = fill,
         -- the countdown text takes the band colour too (plain math here)
         text = R(rec, "thresholds", "threshText") == true,
         textBase = R(rec, "text", "durColor") or { 0.95, 0.97, 1, 1 },
@@ -2267,7 +2320,9 @@ local function RunTimedFill(entry, duration, onDone)
                         break
                     end
                 end
-                bar:SetStatusBarColor(col[1], col[2], col[3], col[4] or 1)
+                if pt.fill ~= false then
+                    bar:SetStatusBarColor(col[1], col[2], col[3], col[4] or 1)
+                end
                 if pt.text then
                     local fs = shell.texts.dur
                     if fs then
@@ -5266,7 +5321,8 @@ local function AuraDurFormatter(entry)
     local rec = entry.rec
     local decTo = (R(rec, "text", "durDecimalsEnabled") == true)
         and (R(rec, "text", "durDecimalThreshold") or 10) or 0
-    local bands = (entry.mode == "duration") and TextBands(entry) or nil
+    -- a stack bar's time left colours its text too (Time left's Text color)
+    local bands = TextBands(entry)
     -- stock "down": the engine's own duration text drops the fraction, so
     -- the default "up" rounding needs a formatter here (Settings > Timers)
     return NS.Factory.TimerFormatter(decTo, bands, R(rec, "text", "durAbbrev") or 0, "down",
@@ -5315,19 +5371,30 @@ local function AuraPlan(entry)
         local M = AuraMaxStacks(rec)
         local segmented = Bars.StackSegmented(rec)
         layers, fillColor = StackLayerPlan(rec, M, segmented)
+        local _, above = Bars.TimeCoverPlan(layers, rec, M, segmented)
         parts[#parts + 1] = "S" .. M .. (segmented and "g" or "c")
         for _, L in ipairs(layers) do
             parts[#parts + 1] = string.format("%s:%d:%d:%.4f:%.4f", L.kind, L.minA, L.maxA, L.x0, L.x1)
+                .. (L.kind == "tcover" and string.format(":%.4f", L.f) or "")
+        end
+        -- the order and Fill color decide the levels and the covers, set at init
+        if above then parts[#parts + 1] = "oS" end
+        if not Bars.TimeFillOn(rec) then parts[#parts + 1] = "nf" end
+        -- the duration text takes the time steps here too
+        for _, b in ipairs(TextBands(entry) or {}) do
+            parts[#parts + 1] = string.format("b%.1f:%s", b.t, ColorKey(b.c))
         end
     else
         -- a ring has no straight length for the colour bands to sit along
         local bands = not Bars.RingOn(rec) and DurationBands(rec, R(rec, "thresholds", "threshRef") or 30) or nil
-        layers = DurationLayerPlan(bands, drain,
+        local fillOn = Bars.TimeFillOn(rec)
+        layers = DurationLayerPlan(fillOn and bands or nil, drain,
             R(rec, "fill", "color") or { 0.247, 0.788, 0.949, 1 }) or {}
         parts[#parts + 1] = "D" .. (drain and "d" or "f")
         for _, L in ipairs(layers) do
             parts[#parts + 1] = string.format("%s:%s:%.4f", L.kind, L.side, L.f)
         end
+        if not fillOn then parts[#parts + 1] = "nf" end
         -- the text formatter bakes the band seconds and colours
         if R(rec, "thresholds", "threshText") == true and bands then
             for _, b in ipairs(bands) do
@@ -5708,6 +5775,13 @@ local function AuraLayoutLayers(entry)
         local lay = AuraLayerHost(entry, i)
         if L.kind == "shade" then
             AuraAxisRect(lay.host, fill, 0, len, vertical, rev)
+        elseif L.kind == "tcover" then
+            -- a cover held to the base-coloured cells ends where that step's overlay does
+            AuraAxisRect(lay.host, fill, 0, (L.x1 < 1) and Snap(len * L.x1) or len, vertical, rev)
+            -- the time step: its fill edge crosses the bar origin when the
+            -- time left reaches the band and clears the bar end within
+            -- len / Lg of the aura's life
+            Bars.TimeGateRect(lay.stepRect, fill, len, cross, L.f, vertical, rev)
         elseif L.kind == "band" then
             AuraAxisRect(lay.host, fill, Snap(len * L.x0), Snap(len * L.x1), vertical, rev)
         else
@@ -5749,6 +5823,57 @@ local function AuraLayoutLayers(entry)
                     end
                 end
             end
+        end
+    end
+end
+
+-- The time step of a stack bar's time colour: Lg long, its origin Lg * f
+-- before the bar origin, so its fill edge sits at Lg * (left - f).
+function Bars.TimeGateLength(len)
+    return math.min(AURA_STEP_MAXLEN, math.max(len, len / AURA_STEP_DELTA))
+end
+
+function Bars.TimeGateRect(sr, fill, len, cross, f, vertical, rev)
+    local Lg = Bars.TimeGateLength(len)
+    local back = Lg * f
+    sr:ClearAllPoints()
+    if vertical then
+        sr:SetSize(cross, Lg)
+        if rev then
+            sr:SetPoint("TOPLEFT", fill, "TOPLEFT", 0, back)
+        else
+            sr:SetPoint("BOTTOMLEFT", fill, "BOTTOMLEFT", 0, -back)
+        end
+    else
+        sr:SetSize(Lg, cross)
+        if rev then
+            sr:SetPoint("TOPRIGHT", fill, "TOPRIGHT", back, 0)
+        else
+            sr:SetPoint("TOPLEFT", fill, "TOPLEFT", -back, 0)
+        end
+    end
+end
+
+-- The cover's window: from the time step's fill edge towards the bar end,
+-- long enough to reach the end from the step's origin, so the cover shows
+-- while the edge sits before the bar origin and none of it once the edge is
+-- past the end.
+function Bars.TimeGateMask(m, gateTex, vertical, rev)
+    m:ClearAllPoints()
+    local long, wide = 2 * AURA_STEP_MAXLEN, 8000
+    if vertical then
+        m:SetSize(wide, long)
+        if rev then
+            m:SetPoint("TOP", gateTex, "BOTTOM", 0, 0)
+        else
+            m:SetPoint("BOTTOM", gateTex, "TOP", 0, 0)
+        end
+    else
+        m:SetSize(long, wide)
+        if rev then
+            m:SetPoint("RIGHT", gateTex, "LEFT", 0, 0)
+        else
+            m:SetPoint("LEFT", gateTex, "RIGHT", 0, 0)
         end
     end
 end
@@ -5899,7 +6024,7 @@ local function AuraBarEnsure(entry)
         local bar = Bars.CreateFrame("StatusBar", nil, b)
         bar:SetFrameLevel(base + 2 + 2 * i)
         s.bar = bar
-        if kind == "track" then
+        if kind == "track" or (kind == "tcover" and L.x1 >= 1) then
             bar:SetAllPoints(sh.fill)                          -- full length, masked to the window
         elseif kind == "step" then
             bar:SetAllPoints(AuraLayerHost(e2, i).stepRect)    -- the overhang, masked to [0..X]
@@ -5944,6 +6069,25 @@ local function AuraBarEnsure(entry)
             end
             t:AddMaskTexture(m)
             s.mask = m
+        elseif kind == "tcover" then
+            -- the hidden time step whose fill edge carries the cover's window
+            local gate = Bars.CreateFrame("StatusBar", nil, b)
+            gate:SetFrameLevel(base + 2 + 2 * i)
+            gate:SetAllPoints(AuraLayerHost(e2, i).stepRect)
+            gate:SetMinMaxValues(0, 1)
+            gate:SetStatusBarTexture(WHITE)
+            gate:SetStatusBarColor(1, 1, 1, 0)
+            local vertical = (R(rec, "fill", "orientation") or "HORIZONTAL") == "VERTICAL"
+            local rev = R(rec, "fill", "reverseFill") == true
+            gate:SetOrientation(vertical and "VERTICAL" or "HORIZONTAL")
+            gate:SetReverseFill(rev)
+            local m = bar:CreateMaskTexture()
+            m:SetTexture(WHITE, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE", "NEAREST")
+            if m.SetSnapToPixelGrid then m:SetSnapToPixelGrid(false) end
+            if m.SetTexelSnappingBias then m:SetTexelSnappingBias(0) end
+            Bars.TimeGateMask(m, gate:GetStatusBarTexture(), vertical, rev)
+            t:AddMaskTexture(m)
+            s.mask, s.gate = m, gate
         end
 
         -- The sheen rides the fill texture, covering only the filled part; it
@@ -5966,6 +6110,14 @@ local function AuraBarEnsure(entry)
             if NS.AuraAppWindow == true then o.minApplications = win and L.minA or 0 end
             if li then o.interpolation = li end
             b:SetApplicationBar(bar, o)
+            if s.gate then
+                -- the time left, whatever the fill mode: the bands are "under"
+                local g = {}
+                if DIR_REMAIN then g.direction = DIR_REMAIN end
+                local gi = INTERP_NONE or interp
+                if gi then g.interpolation = gi end
+                b:SetDurationBar(s.gate, g)
+            end
         else
             local o = {}
             if dir then o.direction = dir end
@@ -6777,19 +6929,19 @@ function PV.DurationColor(e, frac, ref)
 end
 
 -- the stack colour a plain count shows (flip: the highest band reached;
--- the max colour on top at the maximum)
+-- the max colour on top at the maximum); second: whether a stack step holds
 function PV.StackColor(e, count, M)
     local rec = e.rec
     if count >= M and R(rec, "stackcolors", "maxColorEnabled") == true then
-        return R(rec, "stackcolors", "maxColor") or { 0, 1, 0, 1 }
+        return R(rec, "stackcolors", "maxColor") or { 0, 1, 0, 1 }, true
     end
     local bands = StackBands(rec, M)
     if bands then
         for k = #bands, 1, -1 do
-            if count >= bands[k].from then return bands[k].color end
+            if count >= bands[k].from then return bands[k].color, true end
         end
     end
-    return { BarColorOf(rec) }
+    return { BarColorOf(rec) }, false
 end
 
 -- the cooldown parts a preview needs: the text-only Cooldown and the slot
@@ -6985,7 +7137,8 @@ function PV.PaintAuraDuration(e, remaining, len)
     shell.fill:SetMinMaxValues(0, len)
     shell.fill:SetValue(remaining <= 0 and 0 or (drain and remaining or (len - remaining)))
     local col, hit = PV.DurationColor(e, remaining / len, len)
-    shell.fill:SetStatusBarColor(col[1], col[2], col[3], col[4] or 1)
+    local fc = (hit and not Bars.TimeFillOn(rec)) and { BarColorOf(rec) } or col
+    shell.fill:SetStatusBarColor(fc[1], fc[2], fc[3], fc[4] or 1)
     SetRunText(shell, "dur", PV.DurText(e, remaining))
     SetRunText(shell, "stk", remaining > 0 and StackCount(rec, 2) or "")
     local fs = shell.texts.dur
@@ -7016,11 +7169,26 @@ function PV.PaintTimerStack(e, count, M, restart)
     end
 end
 
-function PV.PaintAuraStack(e, count, M)
+-- remaining / len: the preview's own time left; a time band it is under wins
+-- over the stack colour (Stacks above: only while no stack step holds) unless
+-- Fill color is off, as the live bar draws it; the duration text follows the
+-- steps with Text color
+function PV.PaintAuraStack(e, count, M, remaining, len)
     local shell, rec = e.shell, e.rec
     shell.fill:SetMinMaxValues(0, M)
     shell.fill:SetValue(count)
-    local col = PV.StackColor(e, count, M)
+    local col, held = PV.StackColor(e, count, M)
+    if remaining and len and len > 0 then
+        local tc, hit = PV.DurationColor(e, remaining / len, len)
+        if hit and Bars.TimeFillOn(rec) and not (held and Bars.StacksAbove(rec)) then col = tc end
+        SetRunText(shell, "dur", PV.DurText(e, remaining))
+        local fs = shell.texts.dur
+        if fs then
+            local c = (hit and R(rec, "thresholds", "threshText") == true) and tc
+                or (R(rec, "text", "durColor") or { 0.95, 0.97, 1, 1 })
+            fs:SetTextColor(c[1], c[2], c[3], c[4] or 1)
+        end
+    end
     shell.fill:SetStatusBarColor(col[1], col[2], col[3], col[4] or 1)
     SetRunText(shell, "stk", StackCount(rec, count))
 end
@@ -7098,7 +7266,8 @@ function PV.Apply(e, fresh)
         else
             count = math.min(3, M)
         end
-        PV.PaintAuraStack(e, count, M)
+        local len = e.pvLen or 8
+        PV.PaintAuraStack(e, count, M, loop and (len - t % len) or len, len)
     elseif kind == "aura" then
         local len = e.pvLen or 8
         if loop then

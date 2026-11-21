@@ -68,11 +68,21 @@ function AH.ClassFilters(key)
     if not (IC and IT and AS and WS) then return nil end
     local A, W = IC.Armor, IC.Weapon
     local function f(classID, subClassID, inv) return { classID = classID, subClassID = subClassID, inventoryType = inv } end
+    -- a body slot is one filter per armor type, as the game's own list sends it: a slot filter with no armor type is
+    -- not one the server keeps to
+    local function body(inv, robe)
+        local out = {}
+        for _, sub in ipairs({ AS.Cloth, AS.Leather, AS.Mail, AS.Plate }) do
+            out[#out + 1] = f(A, sub, inv)
+            if robe then out[#out + 1] = f(A, sub, robe) end
+        end
+        return out
+    end
     local all = {
-        head = { f(A, nil, IT.IndexHeadType) }, shoulder = { f(A, nil, IT.IndexShoulderType) },
-        chest = { f(A, nil, IT.IndexChestType), f(A, nil, IT.IndexRobeType) }, waist = { f(A, nil, IT.IndexWaistType) },
-        legs = { f(A, nil, IT.IndexLegsType) }, feet = { f(A, nil, IT.IndexFeetType) },
-        wrist = { f(A, nil, IT.IndexWristType) }, hands = { f(A, nil, IT.IndexHandType) },
+        head = body(IT.IndexHeadType), shoulder = body(IT.IndexShoulderType),
+        chest = body(IT.IndexChestType, IT.IndexRobeType), waist = body(IT.IndexWaistType),
+        legs = body(IT.IndexLegsType), feet = body(IT.IndexFeetType),
+        wrist = body(IT.IndexWristType), hands = body(IT.IndexHandType),
         neck = { f(A, AS.Generic, IT.IndexNeckType) }, back = { f(A, AS.Cloth, IT.IndexCloakType) },
         finger = { f(A, AS.Generic, IT.IndexFingerType) }, trinket = { f(A, AS.Generic, IT.IndexTrinketType) },
         offhand = { f(A, AS.Generic, IT.IndexHoldableType), f(A, AS.Shield) },
@@ -83,7 +93,7 @@ function AH.ClassFilters(key)
     local out = {}
     for _, x in ipairs(all[key] or {}) do
         -- a category this game lacks reads nil: leave it out rather than ask for everything
-        if x.classID ~= nil and (x.inventoryType ~= nil or x.subClassID ~= nil) then out[#out + 1] = x end
+        if x.classID ~= nil and x.subClassID ~= nil then out[#out + 1] = x end
     end
     return out
 end
@@ -274,8 +284,8 @@ function AH.SetSort(key)
     AH.Dirty()
 end
 
--- The gain's unit: the scale's own points, DPS, or a share of the scale's DPS (each scale's numbers from a
--- simulator; a scale without them stays in points).
+-- The gain's unit: the scale's own points, DPS (a scale's DPS per point, from a simulator), or a percent of what
+-- the worn piece is worth.
 AH.UNITS = { "points", "dps", "pct" }
 function AH.Unit()
     local t = AH.Store(false)
@@ -293,7 +303,7 @@ end
 
 function AH.UnitWord(u)
     if u == "dps" then return Tr("Gain in DPS") end
-    if u == "pct" then return Tr("Gain in DPS %") end
+    if u == "pct" then return Tr("Gain in %") end
     return Tr("Gain in points")
 end
 
@@ -306,9 +316,9 @@ local function SameKey(a, b)
 end
 AH.SameKey = SameKey
 
--- One query for every picked slot. The server may ignore a filter's slot and answer with every item of the class in
--- name order (four pages a slot only ever reached names from A to D): so every page is read, and each
--- item goes to the picked slot its equip location fits. slots: a list of slot keys, a single key, or "all".
+-- One query for every picked slot. Every page is read (a slot alone can run to several), and each item goes to the
+-- picked slot its equip location fits, should the server send others. slots: a list of slot keys, a single key, or
+-- "all".
 function AH.Start(slots)
     AH.Stop()
     AH.seen, AH.byKey, AH.tasks, AH.loads, AH.loading = {}, {}, {}, {}, 0
@@ -316,13 +326,13 @@ function AH.Start(slots)
     if type(slots) == "table" then AH.order = slots
     elseif slots == "all" or slots == nil then AH.order = AH.Slots()
     else AH.order = { slots } end
-    -- one query for every picked slot: the server sends all armor for any armor query, so one read serves them all
+    -- one query for every picked slot: the server joins the categories of one query, every armor type in each
     local filters = {}
     for _, s in ipairs(AH.order) do
         for _, f in ipairs(AH.ClassFilters(s) or {}) do filters[#filters + 1] = f end
     end
     AH.tasks[1] = { kind = "browse", filters = filters }
-    AH.slotsDone, AH.running, AH.deadline = 0, true, nil
+    AH.slotsDone, AH.running, AH.deadline, AH.gotLoads = 0, true, nil, 0
     AH.Listen(true)
     AH.Pump()
     -- the press shows once the query is out: the button, the first status
@@ -374,11 +384,16 @@ function AH.Pump()
         elseif (AH.loading or 0) <= 0 then
             AH.Finish()
         elseif not AH.deadline then
-            -- an item that never loads must not hold the search open
+            -- an item that never loads must not hold the search open; while others keep coming in, it waits on
             AH.deadline = true
-            local token = AH.token
+            local token, got = AH.token, AH.gotLoads
             C_Timer.After(AH.WAIT_FOR, function()
                 if AH.token == token and AH.running and not AH.tasks[1] and not AH.wait then
+                    if AH.gotLoads ~= got then
+                        AH.deadline = nil
+                        AH.Pump()
+                        return
+                    end
                     AH.loads, AH.loading = {}, 0
                     AH.Finish()
                 end
@@ -581,6 +596,7 @@ function AH.OnItemInfo(id)
     if not link then return end
     AH.loads[id] = nil
     AH.loading = math.max(0, (AH.loading or 0) - 1)
+    AH.gotLoads = (AH.gotLoads or 0) + 1
     for _, e in ipairs(waiting) do AH.Value(e, link) end
     AH.Next()
 end
@@ -592,6 +608,13 @@ function AH.Value(entry, link, lines)
     entry.link, entry.lines = link, lines or (tip and tip.lines)
     entry.name = link:match("%[(.-)%]") or "?"
     entry.quality, entry.req, entry.icon, entry.gains = quality, minLevel, icon, {}
+    -- its stats and set now, while the game holds the item: after a big search it forgets items within seconds, and a
+    -- scale ticked later values it from these
+    local G = NS.GearValue
+    if G then
+        entry.stats, entry.any = G.ItemStats(link, entry.lines)
+        G.SetOf(link)
+    end
     AH.seen[#AH.seen + 1] = entry
     -- its worth on the picked scales now, inside the reading budget, so a redraw only reads what is kept
     for _, s in ipairs(AH.slicePicks or {}) do AH.Gain(entry, s) end
@@ -607,37 +630,42 @@ end
 
 -- The listings that beat what is worn for a picked scale, best gain first. Each listing's gain per scale is read
 -- once a search, so picking scales re-ranks at once.
+-- Returns the gain in points, what the replaced piece is worth (nil: nothing worn there, or a piece worth nothing)
+-- and whether the slot is empty.
 function AH.Gain(entry, scale)
     local g = entry.gains[scale.id]
     if g == nil then
         local G = NS.GearValue
-        local out = G and entry.link and G.Gains(entry.link, entry.lines, { scale })
+        local out = G and entry.link and G.Gains(entry.link, entry.lines, { scale }, entry.stats, entry.any)
         local d = out and out[1] and out[1].delta
-        g = (type(d) == "number") and d or false
+        g = (type(d) == "number") and { d = d, was = out[1].was, empty = out[1].empty } or false
         entry.gains[scale.id] = g
     end
-    return g or nil
+    if not g then return nil end
+    return g.d, g.was, g.empty
 end
 
 -- Each row: the gain in points on its best picked scale, that gain in the unit asked (value, unit), the scale; in
--- the order the clicked column asks, ties by the larger gain, then the lower price. In DPS or DPS % only the scales
--- that can say it count, so every row is in the one unit (the status names the others).
+-- the order the clicked column asks, ties by the larger gain, then the lower price. In DPS only the scales with
+-- their DPS per point count, so every row is in the one unit (the status names the others); in percent a gain over
+-- nothing worth comparing (an empty slot) ranks first.
 function AH.Ranked()
     local G = NS.GearValue
     local scales, out, mode = AH.PickedScales(), {}, AH.Unit()
     for _, e in ipairs(AH.seen) do
-        local best, by, bestV, bestU
+        local best, by, bestV, bestU, bestE
         for _, s in ipairs(scales) do
-            local d = AH.Gain(e, s)
+            local d, was, empty = AH.Gain(e, s)
             if d and d > 0.05 then
                 local v, u = d, "points"
-                if G then v, u = G.InUnit(s, d, mode) end
+                if G then v, u = G.InUnit(s, d, mode, was) end
+                if mode == "pct" and u == "points" then v, u = math.huge, "pct" end
                 if (u == mode or mode == "points") and (not bestV or v > bestV) then
-                    best, by, bestV, bestU = d, s, v, u
+                    best, by, bestV, bestU, bestE = d, s, v, u, empty
                 end
             end
         end
-        if best then out[#out + 1] = { entry = e, gain = best, scale = by, value = bestV, unit = bestU } end
+        if best then out[#out + 1] = { entry = e, gain = best, scale = by, value = bestV, unit = bestU, empty = bestE } end
     end
     local key, desc = AH.Sort()
     local function field(it)
@@ -660,27 +688,28 @@ function AH.Ranked()
     return out
 end
 
--- A row's gain in its unit: "+8 SP", "+3.5 DPS", "+0.55%".
+-- A row's gain in its unit: "+8 SP", "+3.5 DPS", "+20%".
 function AH.GainText(it)
     local G = NS.GearValue
     if it.unit == "dps" then return ("+%.1f %s"):format(it.value, Tr("DPS")) end
-    if it.unit == "pct" then return ((it.value < 1) and "+%.2f%%" or "+%.1f%%"):format(it.value) end
+    if it.unit == "pct" then
+        if it.value == math.huge or not G then return it.empty and Tr("Empty slot") or Tr("Worn adds 0") end
+        return G.PctText(it.value)
+    end
     local unit = G and G.Unit(it.scale)
     return "+" .. (G and G.Num(it.gain) or it.gain) .. (unit and (" " .. Tr(unit)) or "")
 end
 
--- DPS asked for while a picked scale lacks its numbers: say which scales the DPS rows leave out.
+-- DPS asked for while a picked scale lacks its DPS per point: say which scales the DPS rows leave out.
 function AH.UnitHint()
-    local mode = AH.Unit()
     local G = NS.GearValue
-    if mode == "points" or not G then return nil end
+    if AH.Unit() ~= "dps" or not G then return nil end
     local missing = {}
     for _, s in ipairs(AH.PickedScales()) do
-        local per, base = G.Dps(s)
-        if not per or (mode == "pct" and not base) then missing[#missing + 1] = s.name end
+        if not G.Dps(s) then missing[#missing + 1] = s.name end
     end
     if #missing == 0 then return nil end
-    return Tr("Left out of DPS: %s. Set DPS per point and Your DPS on its Weights tab."):format(table.concat(missing, ", "))
+    return Tr("Left out of DPS: %s. Set DPS per point on its Weights tab."):format(table.concat(missing, ", "))
 end
 
 function AH.StatusText()
@@ -894,7 +923,7 @@ function AH.Build()
             root:CreateRadio(AH.UnitWord(u), function(v) return AH.Unit() == v end, AH.SetUnit, u)
         end
     end)
-    AT.Tooltip(unit, "Gain", "Gains in the scale's points, in DPS or as a share of your DPS. DPS takes each scale's DPS per point and your DPS, set on its Weights tab.")
+    AT.Tooltip(unit, "Gain", "Gains in the scale's points, in DPS, or in percent over the piece you wear. DPS takes each scale's DPS per point, set on its Weights tab.")
     AH.unitDD = unit
 
     AH.BuildList(F)

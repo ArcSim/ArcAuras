@@ -620,7 +620,8 @@ function Schema.AmmoCountShown(rec)
     local Store = NS.Store
     if not (rec and Store) then return false end
     if rec.kind == "ammo" then return Store.Resolve(rec, "text", "stackText") ~= false end
-    return Store.Resolve(rec, "text", "ammoText") == true
+    return NS.IsForever == true and Store.Resolve(rec, "text", "ammoText") == true
+        and (Store.Resolve(rec, "text", "countSource") or "ammo") == "ammo"
 end
 
 -- An item worn in a slot (a trinket, a ring): its instant info names the slot.
@@ -2302,27 +2303,35 @@ Schema.icon = {
             dep = { { field = "stackText" }, { field = "stackColorBands" }, { field = "stkBandCount", min = 6 } } },
         stkBandCount = { inherit = false, d = 1, t = "int", min = 1, max = 6, kinds = AU, adds = "band",
             label = "Number of stack bands", dep = { { field = "stackText" }, { field = "stackColorBands" } } },
-        -- The equipped ammo count on a spell icon, styled apart from the stack
-        -- text: a charge spell can show both, hence the opposite corner. The
-        -- count is plain in combat (no secrecy annotation; Blizzard's item
-        -- buttons compare it). Ammo exists on WoW Forever only.
-        ammoText = { foreverOnly = true, d = false, t = "bool", kinds = SP, label = "Ammo stack text" },
-        ammoSize = { foreverOnly = true, d = 14, t = "int", min = 6, max = 32, kinds = SP, label = "Ammo text size", dep = { field = "ammoText" } },
-        ammoColor = { foreverOnly = true, d = { 1, 1, 1, 1 }, t = "color", alpha = true, kinds = SP, label = "Ammo text color", dep = { field = "ammoText" } },
-        ammoOutline = { foreverOnly = true, adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = SP, label = "Ammo text outline", dep = { field = "ammoText" } },
-        ammoFont = { foreverOnly = true, d = "", t = "text", font = true, kinds = SP, label = "Ammo text font", dep = { field = "ammoText" } },
-        ammoAnchor = { foreverOnly = true, d = "BOTTOMLEFT", t = "enum",
+        -- A count on a spell icon, styled apart from the stack text: a charge
+        -- spell can show both, hence the opposite corner. countSource picks
+        -- it: the equipped ammo (WoW Forever only; plain in combat), the casts
+        -- the spell's reagents allow (may be secret: set as text, never
+        -- compared) or one item's count by ID. The ammo* fields keep their
+        -- names so saves from before the choice still show ammo.
+        ammoText = { d = false, t = "bool", kinds = SP, label = "Count text" },
+        countSource = { inherit = false, noDefault = true, d = NS.IsForever == true and "ammo" or "reagent", t = "enum",
+            values = NS.IsForever == true and { "ammo", "reagent", "item" } or { "reagent", "item" },
+            labels = { ammo = "Ammo", reagent = "Reagents (casts left)", item = "An item" },
+            kinds = SP, label = "Count", dep = { field = "ammoText" } },
+        countItem = { inherit = false, noDefault = true, d = "", t = "text", kinds = SP, label = "Item ID",
+            dep = { { field = "ammoText" }, { field = "countSource", value = "item" } } },
+        ammoSize = { d = 14, t = "int", min = 6, max = 32, kinds = SP, label = "Count text size", dep = { field = "ammoText" } },
+        ammoColor = { d = { 1, 1, 1, 1 }, t = "color", alpha = true, kinds = SP, label = "Count text color", dep = { field = "ammoText" } },
+        ammoOutline = { adv = "text", d = "OUTLINE", t = "enum", values = { "OUTLINE", "THICKOUTLINE", "NONE" }, kinds = SP, label = "Count text outline", dep = { field = "ammoText" } },
+        ammoFont = { d = "", t = "text", font = true, kinds = SP, label = "Count text font", dep = { field = "ammoText" } },
+        ammoAnchor = { d = "BOTTOMLEFT", t = "enum",
             values = { "BOTTOMRIGHT", "BOTTOMLEFT", "TOPRIGHT", "TOPLEFT", "TOP", "BOTTOM", "CENTER", "LEFT", "RIGHT" },
-            kinds = SP, label = "Ammo text anchor", dep = { field = "ammoText" } },
-        ammoX = { foreverOnly = true, adv = "text", d = 0, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text X", dep = { field = "ammoText" } },
-        ammoY = { foreverOnly = true, adv = "text", d = 0, t = "int", min = -50, max = 50, kinds = SP, label = "Ammo text Y", dep = { field = "ammoText" } },
-        ammoStrata = { foreverOnly = true, adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, kinds = SP, label = "Ammo text strata",
+            kinds = SP, label = "Count text anchor", dep = { field = "ammoText" } },
+        ammoX = { adv = "text", d = 0, t = "int", min = -50, max = 50, kinds = SP, label = "Count text X", dep = { field = "ammoText" } },
+        ammoY = { adv = "text", d = 0, t = "int", min = -50, max = 50, kinds = SP, label = "Count text Y", dep = { field = "ammoText" } },
+        ammoStrata = { adv = "text", d = "inherit", t = "enum", values = Schema.TEXT_STRATA, kinds = SP, label = "Count text strata",
             showIf = function(r) return Schema.TextStrataShows(r, "text", "ammoPinTo") end, dep = { field = "ammoText" } },
-        ammoPinTo = { foreverOnly = true, inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS,
-            kinds = SP, label = "Ammo text pinned to", dep = { field = "ammoText" } },
-        ammoPinTarget = { foreverOnly = true, noDefault = true, inherit = false, d = "", t = "text", kinds = SP,
-            label = "Ammo text pin target", dep = { field = "ammoText" } },
-        ammoShadow = { foreverOnly = true, adv = "text", d = false, t = "bool", kinds = SP, label = "Ammo text shadow", dep = { field = "ammoText" } },
+        ammoPinTo = { inherit = false, d = "own", t = "enum", values = Schema.PIN_TO, labels = Schema.PIN_LABELS,
+            kinds = SP, label = "Count text pinned to", dep = { field = "ammoText" } },
+        ammoPinTarget = { noDefault = true, inherit = false, d = "", t = "text", kinds = SP,
+            label = "Count text pin target", dep = { field = "ammoText" } },
+        ammoShadow = { adv = "text", d = false, t = "bool", kinds = SP, label = "Count text shadow", dep = { field = "ammoText" } },
         -- Threshold colours for the ammo count (Factory.AmmoCountColor). The
         -- count is plain in combat, so Lua compares it; the lowest threshold
         -- it is at or below wins.
@@ -3658,6 +3667,9 @@ Schema.bar = {
         castStageCount = { d = 4, t = "int", min = 1, max = 8, kinds = BK_CAST, adds = "stage color", label = "Stage colors",
             desc = "How many stage colors to list and show while editing; set it to your spell's stages.",
             showIf = Schema.StageColorsShow },
+        -- the Effects tab's trigger order on this bar, top first (higher wins;
+        -- Store.BarFxSeq): its arrows write it, no row of its own
+        fxOrder = { d = "", t = "text", noDefault = true, inherit = false, label = "Effects order" },
         -- Cooldown stack bars draw charge slots, never the fill, so they lack
         -- orientation and reverse; aura stack bars keep them. onSet runs after
         -- the editor writes: Horizontal lays a standing bar down.
@@ -4231,7 +4243,7 @@ Schema.bar = {
     -- and swing bars compare plain seconds in the GetTime loop; aura duration
     -- bars get engine-driven colour layers, so their time never reaches Lua.
     thresholds = { push = true, kinds = { cooldown = true, timer = true, aura = true, swing = true },
-        kindModes = { aura = { duration = true }, timer = { duration = true } }, fields = {
+        kindModes = { aura = { duration = true, stack = true }, timer = { duration = true } }, fields = {
         threshEnabled = { d = false, t = "bool", label = "Threshold colors" },
         -- Bands in play (of three); the others hide and the runtime skips them.
         -- adds: the panel grows the count with an "Add threshold" button. One
@@ -4265,6 +4277,10 @@ Schema.bar = {
         -- The countdown text takes the same bands (C-side formatter on cooldown
         -- and aura bars, plain math on timer bars).
         threshText = { d = false, t = "bool", label = "Color duration text too", dep = { field = "threshEnabled" } },
+        -- The Effects tab's Fill color on Time left: its card is the switch,
+        -- no row of its own. On by default, so every bar keeps its look.
+        threshFill = { d = true, t = "bool", noDefault = true, inherit = false, label = "Fill color",
+            dep = { field = "threshEnabled" } },
     } },
     -- Swing bars: the fill wears an ability's colour while it is queued on the
     -- next swing, or from its cast until that swing lands, over the threshold

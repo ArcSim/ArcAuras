@@ -799,13 +799,21 @@ function GV.SetSize(lines)
     return nil
 end
 
--- The set an item belongs to; nil for none or unread.
+-- The set an item belongs to; nil for none or unread. Kept by item once read: the game forgets items after a big
+-- auction search, and a piece listed then is valued later.
+GV.setOf = {}
 function GV.SetOf(link)
     if type(link) ~= "string" or Secret(link) then return nil end
+    local key = GV.ItemID(link)
+    local had = key and GV.setOf[key]
+    if had ~= nil then return had or nil end
     local get = (C_Item and C_Item.GetItemInfo) or GetItemInfo
-    local id = get and select(16, get(link))
-    if Secret(id) or type(id) ~= "number" or id == 0 then return nil end
-    return id
+    if not get or get(link) == nil then return nil end
+    local id = select(16, get(link))
+    if Secret(id) then return nil end
+    local v = (type(id) == "number" and id ~= 0) and id or false
+    if key then GV.setOf[key] = v end
+    return v or nil
 end
 
 -- The stat words name, as the equip patterns read it: key and amount, or nil.
@@ -999,39 +1007,39 @@ function GV.CopyExtras(x)
     return out
 end
 
--- What a scale's points are worth in DPS, from a simulator: per = the DPS one point of the stat weighed at 1 adds,
--- base = the DPS a gain is a share of. scale.dps = { per, base }; either may be unset.
+-- What one point of a scale is worth in DPS, from a simulator (the DPS weight of the stat weighed at 1).
+-- scale.dps = { per }.
 function GV.Dps(scale)
     local d = scale and scale.dps
-    if type(d) ~= "table" then return nil, nil end
-    local per = (type(d.per) == "number" and not Secret(d.per) and d.per > 0) and d.per or nil
-    local base = (type(d.base) == "number" and not Secret(d.base) and d.base > 0) and d.base or nil
-    return per, base
+    if type(d) ~= "table" then return nil end
+    return (type(d.per) == "number" and not Secret(d.per) and d.per > 0) and d.per or nil
 end
 
 -- On an own scale; 0 or less unsets it.
 function GV.SetDps(id, field, v)
     local s = Own(id)
     v = tonumber(v)
-    if not (s and (field == "per" or field == "base") and v) then return false end
-    if type(s.dps) ~= "table" then s.dps = {} end
-    s.dps[field] = (v > 0) and v or nil
-    if not next(s.dps) then s.dps = nil end
+    if not (s and field == "per" and v) then return false end
+    s.dps = (v > 0) and { per = v } or nil
     return true
 end
 
 function GV.CopyDps(d)
-    if type(d) ~= "table" then return nil end
-    local out = { per = d.per, base = d.base }
-    return next(out) and out or nil
+    if type(d) ~= "table" or type(d.per) ~= "number" then return nil end
+    return { per = d.per }
 end
 
--- A gain in the unit asked: "points" (the scale's own), "dps", or "pct" (a share of the scale's DPS). Returns the
--- value and the unit it ends in: "points" when the scale lacks the numbers for the one asked.
-function GV.InUnit(scale, v, mode)
-    local per, base = GV.Dps(scale)
-    if mode == "dps" and per then return v * per, "dps" end
-    if mode == "pct" and per and base then return v * per / base * 100, "pct" end
+-- A gain in the unit asked: "points" (the scale's own), "dps" (its DPS per point), or "pct" (a share of what the
+-- replaced piece is worth, was). Returns the value and the unit it ends in: "points" when the one asked cannot be
+-- said (no DPS per point; nothing worn worth comparing).
+function GV.InUnit(scale, v, mode, was)
+    if mode == "dps" then
+        local per = GV.Dps(scale)
+        if per then return v * per, "dps" end
+    elseif mode == "pct" then
+        local p = GV.Pct(v, was)
+        if p then return p, "pct" end
+    end
     return v, "points"
 end
 
@@ -1091,10 +1099,39 @@ function GV.BestSwap(stats, link, slots, loc, scale, goals, lines)
         local v = value({ { stats, Share(opt.hand) } }, base) + mineX
         local d = v - was + setD
         if not best or d > best.d then
-            best = { v = v, d = d, empty = empty, name = name, x = mineX - wasX + setD }
+            best = { v = v, d = d, empty = empty, name = name, x = mineX - wasX + setD, was = was }
         end
     end
-    return best.v, best.d, best.empty, (#options > 1 and not best.empty) and best.name or nil, best.x
+    -- the replaced pieces' worth last: a percent gain is a share of it
+    return best.v, best.d, best.empty, (#options > 1 and not best.empty) and best.name or nil, best.x,
+        (not best.empty) and best.was or nil
+end
+
+-- A gain as a percent of what the worn piece is worth; nil with nothing worth comparing (an empty slot, a piece
+-- worth nothing to the scale).
+function GV.Pct(delta, was)
+    if type(delta) ~= "number" or type(was) ~= "number" or was < 0.05 then return nil end
+    return delta / was * 100
+end
+
+-- "+20%", "+2.5%", "-12%".
+function GV.PctText(p)
+    local a = math.abs(p)
+    local n = (a < 10) and (string.format("%.1f", a):gsub("%.0$", "")) or string.format("%d", math.floor(a + 0.5))
+    return ((p > 0) and "+" or (p < 0 and n ~= "0") and "-" or "") .. n .. "%"
+end
+
+-- Whether item tooltips add the percent beside each change, account-wide; off until the player ticks it.
+function GV.PctOn()
+    local data = GV.Data()
+    return data ~= nil and data.gearPct == true
+end
+
+function GV.SetPctOn(on)
+    local data = GV.Data()
+    if not data then return false end
+    data.gearPct = on and true or nil
+    return true
 end
 
 
@@ -1108,8 +1145,9 @@ end
 
 -- One scale's line: "Elemental: 22 SP (-3 vs worn)"; the change and its words
 -- are each one sentence to translate; name = the item it replaces, when it
--- could go in two places; extra = how much of it the scale's extras make.
-function GV.Line(scale, v, delta, empty, name, extra)
+-- could go in two places; extra = how much of it the scale's extras make; was = what the replaced piece is worth
+-- (the percent beside the change, when ticked).
+function GV.Line(scale, v, delta, empty, name, extra, was)
     local unit = GV.Unit(scale)
     local s = GV.LINE_COLOR .. scale.name .. ": " .. GV.Num(v) .. (unit and (" " .. Tr(unit)) or "") .. "|r"
     local x = (type(extra) == "number" and math.abs(extra) >= 0.05) and GV.Num(extra) or nil
@@ -1126,6 +1164,8 @@ function GV.Line(scale, v, delta, empty, name, extra)
         col = GV.DOWN_COLOR
     end
     local n = sign .. GV.Num(delta)
+    local p = (delta ~= 0 and GV.PctOn()) and GV.Pct(delta, was) or nil
+    if p then n = n .. ", " .. GV.PctText(p) end
     local vs
     if empty then
         vs = x and Tr("(%s vs empty, %s from extras)"):format(n, x) or Tr("(%s vs empty)"):format(n)
@@ -1220,8 +1260,8 @@ function GV.LinesFor(link, lines, scales)
                 end
             end
         end
-        local v, delta, empty, name, extra = GV.BestSwap(stats, link, slots, loc, scale, mine, lines)
-        out[#out + 1] = GV.Line(scale, v, delta, empty, name, extra)
+        local v, delta, empty, name, extra, was = GV.BestSwap(stats, link, slots, loc, scale, mine, lines)
+        out[#out + 1] = GV.Line(scale, v, delta, empty, name, extra, was)
     end
     local order = {}
     for i, k in ipairs(GV.GoalKinds()) do order[k.key] = i end
@@ -1234,13 +1274,14 @@ function GV.LinesFor(link, lines, scales)
 end
 
 -- Each scale's worth of an item and its change from the best swap, its goals
--- counted: { { scale, v, delta }, ... } (delta nil: nothing to compare), or nil
--- when the item has nothing to value.
-function GV.Gains(link, lines, scales)
+-- counted: { { scale, v, delta, was, empty }, ... } (delta nil: nothing to compare; was: what the replaced piece
+-- is worth), or nil when the item has nothing to value. stats, any: its stats as read before (GV.ItemStats), for an
+-- item the game may no longer hold.
+function GV.Gains(link, lines, scales, stats, any)
     local loc = GV.EquipLoc(link)
     local slots = loc and GV.SLOTS[loc]
     if not slots then return nil end
-    local stats, any = GV.ItemStats(link, lines)
+    if stats == nil then stats, any = GV.ItemStats(link, lines) end
     if not any and not GV.Listed(link, scales) then return nil end
     local out = {}
     for _, scale in ipairs(scales) do
@@ -1249,8 +1290,8 @@ function GV.Gains(link, lines, scales)
             goal.worn = GV.WornAmount(goal)
             if goal.worn ~= nil then mine[#mine + 1] = goal end
         end
-        local v, delta = GV.BestSwap(stats, link, slots, loc, scale, mine, lines)
-        out[#out + 1] = { scale = scale, v = v, delta = delta }
+        local v, delta, empty, _, _, was = GV.BestSwap(stats, link, slots, loc, scale, mine, lines)
+        out[#out + 1] = { scale = scale, v = v, delta = delta, was = was, empty = empty == true }
     end
     return out
 end
@@ -1294,6 +1335,12 @@ end
 GV.GOAL_SHARE = { regen = "RegenGoal", spellhit = "SpellHitGoal", meleehit = "MeleeHitGoal", crit = "CritGoal",
     haste = "HasteGoal", pen = "SpellPenetrationGoal", mastery = "MasteryGoal", vers = "VersatilityGoal" }
 GV.RATE_SHARE = { spi = "RegenSpirit", int = "RegenIntellect" }
+-- The other words simulators write for the same stats (a spell and a melee word for one stat here: the larger
+-- weight wins, the class's own).
+GV.SHARE_ALIASES = {
+    forever = { naturespelldamage = "nature", firespelldamage = "fire", spellhitrating = "hit",
+        spellcritrating = "crit", spellhasterating = "haste", spellpen = "pen" },
+}
 
 -- A scale and its goals: one package.
 function GV.Export(scale)
@@ -1314,10 +1361,9 @@ function GV.Export(scale)
             end
         end
     end
-    -- what a point is worth in DPS, and the DPS a gain is a share of
-    local per, base = GV.Dps(scale)
+    -- what a point is worth in DPS
+    local per = GV.Dps(scale)
     if per then parts[#parts + 1] = "DpsPerPoint=" .. Short(per) end
-    if base then parts[#parts + 1] = "BaseDps=" .. Short(base) end
     -- extras by ID: Item_<id>=value (ItemAuto_<id>=1 reads from its words), SetItem_<set>=<piece>, Set_<set>_<n>=value
     local x = GV.Extras(scale)
     local ids = {}
@@ -1378,15 +1424,18 @@ end
 
 -- A weights string read into the player's own scales: a scale of the same class
 -- and name takes its weights and goals (and its spec, when it names one), else a
--- new scale. Returns the id, true when it updated one, and how many goals came
--- in; or nil and why.
+-- new scale. Returns the id, true when it updated one, how many goals came in,
+-- and the weighed words it does not know (said on the page, never dropped
+-- silently); or nil and why.
 function GV.Import(text)
     if type(text) ~= "string" then return nil, "empty" end
     local name, body = text:match('^%s*%(%s*[%w_]+%s*:%s*v%d+%s*:%s*"([^"]+)"%s*:(.-)%)%s*$')
     if not name then return nil, "format" end
     local byName, goalBy, rateBy = {}, {}, {}
     for k, n in pairs(GV.SHARE_NAMES[GV.Game()]) do byName[n:lower()] = k end
+    for word, k in pairs(GV.SHARE_ALIASES[GV.Game()] or {}) do byName[word] = k end
     byName.dps = "dps"
+    local skipped = {}
     for k, n in pairs(GV.GOAL_SHARE) do goalBy[n:lower()] = k end
     for k, n in pairs(GV.RATE_SHARE) do rateBy[n:lower()] = k end
     local cls, spec, w, n, goals = nil, nil, {}, 0, {}
@@ -1417,9 +1466,10 @@ function GV.Import(text)
                 setId, at = tonumber(setId), tonumber(at)
                 extras.sets[setId] = extras.sets[setId] or {}
                 extras.sets[setId][at] = num
-            elseif (lk == "dpsperpoint" or lk == "basedps") and num and num > 0 then
-                dps = dps or {}
-                dps[(lk == "dpsperpoint") and "per" or "base"] = num
+            elseif lk == "dpsperpoint" and num and num > 0 then
+                dps = { per = num }
+            elseif lk == "basedps" then
+                -- an older string's DPS, no longer used
             elseif goalBy[lk] and num and num >= 0 then
                 goals[goalBy[lk]] = goals[goalBy[lk]] or {}
                 goals[goalBy[lk]].goal = num
@@ -1427,8 +1477,11 @@ function GV.Import(text)
                 goals.regen = goals.regen or {}
                 goals.regen[rateBy[lk]] = num
             elseif key and num and num > 0 then
-                w[key] = num / PerPoint(key)
-                n = n + 1
+                local each = num / PerPoint(key)
+                if not w[key] then n = n + 1 end
+                if not w[key] or each > w[key] then w[key] = each end
+            elseif not key and num and num > 0 then
+                skipped[#skipped + 1] = k
             end
         end
     end
@@ -1445,21 +1498,21 @@ function GV.Import(text)
         -- the string is the whole package: a scale updated from one with no goals or extras has none
         same.w, same.goals, same.extras, same.dps = w, kept, keptX, dps
         if spec then same.spec = spec end
-        return same.id, true, count
+        return same.id, true, count, skipped
     end
     local id = GV.NewScale(name, { w = w, class = cls, spec = spec, goals = kept, extras = keptX, dps = dps })
     if not id then return nil, "saves" end
-    return id, false, count
+    return id, false, count, skipped
 end
 
 -- Every weights string in a paste, read in order. Returns a list of
--- { id, updated, goals } or { why }; a paste with none reads as one string.
+-- { id, updated, goals, skipped } or { why }; a paste with none reads as one string.
 function GV.ImportAll(text)
     local out = {}
     if type(text) ~= "string" then return { { why = "empty" } } end
     local function one(s)
-        local id, r, goals = GV.Import(s)
-        if id then return { id = id, updated = r == true, goals = goals or 0 } end
+        local id, r, goals, skipped = GV.Import(s)
+        if id then return { id = id, updated = r == true, goals = goals or 0, skipped = skipped or {} } end
         return { why = r }
     end
     for block in text:gmatch("%b()") do out[#out + 1] = one(block) end

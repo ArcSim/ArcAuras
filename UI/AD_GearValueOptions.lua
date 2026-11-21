@@ -235,7 +235,7 @@ end
 function P.OpenImport()
     P.Unfocus()
     P.Disarm()
-    P.panel, P.importWhy = "import", nil
+    P.panel, P.importWhy, P.skipped = "import", nil, nil
     P.Relayout()
     if P.impBox then P.impBox:SetFocus() end
 end
@@ -246,9 +246,11 @@ function P.DoImport()
     if not (G and box) then return end
     local pick, why
     local data = G.Data()
+    local skipped = {}
     -- each string brings its scale whole: weights and goals
     for _, r in ipairs(G.ImportAll(box:GetText() or "")) do
         if r.id then
+            for _, word in ipairs(r.skipped or {}) do skipped[#skipped + 1] = word end
             -- an update keeps the scale's mark and where it shows; the engine keeps
             -- where a new scale came from only as this mark
             if not r.updated then
@@ -273,7 +275,15 @@ function P.DoImport()
     else
         P.importWhy = "class"
     end
+    -- words the string weighed that this game has no stat for: said under the scale it made, never lost silently
+    P.skipped = (#skipped > 0 and pick) and { id = pick, words = skipped } or nil
     P.Changed()
+end
+
+function P.SkippedText()
+    local s = P.skipped
+    if not (s and P.sel == s.id) then return nil end
+    return Tr("Not read from the string: %s."):format(table.concat(s.words, ", "))
 end
 
 function P.ImportWhyText()
@@ -836,32 +846,24 @@ function P.WeightRow(sp, a, b, specA, specB)
     return row
 end
 
--- What the scale's points are worth in DPS, for the auction house's DPS gains: a row of the weights' grid.
-P.DPS_STEP, P.BASE_STEP = 0.01, 5
+-- What one point of the scale is worth in DPS, for the auction house's DPS gains: a row of the weights' grid.
+P.DPS_STEP = 0.01
 function P.DpsRow(sp)
-    local function get(field)
-        return function(s)
+    local per = {
+        get = function(s)
             local G = NS.GearValue
-            if not G then return nil end
-            -- both values: `G and G.Dps(s)` would keep only the first
-            local per, base = G.Dps(s)
-            if field == "per" then return per end
-            return base
-        end
-    end
-    local function put(field)
-        return function(id, v) return NS.GearValue.SetDps(id, field, v) end
-    end
-    local per = { get = get("per"), put = put("per"), step = P.DPS_STEP, label = function()
-        local G, c = NS.GearValue, P.Cur()
-        local unit = G and c and G.Unit(c)
-        return unit and Tr("DPS per %s"):format(Tr(unit)) or Tr("DPS per point")
-    end }
-    local base = { get = get("base"), put = put("base"), step = P.BASE_STEP }
-    -- a one-word label: through Tr here so the key list reads it
-    local row = P.WeightRow(sp, { "dpsper", "DPS per point" }, { "dpsbase", Tr("Your DPS") }, per, base)
+            return G and G.Dps(s) or nil
+        end,
+        put = function(id, v) return NS.GearValue.SetDps(id, "per", v) end,
+        step = P.DPS_STEP,
+        label = function()
+            local G, c = NS.GearValue, P.Cur()
+            local unit = G and c and G.Unit(c)
+            return unit and Tr("DPS per %s"):format(Tr(unit)) or Tr("DPS per point")
+        end,
+    }
+    local row = P.WeightRow(sp, { "dpsper", "DPS per point" }, nil, per)
     AT.Tooltip(row.cells[1].val, "DPS per point", "What one point of this scale adds to your DPS, from a simulator. The auction house can show gains in DPS with it.")
-    AT.Tooltip(row.cells[2].val, "Your DPS", "Your DPS in a simulator. The auction house's percent gain is a share of it.")
     P.dpsCells = row.cells
     return row
 end
@@ -1561,6 +1563,7 @@ function P.BuildScale(sp)
     -- the scale editor: which scale, its name and spec, what to do with it, then its tabs as the box's last row
     AT.Section(sp, Tr("Scales"), { visibleFn = edit })
     P.ScaleRow(sp)
+    P.Line(sp, P.SkippedText, function() return edit() and P.SkippedText() ~= nil end)
     local row = AT.RowInput(sp, "Name",
         function()
             local c = P.Cur()
@@ -1705,6 +1708,28 @@ function P.Build(pg, m)
     P.showFor = row._colCtrl
     P.ShowRow(pg, m.isOn)
     P.GoalLinesRow(pg, m.isOn)
+    row = AT.RowToggle(pg, "Gain in %", function()
+        local G = NS.GearValue
+        return G ~= nil and G.PctOn()
+    end, function(v)
+        local G = NS.GearValue
+        if G then G.SetPctOn(v) end
+        P.Changed()
+    end, m.isOn, "Adds how much better or worse than the piece you wear, in percent, beside each change on item tooltips.")
+    P.pctCheck = row._colCtrl
+    -- the gear list, WoW Forever only: every piece within reach that beats the gear, and its tracker in dungeons
+    local onForever = function() return m.isOn() and NS.IsForever == true end
+    row = AT.RowButton(pg, "Open", function()
+        if NS.GearListUI then NS.GearListUI.Open() end
+    end, onForever, nil, "Gear list")
+    AT.Tooltip(row._colCtrl or row, "Gear list", "Every piece you can get outside raids that beats your gear, by where it comes from.")
+    P.listButton = row._colCtrl or row
+    row = AT.RowToggle(pg, "Tracker inside dungeons", function()
+        return NS.GearTracker ~= nil and NS.GearTracker.On()
+    end, function(v)
+        if NS.GearTracker then NS.GearTracker.SetOn(v) end
+    end, onForever, "Inside a dungeon: the pieces you still want there, boss by boss, and a reminder to roll Need when one drops.")
+    P.trackerCheck = row._colCtrl
     AT.Section(pg, nil)
     local host = AT.AddRow(pg, 40, m.isOn)
     P.host = host

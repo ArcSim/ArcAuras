@@ -2430,12 +2430,32 @@ function Factory.AmmoCount()
     return type(n) == "number" and n or nil
 end
 
+-- What a spell icon's Count text shows (rec's text.countSource): the equipped
+-- ammo, the casts the spell's reagents allow, or one item's count. nil when
+-- there is nothing to count. The reagent count may be secret: set it as text,
+-- never compare it.
+function Factory.CountValue(rec, sid)
+    local src = Store.Resolve(rec, "text", "countSource") or (NS.IsForever == true and "ammo" or "reagent")
+    if src == "reagent" then
+        if not (sid and C_Spell and C_Spell.GetSpellCastCount) then return nil end
+        return C_Spell.GetSpellCastCount(sid)
+    elseif src == "item" then
+        local id = tonumber(Store.Resolve(rec, "text", "countItem") or "")
+        local F = (C_Item and C_Item.GetItemCount) or GetItemCount
+        if not (id and F) then return nil end
+        return F(id)
+    end
+    if NS.IsForever ~= true then return nil end
+    return GetInventoryItemCount("player", AMMO_SLOT)
+end
+
 -- An ammo count's colour: the lowest threshold it is at or below, else the
 -- text's own (baseKey).
 function Factory.AmmoCountColor(fs, rec, baseKey)
     local R = function(k) return Store.Resolve(rec, "text", k) end
     local c = R(baseKey) or { 1, 1, 1, 1 }
-    local n = R("ammoCountColors") == true and Factory.AmmoCount() or nil
+    -- a Count text showing reagents or an item never takes the ammo colours
+    local n = R("ammoCountColors") == true and NS.Schema.AmmoCountShown(rec) and Factory.AmmoCount() or nil
     if n then
         local best
         for k = 1, math.min(3, R("ammoCountSteps") or 1) do

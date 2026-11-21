@@ -1,5 +1,25 @@
 # Arc Auras
 
+## 3.3.6
+
+Count text for reagents and items, time left colors on stack bars, and a new look for the bar Effects tab.
+
+### New Features
+
+- **Count text** - A spell icon can show a count: how many casts its reagents allow, or any item by its ID. Text > Stacks > Count text.
+- **Time left on stack bars** - An aura stack bar can also color by time left: a time step it is under wins over the stack colors, so low stacks or a running-out buff both show.
+
+### Improvements
+
+- **Bar Effects tab** - Works like the icon Effects tab: each trigger in the list shows a small picture of how it paints the bar, its effects sit on tabs with + Add effect, and on an aura stack bar arrows pick whether Time left or Stacks wins.
+- **Red remove buttons** - Remove trigger and the other remove buttons on both Effects tabs are red, so they stand apart.
+- **Gain in percent** - Find upgrades and item tooltips can show a gain as a percent of the piece you wear; no simulator needed. Turn it on for tooltips under Gear value in tooltips.
+
+### Bug Fixes
+
+- **Bar editor** - A thin blue strip no longer stays on other tabs after picking a trigger on Effects.
+- **Find upgrades** - Lists every upgrade on the auction house: gear read early in a big search, or valued on a scale ticked afterwards, was left out. A single slot also searches in a second or two.
+
 ## 3.3.5
 
 More triggers for the aura on a cooldown icon, its cooldown text over the aura, swipe and border effects, gear goals and upgrades from the auction house.

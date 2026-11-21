@@ -161,7 +161,64 @@ function Store.Init()
         Store.FreeImportedFonts()
         DB.importFontsFreed = true
     end
+    -- Time left colours did not draw on aura stack bars before: once per saved
+    -- table, a stack bar that already reads them on keeps its look.
+    if not DB.stackTimeKept then
+        Store.KeepStackTimeOff()
+        DB.stackTimeKept = true
+    end
     Store.Normalize()
+end
+
+-- Every aura stack bar whose Time left colours read on (its own, a saved
+-- default) gets them off as its own value. Returns how many.
+function Store.KeepStackTimeOff()
+    local n = 0
+    for _, r in pairs(DB.records or {}) do
+        if r.type == "bar" and r.barKind == "aura" and r.barMode == "stack"
+            and Store.Resolve(r, "thresholds", "threshEnabled") == true then
+            r.o = type(r.o) == "table" and r.o or {}
+            r.o.thresholds = type(r.o.thresholds) == "table" and r.o.thresholds or {}
+            r.o.thresholds.threshEnabled = false
+            n = n + 1
+        end
+    end
+    return n
+end
+
+-- A bar's effect triggers in its Effects order, top first (higher wins):
+-- names as the bar's saved fill.fxOrder places them, the rest after in
+-- BAR_FX_DEFAULT's order, then as given. Today's winner sits on top.
+Store.BAR_FX_DEFAULT = { "Time left", "Stacks" }
+function Store.BarFxSeq(rec, names)
+    local have, seq, placed = {}, {}, {}
+    for _, n in ipairs(names) do have[n] = true end
+    local s = rec and Store.Resolve(rec, "fill", "fxOrder")
+    if type(s) == "string" then
+        for k in s:gmatch("[^,]+") do
+            if have[k] and not placed[k] then
+                seq[#seq + 1] = k
+                placed[k] = true
+            end
+        end
+    end
+    for _, k in ipairs(Store.BAR_FX_DEFAULT) do
+        if have[k] and not placed[k] then
+            seq[#seq + 1] = k
+            placed[k] = true
+        end
+    end
+    for _, k in ipairs(names) do
+        if not placed[k] then
+            seq[#seq + 1] = k
+            placed[k] = true
+        end
+    end
+    return seq
+end
+-- true when trigger a sits above trigger b on the bar (its look wins)
+function Store.BarFxFirst(rec, a, b)
+    return Store.BarFxSeq(rec, { a, b })[1] == a
 end
 
 -- Drops every empty font an imported item holds as its own (the game's font

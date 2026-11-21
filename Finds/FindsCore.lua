@@ -49,4 +49,9 @@ ArcAurasFinds = {
         end
         if ns.FavPins then ns.FavPins.Refresh() end
     end,
+    -- read only, for Arc Auras' gear list: every item row, an item's places, a new item's stats, a dungeon by name
+    ForEachSeed = function(fn) ns.Data.ForEachSeed(fn) end,
+    Sources = function(id) return ns.Data.Sources(id) end,
+    Tip = function(id) return ns.Data.Tip(id) end,
+    DungeonNamed = function(name) return ns.Data.DungeonNamed(name) end,
 }

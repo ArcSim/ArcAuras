@@ -14,7 +14,8 @@ NS.Perf = Perf
 Perf.SKIP = { Perf = true, Events = true, Store = true, Schema = true, AT = true, Options = true,
     Changelog = true, Spotlight = true, NewLayout = true, LayoutPreview = true, LayoutFollow = true,
     IconScreen = true, ItemSets = true, FramePicker = true, CDMMirrorOptions = true,
-    ImportArcUI = true, Migrate = true, MigratePT = true, SpellCatalog = true, TalentCatalog = true }
+    ImportArcUI = true, Migrate = true, MigratePT = true, SpellCatalog = true, TalentCatalog = true,
+    GearListUI = true }
 Perf.TOP = 12
 Perf.TOP_AFTER = 6
 Perf.TOP_GAME = 5

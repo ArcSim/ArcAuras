@@ -126,6 +126,11 @@ local function Slash(msg)
         NS.MirrorCheck.Open()
         return
     end
+    -- "/arcauras gear": the gear list (WoW Forever)
+    if msg == "gear" and NS.GearListUI then
+        NS.GearListUI.Toggle()
+        return
+    end
     -- "/arcui2 proctracker" opens the ProcTracker import (retail); ArcUI
     -- ProcTracker's own pointer runs it.
     local PW = NS.Options and NS.Options.ImportPT

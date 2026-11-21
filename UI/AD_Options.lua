@@ -8055,7 +8055,7 @@ local PREV_MODES = {
 -- own fontstring, fetched when the handles sync
 local PREV_DRAGS = {
     { fs = "stackText",   name = "Stack text",    sec = "text",    a = "stackAnchor",    x = "stackX",    y = "stackY" },
-    { fs = "ammoText",    name = "Ammo text",     sec = "text",    a = "ammoAnchor",     x = "ammoX",     y = "ammoY" },
+    { fs = "ammoText",    name = "Count text",    sec = "text",    a = "ammoAnchor",     x = "ammoX",     y = "ammoY" },
     { fs = "keybindText", name = "Keybind",       sec = "keybind", a = "keybindAnchor",  x = "keybindX",  y = "keybindY" },
     { fs = "labelText",   name = "Custom text 1", sec = "label",   a = "labelAnchor",    x = "labelX",    y = "labelY" },
     { fs = "labelText2",  name = "Custom text 2", sec = "label",   a = "labelAnchor2",   x = "labelX2",   y = "labelY2" },
@@ -8346,9 +8346,12 @@ local function PreviewRestyle(rec, f)
         end
         f.stackText:SetText(sample)
     end
-    -- the preview shows a real ammo count so the styling reads true
+    -- the preview shows the real count so the styling reads true
     if f.ammoText and f.ammoText:IsShown() then
-        f.ammoText:SetText(GetInventoryItemCount("player", NS.AMMO_SLOT or 0) or 0)
+        local sid = rec.driver and Store.RecordSpellID(rec.driver)
+        local n = NS.Factory.CountValue(rec, sid)
+        if type(n) ~= "number" or (issecretvalue and issecretvalue(n)) then n = 0 end
+        f.ammoText:SetText(n)
     end
     -- The key on your bars, else a stand-in so the text can still be placed.
     local kb = NS.DriverCooldown and NS.DriverCooldown.KeybindTextFor
@@ -10892,9 +10895,10 @@ local function BuildIconEditor(parent)
         "ammoCountColors", "ammoCount1", "ammoCount1Color",
         "ammoCount2", "ammoCount2Color", "ammoCount3", "ammoCount3Color", "ammoCountSteps",
     }
-    -- spell only: the ammo thresholds above also name the ammo kind
-    local ammoDef = Block("Text", "Stacks", "Ammo stack text", "text", {
-        "ammoText", "ammoFont", "ammoSize", "ammoColor", "ammoOutline", "ammoShadow",
+    -- spell only: the ammo thresholds above also name the ammo kind. Count
+    -- text: ammo, a spell's reagents (casts left) or any item by ID.
+    local ammoDef = Block("Text", "Stacks", "Count text", "text", {
+        "ammoText", "countSource", "countItem", "ammoFont", "ammoSize", "ammoColor", "ammoOutline", "ammoShadow",
         "ammoAnchor", "ammoX", "ammoY", "ammoStrata",
     }, { kindOnly = "spell" })
     Options.BuildYield()
@@ -10902,7 +10906,7 @@ local function BuildIconEditor(parent)
         Options.TextPinRows(pg, SelIcon, function()
             local r = SelIcon()
             return ammoDef.vis() and r ~= nil and Store.Resolve(r, "text", "ammoText") == true
-        end, "icon", "text", "ammoPinTo", "ammoPinTarget", win, "Ammo text")
+        end, "icon", "text", "ammoPinTo", "ammoPinTarget", win, "Count text")
     end
     Sub(ammoDef, "Color by ammo count", "text", AMMO_COLORS, { noLook = true, vis = function()
         local r = SelIcon()
@@ -13179,7 +13183,7 @@ local function BuildBarPane()
     local SF, FC = "Size & Frame", "Fill & Colors"
     -- Effects: the trigger list, its head and its picker (UI\AD_BarEffects.lua)
     if Options.BarEffects then
-        Options.BarEffects.Build(pg, SelBar, BarTabVisible("Effects"), AvailSecs, function() return ui.barSec end, tabRow)
+        Options.BarEffects.Build(pg, SelBar, BarTabVisible("Effects"), AvailSecs, function() return ui.barSec end, tabRow, win)
     end
 
     -- Appearance > Size & Frame. A resource bar's style (a bar or a row of
@@ -13564,9 +13568,8 @@ local function BuildBarPane()
         "threshEnabled", "threshAsSeconds", "threshCdSeconds", "threshRef",
         "thresh2Value", "thresh2Color", "thresh3Value", "thresh3Color",
         "thresh4Value", "thresh4Color", "threshCount", "threshText",
-    }, function(r) return not (r.barKind == "aura" and Schema.BarRing(r)) end, "Time left", nil, { rows = function(vis)
-        if Options.BarEffects then Options.BarEffects.StepsRows(pg, SelBar, vis, Options.BarEffects.STEPS.time) end
-        SectionRows(pg, "bar", "thresholds", SelBar, vis, { "threshAsSeconds", "threshCdSeconds", "threshRef", "threshText" })
+    }, function(r) return not (r.barKind == "aura" and Schema.BarRing(r)) end, "Time left", nil, { noTitle = true, rows = function(vis)
+        if Options.BarEffects then Options.BarEffects.TimeRows(pg, SelBar, vis, SectionRows) end
     end })
     -- aura stack bars only here: a resource bar's banding is Point Colors
     -- above (pips style), and a continuous fill has no per-point cells
@@ -13577,7 +13580,7 @@ local function BuildBarPane()
         -- a totem bar colours by its totems out, when it counts them
         if r.barKind == "totembar" then return r._adDefaults ~= nil or Schema.TotemBarCounts(r) end
         return r.barKind ~= "resource"
-    end, "Stacks", nil, { rows = function(vis)
+    end, "Stacks", nil, { noTitle = true, rows = function(vis)
         if Options.BarEffects then Options.BarEffects.StepsRows(pg, SelBar, vis, Options.BarEffects.STEPS.stacks) end
         SectionRows(pg, "bar", "stackcolors", SelBar, vis, { "maxColorEnabled", "maxColor", "scPosition" })
     end })
@@ -13727,9 +13730,9 @@ local function BuildBarPane()
         SectionRows(pg, "bar", "fill", SelBar, tickVis, swingTicks)
         Options.LookBlock("bar", "Appearance", "Ticks", "fill", swingTicks, "Ticks", { kindOnly = "swing" })
     end
-    -- a resource bar's cost marks are its States rows' (Conditions > By State)
+    -- a resource bar's cost marks are its Spells rows' (Effects > Spells)
     Options.BuildYield()
-    AT.RowDesc(pg, "Spell cost marks: COST MARK on a row in Conditions > By State.", 20, function()
+    AT.RowDesc(pg, "Spell cost marks: turn on Cost mark on a row under Effects > Spells.", 20, function()
         local r = SelBar()
         return tickVis() and r ~= nil and r.barKind == "resource"
     end)

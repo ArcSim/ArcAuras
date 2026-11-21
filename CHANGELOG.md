@@ -1,5 +1,27 @@
 # Arc Auras
 
+## 3.3.6
+
+Count text for reagents and items, time left colors on stack bars, a new look for the bar Effects tab, and a gear list for your next upgrades.
+
+### New Features
+
+- **Count text** - A spell icon can show a count: your ammo, how many casts its reagents allow, such as Rebirth's seeds, or any item by its ID. Text > Stacks > Count text.
+- **Time left on stack bars** - An aura stack bar can also color by time left: a time step it is under wins over the stack colors, so low stacks or a running-out buff both show.
+- **Gear list** - With Gear Value on, /arcauras gear lists every piece outside raids that beats your gear on a scale, by where it comes from: dungeons boss by boss, quests, crafted and vendors. My List shows each slot with the best piece you can get and where. Inside a dungeon an optional tracker shows what you still want there, boss by boss, and reminds you to roll Need when it drops.
+
+### Improvements
+
+- **Bar Effects tab** - Works like the icon Effects tab: each trigger in the list shows a small picture of how it paints the bar, its effects sit on tabs with + Add effect, and on an aura stack bar arrows pick whether Time left or Stacks wins.
+- **Red remove buttons** - Remove trigger and the other remove buttons on both Effects tabs are red, so they stand apart.
+- **Gain in percent** - Find upgrades and item tooltips can show a gain as a percent of the piece you wear; no simulator needed. Turn it on for tooltips under Gear value in tooltips.
+
+### Bug Fixes
+
+- **Bar editor** - A thin blue strip no longer stays on other tabs after picking a trigger on Effects.
+- **Gear Value import** - Weights strings from simulators keep every stat they weigh: spell hit, crit, haste, school damage and penetration were left out, and anything still unread is named.
+- **Find upgrades** - Lists every upgrade on the auction house: gear read early in a big search, or valued on a scale ticked afterwards, was left out. A single slot also searches in a second or two.
+
 ## 3.3.5
 
 More triggers for the aura on a cooldown icon, its cooldown text over the aura, swipe and border effects, gear goals and upgrades from the auction house.

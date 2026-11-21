@@ -1718,8 +1718,9 @@ local function FeedMovedItems()
     if moved then FeedItemUsabilitySoon() end
 end
 
--- Ammo count on spell icons (arrows on Auto Shot). Factory.ApplyStyle owns
--- the look and Show/Hide; this sets only the number.
+-- The Count text on spell icons: ammo (arrows on Auto Shot), reagents (the
+-- casts left) or an item's count. Factory.ApplyStyle owns the look and
+-- Show/Hide; this sets only the number, which may be secret (type() only).
 local function ApplyAmmoText(a)
     local f, rec = a.frame, a.rec
     if not (f and f.ammoText) then return end
@@ -1727,7 +1728,8 @@ local function ApplyAmmoText(a)
         f.ammoText:SetText("")
         return
     end
-    f.ammoText:SetText(GetInventoryItemCount("player", AMMO_SLOT) or "")
+    local n = Factory.CountValue(rec, EffOf(a))
+    if type(n) == "number" then f.ammoText:SetText(n) else f.ammoText:SetText("") end
     Factory.AmmoCountColor(f.ammoText, rec, "ammoColor")
 end
 

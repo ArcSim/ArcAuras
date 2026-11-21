@@ -1597,32 +1597,51 @@ local function PaintMini(m, r, look)
 end
 EF.PaintMini = PaintMini
 
--- a quiet button with an x before its words: Remove <effect>, Remove trigger
+-- a remove reads as a delete: the theme's red, brighter while hovered
+local function PaintDanger(b, hot)
+    local f = hot and COL.dangerHover or COL.dangerFill
+    local e = hot and COL.dangerEdge or COL.danger
+    b:SetBackdropColor(f[1], f[2], f[3], 1)
+    b:SetBackdropBorderColor(e[1], e[2], e[3], 1)
+    if b.fs then b.fs:SetTextColor(COL.dangerInk[1], COL.dangerInk[2], COL.dangerInk[3]) end
+    b._x:SetColor(COL.dangerInk)
+end
+local function XGlyph(b)
+    local x = ET().Glyph(b, "add")
+    x:SetScale(0.7)
+    for _, t in ipairs(x._bars) do t:SetRotation(math.rad(45)) end
+    return x
+end
+
+-- a red button with an x before its words: Remove <effect>, Remove trigger
 local function QuietX(parent)
     local b = CreateFrame("Button", nil, parent, "BackdropTemplate")
-    AT.Skin(b, { 0, 0, 0 }, COL.line2)
+    AT.Skin(b, COL.dangerFill, COL.danger)
     b:SetHeight(20)
-    b._x = ET().Glyph(b, "add")
-    b._x:SetScale(0.7)
+    b._x = XGlyph(b)
     b._x:SetPoint("LEFT", 8 / 0.7, 0)
-    for _, t in ipairs(b._x._bars) do t:SetRotation(math.rad(45)) end
     b.fs = Font(b, 11)
     b.fs:SetPoint("LEFT", 8 + 8 + 5, 0)
-    local function Paint(hot)
-        b:SetBackdropColor(0, 0, 0, 0)
-        if hot then b:SetBackdropBorderColor(COL.line2[1], COL.line2[2], COL.line2[3], 1)
-        else b:SetBackdropBorderColor(0, 0, 0, 0) end
-        local c = hot and COL.ink or COL.dim
-        b.fs:SetTextColor(c[1], c[2], c[3])
-        b._x:SetColor(c)
-    end
-    Paint(false)
-    b:SetScript("OnEnter", function() Paint(true) end)
-    b:SetScript("OnLeave", function() Paint(false) end)
+    PaintDanger(b, false)
+    b:SetScript("OnEnter", function() PaintDanger(b, true) end)
+    b:SetScript("OnLeave", function() PaintDanger(b, false) end)
     function b:SetWords(t)
         self.fs:SetText(t)
         self:SetWidth(8 + 8 + 5 + Measure(self.fs) + 9)
     end
+    return b
+end
+
+-- the same red as a small square with only the x: a step's remove
+local function RedX(parent, size)
+    local b = CreateFrame("Button", nil, parent, "BackdropTemplate")
+    AT.Skin(b, COL.dangerFill, COL.danger)
+    b:SetSize(size or 17, size or 17)
+    b._x = XGlyph(b)
+    b._x:SetPoint("CENTER", 0, 0)
+    PaintDanger(b, false)
+    b:SetScript("OnEnter", function() PaintDanger(b, true) end)
+    b:SetScript("OnLeave", function() PaintDanger(b, false) end)
     return b
 end
 
@@ -1655,6 +1674,22 @@ local function ArrowInk(b, hot)
     local lit = hot and b._can == true
     b._hot:SetShown(lit)
     b._chev:SetColor(lit and COL.arc or (b._can and COL.dim or COL.line2))
+end
+-- an order arrow on a list row; the caller sets b._can and its click
+local function OrderArrow(parent, dir)
+    local b = CreateFrame("Button", nil, parent)
+    b:SetSize(ARROW_W, 12)
+    b._hot = Tex(b, "BACKGROUND")
+    b._hot:SetAllPoints()
+    b._hot:SetVertexColor(COL.btn[1], COL.btn[2], COL.btn[3], 1)
+    b._hot:Hide()
+    b._chev = AT.MakeChevron(b)
+    b._chev:SetPoint("CENTER")
+    b._chev:SetDir(dir)
+    b._dir = dir
+    b:SetScript("OnEnter", function(self) ArrowInk(self, true) end)
+    b:SetScript("OnLeave", function(self) ArrowInk(self, false) end)
+    return b
 end
 -- the column round the list: the first row flush under its top edge (the
 -- open one's top line is the column's), + Add a trigger 9 under the last row
@@ -1703,7 +1738,9 @@ end
 -- right, or the tile picker. vis: the tab's own gate. under: the editor's
 -- tab row, the page's ground starts under it. Returns the row.
 -- the pieces the bar editor's Effects tab shares (UI\AD_BarEffects.lua)
-EF.Kit = { Edges = Edges, DashEdge = DashEdge, QuietX = QuietX }
+EF.Kit = { Edges = Edges, DashEdge = DashEdge, QuietX = QuietX, RedX = RedX, OrderArrow = OrderArrow,
+    ArrowInk = ArrowInk, Menu = Menu, MidInk = MidInk, Measure = Measure, GREEN = GREEN, GREEN_EDGE = GREEN_EDGE,
+    ARROW_W = ARROW_W, ORDER_CAP_H = ORDER_CAP_H, PaintDanger = PaintDanger }
 
 function EF.Build(pg, ctx, vis, owner, under)
     local E = ET()
@@ -1828,19 +1865,8 @@ function EF.Build(pg, ctx, vis, owner, under)
         rw._segs, rw._gl = {}, {}
         -- the look order's up and down (higher wins)
         for _, dir in ipairs({ "up", "down" }) do
-            local b = CreateFrame("Button", nil, rw)
-            b:SetSize(ARROW_W, 12)
             -- hovered while it can move: a lit square under an accent chevron
-            b._hot = Tex(b, "BACKGROUND")
-            b._hot:SetAllPoints()
-            b._hot:SetVertexColor(COL.btn[1], COL.btn[2], COL.btn[3], 1)
-            b._hot:Hide()
-            b._chev = AT.MakeChevron(b)
-            b._chev:SetPoint("CENTER")
-            b._chev:SetDir(dir)
-            b._dir = dir
-            b:SetScript("OnEnter", function(self) ArrowInk(self, true) end)
-            b:SetScript("OnLeave", function(self) ArrowInk(self, false) end)
+            local b = OrderArrow(rw, dir)
             b:SetScript("OnClick", function(self)
                 local r, c = Rec(), rw._card
                 if r and c and self._can and EF.Move(r, c.key, self._dir) then Relay() end

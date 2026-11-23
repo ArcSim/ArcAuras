@@ -20,6 +20,7 @@ Count text for reagents and items, time left colors on stack bars, and a new loo
 
 - **Bar editor** - A thin blue strip no longer stays on other tabs after picking a trigger on Effects.
 - **Find upgrades** - Lists every upgrade on the auction house: gear read early in a big search, or valued on a scale ticked afterwards, was left out. A single slot also searches in a second or two.
+- **Minimap button** - Minimap addons now list, place and fade the Arc Auras button like the others, and it stays on a square minimap after a reload.
 
 ## 3.3.5
 

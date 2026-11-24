@@ -23,6 +23,7 @@ Count text for reagents and items, time left colors on stack bars, a new look fo
 - **Gear Value import** - Weights strings from simulators keep every stat they weigh: spell hit, crit, haste, school damage and penetration were left out, and anything still unread is named.
 - **Find upgrades** - Lists every upgrade on the auction house: gear read early in a big search, or valued on a scale ticked afterwards, was left out. A single slot also searches in a second or two.
 - **Minimap button** - Minimap addons now list, place and fade the Arc Auras button like the others, and it stays on a square minimap after a reload.
+- **Minimap button drag** - The minimap button drags again without an error.
 
 ## 3.3.5
 

@@ -72,15 +72,13 @@ local function Broker(ldb)
     })
 end
 
--- Our look on both games: the round icon inside the tracking ring.
-local function Dress(dbi, btn)
+-- Our look on both games: the round icon inside the tracking ring. The file is
+-- already round; a mask would break the library, which sets the icon's tex
+-- coords on every press and drag (refused on a masked texture).
+local function Dress(dbi)
     if dbi.SetButtonBorder then dbi:SetButtonBorder(NAME, 136430, 53, "TOPLEFT", 0, 0) end
     if dbi.RemoveButtonBackground then dbi:RemoveButtonBackground(NAME) end
     if dbi.SetButtonIcon then dbi:SetButtonIcon(NAME, nil, 19, "TOPLEFT", 7, -6) end
-    if btn.icon and btn.icon.SetMask and not btn._adMasked then
-        btn.icon:SetMask("Interface\\CharacterFrame\\TempPortraitAlphaMask")
-        btn._adMasked = true
-    end
 end
 
 function MM.Build()
@@ -93,7 +91,7 @@ function MM.Build()
     dbi:Register(NAME, obj, MM.db)
     btn = dbi:GetMinimapButton(NAME)
     if not btn then return nil end
-    Dress(dbi, btn)
+    Dress(dbi)
     btn:HookScript("OnDragStop", function()
         if dragPos and NS.Store and NS.Store.SetSetting then
             NS.Store.SetSetting("minimapAngle", math.floor(dragPos + 0.5) % 360)

@@ -139,7 +139,8 @@ local function CenterLean(f, w, h)
 end
 
 local moveMode = false
-local editMode = false   -- true while the options panel is open
+local panelOpen = false
+local editMode = false   -- true while the options panel is open or move mode is on
 local screenEditing = false   -- the on-screen layout mode draws its own names and handles
 
 -- With the panel open, a record failing its load conditions is still drawn,
@@ -160,7 +161,7 @@ end
 -- A record drawn here along with the group and layout it sits in.
 local function DrawnHere(rec)
     if not ShowsRec(rec) then return false end
-    local g = rec.groupId and Store.Get(rec.groupId)
+    local g = (rec.groupId and Store.Get(rec.groupId)) or (rec.type == "bar" and Store.BarGroupOf(rec.id))
     if g and not ShowsRec(g) then return false end
     local lay = Store.Get((g and g.layoutId) or rec.layoutId)
     return not (lay and not ShowsRec(lay))
@@ -375,6 +376,7 @@ local function PlaceGroupRoot(group, gf, ox, oy)
     local pos = group.pos or {}
     SnapPlacement(gf, c, (pos.x or 0) + (ox or 0), (pos.y or 0) + (oy or 0))
 end
+Engine.PlaceGroupRoot = PlaceGroupRoot
 
 -- The anchor and glide code below must stay above its users: a closure only
 -- binds locals declared before it.
@@ -841,6 +843,8 @@ local function EnsureLayoutFrame(rec)
         f.drag:SetBackdropBorderColor(0.247, 0.788, 0.949, 0.9)
         f.drag:EnableMouse(true)
         f.drag:RegisterForDrag("LeftButton")
+        -- behind the items it wraps: they keep their own clicks and drags
+        f.drag:SetFrameStrata("BACKGROUND")
         f.drag:Hide()
         f.dragLabel = f.drag:CreateFontString(nil, "OVERLAY")
         f.dragLabel:SetFont(STANDARD_TEXT_FONT, 11, "OUTLINE")
@@ -893,8 +897,8 @@ local function PlaceLayoutFrame(layout, container)
     if container._adStrata ~= ls then
         container:SetFrameStrata(ls or "MEDIUM")
         container._adStrata = ls
-        -- the move handle stays where it always drew
-        if container.drag then container.drag:SetFrameStrata("MEDIUM") end
+        -- the move box stays behind every item, whatever the layout's strata
+        if container.drag then container.drag:SetFrameStrata("BACKGROUND") end
     end
     -- on the spot it is pinned to, so a new resolution or UI scale keeps
     -- its distance from that spot
@@ -1203,15 +1207,27 @@ local function PlaceBar(rec, container)
         NS.Bars.EnsureBar(rec, f)
         return
     end
-    -- Place it free now and register it as an anchor source; the post-pass
-    -- re-places it once every frame exists, so a bar can target a group,
-    -- another bar, a layout or a named frame regardless of build order.
-    if NS.Anchor then NS.Anchor.Register(rec, f) end
-    SnapPlacement(f, container, rec.pos.x or 0, rec.pos.y or 0)
+    -- A bar in a drawn Bar Group sits in the group's frame, where the group
+    -- puts it (Drivers\AD_BarGroups.lua); it neither anchors nor drags.
+    local BG = NS.BarGroups
+    local gf = BG and BG.FrameFor(rec)
+    if gf then
+        if NS.Anchor then NS.Anchor.Unregister(rec.id) end
+        f:SetParent(gf)
+        f:SetFrameStrata(gf:GetFrameStrata())
+        f:SetFrameLevel(gf:GetFrameLevel() + 2)
+        BG.PlaceMember(rec, f)
+    else
+        -- Place it free now and register it as an anchor source; the post-pass
+        -- re-places it once every frame exists, so a bar can target a group,
+        -- another bar, a layout or a named frame regardless of build order.
+        if NS.Anchor then NS.Anchor.Register(rec, f) end
+        SnapPlacement(f, container, rec.pos.x or 0, rec.pos.y or 0)
+    end
     WireBarDrag(f)
     -- An anchored bar stays draggable: the drag edits its offsets, so it never
     -- detaches from its target.
-    f:SetMovable(CanMove(rec))
+    f:SetMovable(CanMove(rec) and not gf)
     f:EnableMouse(editMode)
     local ch = EnsureBarChrome(f)
     -- Settings "Edit buttons on screen" can keep the bars' chips away; the
@@ -1237,6 +1253,7 @@ local function ReleaseBar(id)
     local f = barFrames[id]
     if f then f:Hide() end
 end
+Engine.ReleaseBar = ReleaseBar
 
 -- Icon drag and drop: into, out of and between groups
 
@@ -2313,7 +2330,9 @@ end
 
 -- One bar of a shown layout.
 local function DrawBar(rec, container)
-    if ShowsRec(rec) then
+    -- a bar whose Bar Group is not drawn goes with it
+    local BG = NS.BarGroups
+    if ShowsRec(rec) and not (BG and BG.Blocks(rec)) then
         PlaceBar(rec, container)
         local bf = barFrames[rec.id]
         if bf then GhostTag(bf, rec) end
@@ -2340,16 +2359,50 @@ local function LastWord()
     end
 end
 
+-- Each layout's move box wraps everything the layout shows, with room for its
+-- name above, on whole pixels; a layout with nothing on screen keeps the small
+-- box on its point. Sizes are UIParent units, so every scale looks the same.
+local MOVE_PAD, MOVE_NAME, MOVE_MIN_W, MOVE_MIN_H = 6, 18, 120, 40
+local function FitMoveBoxes()
+    for lid, f in pairs(layoutFrames) do
+        local d = f.drag
+        local l, b, w, h
+        if d and f:IsShown() then l, b, w, h = Engine.LayoutBounds(lid) end
+        local cl, cb = f:GetLeft(), f:GetBottom()
+        local us = UIParent:GetEffectiveScale()
+        local kc = (us and us > 0) and (f:GetEffectiveScale() / us) or 1
+        local px = UIPx(kc)
+        if d and l and cl and cb and px and kc > 0 then
+            local r, t = l + w, b + h
+            if w < MOVE_MIN_W then l, r = l - (MOVE_MIN_W - w) / 2, r + (MOVE_MIN_W - w) / 2 end
+            if h < MOVE_MIN_H then b, t = b - (MOVE_MIN_H - h) / 2, t + (MOVE_MIN_H - h) / 2 end
+            l, r = (l - MOVE_PAD) / kc, (r + MOVE_PAD) / kc
+            b, t = (b - MOVE_PAD) / kc, (t + MOVE_NAME) / kc
+            d:ClearAllPoints()
+            d:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", PixRoundLeft(l, px) - cl, PixRound(b, px) - cb)
+            d:SetPoint("TOPRIGHT", f, "BOTTOMLEFT", PixRound(r, px) - cl, PixRound(t, px) - cb)
+        elseif d then
+            d:ClearAllPoints()
+            d:SetPoint("TOPLEFT", -60, 20)
+            d:SetPoint("BOTTOMRIGHT", 60, -20)
+        end
+    end
+end
+
 -- Post-passes: anchors need every live frame (cross-layout too), and game
 -- frames pinned to a group need its anchored spot; then the conditions
 -- pass paints alphas this same frame, so none render stale.
 local function PostPasses()
+    -- Bar Groups lay their bars out now that every bar is drawn, before
+    -- anything anchored to them is placed
+    if NS.BarGroups then NS.BarGroups.Flush() end
     ApplyAnchors()
     -- texts riding our own items: their frames may be new this pass
     if NS.TextAnchor and NS.TextAnchor.ReapplyItems then NS.TextAnchor.ReapplyItems() end
     if NS.Pins then NS.Pins.ApplyAll() end
     if NS.Conditions then NS.Conditions.Pass() end
     Engine.RefreshEditing()
+    if moveMode then FitMoveBoxes() end
     if screenEditing then HideEditChrome() end
 end
 
@@ -2632,9 +2685,27 @@ function Engine.OnScreenChanged()
     Engine.QueueRebuild()
 end
 
-function Engine.SetMoveMode(on)
-    moveMode = on and true or false
+-- Edit mode (every item drawn in its spot) is on while the panel is open or
+-- move mode is; both only start out of combat and end as combat starts.
+local function ApplyEditMode()
+    editMode = panelOpen or moveMode
+    -- what an eye hid shows again on the next open
+    if not editMode then Store.ClearEditHidden() end
+    -- First-come order resets on every panel open and close, so a closed panel
+    -- builds the dynamic layout from the grid, not the last fight's arrivals.
+    wipe(fcfsOrders)
+    -- the rebuild also hands Dynamic aura groups between the grid and their
+    -- pieces (Drivers\AD_DriverAuraRows.lua claims them in play only)
     Engine.QueueRebuild()
+end
+
+-- Move mode shows every item of each layout, so a layout of hidden bars is not
+-- an empty box to drag.
+function Engine.SetMoveMode(on)
+    on = on and true or false
+    if on and InCombatLockdown and InCombatLockdown() then return end
+    moveMode = on
+    ApplyEditMode()
 end
 
 function Engine.IsMoveMode() return moveMode end
@@ -2980,15 +3051,8 @@ function Engine.SetLayoutPin(id, v)
 end
 
 function Engine.SetEditMode(on)
-    editMode = on and true or false
-    -- what an eye hid shows again on the next open
-    if not editMode then Store.ClearEditHidden() end
-    -- First-come order resets on every panel open and close, so a closed panel
-    -- builds the dynamic layout from the grid, not the last fight's arrivals.
-    wipe(fcfsOrders)
-    -- the rebuild also hands Dynamic aura groups between the grid and their
-    -- pieces (Drivers\AD_DriverAuraRows.lua claims them in play only)
-    Engine.QueueRebuild()
+    panelOpen = on and true or false
+    ApplyEditMode()
 end
 
 function Engine.IsEditMode() return editMode end
@@ -3022,6 +3086,10 @@ function Engine.Init()
         end)
     end
     Events.On("PLAYER_REGEN_DISABLED", "adeng", CombatEdge)
+    -- move mode ends as combat starts, as the panel closes
+    Events.On("PLAYER_REGEN_DISABLED", "adeng_move", function()
+        if moveMode then Engine.SetMoveMode(false) end
+    end)
     Events.On("PLAYER_REGEN_ENABLED", "adeng", CombatEdge)
     Events.On("PLAYER_SPECIALIZATION_CHANGED", "adeng", function(_, unit)
         if unit == "player" or unit == nil then Engine.QueueRebuild() end

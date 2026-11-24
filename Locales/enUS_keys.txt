@@ -471,6 +471,7 @@ A reactive ability lit up
 A ready-made proc tracker as a deck bar.
 A ready-made proc tracker for your class.
 A reminder exported on its own joins this group. A group keeps one reminder per spell, item or weapon hand, so duplicates stay out.
+A returning bar
 A returning icon
 A ring
 A ring of spells on a key
@@ -534,6 +535,7 @@ A wheel loads by class, spec, talents and spells: its key cannot change during c
 A whole number; Enter applies it.
 A window that lists your group's pings as they come in.
 A word on the icon in this type's color. Size and position are under All.
+A zone or subzone name, or a map ID. Press Enter to add it.
 ADD A SKIN
 ADDON
 ARC PROC
@@ -615,6 +617,8 @@ Add a row at the bottom
 Add a spell
 Add a state
 Add a trigger
+Add a zone
+Add a zone to use the zone rule.
 Add ability color
 Add an ability
 Add an icon
@@ -623,6 +627,7 @@ Add an item
 Add band
 Add by spell ID
 Add check
+Add current zone
 Add effect
 Add item
 Add new items
@@ -813,6 +818,7 @@ Any count
 Any enchant
 Any icons together; it can close the gaps when some are hidden.
 Any icons, in a grid
+Any level.
 Any lust on you: %s and the drums, on one icon.
 Any lust on you: Bloodlust, Heroism, Time Warp, Primal Rage, Fury of the Aspects, Harrier's Cry and the drums, on one icon.
 Any mob, or the AH
@@ -835,6 +841,7 @@ Any talent build
 Any text you like in place of the name. Leave it empty to show the default name.
 Any time
 Any totem you drop with its time left, one per element. Greyed with a glow while its buff is not on you.
+Any zone.
 Anyone
 Anyone but me
 Anyone lacks it
@@ -1033,21 +1040,31 @@ Bands in percent of the duration
 Bar
 Bar 
 Bar %d
+Bar Group
 Bar Size
 Bar category
 Bar color
+Bar direction
+Bar groups
 Bar height
+Bar length
 Bar mode
 Bar scale
 Bar texture
+Bar thickness
 Bar width
 Bar's own
 Bars
 Bars 2 to 8 change after a reload.
 Bars 2 to 8 off.
+Bars at opacity 0
+Bars glide to their new spot instead of jumping.
+Bars in this state give up their spot too, and take one again when it ends.
 Bars of type
+Bars on cooldown
 Bars on: %s.
 Bars only
+Bars that pack
 Base alpha
 Base icon ID
 Battle Shout
@@ -1740,6 +1757,7 @@ Done
 Done editing
 Doom Winds
 Doom Winds (buff icon)
+Down
 Down, like buff timers
 Drag a spell from the list, your spellbook, your bags or your bars onto a spot. Right-click a spot to empty it.
 Drag an element to move it, its handles to size it; the outline moves all, corners scale, the cross sets the center. Alt drags free.
@@ -1881,6 +1899,7 @@ Empty pip tint
 Empty slot
 Empty slot art
 Empty slot icon ID
+Empty spots close up while you play: a bar that is not loaded or hidden by its own setting.
 Empty spots close up while you play: a spot with no icon, or with an icon that is not loaded.
 Empty your cursor first
 Enable sound
@@ -2314,6 +2333,7 @@ Groups stop at %d columns.
 Groups stop at %d rows.
 Groups, icons and bars go into
 Groups, icons, bars
+Grow
 Grows the glow past the bar's sides (below 0: inside), in screen pixels.
 Grows the glow past the bar's top and bottom (below 0: inside), in screen pixels.
 Guaranteed (100%)
@@ -2418,6 +2438,7 @@ High
 High threat
 Higher wins
 Higher wins: the higher trigger's look shows while both hold.
+Highest level
 Highest rank
 Highlight color
 Highlight icons when you press their button
@@ -2807,6 +2828,11 @@ Left to right
 Left-click: options
 Legs
 Lethal Poison
+Level %d and below.
+Level %d and up.
+Level %d only.
+Level and Zone
+Levels %d to %d.
 LibDeflate did not load
 Light
 Light's Potential
@@ -2834,9 +2860,11 @@ Loaded on this character
 Loading
 Loading options
 Loading this page
+Loads only from this level up. Leave it empty for any level.
 Loads only once you know %s.
 Loads only once you know %s. Known now.
 Loads only once you know %s. Not known now.
+Loads only up to this level. Leave it empty for any level.
 Loads only while EVERY checked condition is true. Unloaded, it is fully gone, and returns when that changes, in combat too.
 Loads only while EVERY checked condition is true. Unloaded, it is hidden and returns when that changes. Aura sounds still play.
 Loads only while at least one checked condition is true. Unloaded, it is fully gone, and returns when that changes, in combat too.
@@ -2871,6 +2899,7 @@ Looks for
 Loot
 Low
 Lower case (cs2, m4)
+Lowest level
 Lvl
 MEDIUM
 MP5
@@ -2909,6 +2938,7 @@ Mana
 Mana Gem
 Mana Potion
 Mana, rage, energy
+Map %d
 Mark each proc
 Mark of the Wild
 Mark unloaded items
@@ -3069,6 +3099,8 @@ Never
 Never Load When
 Never brighter than Ready's opacity.
 Never here
+Never in the zones below.
+Never in these zones
 Never load
 New
 New Layout
@@ -3160,6 +3192,7 @@ No type glow
 No type label
 No weapon
 No weapon opacity
+No zone rule
 No-resource alpha
 No-resource tint
 No-resource tint color
@@ -3391,6 +3424,8 @@ Only fire when proc is active
 Only if
 Only if it is not running
 Only in combat
+Only in the zones below.
+Only in these zones
 Only its glows
 Only its glows: the spell's own look and cooldown stay, and the aura's glows show over them.
 Only load once learned
@@ -3450,6 +3485,7 @@ Other classes (%d)
 Other classes' Arc Procs too. Each loads only for its own class.
 Other heals color
 Other spells this icon can show, separated by commas. It turns to the last of them you cast, else shows the first one you know.
+Out of %s
 Out of Range
 Out of Shadowform
 Out of combat
@@ -3888,6 +3924,7 @@ Ready
 Ready Check
 Ready alpha
 Ready and queued place
+Ready bars
 Ready check
 Ready color
 Ready glow
@@ -4851,6 +4888,7 @@ The glow waits for combat; out of combat the icon shows without it.
 The green outline and dark fill around each group while this window is open. Nothing shows groups as in play. Name tabs still work.
 The group
 The group takes its %s with it.
+The group's box hugs the bars that are showing; anything anchored to it moves with it.
 The group's box hugs the icons that are showing; anything anchored to it moves with it.
 The group's point
 The group's spot can't be read right now. The frame moves once it can.
@@ -5267,6 +5305,7 @@ Until the Cooldown Manager lists this aura as learned, it shows only while the a
 Unusable alpha
 Unusable tint
 Unusable tint color
+Up
 Up to charges
 Up to stacks
 Up, like action bar cooldowns
@@ -5552,6 +5591,7 @@ When your pet takes a critical hit
 When your target changes
 When your target dies
 Where Position X and Y count from. Either way it moves and scales with its layout.
+Where a bar goes when it shows again.
 Where a group, icon or bar shared without its layout lands. It starts on a layout that loads on this character.
 Where an ability comes off cooldown: this swing, or a later one marked +1, +2.
 Where an icon goes when it shows again. Only for a single row or column.
@@ -5559,11 +5599,13 @@ Where each item sits (its group, or free and where), its anchor, sizes, strata a
 Where it shows
 Where it sits: its edge against the group's.
 Where on the group that point goes.
+Where the bars go from the first one; Close gaps packs them toward it.
 Where the layout's center point (the cross on the map) sits from the spot it's pinned to, in whole pixels.
 Where the selection goes: free in a layout, or into a group for icons. A selected group brings its icons. Press Move or Copy to apply.
 Where they load
 Where this sub-panel's rows go: all of this type, one layout, one group, one item, or all icons of this kind. Press Copy to apply.
 Where to find the pack or you, a page or a Discord. It shows as text to copy.
+Where you are
 Which Casts
 Which casts
 Which listed aura the icon shows while more than one is up. In list order: the first ID listed wins.
@@ -5715,6 +5757,7 @@ YOUR STRING
 You
 You absorbed an attack
 You already have this
+You are level %d, in %s.
 You blocked
 You cast a spell
 You cast any spell but these
@@ -5761,6 +5804,7 @@ Your attack was blocked
 Your attack was dodged
 Your attack was parried
 Your bars are empty
+Your bars in a line: cooldown, timer and swing bars close the gaps as they come and go.
 Your bars match this save.
 Your bars now
 Your cast was interrupted
@@ -5819,6 +5863,8 @@ Your traps in a row: each shows while it is armed or burning, the rest close up.
 Your version of the pack, for example 1.2. An update and its undo name it.
 Your weapon swings
 Yours or an enemy's
+Zone name
+Zone rule
 Zoom (pop in + fade)
 Zoom Peak Scale
 Zoom Peak Scale (override)

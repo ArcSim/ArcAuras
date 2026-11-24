@@ -78,6 +78,91 @@ function P.DecodeAnswer(msg)
     return token, f[4], f[5], f[6]
 end
 
+-- channel news (where the copies share, and what was done to a channel) carries its own number too, for the same reason
+P.NEWS = 102
+
+-- a copy logging in asks where the others share before it knocks; newest is the time of the newest channel event it
+-- holds, so answers bring only newer ones
+function P.EncodeWhere(newest)
+    return Seal(table.concat({ "R", P.NEWS, newest or 0 }, "~"))
+end
+
+function P.DecodeWhere(msg)
+    local f = Opened(msg, P.NEWS)
+    if not f or f[1] ~= "R" or #f ~= 3 then return end
+    return Num(f[3], 0, 4000000000)
+end
+
+-- the answer: the channel name's number this copy shares on (1 the plain name, 2 and on its backups)
+function P.EncodeHere(slot)
+    return Seal(table.concat({ "N", P.NEWS, slot }, "~"))
+end
+
+function P.DecodeHere(msg)
+    local f = Opened(msg, P.NEWS)
+    if not f or f[1] ~= "N" or #f ~= 3 then return end
+    return Num(f[3], 1, 99)
+end
+
+-- the channel notices a player causes, as the game names them (an owner change is left out: it comes every time an
+-- owner logs off)
+P.EVENTS = { PASSWORD_CHANGED = true, MODERATION_ON = true, PLAYER_KICKED = true, PLAYER_BANNED = true,
+    UNSET_VOICE = true, SET_MODERATOR = true }
+
+-- one of them as this copy saw it: when (server time), on which name, who did it and to whom (either may be empty)
+function P.EncodeEvent(ev)
+    return Seal(table.concat({ "W", P.NEWS, ev.t, ev.slot, ev.kind, Clean(ev.by, 60), Clean(ev.on, 60) }, "~"))
+end
+
+function P.DecodeEvent(msg)
+    local f = Opened(msg, P.NEWS)
+    if not f or f[1] ~= "W" or #f ~= 7 then return end
+    local t, slot = Num(f[3], 1000000000, 4000000000), Num(f[4], 1, 99)
+    if not t or not slot or not P.EVENTS[f[5]] then return end
+    local by, on = f[6] ~= "" and f[6] or nil, f[7] ~= "" and f[7] or nil
+    if not by and not on then return end
+    return { t = t, slot = slot, kind = f[5], by = by, on = on }
+end
+
+-- the items of a catch-up page the serving copy holds confirmed by two players or more, so the asker never reports them
+-- again: base 36 ids, as many messages as they need
+local DIGITS = "0123456789abcdefghijklmnopqrstuvwxyz"
+local KNOWN_PER = 35
+local function Base36(n)
+    local s = ""
+    repeat
+        local d = n % 36
+        s = DIGITS:sub(d + 1, d + 1) .. s
+        n = math.floor(n / 36)
+    until n == 0
+    return s
+end
+
+function P.EncodeKnown(ids)
+    local out, cur = {}, {}
+    for _, id in ipairs(ids) do
+        cur[#cur + 1] = Base36(id)
+        if #cur == KNOWN_PER then
+            out[#out + 1] = Seal(table.concat({ "K", P.NEWS, table.concat(cur, ",") }, "~"))
+            cur = {}
+        end
+    end
+    if #cur > 0 then out[#out + 1] = Seal(table.concat({ "K", P.NEWS, table.concat(cur, ",") }, "~")) end
+    return out
+end
+
+function P.DecodeKnown(msg)
+    local f = Opened(msg, P.NEWS)
+    if not f or f[1] ~= "K" or #f ~= 3 or not f[3]:find("^[%l%d,]+$") then return end
+    local ids = {}
+    for part in f[3]:gmatch("[^,]+") do
+        local id = tonumber(part, 36)
+        if not id or id < 1 or id > 9999999 or #ids >= KNOWN_PER then return end
+        ids[#ids + 1] = id
+    end
+    if #ids > 0 then return ids end
+end
+
 -- e: a find record (Finds.lua keys)
 function P.EncodeFind(e)
     local s = e.s and e.s[1] or {}

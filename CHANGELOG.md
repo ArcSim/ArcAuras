@@ -1,5 +1,19 @@
 # Arc Auras
 
+## 3.3.7
+
+Bar Groups that close their gaps, level and zone load rules, a move mode that shows every item, and the latest Item Finds.
+
+### New Features
+
+- **Bar Groups** - Add > Group > Bar Group puts your bars in a line that closes the gaps as they come and go: cooldown, timer, totem and swing bars, in combat too. Grow down, up, left or right, lying or standing bars, with the same Dynamic options as icon groups.
+- **Level and Zone load rules** - Load Conditions can now limit an item to a range of levels, and to zones you list or away from them. Add current zone picks where you stand.
+
+### Improvements
+
+- **Move layouts** - Right-clicking the minimap button now shows every icon and bar in its spot inside a box that wraps the whole layout, even ones that are hidden right now.
+- **Item Finds** - Behind-the-scenes improvements and Forever's latest item data.
+
 ## 3.3.6
 
 Count text for reagents and items, time left colors on stack bars, a new look for the bar Effects tab, and a gear list for your next upgrades.

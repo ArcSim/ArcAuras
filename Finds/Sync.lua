@@ -20,7 +20,8 @@ local PAGE_GAP = 3            -- seconds before asking for the next page
 local PAGE_WAIT = 40          -- seconds a next-page ask waits for an answer before the run counts as done
 local OVERLAP = 3600          -- a catch-up reaches an hour back from the bookmark, for finds recorded around it
 local SENDER_WINDOW = 300
-local SENDER_MAX = 40         -- finds one sender may announce per window before being muted
+local SENDER_MAX = 40         -- finds new to this copy heard from one sender per window; the rest of that window goes unheard
+local SEND_MAX = 30           -- finds this copy sends per window, well under what the others hear (SENDER_MAX)
 local BAD_MAX = 5             -- broken messages before a sender is muted
 local ASK_MAX = 6             -- fresh catch-up asks answered for one sender per SENDER_WINDOW
 local QUIET_GAP = 600         -- a find announced this long after the last word from another copy may have reached nobody
@@ -30,6 +31,9 @@ local ANNOUNCE_SPREAD = 3     -- seconds a find may wait before this copy announ
 local PING_SPREAD = 20        -- seconds a ping's answer may wait, so a channel's answers spread out
 local PING_GAP = 600
 local PING_MAX = 3            -- pings answered per PING_GAP, whoever sends them
+local WHERE_GAP = 60          -- seconds before one player's "where do you share" is answered again
+local WHERE_MAX = 20          -- such asks answered per SENDER_WINDOW, whoever sends them
+local NEWS_MAX = 3            -- channel events one answer carries
 
 function Engine.New(env)
     local e = setmetatable({ env = env, chanQ = {}, whisQ = {}, grpQ = {}, pumping = false, nextChan = 0, nextWhis = 0, nextGrp = 0,
@@ -46,6 +50,12 @@ end
 
 function Engine:IsMuted(sender)
     return self.muted[sender] == true
+end
+
+-- past SENDER_MAX finds in the current window: the rest of it goes unheard
+function Engine:IsCapped(sender)
+    local b = self.senders[sender]
+    return b ~= nil and self.env.now() - b.start <= SENDER_WINDOW and b.finds > SENDER_MAX
 end
 
 local function Bucket(self, sender)
@@ -152,8 +162,9 @@ function Engine:Unreachable(to)
     for i = #q, n + 1, -1 do q[i] = nil end
 end
 
--- this copy saw something worth telling: once per item per session
-function Engine:Announce(rec)
+-- this copy saw something worth telling: once per item per session. fresh: new to this copy or changed, so it goes ahead
+-- of repeats when finds have to wait
+function Engine:Announce(rec, fresh)
     if self.announced[rec.id] then return end
     self.announced[rec.id] = true
     -- no other copy has spoken lately, so maybe none is online: the find goes out again once one speaks (saved on the
@@ -164,30 +175,82 @@ function Engine:Announce(rec)
         if self.unheard then self.unheard = self.unheard + 1 end
     end
     -- a raid sees the same loot on every copy at once: each waits a moment and stays quiet when two other players have
-    -- reported the item meanwhile (everyone listening then holds it, confirmed)
+    -- reported the item meanwhile (everyone listening then holds it, confirmed), or when a catch-up said it is
+    -- confirmed (an old item said to be changed still needs real reports)
     env.after(env.random(0, ANNOUNCE_SPREAD * 1000) / 1000, function()
-        if env.finds.OthersReporting and env.finds.OthersReporting(rec, env.me) >= 2 then
+        if (rec.cf and not rec.pend) or (env.finds.OthersReporting and env.finds.OthersReporting(rec, env.me) >= 2) then
             if rec.uh then
                 rec.uh = nil
                 if self.unheard then self.unheard = math.max(0, self.unheard - 1) end
             end
             return
         end
-        self:SendFind(rec, true)
+        self:SendFind(rec, true, fresh)
     end)
 end
 
--- a find on the channel, counted: the copies hearing it mute a sender past SENDER_MAX finds in a window. A live find
--- also goes to the player's guild and group, so they get it wherever the channel does not reach
-function Engine:SendFind(rec, live)
+-- a find on the channel, counted: past SEND_MAX in a window it waits for room (Hold), so the copies hearing it never
+-- cut this one off. A live find also goes to the player's guild and group, so they get it wherever the channel does
+-- not reach
+function Engine:SendFind(rec, live, fresh)
     local now, sent = self.env.now(), self.sent
     while sent[1] and now - sent[1] > SENDER_WINDOW do table.remove(sent, 1) end
+    if #sent >= SEND_MAX then return self:Hold(rec, live, fresh) end
     sent[#sent + 1] = now
     local msg = P.EncodeFind(rec)
     self:QueueChannel(msg)
     if live and self.env.groups then
         for _, dist in ipairs(self.env.groups()) do self:QueueGroup(dist, msg) end
     end
+end
+
+-- a find waiting for room: new finds go ahead of repeats. A new one is also marked unheard (saved on the find), so a
+-- logout before its turn sends it with the next session's resend
+function Engine:Hold(rec, live, fresh)
+    local h = self.held or { fresh = {}, again = {}, ids = {} }
+    self.held = h
+    if fresh and not rec.uh then
+        rec.uh = true
+        if self.unheard then self.unheard = self.unheard + 1 end
+    end
+    if not h.ids[rec.id] then
+        h.ids[rec.id] = true
+        table.insert(fresh and h.fresh or h.again, { rec = rec, live = live, fresh = fresh })
+    end
+    self:DrainSoon()
+end
+
+-- the held finds go once the oldest send leaves the window
+function Engine:DrainSoon()
+    if self.drainDue then return end
+    local env, sent = self.env, self.sent
+    self.drainDue = true
+    env.after(math.max(1, sent[1] and (sent[1] + SENDER_WINDOW - env.now() + 1) or 1), function()
+        self.drainDue = nil
+        self:Drain()
+    end)
+end
+
+function Engine:Drain()
+    local h = self.held
+    if not h then return end
+    local now, sent = self.env.now(), self.sent
+    while sent[1] and now - sent[1] > SENDER_WINDOW do table.remove(sent, 1) end
+    local env = self.env
+    while #sent < SEND_MAX do
+        local m = table.remove(h.fresh, 1) or table.remove(h.again, 1)
+        if not m then break end
+        local rec = m.rec
+        h.ids[rec.id] = nil
+        if rec.uh then
+            rec.uh = nil
+            if self.unheard then self.unheard = math.max(0, self.unheard - 1) end
+        end
+        -- two other players reported it while it waited, or a catch-up called it confirmed: nobody needs it any more
+        local done = (rec.cf and not rec.pend) or (env.finds.OthersReporting and env.finds.OthersReporting(rec, env.me) >= 2)
+        if not done then self:SendFind(rec, m.live, m.fresh) end
+    end
+    if #h.fresh + #h.again > 0 then self:DrainSoon() end
 end
 
 -- another copy spoke. A hello comes from a copy that just logged in or pressed Refresh, and right after this copy's
@@ -231,7 +294,7 @@ function Engine:Resend()
     self.resending = true
     for _, rec in ipairs(list) do
         rec.uh = nil
-        self:SendFind(rec)
+        self:SendFind(rec, false, true)
     end
     env.after(SENDER_WINDOW, function()
         self.resending = false
@@ -299,13 +362,14 @@ function Engine:Serve(requester, since, after, holding)
     self.serving[requester] = nil
     local page = env.finds.Since(since, after, SERVE_LIMIT)
     -- a copy too busy to whisper the whole page leaves the asker to another copy, so no page arrives in part
-    if #page == 0 or #self.whisQ + #page + 1 > WHISPER_ROOM then return end
+    if #page == 0 or #self.whisQ + #page + 4 > WHISPER_ROOM then return end
     -- "I have it" goes out at once, ahead of anything queued, so the other copies stand down in time
     local claim = P.EncodeServing(requester, holding)
     if not env.canSend() or env.send("CHANNEL", nil, claim) ~= "ok" then
         table.insert(self.chanQ, 1, claim)
         self:Pump()
     end
+    local known = {}
     for _, rec in ipairs(page) do
         -- an unheard find reaches this asker now
         if rec.uh then
@@ -313,7 +377,10 @@ function Engine:Serve(requester, since, after, holding)
             if self.unheard then self.unheard = math.max(0, self.unheard - 1) end
         end
         self:QueueWhisper(requester, P.EncodeFind(rec))
+        -- a page carries no reporters, so the asker would report these again on seeing them: it is told which are confirmed
+        if not rec.pend and (rec.cf or (env.finds.Confirmed and env.finds.Confirmed(rec))) then known[#known + 1] = rec.id end
     end
+    for _, m in ipairs(P.EncodeKnown(known)) do self:QueueWhisper(requester, m) end
     self:QueueWhisper(requester, P.EncodeEnd(#page, page[#page].id))
 end
 
@@ -355,6 +422,33 @@ function Engine:Ping(sender, token, via)
     end)
 end
 
+-- a player whose copy spoke: one to ask where the copies share at a later login
+function Engine:Peer(sender)
+    if self.env.onPeer then self.env.onPeer(sender) end
+end
+
+-- a copy logging in asks where the copies share: the answer is this copy's channel name, then the channel events it saw
+-- itself that the asker does not hold yet (newer than its newest), all by whisper
+function Engine:Where(sender, newest)
+    local env = self.env
+    if not (env.here and env.here()) then return end
+    local now = env.now()
+    self.whereAt = self.whereAt or {}
+    if self.whereAt[sender] and now - self.whereAt[sender] < WHERE_GAP then return end
+    local times = self.whereTimes or {}
+    self.whereTimes = times
+    while times[1] and now - times[1] > SENDER_WINDOW do table.remove(times, 1) end
+    if #times >= WHERE_MAX then return end
+    times[#times + 1] = now
+    self.whereAt[sender] = now
+    env.after(env.random(200, 2000) / 1000, function()
+        local slot = env.here()
+        if not slot then return end
+        self:QueueWhisper(sender, P.EncodeHere(slot))
+        for _, ev in ipairs(env.news and env.news(newest, NEWS_MAX) or {}) do self:QueueWhisper(sender, P.EncodeEvent(ev)) end
+    end)
+end
+
 -- via: "line" for a chat line on the channel, nil for an addon message
 function Engine:Receive(msg, dist, sender, via)
     local env = self.env
@@ -362,12 +456,14 @@ function Engine:Receive(msg, dist, sender, via)
     -- a banned player is not heard at all
     if env.banned and env.banned(sender) then return end
     local kind = P.Kind(msg)
-    -- the guild and the group carry live finds only; asks, claims and pages stay on the channel and whispers
-    if dist ~= "CHANNEL" and dist ~= "WHISPER" and kind ~= "F" then return end
+    -- the guild and the group carry live finds, the guild also the channel news; asks, claims and pages stay on the
+    -- channel and whispers
+    if dist ~= "CHANNEL" and dist ~= "WHISPER" and kind ~= "F" and not (dist == "GUILD" and (kind == "R" or kind == "W")) then return end
     local b = Bucket(self, sender)
     if kind == "F" then
         local info = P.DecodeFind(msg)
         if not info then return Bad(self, b, sender, msg, via) end
+        self:Peer(sender)
         self:Heard()
         -- a find heard on the channel, the guild or the group is a first-hand report; a whispered one is a catch-up
         -- copy. The same report on two of them counts and records once
@@ -382,11 +478,17 @@ function Engine:Receive(msg, dist, sender, via)
         -- claim goes out as a chat line that waits for a key press, so several copies may serve one ask unheard
         local now, served, asked = env.now(), self.helped[sender], self.lastHello
         local expected = (served and now - served < SENDER_WINDOW) or (asked and now - asked < SENDER_WINDOW)
+        -- only finds that teach this copy something count: a vendor list or a bag of items it already holds costs the
+        -- sender nothing. Past the cap the rest of the window goes unheard and the sender is heard again in the next one;
+        -- fakes are harmless anyway
         if not (dist == "WHISPER" and expected) then
-            b.finds = b.finds + 1
-            if b.finds > SENDER_MAX then
-                self:Mute(sender, b.finds .. " finds within 5 minutes")
-                return
+            if b.finds > SENDER_MAX then return end
+            if not env.finds.Adds or env.finds.Adds({ id = info.id, fp = info.fp, src = info.src, reporter = firstHand and sender or nil }) then
+                b.finds = b.finds + 1
+                if b.finds > SENDER_MAX then
+                    if env.report then env.report("capped", sender, b.finds .. " finds this copy lacked, within 5 minutes") end
+                    return
+                end
             end
         end
         self.lastHeard = env.now()
@@ -402,11 +504,16 @@ function Engine:Receive(msg, dist, sender, via)
             -- a catch-up copy is old news: it fills the feed and the database but never pops up
             info.quiet = not firstHand or nil
             local status, rec = env.finds.Record(info)
+            if rec and self.knownSoon and self.knownSoon[info.id] then
+                rec.cf = true
+                self.knownSoon[info.id] = nil
+            end
             if status and env.onRecorded then env.onRecorded(rec, status, info) end
         end)
     elseif kind == "H" then
         local count, sum, since, after = P.DecodeHello(msg)
         if not count then return Bad(self, b, sender, msg, via) end
+        self:Peer(sender)
         -- a fresh ask comes at login and at most once a minute from Refresh; past ASK_MAX in a window more asks go
         -- unanswered, without a mute (a player reloading a lot is no troublemaker; a page run's next asks carry a cursor
         -- and are not counted)
@@ -474,6 +581,35 @@ function Engine:Receive(msg, dist, sender, via)
         local token, heard, host, version = P.DecodeAnswer(msg)
         if not token then return Bad(self, b, sender, msg, via) end
         if env.onAnswer then env.onAnswer(sender, token, heard, host, version, dist, via) end
+    elseif kind == "K" then
+        local ids = P.DecodeKnown(msg)
+        if not ids then return Bad(self, b, sender, msg, via) end
+        -- taken like the pages it follows: by whisper, from a copy that served this one or soon after this one asked
+        local now, served, asked = env.now(), self.helped[sender], self.lastHello
+        if dist ~= "WHISPER" or not ((served and now - served < SENDER_WINDOW) or (asked and now - asked < SENDER_WINDOW)) then return end
+        self.knownSoon = self.knownSoon or {}
+        for _, id in ipairs(ids) do
+            local rec = env.finds.Get and env.finds.Get(id)
+            if rec then rec.cf = true else self.knownSoon[id] = true end
+        end
+    elseif kind == "R" then
+        local newest = P.DecodeWhere(msg)
+        if not newest then return Bad(self, b, sender, msg, via) end
+        if dist == "CHANNEL" then return end
+        self:Peer(sender)
+        self:Where(sender, newest)
+    elseif kind == "N" then
+        local slot = P.DecodeHere(msg)
+        if not slot then return Bad(self, b, sender, msg, via) end
+        if dist ~= "WHISPER" then return end
+        self:Peer(sender)
+        if env.onHere then env.onHere(sender, slot) end
+    elseif kind == "W" then
+        local ev = P.DecodeEvent(msg)
+        if not ev then return Bad(self, b, sender, msg, via) end
+        if dist == "CHANNEL" then return end
+        self:Peer(sender)
+        if env.onEvent then env.onEvent(sender, ev) end
     else
         Bad(self, b, sender, msg, via)
     end
@@ -492,7 +628,48 @@ S.CHANNEL = CHANNEL
 -- first, so copies meet again on the lowest name that works
 local NAMES = 9
 local slot, hops, refused = 1, 0, false
-local function Current() return slot == 1 and CHANNEL or (CHANNEL .. slot) end
+-- toldSlot: the name the copies that answered at login share on
+local toldSlot
+local function NameOf(n) return n == 1 and CHANNEL or (CHANNEL .. n) end
+local function Current() return NameOf(slot) end
+S.NameOf = NameOf
+
+-- the number of one of our names (1 the plain name), nil for any other channel
+local function SlotOf(name)
+    local n = name:lower()
+    if n == CHANNEL:lower() then return 1 end
+    local i = tonumber(n:match("^" .. CHANNEL:lower() .. "(%d)$"))
+    if i and i >= 2 and i <= NAMES then return i end
+end
+
+-- this realm's part of a saved table (each realm has its own channels)
+local function Realm(key)
+    local realm = GetNormalizedRealmName and GetNormalizedRealmName()
+    if not ns.db or type(realm) ~= "string" or realm == "" or ns.Secret(realm) then return nil end
+    ns.db[key] = ns.db[key] or {}
+    local t = ns.db[key][realm] or {}
+    ns.db[key][realm] = t
+    return t
+end
+
+-- Knocking on a locked name makes the game show its own password box, which no chat filter stops. A name refused
+-- once is kept per realm for a day and passed by without knocking, so a locked name costs a player one box a day
+local LOCK_FOR = 24 * 3600
+local function Locks() return Realm("locked") end
+local function IsLocked(name)
+    local t = Locks()
+    local at = t and t[name:lower()]
+    if not at then return false end
+    if ns.Now() - at >= LOCK_FOR then
+        t[name:lower()] = nil
+        return false
+    end
+    return true
+end
+local function MarkLocked(name)
+    local t = Locks()
+    if t then t[name:lower()] = ns.Now() end
+end
 
 local engine
 local joinTries = 0
@@ -639,6 +816,8 @@ local function Join()
         ns.Signal("SyncState")
         return true
     end
+    -- a name found locked lately is passed by without knocking, unless the copies that answered share there now
+    if IsLocked(Current()) and slot ~= toldSlot then return Hop() end
     joinTries = joinTries + 1
     refused = false
     local at = slot
@@ -732,11 +911,138 @@ local function MemberName(guid, first, channel)
     end
 end
 
-local function Ours(name)
-    local n = name:lower()
-    if n == CHANNEL:lower() then return true end
-    local i = tonumber(n:match("^" .. CHANNEL:lower() .. "(%d)$"))
-    return i ~= nil and i >= 2 and i <= NAMES
+local function Ours(name) return SlotOf(name) ~= nil end
+
+-- The name log: what players did to our channels, with the names the game gave, kept per realm so players can see who
+-- locked one. A copy writes down what it saw and passes it on; what others passed on shows as told, by how many
+local WHO_MAX = 30
+local WHO_KEEP = 30 * 86400
+local NEWS_FRESH = 7 * 86400  -- events younger than this go to copies logging in
+local SAME_WINDOW = 300       -- two copies' times for one event differ by their clocks and the notice's way to each
+local function Who()
+    local t = Realm("who")
+    if not t then return nil end
+    local now = ns.Now()
+    for i = #t, 1, -1 do
+        if type(t[i]) ~= "table" or type(t[i].t) ~= "number" or now - t[i].t > WHO_KEEP then table.remove(t, i) end
+    end
+    return t
+end
+S.Who = Who
+
+local function Newest()
+    local t = Who()
+    return t and t[#t] and t[#t].t or 0
+end
+
+-- a notice names a player by first name and realm, the member list by first name and surname: they agree on the first
+local function FirstOf(name)
+    if type(name) ~= "string" then return "" end
+    local base = name:gsub("%-[^-]+$", "")
+    local i = base:find(SURNAME, 1, true)
+    return (i and base:sub(1, i - 1) or base):lower()
+end
+
+local function Same(a, b)
+    return a.slot == b.slot and a.kind == b.kind and math.abs(a.t - b.t) <= SAME_WINDOW
+        and FirstOf(a.by) == FirstOf(b.by) and FirstOf(a.on) == FirstOf(b.on)
+end
+
+-- a name with the surname tells players apart, one without does not
+local function Fuller(old, new)
+    if not new then return old end
+    if not old then return new end
+    local oldBase, newBase = old:gsub("%-[^-]+$", ""), new:gsub("%-[^-]+$", "")
+    if newBase:find(SURNAME, 1, true) and not oldBase:find(SURNAME, 1, true) then return new end
+    return old
+end
+
+-- teller: who passed it on, nil when this copy saw it. Returns the entry and whether it is new
+local function AddEvent(ev, teller)
+    local t = Who()
+    if not t then return end
+    for _, e in ipairs(t) do
+        if Same(e, ev) then
+            if teller then
+                e.told = e.told or {}
+                e.told[teller] = true
+            else
+                e.mine = true
+            end
+            e.by, e.on = Fuller(e.by, ev.by), Fuller(e.on, ev.on)
+            ns.Signal("WhoChanged")
+            return e, false
+        end
+    end
+    local e = { t = ev.t, slot = ev.slot, kind = ev.kind, by = ev.by, on = ev.on, mine = not teller or nil,
+        told = teller and { [teller] = true } or nil }
+    t[#t + 1] = e
+    table.sort(t, function(a, b) return a.t < b.t end)
+    while #t > WHO_MAX do table.remove(t, 1) end
+    ns.Signal("WhoChanged")
+    return e, true
+end
+S.AddEvent = AddEvent
+
+-- the events this copy saw itself after time since, newest first, at most n: what a copy logging in is told
+local function News(since, n)
+    local out, t = {}, Who()
+    if not t then return out end
+    local now = ns.Now()
+    for i = #t, 1, -1 do
+        local e = t[i]
+        if #out >= n or e.t <= since then break end
+        if e.mine and now - e.t <= NEWS_FRESH then out[#out + 1] = e end
+    end
+    return out
+end
+
+local NOBODY_SHORT = "an unnamed player"
+local EVENT_WORDS = {
+    PASSWORD_CHANGED = function(by) return "locked with a password by " .. by end,
+    MODERATION_ON = function(by) return "moderation turned on by " .. by end,
+    PLAYER_KICKED = function(by, on) return on .. " kicked by " .. by end,
+    PLAYER_BANNED = function(by, on) return on .. " banned by " .. by end,
+    UNSET_VOICE = function(by, on) return on .. " silenced by " .. by end,
+    SET_MODERATOR = function(by, on) return on .. " made a moderator by " .. by end,
+}
+local function EventText(e)
+    return NameOf(e.slot) .. ": " .. EVENT_WORDS[e.kind](e.by or NOBODY_SHORT, e.on or NOBODY_SHORT)
+end
+S.EventText = EventText
+
+-- the window footer's list: the newest n events, newest first, with when and who saw them
+function S.WhoLines(n)
+    local out, t = {}, Who() or {}
+    for i = #t, math.max(1, #t - n + 1), -1 do
+        local e = t[i]
+        local tellers = 0
+        for _ in pairs(e.told or {}) do tellers = tellers + 1 end
+        local seen = e.mine and "seen by you" or ("told by " .. tellers .. (tellers == 1 and " player" or " players"))
+        out[#out + 1] = EventText(e) .. " (" .. date("%b %d, %H:%M", e.t) .. ", " .. seen .. ")"
+    end
+    return out
+end
+
+-- a copy that saw it tells its guild a moment later, unless a guildmate's copy told it first
+local function SpreadSoon(e)
+    if not engine or not (IsInGuild and IsInGuild()) then return end
+    C_Timer.After(math.random(1000, 10000) / 1000, function()
+        if e.told and next(e.told) then return end
+        engine:QueueGroup("GUILD", P.EncodeEvent(e))
+    end)
+end
+
+-- the one-name notices name the player who acted; the two-name ones the player acted on, then the one who acted
+local ONE_NAME = { PASSWORD_CHANGED = true, MODERATION_ON = true }
+local function Witness(kind, first, second, name, guid)
+    local function Best(n) return MemberName(guid, n, name) or Full(n) end
+    local by, on
+    if ONE_NAME[kind] then by = Best(first) else on, by = Best(first), Best(second) end
+    -- a new moderator with nobody named is the game handing the channel to its next owner, which happens all the time
+    if (kind == "SET_MODERATOR" and not by) or (not by and not on) then return end
+    local e, new = AddEvent({ t = ns.Now(), slot = SlotOf(name), kind = kind, by = by, on = on })
+    if e and new then SpreadSoon(e) end
 end
 
 -- arg2 is a notice's first player, arg5 its second, arg9 the channel
@@ -749,10 +1055,13 @@ local function Notice(kind, first, _, _, second, _, _, _, name, _, _, guid)
         end
         Report(name .. ": " .. SAID[kind](Named(first), Named(second)))
     end
+    if P.EVENTS[kind] and Ours(name) then Witness(kind, first, second, name, guid) end
     if name:lower() ~= Current():lower() then return end
     if kind == "WRONG_PASSWORD" or kind == "BANNED" then
+        if kind == "WRONG_PASSWORD" then MarkLocked(name) end
         refused = true
     elseif TAKEOVER[kind] and S.state == "on" then
+        if kind == "PASSWORD_CHANGED" then MarkLocked(name) end
         Hop()
     elseif kind == "YOU_LEFT" and S.state == "on" then
         -- put out of the channel: back in, or on to the next name when the door stays shut
@@ -763,6 +1072,13 @@ local function Notice(kind, first, _, _, second, _, _, _, name, _, _, guid)
 end
 ns.On("CHAT_MSG_CHANNEL_NOTICE", Notice)
 ns.On("CHAT_MSG_CHANNEL_NOTICE_USER", Notice)
+-- the game asks for a password (its own box is already up) when a name we knock on is locked: that name refused us
+ns.On("CHANNEL_PASSWORD_REQUEST", function(name)
+    if type(name) ~= "string" or ns.Secret(name) or not Ours(name) then return end
+    MarkLocked(name)
+    Report(name .. ": a password we do not know was asked for")
+    if name:lower() == Current():lower() then refused = true end
+end)
 
 -- AreOutgoingAddonChatMessagesRestricted is no send gate: it reads true on ordinary realms (tournament realms clear it)
 -- while addon messages still go out there
@@ -858,6 +1174,58 @@ local function ReplyName(name, sender, guid)
     local realm = select(7, GetPlayerInfoByGUID(guid))
     if type(realm) ~= "string" or ns.Secret(realm) or realm == "" then return end
     return name .. "-" .. (sender:match("%-(.+)$") or realm:gsub("%s", ""))
+end
+
+-- Before its first knock, a copy asks where the copies share: its guild, and the players whose copies it heard lately
+-- (a whisper to one who is offline bounces quietly). It goes straight to the lowest name an answer gives, so a name
+-- locked while it was away costs no password box
+local PEER_MAX = 40
+local PEER_FRESH = 14 * 86400
+local ASK_PEERS = 5
+local told = {}
+
+local function RecordPeer(sender)
+    if type(sender) ~= "string" or ns.Secret(sender) or sender == "" or IsMe(sender) or Banned(sender) then return end
+    local t = Realm("peers")
+    if not t then return end
+    t[route[sender] or sender] = ns.Now()
+    local n, oldest, at = 0, nil, nil
+    for k, v in pairs(t) do
+        n = n + 1
+        if type(v) ~= "number" or not at or v < at then oldest, at = k, type(v) == "number" and v or -1 end
+    end
+    if n > PEER_MAX then t[oldest] = nil end
+end
+
+local function AskWhere()
+    if not engine or not CanSend() then return end
+    local msg = P.EncodeWhere(Newest())
+    if IsInGuild and IsInGuild() then engine:QueueGroup("GUILD", msg) end
+    local list, now = {}, ns.Now()
+    for name, at in pairs(Realm("peers") or {}) do
+        if type(at) == "number" and now - at <= PEER_FRESH then list[#list + 1] = { name = name, at = at } end
+    end
+    table.sort(list, function(a, b) return a.at > b.at end)
+    for i = 1, math.min(ASK_PEERS, #list) do engine:QueueWhisper(list[i].name, msg) end
+end
+
+-- answers count until this copy first knocks; the lowest name wins, so one wrong answer cannot pull it away from where
+-- the others are
+local function OnHere(sender, n)
+    if n > NAMES then return end
+    if not told.slot or n < told.slot then told.slot = n end
+    Report((Full(sender) or "?") .. " says the copies share on " .. NameOf(n))
+end
+
+local function OnEvent(sender, ev)
+    local now = ns.Now()
+    if ev.slot > NAMES or ev.t > now + SAME_WINDOW or now - ev.t > WHO_KEEP then return end
+    local e, new = AddEvent(ev, sender)
+    if e and new then Report("told by " .. (Full(sender) or "?") .. ": " .. EventText(e)) end
+end
+
+local function Here()
+    if S.state == "on" and ChannelNumber() then return slot end
 end
 
 local RESULT = Enum and Enum.SendAddonMessageResult
@@ -1027,9 +1395,10 @@ local function Accept(info, _, done)
     end)
 end
 
--- a find goes out while sharing is on, even with no channel: the guild and group routes still carry it
-function S.Announce(rec)
-    if engine and S.state ~= "paused" then engine:Announce(rec) end
+-- a find goes out while sharing is on, even with no channel: the guild and group routes still carry it. fresh: new to
+-- this copy or changed
+function S.Announce(rec, fresh)
+    if engine and S.state ~= "paused" then engine:Announce(rec, fresh) end
 end
 
 -- the routes a live find also takes: the player's guild and the group they are in
@@ -1102,10 +1471,21 @@ ns.Listen("DBReady", function()
             ns.db.sync[ServerKey()] = t
         end,
         banned = Banned,
-        report = function(_, sender, why) Report("muted " .. (Full(sender) or "?") .. " for this session: " .. why) end,
+        report = function(kind, sender, why)
+            if kind == "capped" then
+                Report("skipped " .. (Full(sender) or "?") .. "'s finds for the rest of 5 minutes: " .. why)
+            else
+                Report("muted " .. (Full(sender) or "?") .. " for this session: " .. why)
+            end
+        end,
         host = ns.SAVE == "ArcAurasFindsDB" and "Arc Auras" or "Item Finder",
         version = ns.VERSION,
         onAnswer = function(...) if S.OnAnswer then S.OnAnswer(...) end end,
+        onPeer = RecordPeer,
+        here = Here,
+        news = News,
+        onHere = OnHere,
+        onEvent = OnEvent,
     })
 end)
 
@@ -1130,8 +1510,13 @@ ns.Listen("Login", PurgeBans)
 ns.On("PLAYER_ENTERING_WORLD", function(isLogin, isReload)
     if S.joined then return end
     S.joined = true
+    C_Timer.After(1, AskWhere)
     -- the game's own channels join first; ours waits so it never takes their numbers
     C_Timer.After(8, function()
+        if told.slot then
+            slot, toldSlot = told.slot, told.slot
+            Report("going straight to " .. Current() .. ", where the copies that answered share")
+        end
         Join()
         WatchPresses()
         if engine then

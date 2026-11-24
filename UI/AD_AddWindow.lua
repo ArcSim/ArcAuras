@@ -84,6 +84,7 @@ function AW.Kinds(sec)
     elseif sec == "Group" then
         K("cooldown", Tr("Icon Group"), nil, Tr("Any icons, in a grid"), Tr("Any icons together; it can close the gaps when some are hidden."))
         K("aura", Tr("Aura Group"), nil, Tr("Aura icons that pack"), Tr("Aura icons only: they pack together as auras come and go."))
+        if NS.BarGroups then K("bar", Tr("Bar Group"), nil, Tr("Bars that pack"), Tr("Your bars in a line: cooldown, timer and swing bars close the gaps as they come and go.")) end
         if NS.Reminders then K("reminder", Tr("Reminder Group"), nil, Tr("Pulses mid-screen"), Tr("A spot mid-screen where your cooldowns pulse as they come back.")) end
         if Options.MissingBuffsAddRows then K("missing", Tr("Missing Buffs"), nil, Tr("Shows what you forgot"), Tr("Each icon shows only while its buff is missing, in combat too.")) end
         if Options.BarImport then K("frombars", Tr("From my action bars"), Tr("My Action Bars"), Tr("Pick from your bars"), Tr("A new Icon Group: pick its spells and items from your action bars. Out of combat only.")) end
@@ -115,7 +116,7 @@ function AW.DotColor(sec, id)
     elseif sec == "Bar" then
         c = select(2, Options.BarPillText(id))
     elseif sec == "Group" then
-        local g = (id == "frombars" and "cooldown") or (id == "fromcdm" and "aura") or (id == "missing" and "aura") or id
+        local g = ((id == "frombars" or id == "bar") and "cooldown") or (id == "fromcdm" and "aura") or (id == "missing" and "aura") or id
         c = Options.GROUP_COLORS[g]
     else
         c = select(2, Options.BarPillText(id))

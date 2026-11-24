@@ -135,11 +135,20 @@ function D.IsNotFound(id)
     return i ~= nil and D.RowNotFound(i)
 end
 
+-- rows a public item database lists with a source, in the same shape: in the game, so found
+local listedBits = D.listed
+D.listed = nil
+function D.IsListed(id)
+    local i = FindSeed(id)
+    return i ~= nil and RowBit(listedBits, i)
+end
+
 -- every row, newest first, read from the index alone (no line is parsed, nothing is made per row):
 -- fn(pos, id, kind, quality, requiredLevel, class, subclass, slot, allowedClasses, nameStart, sourceMask, notFound)
-function D.ForEachRow(fn)
+-- from and to (row indexes, from >= to) walk part of the rows, so a long walk can be spread over frames
+function D.ForEachRow(fn, from, to)
     IndexSeed()
-    for i = rows, 1, -1 do
+    for i = math.min(from or rows, rows), math.max(to or 1, 1), -1 do
         local o = (i - 1) * STRIDE
         local ac = Dec(index, o + 16, 2)
         local pos = Dec(index, o + 5, 4)
@@ -149,9 +158,19 @@ function D.ForEachRow(fn)
     end
 end
 
+function D.RowCount()
+    IndexSeed()
+    return rows
+end
+
 -- a row's name, from where ForEachRow says it starts
 function D.NameAt(nameStart)
     return seed:match("^[^\n]*", nameStart)
+end
+-- whether a row's name holds a pattern (one that starts "^[^\n]-", so it stays on the row), read in place: a search
+-- makes no string per row
+function D.NameHas(nameStart, linePattern)
+    return seed:find(linePattern, nameStart) ~= nil
 end
 
 -- flags carry the data version that first listed a row, so an update counts what it adds even when it drops others
@@ -252,8 +271,9 @@ function D.Dungeon(area)
     if not name then return end
     -- an announced dungeon has no entrance until the data has one
     local m, x, y = at:match("^(%d+)%.(%d+)%.(%d+)$")
+    -- later: a raid Forever has not opened yet
     return { name = name, m = tonumber(m), x = tonumber(x), y = tonumber(y), raid = flag:find("r", 1, true) ~= nil,
-        own = flag:find("f", 1, true) ~= nil, game = game ~= "" and game or nil }
+        own = flag:find("f", 1, true) ~= nil, later = flag:find("l", 1, true) ~= nil, game = game ~= "" and game or nil }
 end
 
 -- names compared without a leading "The", case or punctuation, so an announced name still matches the game's
@@ -362,7 +382,8 @@ local Discovery
 -- on each redraw
 local discovery = {}
 local function TeachesPlace(e)
-    for _, s in ipairs(e.s or {}) do
+    if not e.s then return false end
+    for _, s in ipairs(e.s) do
         if s.t and s.t ~= "q" then return true end
     end
     return false
@@ -435,17 +456,18 @@ function D.FilterPasses(st, id, q, req, cls, sub, inv, ac, mask, e)
     return true
 end
 
--- an NPC or object: its name, level text, rank (1 elite, 2 rare elite, 3 boss, 4 rare), spots, and the dungeon it
--- stands in (if any); an object's level field holds the gathering skill a vein or herb needs (gather: its name)
+-- an NPC or object: its name, level text, rank (1 elite, 2 rare elite, 3 boss, 4 rare), side ("a" / "h": friendly to
+-- that faction only), spots, and the dungeon it stands in (if any); an object's level field holds the gathering skill a
+-- vein or herb needs (gather: its name)
 local function Place(kind, id)
     local line = BlockLine(kind, id)
     if not line then return end
-    local name, level, rank, spots = line:match("^%d+|([^|]*)|([^|]*)|([^|]*)|(.*)$")
+    local name, level, rank, side, spots = line:match("^%d+|([^|]*)|([^|]*)|(%d*)(%l?)|(.*)$")
     if not name then return end
     local pins, inside = Spots(spots)
     local gather = kind == "objects" and level ~= "" and D.PROFESSIONS[tonumber(level)] or nil
     return { id = id, name = name, lv = level ~= "" and not gather and level or nil, rank = tonumber(rank), pins = pins,
-        dungeon = D.Dungeon(inside), gather = gather }
+        dungeon = D.Dungeon(inside), gather = gather, side = side ~= "" and side or nil }
 end
 D.Place = Place
 
@@ -544,12 +566,15 @@ function D.Sources(id)
         elseif t == "q" then
             local qline = BlockLine("quests", tonumber(rest))
             -- "qline and qline:match(...)" would keep only the first capture
-            local name, level, gk, gid
-            if qline then name, level, gk, gid = qline:match("^%d+|([^|]*)|([^|]*)|(%a?)(%d*)$") end
+            local name, level, by
+            if qline then name, level, by = qline:match("^%d+|([^|]*)|([^|]*)|(.*)$") end
             if name then
-                local giver = gid ~= "" and Place(gk == "o" and "objects" or "npcs", tonumber(gid))
+                local gk, gid = by:match("^(%a?)(%d*)$")
+                local giver = gid and gid ~= "" and Place(gk == "o" and "objects" or "npcs", tonumber(gid))
                 if giver and gk ~= "o" then giver.npc = giver.id end
-                src = { name = name, lv = level ~= "" and level or nil, pins = giver and giver.pins or {},
+                -- a quest only players' finds know: the spots where they saw its window
+                local seen = not gid and (Spots(by))
+                src = { name = name, lv = level ~= "" and level or nil, pins = (giver and giver.pins) or seen or {},
                     dungeon = giver and giver.dungeon, giver = giver or nil }
             end
         elseif t == "c" then

@@ -895,6 +895,8 @@ local function WhenOK(rec)
     end
     if SetAny(c.loadNever) then return false end
     if not SetHolds(rec) then return false end
+    -- level and zone (Core\AD_LoadRules.lua)
+    if NS.LoadRules and not NS.LoadRules.Holds(rec) then return false end
     return true
 end
 
@@ -1221,6 +1223,7 @@ local function CollectKeys(c)
     local id = RuleOf(c)
     if id then rangeUse[id] = true end
     if SetRuleOf(c) then setUse = true end
+    if NS.LoadRules then NS.LoadRules.Collect(c) end
 end
 
 -- Evaluate every live record, then paint, since a painter reads its parents'
@@ -1233,6 +1236,7 @@ function Conditions.Pass()
     wipe(inUse)
     wipe(rangeUse)
     setUse = false
+    if NS.LoadRules then NS.LoadRules.BeginPass() end
     local flipped = false
     for _, recType in ipairs(subjectOrder) do
         subjects[recType].each(function(id)
@@ -1259,6 +1263,7 @@ function Conditions.Pass()
         if s.pass ~= passNo then st[id] = nil end
     end
     Arm()
+    if NS.LoadRules then NS.LoadRules.Arm() end
     Kick()
     -- An icon that went inert or came back leaves or retakes its dynamic
     -- cell; the engine re-places only its dynamic groups.
@@ -1524,6 +1529,7 @@ function Conditions.Normalize(rec)
         local n = tonumber(c.setPieces)
         c.setPieces = n and math.max(1, math.min(SET_SLOTS, math.floor(n))) or nil
     end
+    if NS.LoadRules then NS.LoadRules.Normalize(c) end
     -- An empty faction set is legal: it means "nowhere", like classes.
     if c.factions ~= nil then
         if type(c.factions) ~= "table" then

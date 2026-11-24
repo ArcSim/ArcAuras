@@ -50,7 +50,7 @@ Schema.ICON_KINDS = { "spell", "item", "trinket", "timer", "totem", "aura", "amm
     "stance" }
 -- A reminder group (Drivers\AD_DriverReminders.lua) is a pulse window: its
 -- members are reminder records, never icons.
-Schema.GROUP_KINDS = { "cooldown", "aura", "reminder" }
+Schema.GROUP_KINDS = { "cooldown", "aura", "reminder", "bar" }
 -- Creatable bar kinds; cooldown and aura bars carry rec.barMode ("duration" or
 -- "stack"). The create UI hides swing where C_SwingTimer is missing, but the
 -- kind stays valid everywhere, so sync never rewrites a record. Legacy "timer"
@@ -613,6 +613,12 @@ Schema.CountGateShows = CountGateShows
 Schema.COUNT_RULES = { "any", "least", "most", "exactly", "between" }
 Schema.COUNT_RULE_LABELS = { any = "Any count", least = "At least", most = "At most", exactly = "Exactly",
     between = "Between" }
+
+-- A bar in a Bar Group: its size and direction are the group's.
+function Schema.NotInBarGroup(rec)
+    local Store = NS.Store
+    return not (rec and rec.type == "bar" and rec.id and Store and Store.BarGroupOf and Store.BarGroupOf(rec.id))
+end
 
 -- The ammo count's own threshold colours show with the text that carries the
 -- count: the ammo icon's stack text, a spell icon's ammo text.
@@ -2887,7 +2893,54 @@ Schema.iconGroup = {
             label = "Slide time (s)", fmt = "%.2f",
             dep = { { field = "dynamicLayout" }, { field = "smoothMovement" } } },
     } },
-    look = { push = true, inherit = true, kinds = { cooldown = true, aura = true, reminder = true }, fields = {
+    -- A Bar Group (Drivers\AD_BarGroups.lua): its bars in a line, toward
+    -- Grow's start; Close gaps packs the ones showing, in combat too, from
+    -- plain flags only (a bar's own hide rule, cooldown running, its fade).
+    barStack = { push = true, inherit = true, kinds = { bar = true }, fields = {
+        grow = { d = "down", t = "enum", values = { "down", "up", "right", "left" },
+            labels = { down = "Down", up = "Up", right = "Right", left = "Left" }, label = "Grow",
+            desc = "Where the bars go from the first one; Close gaps packs them toward it." },
+        spacing = { d = 2, t = "int", min = -20, max = 50, label = "Spacing" },
+        padding = { d = 0, t = "int", min = -6, max = 12, label = "Container padding" },
+        closeGaps = { inherit = false, d = false, t = "bool", label = "Close gaps",
+            desc = "Empty spots close up while you play: a bar that is not loaded or hidden by its own setting." },
+        align = { inherit = false, d = "start", t = "enum", values = { "start", "center", "end" },
+            labelsFn = function(r)
+                local g = NS.Store and NS.Store.Resolve(r, "barStack", "grow")
+                if g == "right" or g == "left" then return { start = "Left", center = "Center", ["end"] = "Right" } end
+                return { start = "Top", center = "Center", ["end"] = "Bottom" }
+            end,
+            labels = { start = "Top", center = "Center", ["end"] = "Bottom" },
+            label = "Alignment", dep = { field = "closeGaps" } },
+        collapse = { inherit = false, d = "none", t = "enum", values = { "none", "ready", "cooldown", "hidden" },
+            labels = { none = "Nothing else", ready = "Ready bars", cooldown = "Bars on cooldown",
+                hidden = "Bars at opacity 0" },
+            label = "Also count as empty", dep = { field = "closeGaps" },
+            desc = "Bars in this state give up their spot too, and take one again when it ends." },
+        order = { inherit = false, d = "priority", t = "enum", values = { "priority", "fcfs" },
+            labels = { priority = "Takes its spot back", fcfs = "Joins the end" },
+            label = "A returning bar", dep = { { field = "closeGaps" }, { field = "collapse", notValue = "none" } },
+            desc = "Where a bar goes when it shows again." },
+        shrink = { d = false, t = "bool", label = "Shrink the group to fit", dep = { field = "closeGaps" },
+            desc = "The group's box hugs the bars that are showing; anything anchored to it moves with it." },
+        slide = { d = false, t = "bool", label = "Slide into place", dep = { field = "closeGaps" },
+            desc = "Bars glide to their new spot instead of jumping." },
+        slideTime = { d = 0.18, t = "num", min = 0.05, max = 0.4, label = "Slide time (s)", fmt = "%.2f",
+            dep = { { field = "closeGaps" }, { field = "slide" } } },
+        -- the group's bars all take this size and direction; a standing bar
+        -- is as long as the width and as thick as the height, and fills upward
+        barDir = { d = "horizontal", t = "enum", values = { "horizontal", "vertical" },
+            labels = { horizontal = "Horizontal", vertical = "Vertical" }, label = "Bar direction" },
+        barW = { d = 220, t = "int", min = 20, max = 600, label = "Bar width",
+            labelFn = function(r)
+                return NS.Store and NS.Store.Resolve(r, "barStack", "barDir") == "vertical" and "Bar length" or nil
+            end },
+        barH = { d = 16, t = "int", min = 2, max = 60, label = "Bar height",
+            labelFn = function(r)
+                return NS.Store and NS.Store.Resolve(r, "barStack", "barDir") == "vertical" and "Bar thickness" or nil
+            end },
+    } },
+    look = { push = true, inherit = true, kinds = { cooldown = true, aura = true, reminder = true, bar = true }, fields = {
         showBorder = { d = false, t = "bool", label = "Container border" },
         showBackground = { d = false, t = "bool", label = "Container background" },
         borderColor = { d = { 0.11, 0.16, 0.25, 1 }, t = "color", alpha = true, label = "Border color" },
@@ -3608,10 +3661,11 @@ Schema.bar = {
         -- Both run to 600 because a standing bar is thin and tall, and down to
         -- 1 because a one-pixel line is a legal bar (the renderers clamp their
         -- own insets, never this size).
-        width   = { d = 193, t = "int", min = 1, max = 600, label = "Bar width" },
-        height  = { d = 24, t = "int", min = 1, max = 600, label = "Bar height" },
+        -- a bar in a Bar Group takes the group's size and direction instead
+        width   = { d = 193, t = "int", min = 1, max = 600, label = "Bar width", showIf = function(r) return Schema.NotInBarGroup(r) end },
+        height  = { d = 24, t = "int", min = 1, max = 600, label = "Bar height", showIf = function(r) return Schema.NotInBarGroup(r) end },
         -- Multiplies width and height rather than calling SetScale.
-        scale   = { d = 1, t = "num", min = 0.25, max = 4, label = "Bar scale" },
+        scale   = { d = 1, t = "num", min = 0.25, max = 4, label = "Bar scale", showIf = function(r) return Schema.NotInBarGroup(r) end },
         opacity = { d = 1, t = "num", min = 0.1, max = 1, label = "Opacity" },
     } },
     fill = { push = true, inherit = true, kinds = BK_DRAWN, fields = {
@@ -3697,7 +3751,8 @@ Schema.bar = {
             modes = { duration = true }, label = "Ring runs", dep = { field = "shape", value = "ring" } },
         orientation = { inherit = false, d = "HORIZONTAL", t = "enum", values = { "HORIZONTAL", "VERTICAL" }, label = "Orientation",
             labels = { HORIZONTAL = "Horizontal", VERTICAL = "Vertical" },
-            kindModes = { cooldown = { duration = true } }, showIf = Schema.NotRing,
+            kindModes = { cooldown = { duration = true } },
+            showIf = function(r) return Schema.NotRing(r) and Schema.NotInBarGroup(r) end,
             onSet = function(rec, v)
                 if v ~= "VERTICAL" and NS.Store and NS.Store.SetBarStanding then
                     NS.Store.SetBarStanding(rec, false)

@@ -201,7 +201,7 @@ function Detect.Saw(id, src, quiet)
         local status, e = ns.Finds.Record(info)
         -- tell the others when the find is new, changed, or still waits for a second player
         if e and not quiet and (status == "new" or status == "changed" or (status == "updated" and not ns.Finds.Confirmed(e))) then
-            ns.Sync.Announce(e)
+            ns.Sync.Announce(e, status == "new" or status == "changed")
         end
     end)
 end

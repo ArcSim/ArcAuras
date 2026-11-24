@@ -77,6 +77,7 @@ D.WORDS = {
         cooldown = K("Icon Group", "icon group", "icon groups", "Icon groups"),
         aura = K("Aura Group", "aura group", "aura groups", "Aura groups"),
         reminder = K("Reminder Group", "reminder group", "reminder groups", "Reminder groups"),
+        bar = K("Bar Group", "bar group", "bar groups", "Bar groups"),
     },
 }
 D.FAMILY_WORDS = { icon = { "icon", "icons", "The icon" }, bar = { "bar", "bars", "The bar" },

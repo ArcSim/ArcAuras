@@ -1277,8 +1277,14 @@ function Store.Normalize()
         end
         if rec.members then
             local clean = {}
+            -- a Bar Group lists bars of its own layout, each once
+            local bars, seen = rec.type == "group" and rec.groupKind == "bar", {}
             for _, mid in ipairs(rec.members) do
-                if DB.records[mid] then clean[#clean + 1] = mid end
+                local m = DB.records[mid]
+                if m and not (bars and (m.type ~= "bar" or m.layoutId ~= rec.layoutId or seen[mid])) then
+                    seen[mid] = true
+                    clean[#clean + 1] = mid
+                end
             end
             rec.members = clean
         end
@@ -1787,7 +1793,43 @@ function Store.KeepDynReadings(rec, readings)
     end
 end
 
+-- The Bar Group each bar sits in ([barId] = group), rebuilt after any change
+-- to the tree. Bars stay on their layout; the group lists them in its order.
+local barGroupOf
+function Store.BarGroupOf(barId)
+    if not barGroupOf then
+        barGroupOf = {}
+        for _, g in pairs(DB.records) do
+            if g.type == "group" and g.groupKind == "bar" and type(g.members) == "table" then
+                for _, mid in ipairs(g.members) do barGroupOf[mid] = g end
+            end
+        end
+    end
+    return barGroupOf[barId]
+end
+function Store.ForgetBarGroups() barGroupOf = nil end
+
+-- What a Bar Group sets on its bars: their size (a standing bar is as long as
+-- the width and as thick as the height) and their direction.
+local function BarGroupValue(g, section, field)
+    local up = Store.Resolve(g, "barStack", "barDir") == "vertical"
+    if section == "size" then
+        if field == "width" then return Store.Resolve(g, "barStack", up and "barH" or "barW") end
+        if field == "height" then return Store.Resolve(g, "barStack", up and "barW" or "barH") end
+        if field == "scale" then return 1 end
+    elseif section == "fill" and field == "orientation" then
+        return up and "VERTICAL" or "HORIZONTAL"
+    end
+end
+
 function Store.Resolve(rec, section, field)
+    if rec.type == "bar" and (section == "size" or section == "fill") then
+        local g = Store.BarGroupOf(rec.id)
+        if g then
+            local v = BarGroupValue(g, section, field)
+            if v ~= nil then return v end
+        end
+    end
     -- a resource bar's look for the power or spec in play (Core\AD_Looks.lua)
     local lk = rec.looks
     if lk then
@@ -4595,7 +4637,7 @@ function Store.NewGroup(layoutId, name, groupKind)
     local layout = Store.Get(layoutId)
     if not layout or layout.type ~= "layout" then return nil end
     local id = NewId()
-    local kind = (groupKind == "aura" or groupKind == "reminder") and groupKind or "cooldown"
+    local kind = (groupKind == "aura" or groupKind == "reminder" or groupKind == "bar") and groupKind or "cooldown"
     local sx, sy
     if kind == "reminder" then
         sx, sy = PulseSpot(layoutId)
@@ -4613,6 +4655,8 @@ function Store.NewGroup(layoutId, name, groupKind)
     DB.records[id] = rec
     -- v1's pulse window sat over the rest of the UI
     if kind == "reminder" then TemplateSet(rec, "frame", "strata", "HIGH") end
+    -- a Bar Group is made to pack its bars
+    if kind == "bar" then TemplateSet(rec, "barStack", "closeGaps", true) end
     layout.members[#layout.members + 1] = id
     Store.Dirty("tree")
     return rec
@@ -4633,9 +4677,20 @@ end
 function Store.GroupTakes(group, kind)
     if not group then return false end
     if group.groupKind == "aura" then return kind == "aura" and not Store.ShowsAll(group) end
-    if group.groupKind == "reminder" then return false end
+    if group.groupKind == "reminder" or group.groupKind == "bar" then return false end
     return true
 end
+
+-- A Bar Group's bars, in its order.
+function Store.BarsOf(group)
+    local out = {}
+    for _, mid in ipairs(type(group.members) == "table" and group.members or {}) do
+        local rec = DB.records[mid]
+        if rec and rec.type == "bar" then out[#out + 1] = rec end
+    end
+    return out
+end
+
 
 -- A reminder group's reminders, in its member order.
 function Store.RemindersOf(group)
@@ -5935,8 +5990,11 @@ function Store.Delete(id, packDrop)
             end
         end
     elseif rec.type == "group" then
-        for _, iid in ipairs(rec.members or {}) do
-            DB.records[iid] = nil
+        -- a Bar Group's bars stay on the layout, free
+        if rec.groupKind ~= "bar" then
+            for _, iid in ipairs(rec.members or {}) do
+                DB.records[iid] = nil
+            end
         end
         local layout = Store.Get(rec.layoutId)
         if layout then removeFrom(layout.members, id) end
@@ -5952,12 +6010,33 @@ function Store.Delete(id, packDrop)
             if layout then removeFrom(layout.members, id) end
         end
     elseif rec.type == "bar" then
+        local bg = Store.BarGroupOf(id)
+        if bg then removeFrom(bg.members, id) end
         -- bars have no members: just unlink from the layout
         local layout = Store.Get(rec.layoutId)
         if layout then removeFrom(layout.members, id) end
     end
     DB.records[id] = nil
     Store.Dirty("tree")
+end
+
+-- Puts a bar in a Bar Group of its own layout (at `index`, else last), or with
+-- no group takes it out of the one it is in. It stays on its layout either way.
+function Store.MoveBar(barId, groupId, index)
+    local rec = Store.Get(barId)
+    if not rec or rec.type ~= "bar" then return false end
+    local dest = groupId and Store.Get(groupId)
+    if groupId and not (dest and dest.type == "group" and dest.groupKind == "bar"
+        and dest.layoutId == rec.layoutId) then return false end
+    local from = Store.BarGroupOf(barId)
+    if from then removeFrom(from.members, barId) end
+    if dest then
+        local n = #dest.members + 1
+        table.insert(dest.members, math.max(1, math.min(tonumber(index) or n, n)), barId)
+    end
+    barGroupOf = nil
+    Store.Dirty("tree")
+    return true
 end
 
 -- Moves an icon into a group (destGroupId, optional cell {row, col}) or to a
@@ -6215,11 +6294,36 @@ function Store.Duplicate(id)
                 DB.records[cc.id] = cc
             end
         end
+        -- a Bar Group's copy lists the copies of its bars
+        for _, mid in ipairs(rec.members or {}) do
+            local child = DB.records[mid]
+            local cc = child and child.groupKind == "bar" and DB.records[map[mid]]
+            if cc then
+                cc.members = {}
+                for _, bid in ipairs(child.members or {}) do
+                    if map[bid] then cc.members[#cc.members + 1] = map[bid] end
+                end
+            end
+        end
     elseif rec.type == "group" then
         local layout = Store.Get(rec.layoutId)
         if not layout then return nil end
         copy.pos = Nudge(rec.pos, 24, -24)
-        CloneIcons(rec, copy, map, made)
+        if rec.groupKind == "bar" then
+            -- a Bar Group's bars are copied onto the layout with it
+            copy.members = {}
+            for _, bid in ipairs(rec.members or {}) do
+                local bar = DB.records[bid]
+                if bar and bar.type == "bar" then
+                    local bc = CloneRecord(bar, map, made)
+                    DB.records[bc.id] = bc
+                    layout.members[#layout.members + 1] = bc.id
+                    copy.members[#copy.members + 1] = bc.id
+                end
+            end
+        else
+            CloneIcons(rec, copy, map, made)
+        end
         layout.members[#layout.members + 1] = copy.id
     elseif rec.type == "icon" then
         if rec.groupId then
@@ -6246,6 +6350,7 @@ function Store.Duplicate(id)
         return nil
     end
     DB.records[copy.id] = copy
+    barGroupOf = nil
     for _, r in ipairs(made) do
         RemapAnchors(r, map, true)
         RemapRules(r, map, true)
@@ -6303,6 +6408,8 @@ function Store.MoveToLayout(id, layoutId)
     elseif rec.layoutId == layoutId then
         return true
     end
+    -- a bar leaves its Bar Group with its layout
+    if rec.type == "bar" and Store.BarGroupOf(id) then Store.MoveBar(id, nil) end
     return Store.PlaceInLayout(id, layoutId, nil)
 end
 
@@ -6657,6 +6764,7 @@ end
 -- what: "tree" (records added/removed/moved), "style" (option values),
 -- "load" (conditions). One coalesced rebuild per frame.
 function Store.Dirty(what, id)
+    if what == "tree" then barGroupOf = nil end
     Events.Fire("AD_DIRTY", what, id)
 end
 
@@ -7185,7 +7293,7 @@ local PART_OF_SECTION = {
         thresholds = "appearance", ticks = "appearance", wheel = "appearance" },
     iconGroup = { anchor = "position", arrangement = "arrange", audio = "sounds", frame = "position",
         keybind = "text", look = "appearance", mouse = "position", timers = "text", pulse = "appearance",
-        typeLook = "appearance", unitAuras = "tracking" },
+        typeLook = "appearance", unitAuras = "tracking", barStack = "arrange" },
     layout = { mouse = "position" },
     reminder = { pulse = "appearance" },
 }

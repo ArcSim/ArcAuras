@@ -114,6 +114,24 @@ function F.Confirmed(e)
     return e and Count(e.rp or {}) >= 2
 end
 
+-- whether a sighting would teach this copy anything: an item it lacks, a changed item, a source it lacks, or a report a
+-- find still needs to count as confirmed. A plain repeat of what it holds says nothing new
+function F.Adds(info)
+    if not db or not info.id then return false end
+    local e = db[info.id]
+    if not e then return true end
+    if info.fp and e.fp and info.fp ~= e.fp then return true end
+    if info.reporter and (Count(e.rp) < 2 or e.pend) and not e.rp[F.ReporterKey(info.reporter)] then return true end
+    local src = info.src
+    if src and src.t and src.t ~= "t" and #e.s < MAX_SOURCES then
+        for _, s in ipairs(e.s) do
+            if SameSource(s, src) then return false end
+        end
+        return true
+    end
+    return false
+end
+
 function F.Reporters(e)
     return e and Count(e.rp or {}) or 0
 end

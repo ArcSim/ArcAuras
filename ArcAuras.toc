@@ -7,7 +7,7 @@
 ## Notes-zhCN: 为你的技能冷却、光环和资源提供图标、图标组和状态条，全部在一个面板中设置。/arcauras 或 /arcui2
 ## Notes-zhTW: 為你的技能冷卻、光環和資源提供圖示、圖示群組和量條，全部在一個面板中設定。/arcauras 或 /arcui2
 ## Author: Arc
-## Version: 3.3.6.c
+## Version: 3.3.7
 ## IconTexture: Interface\AddOns\ArcAuras\Textures\ArcAuras_Icon_256
 ## SavedVariables: ArcAurasDB
 ## OptionalDeps: ArcUI, Masque
@@ -50,6 +50,7 @@ Core\AD_SpellAnchor.lua
 Core\AD_TextAnchor.lua
 Core\AD_TextDrag.lua
 Core\AD_Conditions.lua
+Core\AD_LoadRules.lua
 Core\AD_OwnLooks.lua
 Core\AD_SpellCatalog.lua
 Core\AD_BarSkins.lua
@@ -120,6 +121,7 @@ Core\AD_LayoutEngine.lua
 Core\AD_EditOps.lua
 Core\AD_Pins.lua
 Drivers\AD_DriverReminders.lua
+Drivers\AD_BarGroups.lua
 Drivers\AD_DriverSpecial.lua
 Drivers\Special\AD_SpecialMSW.lua
 Drivers\Special\AD_Special_DoomWinds.lua
@@ -192,9 +194,11 @@ UI\AD_TextureOptions.lua
 UI\AD_WheelOptions.lua
 UI\AD_SoundOptions.lua
 UI\AD_ReminderOptions.lua
+UI\AD_BarGroupOptions.lua
 UI\AD_RetailWho.lua
 UI\AD_TalentPickerRetail.lua
 UI\AD_SpecialOptions.lua
+UI\AD_LoadRulesOptions.lua
 UI\AD_ProcsPick.lua
 UI\AD_CDMBarOptions.lua
 UI\AD_TotemBarOptions.lua

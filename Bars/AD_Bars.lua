@@ -176,6 +176,7 @@ end
 Bars.ResolveFont = ResolveFont
 
 local live = {}          -- [barId] = entry
+function Bars.EntryOf(id) return live[id] end
 local sharedArmed = false
 local lsmOwner, lsmHooked = {}, false   -- the media library's callback owner
 
@@ -1446,6 +1447,8 @@ local function ApplyVisibility(entry)
     if Bars.Glow then Bars.Glow.Visible(entry) end
     -- so do a resource bar's colour rule layers (Bars\AD_ResColors.lua)
     if Bars.ResColor and entry.kind == "resource" then Bars.ResColor.Visible(entry) end
+    -- a Bar Group packs on what this decided (Drivers\AD_BarGroups.lua)
+    if Bars.ShownHook then Bars.ShownHook(entry) end
 end
 
 -- The conditions module paints bars through this writer, since the holder
@@ -1889,6 +1892,7 @@ local function CooldownPushState(entry)
         entry.pendingReady = false
     end
     entry.stateHidden = wantHide
+    entry.busy = not ready
     ApplyVisibility(entry)
 
     local readyFS = entry.shell.texts.ready

@@ -340,6 +340,7 @@ end
 local function GroupPill(pill, groupKind)
     if groupKind == "aura" then pill:Set("Aura Group", PURPLE)
     elseif groupKind == "reminder" then pill:Set("Reminder Group", Options.GROUP_COLORS.reminder)
+    elseif groupKind == "bar" then pill:Set("Bar Group", YELLOW)
     else pill:Set("Icon Group", YELLOW) end
 end
 
@@ -403,6 +404,7 @@ function Options.RecPillText(rec)
     if rec.type == "group" then
         if rec.groupKind == "aura" then return "Aura Group", PURPLE end
         if rec.groupKind == "reminder" then return "Reminder Group", Options.GROUP_COLORS.reminder end
+        if rec.groupKind == "bar" then return "Bar Group", YELLOW end
         return "Icon Group", YELLOW
     end
     if rec.type == "bar" then return BarPillText(rec.barKind, rec.barMode) end
@@ -3768,6 +3770,8 @@ local function ConditionRows(pg, ctx, tabVisible)
             function() return whenVis() and C.Foreign ~= nil and C.Foreign(ctx(), "loadNever") > 0 end)
         -- the set-pieces load rule (retail; UI\AD_SpecialOptions.lua)
         if Options.SetPiecesRows then Options.SetPiecesRows(pg, ctx, whenVis, uiStore, win) end
+        -- level and zone (UI\AD_LoadRulesOptions.lua)
+        if Options.LoadRuleRows then Options.LoadRuleRows(pg, ctx, whenVis, uiStore, win) end
         AT.Section(pg, nil)
         -- A packed member keeps its own rules: they apply again once its group's
         -- Close gaps is off. saved: the note for a member that has some.
@@ -3776,6 +3780,7 @@ local function ConditionRows(pg, ctx, tabVisible)
             local _, packed = InAuraGroup(r)
             if not (tabVisible() and packed) then return false end
             local own = (C.RangeRule ~= nil and C.RangeRule(r) ~= nil) or (C.SetRule ~= nil and C.SetRule(r) ~= nil)
+                or (NS.LoadRules ~= nil and NS.LoadRules.Has(r))
             for _, list in ipairs(C.LISTS or {}) do
                 if C.Count(r, list) > 0 then own = true end
             end
@@ -5174,7 +5179,8 @@ local function BuildRailList()
     local function MemberHit(m)
         if Hit(m) then return true end
         if m.type == "group" then
-            local kids = (m.groupKind == "reminder") and Store.GroupMembers(m) or Store.IconsOf(m)
+            local kids = (m.groupKind == "reminder") and Store.GroupMembers(m)
+                or (m.groupKind == "bar" and Store.BarsOf(m)) or Store.IconsOf(m)
             for _, ic in ipairs(kids) do
                 if Hit(ic) then return true end
             end
@@ -5210,7 +5216,9 @@ local function BuildRailList()
                     -- to its reminders (aura reminders among them, as icon
                     -- rows) and an add row, even while empty.
                     local rem = m.groupKind == "reminder"
-                    local icons = rem and Store.GroupMembers(m) or Store.IconsOf(m)
+                    -- a Bar Group opens to its bars, in its order
+                    local icons = rem and Store.GroupMembers(m) or (m.groupKind == "bar" and Store.BarsOf(m))
+                        or Store.IconsOf(m)
                     local count = #icons
                     local gopen = expanded[m.id] and true or false
                     if filter then
@@ -5224,8 +5232,8 @@ local function BuildRailList()
                         count = count, rem = rem }
                     if gopen then
                         local function Row(ic)
-                            list[#list + 1] = { kind = (ic.type == "reminder") and "reminder" or "groupicon",
-                                rec = ic, group = m }
+                            list[#list + 1] = { kind = (ic.type == "reminder") and "reminder"
+                                or (ic.type == "bar" and "groupbar") or "groupicon", rec = ic, group = m }
                         end
                         -- In a group that loads here, its members that do not
                         -- follow the add row in a fold of their own. A one-class
@@ -5271,7 +5279,8 @@ local function BuildRailList()
                     end
                 elseif m.type == "icon" then
                     list[#list + 1] = { kind = "freeicon", rec = m, layout = layout }
-                else
+                elseif not Store.BarGroupOf(m.id) then
+                    -- a bar in a Bar Group is listed under its group
                     list[#list + 1] = { kind = "bar", rec = m }
                 end
             end
@@ -5282,7 +5291,8 @@ local function BuildRailList()
             local function Main(m)
                 if flat then Add(m)
                 elseif m.type == "icon" then free[#free + 1] = m
-                elseif m.type == "bar" then bars[#bars + 1] = m
+                elseif m.type == "bar" then
+                    if not Store.BarGroupOf(m.id) then bars[#bars + 1] = m end
                 else Add(m) end
             end
             for _, m in ipairs(members) do
@@ -5689,10 +5699,10 @@ local function RefreshRail()
             PaintRailRow(row, false, "add")
             local g = item.rec
             row:SetScript("OnClick", function() Options.OpenAdd(g.layoutId, g.id) end)
-        elseif item.kind == "bar" then
+        elseif item.kind == "bar" or item.kind == "groupbar" then
             local rec = item.rec
             row.thumb:SetBar(rec, 22, BarTexture(rec))
-            Child(row, rec, 20)
+            Child(row, rec, item.kind == "groupbar" and 36 or 20)
             BarPill(row.pill, rec.barKind, rec.barMode)
             PillRight(row)
             PaintRailRow(row, ui.selType == "bar" and ui.selId == rec.id, "child")
@@ -6545,6 +6555,18 @@ local function BandActions(host, nameFS, getRec, opts)
                 end
             end
         end
+        -- a bar: the Bar Groups of its layout, and out of the one it is in
+        local BGO = rec.type == "bar" and Options.BarGroupOptions
+        if BGO then
+            local cur = Store.BarGroupOf(rec.id)
+            local lay = Store.Get(rec.layoutId)
+            for _, g in ipairs(BGO.Targets(rec)) do
+                if g ~= cur then
+                    items[#items + 1] = { value = "B" .. g.id, raw = true, text = (lay and lay.name or "") .. " / " .. g.name }
+                end
+            end
+            if cur then items[#items + 1] = { value = "U" .. cur.id, raw = true, text = AT.Tr("Out of %s"):format(cur.name) } end
+        end
         return items
     end
     local function MoveTo(rec, value)
@@ -6553,6 +6575,9 @@ local function BandActions(host, nameFS, getRec, opts)
         if not id then return end
         if kind == "G" then
             if not Store.MoveIcon(rec.id, id) then return end
+            SelectRecord(rec)
+        elseif kind == "B" or kind == "U" then
+            if not Store.MoveBar(rec.id, kind == "B" and id or nil) then return end
             SelectRecord(rec)
         elseif kind == "L" then
             if not Store.MoveToLayout(rec.id, id) then return end
@@ -11613,6 +11638,12 @@ local function BuildGroupPane()
     Options.BuildYield()
     if Options.ReminderGroupRows then
         Options.ReminderGroupRows(pg, SelGroup, function() return ui.grpTab end,
+            { SectionRows = SectionRows, PushBar = PushBar, win = win,
+                subFn = function() return ui.grpSec end })
+    end
+    -- a Bar Group's Stack and Bars sub-tabs (UI\AD_BarGroupOptions.lua)
+    if Options.BarGroupRows then
+        Options.BarGroupRows(pg, SelGroup, function() return ui.grpTab end,
             { SectionRows = SectionRows, PushBar = PushBar, win = win,
                 subFn = function() return ui.grpSec end })
     end

@@ -285,12 +285,11 @@ end
 
 -- a row against the database's filters (st: state): search reads the name and a find's place, the rest is
 -- D.FilterPasses
+-- name: the row's name, or true when the search already matched it (st.ci: the search as a case-blind pattern)
 local function PassOthers(st, id, kind, q, req, cls, sub, inv, ac, name, e, mask)
     if st.place and not ns.PlacePins.InPlace(st.place, id, kind, e) then return false end
-    if st.q ~= "" then
-        local hay = (name or ""):lower()
-        if e then hay = hay .. " " .. FindLine(e):lower() end
-        if not hay:find(st.q, 1, true) then return false end
+    if st.q ~= "" and name ~= true then
+        if not ((name or ""):find(st.ci) or (e and FindLine(e):find(st.ci))) then return false end
     end
     return D.FilterPasses(st, id, q, req, cls, sub, inv, ac, mask, e)
 end
@@ -345,9 +344,13 @@ end
 
 -- the Live Feed tab's number: the finds the feed is about (discoveries, while its filter keeps to them); and how many
 -- of them came from other players since the feed was last looked at (while away, or while the window showed no feed)
+-- kept until a find changes or what it reads does (the filter's discoveries choice, the last look, a clear)
+local feedCounted = {}
 local function FeedCount()
     local all = not Settings().findFilter.discoveries
     local seen = ns.db.feedSeenAt or 0
+    local c = feedCounted
+    if c.ok and c.db == ns.db and c.all == all and c.seen == seen and c.cleared == ns.db.feedClearedAt then return c.n, c.new end
     local n, new = 0, 0
     for _, e in ipairs(ns.Finds.List()) do
         if AfterClear(e) and (all or e.demo or D.IsDiscovery(e.id, e)) then
@@ -355,8 +358,10 @@ local function FeedCount()
             if (e.got or 0) > seen then new = new + 1 end
         end
     end
+    c.ok, c.db, c.all, c.seen, c.cleared, c.n, c.new = true, ns.db, all, seen, ns.db.feedClearedAt, n, new
     return n, new
 end
+ns.Listen("FindsChanged", function() feedCounted.ok = false end)
 
 function UI.FeedNew()
     if not ns.db then return 0 end
@@ -392,12 +397,17 @@ local dbChipCounts = { all = 0, n = 0, c = 0, o = 0, u = 0, f = 0 }
 -- a class's subclass count lives under its own number, apart from the class counts (0..20)
 local function SubKey(cls, sub) return 100000 + cls * 1000 + (sub or -1) + 1 end
 
--- the whole list is filtered on every refresh: it reads the shipped index (no line is parsed, no text is made per
--- row) and reads a name only while a search is typed; the result list is refilled in place
+-- the filter's result is kept while nothing it reads changes (a click on a row changes none of it); a new one is
+-- worked out a few milliseconds a frame (at most DB_STEP rows) under the list's loading cover, so a search never
+-- stalls the game. It reads the shipped index (no line is parsed, no text is made per row)
+local DB_STEP = 2500
 local dbRefs = {}
+-- dbStale: something the filter reads changed outside the filters (a find, a picture); dbSig / dbFavSig: the filters
+-- and favorites of dbRefs
+local dbStale, dbSig, dbFavSig, dbJob = true, nil, nil, nil
 -- whether an item shows a picture (the game's art, else the datamined icon this client holds) or the question mark;
 -- kept per item, dropped when the game sends its data
-local hasArt, dbLate = {}, {}
+local hasArt = {}
 local function HasArt(id, row)
     local v = hasArt[id]
     if v == nil then
@@ -409,57 +419,121 @@ local function HasArt(id, row)
 end
 UI.HasArt = HasArt
 
--- the database's rows in their order, items without a picture after all the others (each part keeps its order)
-local function DbData()
-    local data, late = dbRefs, dbLate
-    wipe(data)
-    wipe(late)
-    wipe(dbCounts)
-    dbChipCounts.all, dbChipCounts.n, dbChipCounts.c, dbChipCounts.o, dbChipCounts.u, dbChipCounts.f = 0, 0, 0, 0, 0, 0
+-- the filters as one string, and a copy of them for a job: the search box changes the state before its pause is over
+local function SigOf(v)
+    if type(v) ~= "table" then return tostring(v) end
+    local keys = {}
+    for k in pairs(v) do keys[#keys + 1] = k end
+    table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+    for i, k in ipairs(keys) do keys[i] = tostring(k) .. "=" .. tostring(v[k]) end
+    return "{" .. table.concat(keys, ",") .. "}"
+end
+-- second value: the favorites, which a star changes without changing the filters
+local function FilterSig()
+    local keys = {}
+    for k in pairs(state) do
+        if k ~= "catShut" then keys[#keys + 1] = k end
+    end
+    table.sort(keys)
+    -- a place is one object per place
+    for i, k in ipairs(keys) do keys[i] = k .. ":" .. (k == "place" and tostring(state.place) or SigOf(state[k])) end
+    local n, sum = 0, 0
+    for id in pairs(ns.db.favorites or {}) do n, sum = n + 1, sum + id end
+    return table.concat(keys, "|"), n .. ":" .. sum
+end
+local function FilterCopy()
+    local st = {}
+    for k, v in pairs(state) do
+        if type(v) == "table" and k ~= "place" then
+            st[k] = {}
+            for k2, v2 in pairs(v) do st[k][k2] = v2 end
+        else
+            st[k] = v
+        end
+    end
+    return st
+end
+
+-- the database's rows in their order, items without a picture after all the others (each part keeps its order), with
+-- the category and chip counts; DbStep works through the next part and says when the job is done
+local function NewDbJob()
+    local st = FilterCopy()
+    local sig, favSig = FilterSig()
+    local job = { sig = sig, favSig = favSig, st = st, data = {}, late = {}, counts = {},
+        chips = { all = 0, n = 0, c = 0, o = 0, u = 0, f = 0 }, next = D.RowCount(), total = D.RowCount() }
+    local data, late, counts, chips = job.data, job.late, job.counts, job.chips
     local favs = ns.db.favorites or {}
     local catCls, catSub
-    if state.cat ~= "all" then
-        local c, sb = state.cat:match("^(%-?%d+)/?(%-?%d*)$")
+    if st.cat ~= "all" then
+        local c, sb = st.cat:match("^(%-?%d+)/?(%-?%d*)$")
         catCls, catSub = tonumber(c), tonumber(sb)
     end
-    local searching = state.q ~= ""
+    local searching = st.q ~= ""
     local inSeed = {}
     -- New holds the new items the beta showed or with a known place, Not Found (u) every other new or hidden one, so New,
     -- Changed, Classic and Not Found add up to All; a favorite (f) can be any kind and counts under Favorites as well
     local function Consider(ref, id, kind, q, req, cls, sub, inv, ac, name, e, mask, notFound, row)
-        if not PassOthers(state, id, kind, q, req, cls, sub, inv, ac, name, e, mask) then return end
+        if not PassOthers(st, id, kind, q, req, cls, sub, inv, ac, name, e, mask) then return end
         if notFound then kind = "u" end
         cls, sub = D.CatOf(cls, sub)
         local inCat = not catCls or (cls == catCls and (not catSub or sub == catSub))
         local fav = favs[id] == true
         if inCat then
-            dbChipCounts.all = dbChipCounts.all + 1
-            dbChipCounts[kind] = (dbChipCounts[kind] or 0) + 1
-            if fav then dbChipCounts.f = dbChipCounts.f + 1 end
+            chips.all = chips.all + 1
+            chips[kind] = (chips[kind] or 0) + 1
+            if fav then chips.f = chips.f + 1 end
         end
-        if state.kind ~= "all" and state.kind ~= kind and not (state.kind == "f" and fav) then return end
-        dbCounts.all = (dbCounts.all or 0) + 1
+        if st.kind ~= "all" and st.kind ~= kind and not (st.kind == "f" and fav) then return end
+        counts.all = (counts.all or 0) + 1
         if cls then
-            dbCounts[cls] = (dbCounts[cls] or 0) + 1
+            counts[cls] = (counts[cls] or 0) + 1
             local k = SubKey(cls, sub)
-            dbCounts[k] = (dbCounts[k] or 0) + 1
+            counts[k] = (counts[k] or 0) + 1
         end
         if inCat then
             if HasArt(id, row) then data[#data + 1] = ref else late[#late + 1] = ref end
         end
     end
-    -- finds first, newest first
-    for _, e in ipairs(ns.Finds.List()) do
+    -- the search as a case-blind pattern; a seed row's name is read in place against the line form
+    st.ci = st.q:gsub("[%^%$%(%)%%%.%[%]%*%+%-%?]", "%%%0"):gsub("%a", function(c) return "[" .. c:lower() .. c:upper() .. "]" end)
+    local onLine = "^[^\n]-" .. st.ci
+    -- finds first, newest first, then the seed rows; DbStep walks both a part at a time
+    job.finds, job.fi = ns.Finds.List(), 1
+    job.find = function(e)
         inSeed[e.id] = true
         Consider(-e.id, e.id, e.k, e.q, e.rq, e.cl, e.sc, e.iv, e.ac, searching and (e.nm or C_Item.GetItemInfo(e.id)) or nil, e,
-            state.src > 0 and D.FindMask(e) or 0)
+            st.src > 0 and D.FindMask(e) or 0)
     end
-    D.ForEachRow(function(pos, id, kind, q, req, cls, sub, inv, ac, nameStart, mask, notFound, row)
-        if inSeed[id] then return end
-        Consider(pos, id, ChipKind(kind), q, req, cls, sub, inv, ac, searching and D.NameAt(nameStart) or nil, nil, mask, notFound, row)
-    end)
-    for i = 1, #late do data[#data + 1] = late[i] end
-    return data
+    job.row = function(pos, id, kind, q, req, cls, sub, inv, ac, nameStart, mask, notFound, row)
+        if inSeed[id] or (searching and not D.NameHas(nameStart, onLine)) then return end
+        Consider(pos, id, ChipKind(kind), q, req, cls, sub, inv, ac, searching or nil, nil, mask, notFound, row)
+    end
+    return job
+end
+-- a step stops after DB_MS milliseconds: finds DB_FINDS at a time, then as many rows as the last step's speed fits in
+-- what is left (DB_MIN to DB_STEP; the first step guesses DB_FIRST)
+local DB_MS, DB_FINDS, DB_MIN, DB_FIRST = 4, 250, 250, 500
+local function DbStep(job)
+    local t0 = debugprofilestop()
+    local finds = job.finds
+    while job.fi <= #finds do
+        local last = math.min(#finds, job.fi + DB_FINDS - 1)
+        for i = job.fi, last do job.find(finds[i]) end
+        job.fi = last + 1
+        if debugprofilestop() - t0 > DB_MS then return false end
+    end
+    local left = DB_MS - (debugprofilestop() - t0)
+    local n = job.rate and math.floor(job.rate * left) or DB_FIRST
+    n = math.max(DB_MIN, math.min(DB_STEP, n))
+    local to = math.max(1, job.next - n + 1)
+    local t1 = debugprofilestop()
+    D.ForEachRow(job.row, job.next, to)
+    job.rate = (job.next - to + 1) / math.max(0.01, debugprofilestop() - t1)
+    job.next = to - 1
+    if job.next >= 1 then return false end
+    for i = 1, #job.late do job.data[#job.data + 1] = job.late[i] end
+    job.late = nil
+    return true
 end
 
 local function DbItem(ref)
@@ -573,8 +647,47 @@ local function RateText(src, short)
     return Pct(src.chance) .. (src.beta and " in the beta" or " in Classic")
 end
 
+local SIDE = { Alliance = "a", Horde = "h" }
+local SIDE_NAME = { a = "Alliance", h = "Horde" }
+local function PlayerSide()
+    local faction = UnitFactionGroup and UnitFactionGroup("player")
+    if faction and ns.Secret(faction) then return end
+    return SIDE[faction or ""]
+end
+
+-- an item sold in every town lists the vendors the player can use first, those in the player's zone first of all, and
+-- the other faction's last; only vendor lines move, each into another vendor line's place
+local function VendorsFirst(list, from, mine)
+    local slots, vendors = {}, {}
+    for i = from, #list do
+        local en = list[i]
+        if en.look == "vendor" and en.who then
+            slots[#slots + 1] = i
+            vendors[#vendors + 1] = en
+        end
+    end
+    if #vendors < 2 then return end
+    local here = C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
+    if here and ns.Secret(here) then here = nil end
+    local rank = {}
+    for i, en in ipairs(vendors) do
+        local r = 2
+        if mine and en.who.side and en.who.side ~= mine then
+            r = 3
+        elseif here then
+            for _, p in ipairs(en.pins) do
+                if GameSpot(p.m, p.x, p.y) == here then r = 1 break end
+            end
+        end
+        rank[en] = r * 100000 + i
+    end
+    table.sort(vendors, function(a, b) return rank[a] < rank[b] end)
+    for k, i in ipairs(slots) do list[i] = vendors[k] end
+end
+
 local function Entries(e, id, sources)
     local out = {}
+    local mine = PlayerSide()
     for _, s in ipairs(e and e.s or {}) do
         local how = KIND_OF[s.t] or "Seen"
         local name = s.n or (s.npc and ("NPC " .. s.npc))
@@ -635,6 +748,7 @@ local function Entries(e, id, sources)
             end
         end
         local role = ROLE[t]
+        if t == "v" and mine and src.side and src.side ~= mine then role = role .. ", " .. SIDE_NAME[src.side] .. " only" end
         if t == "q" then role = "Gives the quest " .. left end
         if t == "w" then role = "One of " .. (src.count or 0) .. " kinds of mobs that drop it" end
         if t == "s" then role = (src.count or 0) == 1 and "Skin it for this" or ("One of " .. src.count .. " kinds of beasts to skin for it") end
@@ -670,6 +784,7 @@ local function Entries(e, id, sources)
             end
         end
     end
+    VendorsFirst(out, #(e and e.s or {}) + 1, mine)
     return out
 end
 
@@ -763,6 +878,19 @@ function UI.HowToGet(id)
     return HowToGet(ns.Finds.Get(id), D.Sources(id))
 end
 
+-- an item the data knows a source for is in the game: "dungeon" for a dungeon's loot, "known" for any other source;
+-- a source inside a raid Forever has not opened yet does not count
+local function KnownSource(sources)
+    local known
+    for _, s in ipairs(sources or {}) do
+        if not (s.dungeon and s.dungeon.later) then
+            if (s.t == "l" or s.t == "d") and s.dungeon then return "dungeon" end
+            known = "known"
+        end
+    end
+    return known
+end
+
 local function StatusFacts(e, id, row, hidden, sources)
     local kind = (e and e.k == "c" and "c") or (row and row.kind)
     local item = hidden and "Hidden by Blizzard" or ITEM_STATUS[kind] or "New item"
@@ -770,10 +898,14 @@ local function StatusFacts(e, id, row, hidden, sources)
     if hidden and row.name ~= "" then item = item .. ", name not confirmed" end
     local how, rate = HowToGet(e, sources)
     local found
+    -- a listing elsewhere counts only where our data knows no source: it also lists raids Forever has not opened
+    local known = not e and (KnownSource(sources) or (#(sources or {}) == 0 and D.IsListed(id) and "known"))
     if e then
         local who = e.by or ((e.mine and ns.settings.credit ~= "anon") and UnitName("player")) or "Anonymous"
         local n = ns.Finds.Reporters(e)
         found = "By " .. who .. (e.at and (", " .. date("%b %d", e.at)) or "") .. ", " .. n .. (n == 1 and " player" or " players")
+    elseif known then
+        found = known == "dungeon" and "Yes, dungeon loot" or "Yes"
     else
         found = (row and row.beta) and "Seen in the beta" or "Not yet in Forever"
     end
@@ -1238,6 +1370,8 @@ local function TipLines(id)
     if not ns.isForever and T.DataTip and T.DataTip(tipCollect, id) then return tipOut, false end
     if C_Item.GetItemInfo(id) and C_TooltipInfo and C_TooltipInfo.GetItemByID then
         local data = C_TooltipInfo.GetItemByID(id)
+        -- a line can still wait on the server (a set bonus's text): TOOLTIP_DATA_UPDATE names this data when it is in
+        detail.tipInstance = data and data.dataInstanceID
         for i, l in ipairs(data and data.lines or {}) do
             local left, right = l.leftText or "", l.rightText or ""
             -- the sell price line is left out
@@ -2035,14 +2169,14 @@ local function FilterBox(parent, st, base, withSearch, chipDefs, onChange)
         search:SetPoint("LEFT", searchLabel, "RIGHT", U(8), 0)
         search:SetPoint("RIGHT", parent, "RIGHT", -U(10), 0)
         search:SetHint("Item name or zone")
-        local pending
+        local keys = 0
         search:SetScript("OnTextChanged", function(self)
             self.hint:SetShown(self:GetText() == "")
             st.q = self:GetText():lower():gsub("^%s+", ""):gsub("%s+$", "")
-            -- type freely: the list catches up a moment after the last key
-            if pending then return end
-            pending = true
-            C_Timer.After(0.25, function() pending = false onChange() end)
+            -- type freely: the list catches up a moment after the last key, once per word
+            keys = keys + 1
+            local key = keys
+            C_Timer.After(0.25, function() if key == keys then onChange() end end)
         end)
         fb.search, fb.searchLabel = search, searchLabel
     end
@@ -2140,11 +2274,24 @@ local function FilterBox(parent, st, base, withSearch, chipDefs, onChange)
         SyncDungeon()
     end)
     -- which zone: the zones with listed items (PlacePins.lua's place data); a zone clicked on the World Map shows here too
-    local zone = T.Dropdown(parent, U(176), ns.PlacePins.ZoneOptions(), function() return st.place and st.place.zone or "" end,
+    local zone = T.Dropdown(parent, U(176), { { "", "Any zone" } }, function() return st.place and st.place.zone or "" end,
         function(v)
             st.place = v ~= "" and ns.PlacePins.ZonePick(v) or nil
             onChange()
         end)
+    -- the zone list counts every place and find: it is made when the list first opens or a zone is shown, not with the
+    -- window
+    local function LoadZones()
+        if zone.loaded then return end
+        zone.loaded = true
+        zone.options = ns.PlacePins.ZoneOptions()
+    end
+    zone:SetScript("PreClick", LoadZones)
+    local refreshZone = zone.Refresh
+    function zone:Refresh()
+        if st.place and st.place.zone then LoadZones() end
+        return refreshZone(self)
+    end
     -- at the search row's right end (the rows under it are full once Source shows a dungeon), level with the box
     if fb.search then
         local mid = -(base + U(12)) - fb.searchLabel:GetStringHeight() / 2
@@ -2262,6 +2409,22 @@ local function Build()
     local footText = T.Text(win, 12, C.foot)
     footText:SetPoint("LEFT", dot, "RIGHT", U(6), 0)
     UI.footDot, UI.footText = dot, footText
+    -- hovering the sharing line lists what players did to the sharing channels lately, by name
+    local footHit = CreateFrame("Frame", nil, win)
+    footHit:SetPoint("TOPLEFT", dot, "TOPLEFT", 0, U(6))
+    footHit:SetPoint("BOTTOMRIGHT", footText, "BOTTOMRIGHT", 0, -U(6))
+    footHit:EnableMouse(true)
+    footHit:SetScript("OnEnter", function(self)
+        local lines = ns.Sync.WhoLines(3)
+        if #lines == 0 then return end
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Sharing channel events", 1, 1, 1)
+        local r, g, b = T.RGB(C.dim)
+        for _, line in ipairs(lines) do GameTooltip:AddLine(line, r, g, b, true) end
+        GameTooltip:Show()
+    end)
+    footHit:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    UI.footHit = footHit
     local discord = T.Button(win, "Discord", nil, U(22), 12)
     discord:SetPoint("BOTTOMRIGHT", -(BORDER + U(14)), BORDER + U(10) + U(4))
     discord:SetScript("OnClick", function() UI.ShowLink(ns.DISCORD) end)
@@ -2459,6 +2622,26 @@ function UI.BuildDatabase(body)
     UI.dbEmpty = T.Text(pane, 14, C.dim)
     UI.dbEmpty:SetPoint("TOPLEFT", UI.dbList, "TOPLEFT", U(12), -U(16))
     UI.dbEmpty:SetText("No items match.")
+    UI.dbEmpty:Hide()
+    -- the loading cover: the last list dimmed under it, its rows out of reach, and how far the new one got
+    local cover = CreateFrame("Frame", nil, pane)
+    cover:SetAllPoints(UI.dbList)
+    cover:SetFrameLevel(UI.dbList:GetFrameLevel() + 20)
+    cover:EnableMouse(true)
+    local dim = T.Solid(cover, "BACKGROUND", C.inset)
+    dim:SetAllPoints()
+    dim:SetAlpha(0.8)
+    cover.text = T.Text(cover, 14, C.title)
+    cover.text:SetPoint("CENTER", 0, U(10))
+    cover.track = CreateFrame("Frame", nil, cover)
+    cover.track:SetSize(U(170), U(8))
+    cover.track:SetPoint("TOP", cover.text, "BOTTOM", 0, -U(8))
+    T.Panel(cover.track, C.input, C.inputLine)
+    cover.fill = T.Solid(cover.track, "ARTWORK", C.gold)
+    cover.fill:SetPoint("TOPLEFT", 1, -1)
+    cover.fill:SetPoint("BOTTOMLEFT", 1, 1)
+    cover:Hide()
+    UI.dbLoad = cover
 end
 
 local function CatData()
@@ -2896,6 +3079,84 @@ local function FillFeed()
     end
 end
 
+-- the counts beside the categories and on the chips
+local function DbCounts()
+    UI.catList:SetData(CatData())
+    -- with full counts the chips can outgrow the list: their padding narrows a step at a time before the row would run
+    -- past it, and nothing is ever cut
+    local room = UI.dbPane:GetWidth() - 1 - U(10) - U(10)
+    for _, pad in ipairs({ U(8), U(7), U(6), U(5), U(4) }) do
+        local x = 0
+        for i, chip in ipairs(UI.chips) do
+            chip.pad = pad
+            chip:SetLabel((chip.text ~= "" and (chip.text .. " ") or "") .. (dbChipCounts[chip.key] or 0))
+            x = x + (i > 1 and U(6) or 0) + chip:GetWidth()
+        end
+        if x <= room then break end
+    end
+end
+-- the cover over the list while a job the player asked for (new filters) is under way, with how far it got
+local function ShowLoading(job)
+    local cover = UI.dbLoad
+    cover:SetShown(job ~= nil)
+    if not job then return end
+    cover.text:SetText(job.st.q ~= "" and "Searching..." or "Loading...")
+    local inner = cover.track:GetWidth() - 2
+    local done = job.total > 0 and (job.total - job.next) / job.total or 1
+    cover.fill:SetWidth(math.max(0.01, inner * done))
+    cover.fill:SetShown(inner * done >= 0.5)
+end
+local function ApplyDb(job)
+    dbRefs, dbCounts, dbChipCounts, dbSig, dbFavSig = job.data, job.counts, job.chips, job.sig, job.favSig
+    UI.DbListSet(dbRefs)
+    UI.dbEmpty:SetShown(#dbRefs == 0)
+    DbCounts()
+end
+-- the list for the current filters: the kept result while nothing it reads changed, else a new job, its first step at
+-- once and the rest a step a frame. New filters cover the list until it is ready; a star, a find or a picture works
+-- out of sight and swaps the list in when done
+local function FilterDb()
+    local sig, favSig = FilterSig()
+    if dbJob and not dbStale and dbJob.sig == sig and dbJob.favSig == favSig then
+        UI.dbList:Refresh()
+        DbCounts()
+        return
+    end
+    if not dbJob and not dbStale and sig == dbSig and favSig == dbFavSig then
+        UI.dbList:Refresh()
+        DbCounts()
+        return
+    end
+    dbStale = false
+    local job = NewDbJob()
+    job.loud = sig ~= dbSig or #dbRefs == 0
+    dbJob = job
+    -- the filters the list already shows: it stays usable while the job runs, a star lit at once
+    if not job.loud then
+        ShowLoading(nil)
+        UI.dbList:Refresh()
+    end
+    local function Step()
+        if dbJob ~= job then return end
+        -- put away mid-way: the next look at the database starts again
+        if not win:IsShown() or tab ~= "db" then
+            dbJob, dbStale = nil, true
+            ShowLoading(nil)
+            return
+        end
+        if DbStep(job) then
+            dbJob = nil
+            ShowLoading(nil)
+            ApplyDb(job)
+            return
+        end
+        if job.loud then ShowLoading(job) end
+        C_Timer.After(0, Step)
+    end
+    Step()
+    DbCounts()
+end
+
 -- refresh everything that shows
 function UI.Refresh()
     if not win or not win:IsShown() then dirty = true return end
@@ -2922,22 +3183,7 @@ function UI.Refresh()
     if feedOn then
         FillFeed()
     elseif dbOn then
-        local refs = DbData()
-        UI.DbListSet(refs)
-        UI.dbEmpty:SetShown(#refs == 0)
-        UI.catList:SetData(CatData())
-        -- with full counts the chips can outgrow the list: their padding narrows a step at a time before the row
-        -- would run past it, and nothing is ever cut
-        local room = UI.dbPane:GetWidth() - 1 - U(10) - U(10)
-        for _, pad in ipairs({ U(8), U(7), U(6), U(5), U(4) }) do
-            local x = 0
-            for i, chip in ipairs(UI.chips) do
-                chip.pad = pad
-                chip:SetLabel((chip.text ~= "" and (chip.text .. " ") or "") .. (dbChipCounts[chip.key] or 0))
-                x = x + (i > 1 and U(6) or 0) + chip:GetWidth()
-            end
-            if x <= room then break end
-        end
+        FilterDb()
         for _, chip in ipairs(UI.chips) do chip:SetOn(state.kind == chip.key) end
     elseif optOn then
         UI.RefreshOptions()
@@ -3086,10 +3332,10 @@ local function CountsFind(t, e)
         if row.kind == "x" then t.hidden = t.hidden - 1 else t.still = t.still - 1 end
     end
 end
-function UI.TotalCounts()
-    if totals then return totals end
+local function NewTotals()
     local t = { total = 0, found = 0, still = 0, hidden = 0, live = 0, foundIds = {} }
-    D.ForEachRow(function(_, _, kind, _, _, _, _, _, _, _, _, notFound)
+    -- one seed row into the counts (a D.ForEachRow callback)
+    t.row = function(_, _, kind, _, _, _, _, _, _, _, _, notFound)
         if kind ~= "n" and kind ~= "x" then return end
         t.total = t.total + 1
         if not notFound then
@@ -3099,13 +3345,85 @@ function UI.TotalCounts()
         else
             t.still = t.still + 1
         end
-    end)
+    end
+    return t
+end
+function UI.TotalCounts()
+    if totals then return totals end
+    local t = NewTotals()
+    D.ForEachRow(t.row)
     for _, e in pairs(ns.db and ns.db.finds or {}) do CountsFind(t, e) end
     totals = t
     return t
 end
+
+-- the first look's work, spread over frames from WARM_DELAY seconds after login so opening the window computes none of
+-- it: the found bar's counts, which finds are discoveries (the Live Feed's number) and which have a picture. A slice
+-- stops after WARM_MS (at most WARM_ROWS rows or WARM_FINDS finds at a time); combat waits; a window opened sooner
+-- counts the rest at once, as before
+local WARM_DELAY, WARM_MS, WARM_ROWS, WARM_FINDS = 30, 2, 1000, 50
+local warm
+local function WarmSlice()
+    local w = warm
+    if not w then return end
+    if InCombatLockdown() then C_Timer.After(1, WarmSlice) return end
+    local t0 = debugprofilestop()
+    repeat
+        if w.next >= 1 then
+            local to = math.max(1, w.next - WARM_ROWS + 1)
+            D.ForEachRow(w.t.row, w.next, to)
+            w.next = to - 1
+        else
+            local last = math.min(#w.list, w.fi + WARM_FINDS - 1)
+            for i = w.fi, last do
+                local e = w.list[i]
+                CountsFind(w.t, e)
+                HasArt(e.id)
+                -- the Live Feed's number, as FeedCount counts it
+                if AfterClear(e) and (w.all or e.demo or D.IsDiscovery(e.id, e)) then
+                    w.feedN = w.feedN + 1
+                    if (e.got or 0) > w.seen then w.feedNew = w.feedNew + 1 end
+                end
+            end
+            w.fi = last + 1
+            if w.fi > #w.list then
+                warm = nil
+                local c = feedCounted
+                if #w.dirty == 0 and not c.ok and ns.db == w.db and ns.db.feedClearedAt == w.cleared and (ns.db.feedSeenAt or 0) == w.seen and
+                    not Settings().findFilter.discoveries == w.all then
+                    c.ok, c.db, c.all, c.seen, c.cleared, c.n, c.new = true, w.db, w.all, w.seen, w.cleared, w.feedN, w.feedNew
+                end
+                if totals then return end
+                -- finds that came or changed meanwhile, counted once more (foundIds keeps each item to one)
+                for _, e in ipairs(w.dirty) do CountsFind(w.t, e) end
+                totals = w.t
+                return
+            end
+        end
+    until debugprofilestop() - t0 > WARM_MS
+    C_Timer.After(0, WarmSlice)
+end
+local function StartWarm()
+    if totals or warm or not ns.db then return end
+    warm = { t = NewTotals(), next = D.RowCount(), list = ns.Finds.List(), fi = 1, dirty = {}, db = ns.db,
+        all = not Settings().findFilter.discoveries, seen = ns.db.feedSeenAt or 0, cleared = ns.db.feedClearedAt, feedN = 0, feedNew = 0 }
+    C_Timer.After(0, WarmSlice)
+end
+UI.StartWarm = StartWarm
+function UI.Warming() return warm ~= nil end
+ns.Listen("Login", function() C_Timer.After(WARM_DELAY, StartWarm) end)
+
 -- a cleared list starts over; any other change moves at most that one item
 ns.Listen("FindsChanged", function(e)
+    if warm then
+        if e then
+            warm.dirty[#warm.dirty + 1] = e
+        else
+            warm = nil
+            C_Timer.After(1, StartWarm)
+        end
+        return
+    end
     if not totals then return end
     if not e then totals = nil else CountsFind(totals, e) end
 end)
@@ -3320,6 +3638,8 @@ local function Soon(e)
     end)
 end
 ns.Listen("FindsChanged", Soon)
+-- the database list takes finds in on the next refresh it gets, never one per find
+ns.Listen("FindsChanged", function() dbStale = true end)
 ns.Listen("SyncState", function() UI.RefreshFooter() end)
 ns.Listen("ToggleWindow", function() UI.Toggle() end)
 ns.Listen("OpenWindow", function(which) UI.Show(which) end)
@@ -3336,9 +3656,25 @@ local function RedrawRows()
         UI.Refresh()
     end
 end
+-- the item box's game lines are read once; a lookup they waited on resolved (a set bonus's text shows "(3) Set:" until
+-- its spell arrives), so the box reads them again, once for a burst; no id means every tooltip, as the game treats it
+local tipRedraw
+ns.On("TOOLTIP_DATA_UPDATE", function(instance)
+    if tipRedraw or not win or not win:IsShown() or not selected or not detail.tipGame then return end
+    if instance ~= nil and (ns.Secret(instance) or instance ~= detail.tipInstance) then return end
+    tipRedraw = true
+    C_Timer.After(0.1, function()
+        tipRedraw = nil
+        if win:IsShown() and selected then ShowDetail(selected) end
+    end)
+end)
 ns.On("GET_ITEM_INFO_RECEIVED", function(id)
     -- its picture may have come with it: the database places it again on its next refresh
-    if hasArt[id] == false then hasArt[id] = nil end
+    if hasArt[id] == false then
+        hasArt[id] = nil
+        local icon = C_Item.GetItemIconByID and C_Item.GetItemIconByID(id)
+        if icon and icon ~= 134400 then dbStale = true end
+    end
     if not win or not win:IsShown() then return end
     if id == selected then ShowDetail(selected) end
     local list = tab == "db" and UI.dbList or UI.feedList

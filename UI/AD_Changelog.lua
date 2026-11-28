@@ -13,6 +13,28 @@ NS.Changelog = CL
 -- @whatsnew-begin (generated from CHANGELOG.md by tools\whatsnew_sync.lua)
 CL.versions = {
     {
+        version = "3.3.8",
+        intro = "Combined triggers, glows and sounds for every trigger, and proc glows that keep up with a spell that turns into another.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Combined triggers",
+                    desc = "A spell's trigger on Effects can wait for several things at once, such as Ice Barrier ready and its shield down." },
+                { title = "Saber sounds",
+                    desc = "Three new sounds: Saber Ignite, Swing and Clash." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Effects for every trigger",
+                    desc = "Triggers such as Out of stock or Can't use it can now glow and play a sound, and Aura missing can change the border and art." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Proc glows",
+                    desc = "A spell that turns into another with its proc, such as Heart Strike into Vampiric Strike, now glows right away." },
+                { title = "Sounds and textures",
+                    desc = "Sounds, textures, texts and wheels are no longer called bars in the panel and in import messages." },
+            } },
+        },
+    },
+    {
         version = "3.3.7",
         intro = "Bar Groups that close their gaps, level and zone load rules, a move mode that shows every item, and the latest Item Finds.",
         sections = {
@@ -1836,6 +1858,28 @@ CL.versions = {
     },
 }
 CL.retailVersions = {
+    {
+        version = "3.3.8",
+        intro = "Combined triggers, glows and sounds for every trigger, and proc glows that keep up with a spell that turns into another.",
+        sections = {
+            { header = "New Features", items = {
+                { title = "Combined triggers",
+                    desc = "A spell's trigger on Effects can wait for several things at once, such as Ice Barrier ready and its shield down." },
+                { title = "Saber sounds",
+                    desc = "Three new sounds: Saber Ignite, Swing and Clash." },
+            } },
+            { header = "Improvements", items = {
+                { title = "Effects for every trigger",
+                    desc = "Triggers such as Out of stock or Can't use it can now glow and play a sound, and Aura missing can change the border and art." },
+            } },
+            { header = "Bug Fixes", items = {
+                { title = "Proc glows",
+                    desc = "A spell that turns into another with its proc, such as Heart Strike into Vampiric Strike, now glows right away." },
+                { title = "Sounds and textures",
+                    desc = "Sounds, textures, texts and wheels are no longer called bars in the panel and in import messages." },
+            } },
+        },
+    },
     {
         version = "3.3.7",
         intro = "Bar Groups that close their gaps, level and zone load rules, and a move mode that shows every item.",

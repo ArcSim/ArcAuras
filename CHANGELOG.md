@@ -1,5 +1,23 @@
 # Arc Auras
 
+## 3.3.8
+
+Combined triggers, glows and sounds for every trigger, and proc glows that keep up with a spell that turns into another.
+
+### New Features
+
+- **Combined triggers** - A spell's trigger on Effects can wait for several things at once, such as Ice Barrier ready and its shield down.
+- **Saber sounds** - Three new sounds: Saber Ignite, Swing and Clash.
+
+### Improvements
+
+- **Effects for every trigger** - Triggers such as Out of stock or Can't use it can now glow and play a sound, and Aura missing can change the border and art.
+
+### Bug Fixes
+
+- **Proc glows** - A spell that turns into another with its proc, such as Heart Strike into Vampiric Strike, now glows right away.
+- **Sounds and textures** - Sounds, textures, texts and wheels are no longer called bars in the panel and in import messages.
+
 ## 3.3.7
 
 Bar Groups that close their gaps, level and zone load rules, a move mode that shows every item, and the latest Item Finds.

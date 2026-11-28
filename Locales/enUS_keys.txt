@@ -180,12 +180,17 @@
 %d settings differ from the group; a cyan bar marks each.
 %d slots searched: %d upgrade
 %d slots searched: %d upgrades
+%d sound
+%d sounds
 %d specs
 %d spells saved, but only the first %d can ping.
 %d stack or fewer
 %d stacks or fewer
 %d swing
 %d swings
+%d text
+%d texts
+%d texture
 %d textures
 %d tick
 %d ticks
@@ -195,6 +200,8 @@
 %d totem out or fewer
 %d totems out or fewer
 %d unchanged
+%d wheel
+%d wheels
 %d worn
 %d+ charges
 %d+ stacks
@@ -352,6 +359,7 @@
 + Add step
 + Add threshold
 + Add to this layout
++ And...
 + From Action Bars
 + My Action Bars
 + New Layout
@@ -693,7 +701,10 @@ All icons in %s
 All item icons
 All layouts everywhere
 All notes
+All of
+All of or Any of
 All of them
+All of: every part must hold. Any of: any one is enough, its state too.
 All paired icons match now.
 All powers
 All procs used
@@ -795,6 +806,7 @@ Anchored to the frame %s. It is hidden now, so this stays where it sits.
 Anchored to this
 Anchored to this one: it would loop
 Anchors 1 to %d are not there.
+And...
 Animated Picture
 Animated picture (a sheet of frames)
 Animated, %s frames
@@ -806,6 +818,7 @@ Another anchor
 Another aura
 Another frame
 Another group on screen already moves this frame. A frame moves with one group.
+Another part this trigger waits for. Every part must hold.
 Another spell
 Another wheel
 Ants (border crawl)
@@ -822,7 +835,9 @@ Any level.
 Any lust on you: %s and the drums, on one icon.
 Any lust on you: Bloodlust, Heroism, Time Warp, Primal Rage, Fury of the Aspects, Harrier's Cry and the drums, on one icon.
 Any mob, or the AH
+Any of
 Any of %d items: the icon shows the best one you carry and can use.
+Any of its parts
 Any of its spells
 Any of the icon's spells, or only one of them (its ranks together). Works in combat.
 Any one of them
@@ -902,6 +917,7 @@ Art from spell ID
 Art from spell ID (optional)
 Art while active
 Art while missing
+Art while the aura is down
 As is
 Ascendance (buff icon)
 Ascendance (cooldown icon)
@@ -1109,6 +1125,7 @@ Bonuses not read yet
 Border
 Border and background
 Border color
+Border color while the aura is down
 Border colour by dispel type
 Border greys with the icon
 Border in your class color
@@ -1117,6 +1134,8 @@ Border only
 Border style
 Border thickness
 Border while active
+Border while missing
+Border while the aura is down
 Boss encounter
 Both: stacks (time left)
 Bottom
@@ -1188,6 +1207,26 @@ Can't show %s talents here. Log in on an %s to pick its talents.
 Can't show %s talents here. Switch to %s to pick its talents.
 Can't use and not enough resource set the opacity, instead of the lower of theirs and the state's.
 Can't use it
+Can't use it: Glow X offset
+Can't use it: Glow Y offset
+Can't use it: Glow color
+Can't use it: Glow dark backing line
+Can't use it: Glow fade out (seconds)
+Can't use it: Glow frame level
+Can't use it: Glow in the game's own color
+Can't use it: Glow intensity
+Can't use it: Glow line length (0 = auto)
+Can't use it: Glow lines
+Can't use it: Glow move X
+Can't use it: Glow move Y
+Can't use it: Glow only in combat
+Can't use it: Glow particles
+Can't use it: Glow size
+Can't use it: Glow speed
+Can't use it: Glow strata
+Can't use it: Glow style
+Can't use it: Glow thickness
+Can't use it: Sound
 Cancel pulse on cast
 Cards
 Cast bars
@@ -1692,6 +1731,10 @@ Delete Icon
 Delete Layout
 Delete Reminder
 Delete Skin
+Delete Sound
+Delete Text
+Delete Texture
+Delete Wheel
 Delete every row of %s? This can't be undone.
 Delete selection
 Delete the %s '%s'?
@@ -1848,6 +1891,7 @@ Earth Totem
 Ease In
 Ease In/Out
 Ease Out
+Edge
 Edge & finish
 Edge color
 Edge only
@@ -2235,6 +2279,8 @@ Glow %d style
 Glow %d thickness
 Glow %d under this %% left
 Glow %d under this many seconds left
+Glow %d waits for conditions
+Glow %d waits for the spell's state
 Glow %d when
 Glow %d while active
 Glow (no black background)
@@ -2262,15 +2308,21 @@ Glow style
 Glow thickness
 Glow under this % left
 Glow under this many seconds left
+Glow waits for conditions
+Glow waits for the spell's state
 Glow when
 Glow when ready
 Glow when shields pass full health
 Glow when usable
 Glow while active
 Glow while all procs are used
+Glow while in stock
+Glow while missing
 Glow while not active
+Glow while not in it
 Glow while on cooldown
 Glow while out of range
+Glow while out of stock
 Glow while out of totem range
 Glow while procs are left
 Glow while queued
@@ -2278,9 +2330,12 @@ Glow while ready
 Glow while recharging
 Glow while suggested
 Glow while the aura is up
-Glow while the pet is
+Glow while the hand holds no weapon
+Glow while the slot is empty
 Glow while the timer runs
 Glow while toggled on
+Glow while you can't use it
+Glow while you lack the resource
 Glow with no charges
 Glows
 Glows and art
@@ -2521,12 +2576,14 @@ ID or name
 IDs in tooltips
 IMPORT A SKIN
 IN RANGE
+ITS AURA
 Ice Trap
 Icon
 Icon 
 Icon %d
 Icon Group
 Icon ID
+Icon ID while the aura is down
 Icon IDs
 Icon Mouse
 Icon Opacity
@@ -2537,6 +2594,7 @@ Icon border color
 Icon border thickness
 Icon color
 Icon from
+Icon from while the aura is down
 Icon group  -  %d icon
 Icon group  -  %d icons
 Icon groups
@@ -2628,6 +2686,26 @@ In or out of melee range (%s yards), any class. A spell typed here replaces it.
 In or out of range of %s.
 In power units
 In stock
+In stock: Glow X offset
+In stock: Glow Y offset
+In stock: Glow color
+In stock: Glow dark backing line
+In stock: Glow fade out (seconds)
+In stock: Glow frame level
+In stock: Glow in the game's own color
+In stock: Glow intensity
+In stock: Glow line length (0 = auto)
+In stock: Glow lines
+In stock: Glow move X
+In stock: Glow move Y
+In stock: Glow only in combat
+In stock: Glow particles
+In stock: Glow size
+In stock: Glow speed
+In stock: Glow strata
+In stock: Glow style
+In stock: Glow thickness
+In stock: Sound
 In the IDs block
 In the group's place
 In the instances below, out of combat.
@@ -2990,6 +3068,8 @@ Missing
 Missing (2)
 Missing Buffs
 Missing alpha
+Missing border
+Missing border color
 Missing here: %s; they use the default until you add them.
 Missing icon ID
 Missing icon from
@@ -3191,7 +3271,30 @@ No type color wash
 No type glow
 No type label
 No weapon
+No weapon grey out
 No weapon opacity
+No weapon tint
+No weapon tint color
+No weapon: Glow X offset
+No weapon: Glow Y offset
+No weapon: Glow color
+No weapon: Glow dark backing line
+No weapon: Glow fade out (seconds)
+No weapon: Glow frame level
+No weapon: Glow in the game's own color
+No weapon: Glow intensity
+No weapon: Glow line length (0 = auto)
+No weapon: Glow lines
+No weapon: Glow move X
+No weapon: Glow move Y
+No weapon: Glow only in combat
+No weapon: Glow particles
+No weapon: Glow size
+No weapon: Glow speed
+No weapon: Glow strata
+No weapon: Glow style
+No weapon: Glow thickness
+No weapon: Sound
 No zone rule
 No-resource alpha
 No-resource tint
@@ -3224,6 +3327,26 @@ Not attacking
 Not casting
 Not drawn on screen for now. Click to show it again. Closing this window shows everything again.
 Not enough resource
+Not enough resource: Glow X offset
+Not enough resource: Glow Y offset
+Not enough resource: Glow color
+Not enough resource: Glow dark backing line
+Not enough resource: Glow fade out (seconds)
+Not enough resource: Glow frame level
+Not enough resource: Glow in the game's own color
+Not enough resource: Glow intensity
+Not enough resource: Glow line length (0 = auto)
+Not enough resource: Glow lines
+Not enough resource: Glow move X
+Not enough resource: Glow move Y
+Not enough resource: Glow only in combat
+Not enough resource: Glow particles
+Not enough resource: Glow size
+Not enough resource: Glow speed
+Not enough resource: Glow strata
+Not enough resource: Glow style
+Not enough resource: Glow thickness
+Not enough resource: Sound
 Not in a Close gaps group: turn off Close gaps in Group Settings
 Not in a dungeon
 Not in a group
@@ -3354,6 +3477,7 @@ On %s.
 On a key, or by ear
 On a nameplate the bar hides while this window is open; the preview shows it.
 On a ready check
+On a warning
 On anchor %d, %s.
 On any party or raid member it shows as Colors and badges.
 On cooldown
@@ -3510,7 +3634,28 @@ Out of range glow thickness
 Out of range shows while one of these is out and its buff is not on you: %s.
 Out of range shows while the totem is out and %s is not on you (%d spell IDs).
 Out of range, not enough resource and can't use tint it while it cools down too, as the game's buttons do.
+Out of range: Sound
 Out of stock
+Out of stock: Glow X offset
+Out of stock: Glow Y offset
+Out of stock: Glow color
+Out of stock: Glow dark backing line
+Out of stock: Glow fade out (seconds)
+Out of stock: Glow frame level
+Out of stock: Glow in the game's own color
+Out of stock: Glow intensity
+Out of stock: Glow line length (0 = auto)
+Out of stock: Glow lines
+Out of stock: Glow move X
+Out of stock: Glow move Y
+Out of stock: Glow only in combat
+Out of stock: Glow particles
+Out of stock: Glow size
+Out of stock: Glow speed
+Out of stock: Glow strata
+Out of stock: Glow style
+Out of stock: Glow thickness
+Out of stock: Sound
 Out of totem range
 Out of totem range tint
 Out of totem range tint color
@@ -3689,16 +3834,25 @@ Plate
 Plates past the pool get their rows out of combat, or after a /reload.
 Play
 Play a sound
+Play a sound on a warning
 Play a sound on proc
 Play a sound when a charge returns
 Play a sound when it gains a stack
+Play a sound when out of range
+Play a sound when out of stock
 Play a sound when ready
 Play a sound when recharging starts
+Play a sound when restocked
+Play a sound when suggested
 Play a sound when the aura appears
 Play a sound when the aura drops
 Play a sound when the cooldown starts
+Play a sound when the hand holds no weapon
 Play a sound when the next draw is guaranteed
+Play a sound when toggled on
 Play a sound when usable
+Play a sound when you can't use it
+Play a sound when you lack the resource
 Play in a party
 Play in a raid
 Play on screen
@@ -4046,6 +4200,7 @@ Remove the bottom row
 Remove the left column
 Remove the right column
 Remove this look
+Remove this part
 Remove this skin from the bar
 Remove this spell
 Remove this step
@@ -4108,6 +4263,7 @@ Resource text size
 Restart it
 Restart the timer too
 Restricts this to the current character. Off = every character on the account sees it.
+Reverse
 Reverse aura swipe
 Reverse fill
 Reverse swipe
@@ -4181,13 +4337,22 @@ Saved answers
 Saved: applies after combat
 Saves the buttons, which of bars 2 to 8 are on, and your Edit Mode layout into the profile picked above.
 Saves your action bars per spec and as named profiles, and puts them back when the game loads them empty.
+Say on a warning
 Say on proc
 Say when a charge returns
+Say when out of range
+Say when out of stock
 Say when ready
 Say when recharging starts
+Say when restocked
+Say when suggested
 Say when the cooldown starts
+Say when the hand holds no weapon
 Say when the next draw is guaranteed
+Say when toggled on
 Say when usable
+Say when you can't use it
+Say when you lack the resource
 Sayaad is out
 Scale
 Scale grows from here. Drag it in Edit on screen to set it.
@@ -4654,6 +4819,7 @@ Suggested glow speed
 Suggested glow strata
 Suggested glow style
 Suggested glow thickness
+Suggested: Sound
 Swimming
 Swing
 Swing Bar
@@ -4686,6 +4852,7 @@ TEMPLATE - click one to fill in every rank's enchant ID
 TEMPLATE - click one to start the wheel with it
 TEMPLATE - click one, then Create
 TEMPLATE - pick one, then Use template
+THE SPELL
 THICKOUTLINE
 TOP
 TOPLEFT
@@ -5015,6 +5182,7 @@ The tracked cooldown spell.
 The tracked item, or several: the icon shows the first one you carry and can use. Retargeting keeps every setting and position.
 The tracked spell. Retargeting re-keys the driver and keeps every setting and position.
 The tracker's readout when you point at the icon. On also turns the icon's click-through off.
+The trigger no longer waits for it.
 The unit's name
 The value counts power (45 energy, 2000 mana) instead of a percent of the bar.
 The value runs from empty to full and back: threshold colours, pips and every text follow it.
@@ -5066,6 +5234,7 @@ This option is not active
 This piece is hidden: show it above to place it.
 This profile
 This run
+This sound doesn't load on this character (%s). Click its eye to show it while you edit.
 This spell has no charges: Recharging never lights.
 This spell's casts wear their own fill color, over the channel and can't-interrupt colors.
 This string
@@ -5074,12 +5243,15 @@ This string is older than your copy
 This string is older than your copy of %s: updating would bring back its older settings.
 This string updates items you have
 This swing color
+This text doesn't load on this character (%s). Click its eye to show it while you edit.
+This texture doesn't load on this character (%s). Click its eye to show it while you edit.
 This timer ended
 This type's border, color wash, label and glow use it.
 This type's height (0 = the group's size)
 This type's scale
 This type's width (0 = the group's size)
 This way of pinging needs a key: set one below.
+This wheel doesn't load on this character (%s). Click its eye to show it while you edit.
 Threshold %d color
 Threshold %d value
 Threshold colors
@@ -5172,6 +5344,7 @@ Toggle glow style
 Toggle glow thickness
 Toggle key
 Toggled on
+Toggled on: Sound
 Toggled-on alpha
 Toggled-on alpha value
 Toggled-on tint
@@ -5411,6 +5584,7 @@ Vs worn
 WHAT TO DO
 WHAT TO SHARE
 WHAT'S IN IT
+WHEN
 WHEN IT IS
 WHEN THE SPELL IS
 WHERE IT GOES
@@ -5425,6 +5599,8 @@ Wand GCD
 Wand swipe color
 War Mode on
 Warlock by Emity
+Warn when
+Warn while the pet is
 Warning
 Warning glow
 Warning glow X offset
@@ -5446,6 +5622,7 @@ Warning glow speed
 Warning glow strata
 Warning glow style
 Warning glow thickness
+Warning: Sound
 Warrior by Emity
 Watched in this order: the first unit that has the aura is the one you see.
 Watches the Main Hand enchant
@@ -5516,6 +5693,7 @@ When a totem is placed
 When an attack misses you
 When cast again
 When does this trigger fire?
+When every proc is used
 When it falls off
 When it gains a stack
 When it goes on
@@ -5523,16 +5701,20 @@ When it shows
 When it starts
 When it's missing
 When it's missing (falls off, or none is on)
+When its timer starts
 When little time is left
 When one cast summons more than one: the first or the last.
 When out of range
+When out of stock
 When queued
 When queued: while it waits to go off with your next swing. After cast: from the cast until the swing it went off in lands.
 When ready
 When ready (cooldown done)
 When recharging starts
+When restocked
 When several are up, show
 When states overlap
+When suggested
 When texts stay bright
 When the aura appears
 When the aura drops
@@ -5540,15 +5722,20 @@ When the cooldown of %s ends
 When the cooldown of %s starts
 When the cooldown starts
 When the game updates %s
+When the hand holds no weapon
 When the last charge is spent
 When the next draw is guaranteed
 When the proc glow of %s ends
 When the proc glow of %s starts
+When the slot empties
 When the timer ends
 When the timer of %s ends
 When the timer runs out, the stacks go back to 0 with it.
 When the timer starts
+When the totem goes down
+When the totem is gone
 When this timer ends
+When toggled on
 When two apply at once, the one higher in the list wins.
 When usable
 When usable (can be cast now)
@@ -5558,19 +5745,23 @@ When you are healed
 When you are hit
 When you are immune
 When you block
+When you can't use it
 When you cast %s
 When you cast any spell but %s
 When you crit the target
 When you dodge
 When you enter
 When you enter combat
+When you enter it
 When you evade, deflect or reflect
 When you gain a resource
 When you gain extra attacks
 When you hit the target
+When you lack the resource
 When you learn a new rank, action bar buttons with the old top rank move up to it. Lower ranks and macros stay.
 When you learn a new rank, your action bar buttons move up to it, out of combat.
 When you leave combat
+When you leave it
 When you parry
 When you resist a spell
 When you take a critical heal
@@ -5638,11 +5829,13 @@ While it is queued, or after its cast
 While it is ready
 While it recharges or has full charges
 While its charges are at a count
+While its parts hold
 While its proc is up
 While its stacks are at a count
 While its timer is idle it shows this spell's cooldown, then its Ready look.
 While missing
 While not active
+While not in it
 While on cooldown
 While out of range
 While out of stock
@@ -5661,7 +5854,9 @@ While the aura is up, show
 While the aura is up, the border takes its own color. A skin's border takes it too.
 While the button is held
 While the cast can't be interrupted
+While the hand holds no weapon
 While the shot winds up or waits to fire
+While the slot is empty
 While the spell is ready
 While the timer is idle at 0 stacks, the count shows this many: a pool reads full before its first use. Empty = off.
 While the timer runs
@@ -5679,8 +5874,10 @@ While this window is open, items that fail their load conditions are drawn anywa
 While this window is open, the group you edit shows edge arrows: green adds a row or column on that side, red removes one.
 While toggled on
 While you are not casting
+While you can't use it
 While you channel
 While you hold the key, a box beside the cursor lists the quests your target belongs to.
+While you lack the resource
 Who carries the aura. Buffs match on friends and you, debuffs on enemies.
 Who carries the aura: a buff on you, a debuff on your target, or another unit.
 Who carries the aura: buffs on you, your pet, party and friends, debuffs on enemies. The game hides the opposite from addons.
@@ -5878,6 +6075,8 @@ Zoom in
 Zoom out
 Zoom: %s
 a Sound item plays what each one is set to: nothing to default
+a boss fight is on
+a charge comes back
 a charge is coming back
 a full pass
 a layout
@@ -5998,6 +6197,7 @@ in combat
 inherit
 into %s
 it
+it can't be used
 it is active
 it is not active
 it is on cooldown
@@ -6008,6 +6208,7 @@ item
 item %s
 items
 items %s +%d
+its aura is down
 its aura is up
 its conditions keep it quiet now
 its internal cooldown is ready
@@ -6051,11 +6252,13 @@ no sound
 no spell
 no such layout
 no such skin
+no totem is out
 no trigger
 no weapon in that hand
 no words yet
 none
 none for this hand: type a spell
+none is left
 none picked
 not an Arc Auras export string
 not an Arc Auras skin string
@@ -6070,6 +6273,7 @@ not taken
 not talented
 not within %s s of rule %d
 not worn
+nothing is equipped
 nothing matches "%s"
 nothing picked
 nothing this version can use
@@ -6090,6 +6294,7 @@ one stance, none picked yet
 one stance: %s
 optional
 optional: a name, version, link and notes whoever imports it sees first
+or
 out of combat
 own
 paste a skin string first
@@ -6119,6 +6324,7 @@ shows when %s is %s
 shows when %s is %s or %s
 shows when %s is %s or more
 shows when %s is not %s
+shows when %s is not set
 shows when %s is off
 shows when %s is on
 shows when %s is set
@@ -6176,8 +6382,10 @@ the totem is out
 the totem is out and its buff is not on you
 the unit's name
 the weapon has it
+the weapon has none
 the whole cooldown
 the whole time it is up
+this hand holds no weapon
 this pack
 this power
 this spell
@@ -6254,14 +6462,29 @@ wolf path (%s)
 wolf talent
 words
 x
+you are in a raid group
 you are in a stance
+you are in an instance
+you are in combat
 you are in it
+you are mounted
+you are not in a group
+you are not in it
+you are out of combat
+you are stealthed
 you can cast it now
+you can't use it now
+you have a target
+you have ammo
+you have no target
+you lack the resource for it
 your ammo runs low
 your current stance
 your layout
 your pet is not happy
 your pet's health is low
+your target is dead
+your target is hostile
 your target is out of range
 {left} {drawn} {size}: the deck. {procs} {procsLeft} {max}: its procs. {chance}: the chance. {viol}: violations. {count}: a counter.
 |cff3fc9f2Arc Auras IDs|r

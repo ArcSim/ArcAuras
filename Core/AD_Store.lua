@@ -752,6 +752,9 @@ function Store.CleanLookList(kind, list)
     if next(list) == nil then return {} end
     local okKey = {}
     for _, k in ipairs(Schema.OWN_LOOK_CONDITIONS) do okKey[k] = true end
+    if Schema.OWN_LOOK_STATE_KINDS and Schema.OWN_LOOK_STATE_KINDS[kind] then
+        for _, k in ipairs(Schema.OWN_LOOK_STATE_PARTS) do okKey[k] = true end
+    end
     local function Unit(v)
         if type(v) ~= "number" or v ~= v then return nil end
         return math.max(0, math.min(1, v))

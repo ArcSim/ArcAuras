@@ -28,6 +28,21 @@ for _, key in ipairs(Schema.OWN_LOOK_CONDITIONS) do
         OL.CONDITION_OK[key] = true
     end
 end
+-- the spell's states a cooldown icon's look can also wait for
+OL.STATE_PART = {}
+for _, key in ipairs(Schema.OWN_LOOK_STATE_PARTS or EMPTY) do OL.STATE_PART[key] = true end
+
+-- One part of a look holds now: a condition, or (f given) the icon's own
+-- state, its bucket or its usability while it can be cast.
+local function PartHolds(key, f, C)
+    if OL.STATE_PART[key] then
+        local F = NS.Factory
+        if not (f and F and F.StateNow) then return false end
+        local now, use = F.StateNow(f)
+        return key == now or key == use
+    end
+    return C.Read(key) == true
+end
 
 -- The By State key of a kind's ready and cooldown buckets where it is not
 -- "ready" / "cooldown"; Recharging and a Custom Icon's Ready are their own.
@@ -151,7 +166,7 @@ local function CleanWhen(list)
     if type(list) ~= "table" then return nil end
     local out, seen = {}, {}
     for _, k in ipairs(list) do
-        if OL.CONDITION_OK[k] and not seen[k] then
+        if (OL.CONDITION_OK[k] or OL.STATE_PART[k]) and not seen[k] then
             seen[k] = true
             out[#out + 1] = k
         end
@@ -262,7 +277,8 @@ end
 -- so nothing changes until it is edited; what the state lacks is left out.
 -- Returns its index in the list in play, or nil.
 function OL.Add(rec, stateKey, condKey, copy)
-    if not (OL.Offered(rec, stateKey) and OL.CONDITION_OK[condKey]) then return nil end
+    local stateOK = OL.STATE_PART[condKey] and Schema.OWN_LOOK_STATE_KINDS[rec.kind] and condKey ~= stateKey
+    if not (OL.Offered(rec, stateKey) and (OL.CONDITION_OK[condKey] or stateOK)) then return nil end
     local cur = OL.Effective(rec)
     if cur and #cur >= Schema.OWN_LOOK_MAX then return nil end
     local spec = OL.Spec(rec, stateKey)
@@ -476,9 +492,10 @@ end
 function OL.CountOwn(kind, layout) return OwnWalk(kind, layout, false) end
 function OL.FollowAll(kind, layout) return OwnWalk(kind, layout, true) end
 
--- The first look for the state whose every condition holds now, else nil.
--- Called on every state write: no allocation, one read per condition.
-function OL.Active(rec, stateKey)
+-- The first look for the state whose every part holds now, else nil. f: the
+-- icon's frame, for a part that is one of the spell's states (none: such a
+-- look waits). Called on every state write: no allocation, one read per part.
+function OL.Active(rec, stateKey, f)
     if stateKey == nil then return nil end
     local list = OL.Effective(rec)
     if type(list) ~= "table" then return nil end
@@ -490,7 +507,7 @@ function OL.Active(rec, stateKey)
         if type(when) == "table" and #when > 0 then
             local ok = true
             for j = 1, #when do
-                if C.Read(when[j]) ~= true then
+                if not PartHolds(when[j], f, C) then
                     ok = false
                     break
                 end
@@ -503,13 +520,16 @@ end
 
 -- The words after the state on a look's row: "no target", "out of combat and
 -- in an instance", in the client's language.
-function OL.Label(look)
+function OL.Label(look, rec)
     local L, C = NS.L, NS.Conditions
     local parts = {}
+    local CT = NS.CombinedTriggers
     for _, k in ipairs(type(look) == "table" and type(look.when) == "table" and look.when or EMPTY) do
         local d = C and C.ByKey(k)
         local w = d and d.text or tostring(k)
         if L then w = L[w] or w end
+        -- a spell's state: its card's word on this icon
+        if OL.STATE_PART[k] and CT and CT.StateWord and rec then w = CT.StateWord(rec, k) end
         parts[#parts + 1] = (w:gsub("^%u", string.lower))
     end
     local andWord = L and L["and"] or "and"
@@ -612,20 +632,34 @@ end
 function OL.Sync()
     wipe(users)
     local keys
+    local function Use(k, id)
+        local set = users[k]
+        if not set then
+            set = {}
+            users[k] = set
+        end
+        set[id] = true
+        keys = keys or {}
+        keys[k] = true
+    end
+    local DA = NS.DriverAura
     Store.EachRecord(function(id, rec)
-        local list = rec.type == "icon" and OL.Effective(rec)
+        if rec.type ~= "icon" then return end
+        -- a combined trigger's conditions (a Missing glow that waits on them)
+        if rec.kind ~= "aura" and DA and DA.GateList then
+            for k = 2, Schema.AURA_GLOW_SLOTS or 1 do
+                for _, c in ipairs(DA.GateList(Store.Resolve(rec, "auraActive", "activeGlowAnd" .. k)) or EMPTY) do
+                    Use(c, id)
+                end
+            end
+        end
+        local list = OL.Effective(rec)
         if type(list) ~= "table" then return end
         for _, l in ipairs(list) do
             local when = type(l) == "table" and l.when
+            -- a spell's state moves with the icon's own repaint, never the watcher
             for _, k in ipairs(type(when) == "table" and when or EMPTY) do
-                local set = users[k]
-                if not set then
-                    set = {}
-                    users[k] = set
-                end
-                set[id] = true
-                keys = keys or {}
-                keys[k] = true
+                if OL.CONDITION_OK[k] then Use(k, id) end
             end
         end
     end)

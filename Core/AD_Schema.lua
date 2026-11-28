@@ -357,7 +357,7 @@ local CD  = { spell = true, item = true, trinket = true, timer = true, totem = t
 local CDST = { spell = true, item = true, trinket = true, timer = true, totem = true, enchant = true, special = true,
     stance = true }
 -- the cooldown-driven sounds; a special icon's own pair is the proc edge
-local USE_CD = { spell = true, item = true, trinket = true, timer = true, enchant = true }
+local USE_CD = { spell = true, item = true, trinket = true, timer = true, enchant = true, totem = true, stance = true }
 local USE = { spell = true, item = true, trinket = true, timer = true, enchant = true, special = true }
 local SP  = { spell = true }
 -- the charges state's rows: a spell's charges, an Any totem icon's totems out
@@ -395,9 +395,10 @@ local CDGB = { spell = true, item = true, trinket = true, timer = true, totem = 
 -- buff: their text is a count).
 local DUR = { spell = true, item = true, trinket = true, timer = true, totem = true, enchant = true, special = true,
     aura = true }
--- The "while on cooldown" glow: the kinds whose cooldown look means a real
--- cooldown (a totem's or enchant's is "missing", worded apart).
-local CDG = { spell = true, item = true, trinket = true, timer = true, special = true }
+-- The "while on cooldown" glow: the kinds with a cooldown bucket (a totem's
+-- or enchant's is "missing", a stance icon's "not in it", worded apart).
+local CDG = { spell = true, item = true, trinket = true, timer = true, special = true, totem = true, enchant = true,
+    stance = true }
 -- An ammo count: the ammo icon's stack text, a spell icon's ammo text.
 local AMMO_CT = { ammo = true, spell = true }
 -- The kinds whose custom texts follow their two states (the first two rows
@@ -435,23 +436,28 @@ Schema.PIN_LABELS = { own = "Its own spot", frame = "A named frame", action = "A
 Schema.OWN_LOOK_CONDITIONS = { "inCombat", "outOfCombat", "hasTarget", "noTarget", "targetHostile",
     "targetDead", "solo", "raid", "instance", "encounter", "mounted", "stealthed" }
 Schema.OWN_LOOK_MAX = 30
+-- The spell's states a look of a spell, item or trinket icon can also wait
+-- for (combined triggers: "Ready and out of range"), read off the icon's own
+-- state, never the game.
+Schema.OWN_LOOK_STATE_PARTS = { "ready", "recharge", "cooldown", "unusable", "nomana", "range" }
+Schema.OWN_LOOK_STATE_KINDS = { spell = true, item = true, trinket = true }
 do
     local function St(glow, a, g, t) return { a = a ~= false, g = g ~= false, t = t ~= false, glow = glow } end
     local READY = St({ "readyGlow", "usableGlow" })
     local COOLDOWN = St({ "cooldownGlow" })
     local PLAIN = St(nil)
     Schema.OWN_LOOK_STATES = {
-        spell = { ready = READY, recharge = St({ "rechargeGlow" }), cooldown = COOLDOWN, unusable = PLAIN,
-            nomana = PLAIN, range = St({ "rangeGlow" }), toggle = St({ "toggleGlow" }) },
-        item = { ready = READY, cooldown = COOLDOWN, unusable = PLAIN, out = PLAIN },
-        trinket = { ready = READY, cooldown = COOLDOWN, out = PLAIN },
-        ammo = { ready = St(nil, true, false, false), out = PLAIN },
+        spell = { ready = READY, recharge = St({ "rechargeGlow" }), cooldown = COOLDOWN, unusable = St({ "unusableGlow" }),
+            nomana = St({ "nomanaGlow" }), range = St({ "rangeGlow" }), toggle = St({ "toggleGlow" }) },
+        item = { ready = READY, cooldown = COOLDOWN, unusable = St({ "unusableGlow" }), out = St({ "outGlow" }) },
+        trinket = { ready = READY, cooldown = COOLDOWN, out = St({ "outGlow" }) },
+        ammo = { ready = St({ "stockGlow" }, true, false, false), out = St({ "outGlow" }) },
         timer = { active = St({ "readyGlow" }), inactive = COOLDOWN, idle = St({ "idleGlow" }) },
-        totem = { active = St({ "readyGlow" }), missing = PLAIN },
-        enchant = { active = St({ "readyGlow" }), missing = PLAIN, noweapon = St(nil, true, false, false) },
+        totem = { active = St({ "readyGlow" }), missing = COOLDOWN },
+        enchant = { active = St({ "readyGlow" }), missing = COOLDOWN, noweapon = St({ "noWeaponGlow" }) },
         special = { ready = St({ "readyGlow" }), cooldown = COOLDOWN },
         groupbuff = { lacking = St(nil, true, false, false), covered = St(nil, true, true, false) },
-        stance = { active = St({ "readyGlow" }), inactive = PLAIN },
+        stance = { active = St({ "readyGlow" }), inactive = COOLDOWN },
         aura = { missing = St({ "missing" }) },
     }
 end
@@ -1146,16 +1152,16 @@ Schema.icon = {
         warnGlow = { d = false, t = "bool", kinds = NA, classOnly = Schema.WARN_CLASSES, label = "Warning glow" },
         warnGlowWhen = { d = NS.IsForever == true and "ammo" or "petHealth", t = "enum", values = Schema.WARN_WHEN,
             labels = Schema.WARN_WHEN_LABELS, valueIf = Schema.WARN_WHEN_IF,
-            kinds = NA, classOnly = Schema.WARN_CLASSES, label = "Glow when", dep = { field = "warnGlow" } },
+            kinds = NA, classOnly = Schema.WARN_CLASSES, label = "Warn when" },
         warnAmmoBelow = { d = 400, t = "int", min = 1, max = 2000, kinds = NA, classOnly = Schema.WARN_CLASSES,
-            label = "Ammo at or below", dep = { { field = "warnGlow" }, { field = "warnGlowWhen", value = "ammo" } } },
+            label = "Ammo at or below", dep = { field = "warnGlowWhen", value = "ammo" } },
         warnPetHealth = { d = 50, t = "int", min = 1, max = 99, kinds = NA, classOnly = Schema.WARN_CLASSES,
             label = "Pet health at or below (%)",
-            dep = { { field = "warnGlow" }, { field = "warnGlowWhen", value = "petHealth" } } },
+            dep = { field = "warnGlowWhen", value = "petHealth" } },
         warnPetMood = { d = "notHappy", t = "enum", values = { "notHappy", "unhappy" },
             labels = { notHappy = "Content or unhappy", unhappy = "Unhappy" },
-            kinds = NA, classOnly = Schema.WARN_CLASSES, label = "Glow while the pet is",
-            dep = { { field = "warnGlow" }, { field = "warnGlowWhen", value = "petMood" } } },
+            kinds = NA, classOnly = Schema.WARN_CLASSES, label = "Warn while the pet is",
+            dep = { field = "warnGlowWhen", value = "petMood" } },
         warnGlowType = { d = "flash", t = "enum", values = GLOW_STYLES, labels = GLOW_STYLE_LABELS, kinds = NA,
             classOnly = Schema.WARN_CLASSES, label = "Warning glow style", dep = { field = "warnGlow" } },
         warnGlowColor = { d = { 1, 0.3, 0.2, 1 }, t = "color", kinds = NA, classOnly = Schema.WARN_CLASSES,
@@ -1446,6 +1452,10 @@ Schema.icon = {
         -- raised. Gear only changes out of combat or by a plain swap.
         noWeaponAlpha = { d = 0, t = "num", min = 0, max = 1, kinds = { enchant = true },
             label = "No weapon opacity" },
+        noWeaponDesaturate = { d = false, t = "bool", kinds = { enchant = true }, label = "No weapon grey out" },
+        noWeaponTintEnabled = { d = false, t = "bool", kinds = { enchant = true }, label = "No weapon tint" },
+        noWeaponTintColor = { d = { 0.5, 0.5, 0.5, 1 }, t = "color", kinds = { enchant = true },
+            label = "No weapon tint color", dep = { field = "noWeaponTintEnabled" } },
         -- A totem's Out of range look: while the totem is out and its buff is
         -- not on you (Drivers\AD_TotemRange.lua). The game draws it, so it
         -- holds in combat.
@@ -1594,7 +1604,7 @@ Schema.icon = {
     -- field: a name from NS.Sounds, or "" for none, and on the moments Lua sees
     -- (not an aura's, which the game plays) words to speak with it.
     alerts = { push = true, kinds = { spell = true, item = true, trinket = true, timer = true, enchant = true,
-        special = true, aura = true }, fields = {
+        special = true, aura = true, totem = true, stance = true, ammo = true }, fields = {
         soundChannel = { d = "Master", t = "enum", values = { "Master", "SFX", "Music", "Ambience", "Dialog" },
             -- the values are the game's channel keys; another language names
             -- them with the game's own volume slider words, English keeps these
@@ -1868,6 +1878,10 @@ Schema.icon = {
         missingTintEnabled = { d = false, t = "bool", label = "Missing tint", dep = { field = "showWhileMissing" } },
         missingTintColor = { d = { 0.5, 0.5, 0.5, 1 }, t = "color", label = "Missing tint color",
             dep = { { field = "showWhileMissing" }, { field = "missingTintEnabled" } } },
+        -- the missing look's border: the game's button covers it while the aura is up
+        missingBorderOn = { d = false, t = "bool", label = "Missing border", dep = { field = "showWhileMissing" } },
+        missingBorderColor = { d = { 1, 0.35, 0.35, 1 }, t = "color", alpha = true, label = "Missing border color",
+            dep = { { field = "showWhileMissing" }, { field = "missingBorderOn" } } },
         -- The aura twin of states.preserveDurationText (aura icons have no
         -- States tab). On by default: the missing dim touches only the art.
         missingPreserveText = { d = true, t = "bool", label = "Keep texts bright while missing", dep = { field = "showWhileMissing" } },
@@ -1897,6 +1911,15 @@ Schema.icon = {
             label = "Tint while the aura is down" },
         overlayTintInactiveColor = { d = { 1, 0.35, 0.35, 1 }, t = "color", kinds = SPX, showIf = AuraCovers,
             label = "Tint color while the aura is down", dep = { field = "overlayTintInactiveOn" } },
+        -- its border and art while the aura is down, under the aura's button the same way
+        overlayBorderInactiveOn = { d = false, t = "bool", kinds = SPX, showIf = AuraCovers,
+            label = "Border while the aura is down" },
+        overlayBorderInactiveColor = { d = { 1, 0.35, 0.35, 1 }, t = "color", alpha = true, kinds = SPX,
+            showIf = AuraCovers, label = "Border color while the aura is down", dep = { field = "overlayBorderInactiveOn" } },
+        overlayIconInactiveFrom = { noDefault = true, inherit = false, d = "icon", t = "enum", values = ICON_FROM,
+            labels = ICON_FROM_LABELS, kinds = SPX, showIf = AuraCovers, label = "Icon from while the aura is down" },
+        overlayIconInactive = { noDefault = true, inherit = false, d = 0, t = "id", kinds = SPX, showIf = AuraCovers,
+            label = "Icon ID while the aura is down" },
         -- 0 falls back to Appearance's Custom icon, then the aura's art. It is
         -- our texture on the engine button, so it holds in combat.
         activeIconFrom = { noDefault = true, inherit = false, d = "icon", t = "enum", values = ICON_FROM, labels = ICON_FROM_LABELS,
@@ -2018,11 +2041,31 @@ Schema.icon = {
             end,
             desc = "The glow waits for combat; out of combat the icon shows without it.",
             dep = { field = "activeGlow" } },
+        -- A combined trigger on a cooldown icon's aura glow ("Ready and aura
+        -- missing"): the spell's states and the conditions the glow also waits
+        -- for, comma lists. The Effects tab's WHEN row writes them.
+        activeGlowState = { d = "", t = "text", kinds = SPX, noDefault = true, inherit = false,
+            label = "Glow waits for the spell's state" },
+        activeGlowAnd = { d = "", t = "text", kinds = SPX, noDefault = true, inherit = false,
+            label = "Glow waits for conditions" },
+        -- a combined trigger's look on the spell's own art, which the aura's
+        -- button covers while the aura is up (its Aura missing part)
+        -- Any of: any one part is enough (the trigger's own state is one of them)
+        activeGlowAny = { d = false, t = "bool", kinds = SPX, noDefault = true, inherit = false,
+            label = "Any of its parts" },
+        activeGlowGrey = { d = false, t = "bool", kinds = SPX, noDefault = true, inherit = false,
+            label = "Grey out" },
+        activeGlowTint = { d = false, t = "bool", kinds = SPX, noDefault = true, inherit = false,
+            label = "Tint" },
+        activeGlowTintColor = { d = { 1, 0.35, 0.35, 1 }, t = "color", kinds = SPX, noDefault = true, inherit = false,
+            label = "Tint color" },
         -- Engine-driven, no reads. Forever opens no pandemic window: "pandemic" draws the last 30%.
-        activeGlowWhen = { d = "always", t = "enum", values = { "always", "pandemic", "time", "missing", "both" },
+        activeGlowWhen = { d = "always", t = "enum", values = { "always", "pandemic", "time", "missing", "both", "parts" },
             labels = { always = "While the aura is up", pandemic = "In the last 30%",
-                time = "When little time is left", missing = "While the aura is missing", both = "Always" },
-            valueIf = { pandemic = function() return false end,
+                time = "When little time is left", missing = "While the aura is missing", both = "Always",
+                parts = "While its parts hold" },
+            -- parts: a combined trigger with no aura part (UI\AD_CombinedTriggers.lua), never picked here
+            valueIf = { pandemic = function() return false end, parts = function() return false end,
                 missing = function(r)
                     local DA = NS.DriverAura
                     return DA ~= nil and DA.MissingGlowOK ~= nil and DA.MissingGlowOK(r)
@@ -2032,7 +2075,7 @@ Schema.icon = {
                     return DA ~= nil and DA.HolderGlowOK ~= nil and DA.HolderGlowOK(r)
                 end },
             desc = "While the aura is up, only once little time is left, only while the aura is missing, or always. Works in combat.",
-            label = "Glow when", dep = { field = "activeGlow" } },
+            label = "Glow when", dep = { { field = "activeGlow" }, { field = "activeGlowState", empty = true } } },
         -- Percent is exact for any aura; seconds need the aura's length typed
         -- in, as the engine's bar runs over a duration addons cannot read.
         activeGlowTimeUnit = { d = "pct", t = "enum", values = { "pct", "sec" },
@@ -2516,10 +2559,100 @@ do
         end
     end
 end
+-- The states that had a look and no glow or sound (Core\AD_StateFx.lua draws
+-- and plays them): each glow the Recharging glow's rows, each sound the
+-- three rows every moment has. Every state is a plain read in combat.
+Schema.STATE_GLOWS = {
+    { pre = "unusable", word = "Can't use it", kinds = SPI, label = "Glow while you can't use it", color = { 0.6, 0.6, 0.6, 1 } },
+    { pre = "nomana", word = "Not enough resource", kinds = SP, label = "Glow while you lack the resource", color = { 0.3, 0.5, 1, 1 } },
+    { pre = "out", word = "Out of stock", kinds = { item = true, ammo = true, trinket = true },
+        label = "Glow while out of stock",
+        color = { 0.85, 0.2, 0.2, 1 } },
+    { pre = "stock", word = "In stock", kinds = { ammo = true }, label = "Glow while in stock", color = { 0.95, 0.95, 0.32, 1 } },
+    { pre = "noWeapon", word = "No weapon", kinds = { enchant = true }, label = "Glow while the hand holds no weapon",
+        color = { 0.85, 0.2, 0.2, 1 } },
+}
+Schema.STATE_SOUNDS = {
+    { pre = "unusable", kinds = SPI, label = "Play a sound when you can't use it", sound = "Can't use it: Sound",
+        say = "Say when you can't use it" },
+    { pre = "nomana", kinds = SP, label = "Play a sound when you lack the resource", sound = "Not enough resource: Sound",
+        say = "Say when you lack the resource" },
+    { pre = "range", kinds = SP, label = "Play a sound when out of range", sound = "Out of range: Sound",
+        say = "Say when out of range" },
+    { pre = "toggle", kinds = SP, label = "Play a sound when toggled on", sound = "Toggled on: Sound",
+        say = "Say when toggled on" },
+    { pre = "assist", kinds = SP, label = "Play a sound when suggested", sound = "Suggested: Sound",
+        say = "Say when suggested" },
+    { pre = "out", kinds = { item = true, ammo = true, trinket = true }, label = "Play a sound when out of stock",
+        sound = "Out of stock: Sound", say = "Say when out of stock" },
+    { pre = "stock", kinds = { ammo = true }, label = "Play a sound when restocked", sound = "In stock: Sound",
+        say = "Say when restocked" },
+    { pre = "noWeapon", kinds = { enchant = true }, label = "Play a sound when the hand holds no weapon",
+        sound = "No weapon: Sound", say = "Say when the hand holds no weapon" },
+    -- a pet's health is drawn by the game, never read: no sound for it
+    { pre = "warn", kinds = NA, classOnly = Schema.WARN_CLASSES, label = "Play a sound on a warning",
+        sound = "Warning: Sound", say = "Say on a warning",
+        showIf = function(rec)
+            local S = NS.Store
+            return not (rec and S and S.Resolve) or S.Resolve(rec, "states", "warnGlowWhen") ~= "petHealth"
+        end },
+}
+do
+    local src = Schema.icon.states.fields
+    local function copy(v)
+        if type(v) ~= "table" then return v end
+        local t = {}
+        for k, x in pairs(v) do t[k] = copy(x) end
+        return t
+    end
+    local parts = { "Glow", "GlowType", "GlowColor", "GlowSpeed", "GlowLines", "GlowThickness", "GlowLength",
+        "GlowParticles", "GlowScale", "GlowIntensity", "GlowXOffset", "GlowYOffset", "GlowMoveX", "GlowMoveY",
+        "GlowCombatOnly", "GlowStrata", "GlowLevel" }
+    for _, g in ipairs(Schema.STATE_GLOWS) do
+        local pre = g.pre
+        for _, part in ipairs(parts) do
+            local from = src["recharge" .. part]
+            local def = {}
+            for k, v in pairs(from) do def[k] = v end
+            def.d = copy(from.d)
+            def.kinds, def.showIf = g.kinds, nil
+            def.label = part == "Glow" and g.label or (Schema.COUNT_GLOW_LABELS[part]
+                or (part == "GlowCombatOnly" and "Glow only in combat") or (part == "GlowStrata" and "Glow strata"))
+            if part == "GlowColor" then def.d = copy(g.color) end
+            if from.dep then
+                def.dep = copy(from.dep)
+                for _, d in ipairs(def.dep.field and { def.dep } or def.dep) do d.field = d.field:gsub("^recharge", pre) end
+            end
+            src[pre .. part] = def
+        end
+        Schema.GLOW_LANE_WORDS[pre] = "Glow"
+    end
+    local alerts = Schema.icon.alerts.fields
+    for _, s in ipairs(Schema.STATE_SOUNDS) do
+        local en, snd, say = s.pre .. "SoundEnabled", s.pre .. "Sound", s.pre .. "Speech"
+        alerts[en] = { d = false, t = "bool", kinds = s.kinds, classOnly = s.classOnly, showIf = s.showIf, label = s.label }
+        alerts[snd] = { d = "", t = "sound", kinds = s.kinds, classOnly = s.classOnly, showIf = s.showIf, label = s.sound,
+            dep = { field = en } }
+        alerts[say] = { noDefault = true, inherit = false, d = "", t = "text", kinds = s.kinds, classOnly = s.classOnly,
+            showIf = s.showIf, label = s.say,
+            desc = "Spoken by WoW's text to speech at its own speech volume, not on the sound channel. Empty says nothing.",
+            dep = { field = en } }
+    end
+    -- a special icon's cooldown start: every proc used, or its timer running
+    local CDS = { special = true }
+    for k in pairs(USE_CD) do CDS[k] = true end
+    for _, f in ipairs({ "cooldownSoundEnabled", "cooldownSound", "cooldownSpeech" }) do alerts[f].kinds = CDS end
+    -- a spell's proc plays the special icon's proc sound rows
+    for _, f in ipairs({ "procSoundEnabled", "procSound", "procSpeech" }) do
+        alerts[f].kinds = { special = true, spell = true }
+    end
+end
 do
     local lanes = { { "states", "ready" }, { "states", "cooldown" }, { "states", "proc" }, { "states", "usable" },
         { "states", "warn" }, { "states", "toggle" }, { "states", "assist" }, { "states", "range" },
         { "states", "recharge" }, { "states", "totemRange" }, { "states", "idle" }, { "auraActive", "active" },
+        { "states", "unusable" }, { "states", "nomana" }, { "states", "out" }, { "states", "stock" },
+        { "states", "noWeapon" },
         { "auraActive", "stacks" }, { "auraActive", "stacks2" }, { "auraActive", "stacks3" }, { "states", "charges" } }
     for _, ln in ipairs(lanes) do
         local sec, pre = ln[1], ln[2]
@@ -2568,6 +2701,21 @@ do
     end
 end
 
+-- every row of a state's new glow carries its state's name ("Can't use it:
+-- Glow speed"), so the search tells it from Ready's own "Glow speed"
+do
+    local fields = Schema.icon.states.fields
+    for _, g in ipairs(Schema.STATE_GLOWS) do
+        for k, def in pairs(fields) do
+            if k ~= g.pre .. "Glow" and k:sub(1, #g.pre + 4) == g.pre .. "Glow" and def.label then
+                def.label = g.word .. ": " .. def.label
+            end
+        end
+        -- the lane's word, as its rows now read ("Can't use it: Glow")
+        Schema.GLOW_LANE_WORDS[g.pre] = (fields[g.pre .. "GlowType"].label:gsub("%s*style$", ""))
+    end
+end
+
 -- A glow's Strata and Level rows. A Missing glow takes them on a layer of its
 -- own, which needs the icon's own button (not a Dynamic group's rows).
 function Schema.GlowLayerOK(rec, suf)
@@ -2582,7 +2730,8 @@ end
 
 Schema.AURA_GLOW_SLOTS = 4
 Schema.AURA_GLOW_FIELDS = {
-    "activeGlow", "activeGlowFor", "activeGlowCombatOnly",
+    "activeGlow", "activeGlowFor", "activeGlowCombatOnly", "activeGlowState", "activeGlowAnd",
+    "activeGlowAny", "activeGlowGrey", "activeGlowTint", "activeGlowTintColor",
     "activeGlowWhen", "activeGlowTimeUnit", "activeGlowTimePct",
     "activeGlowTimeSec", "activeGlowAuraLength",
     "activeGlowType", "activeGlowNative", "activeGlowColor", "activeGlowSpeed",

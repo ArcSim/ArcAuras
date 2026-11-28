@@ -142,6 +142,8 @@ end
 -- The options preview (f._adGlowLaneOnly) shows the glow while the preview
 -- picks the warning lane, whatever the trigger, and hides it for any other.
 function DW.Apply(f, rec)
+    -- its sound on the warning's start (Core\AD_StateFx.lua)
+    if NS.StateFx then NS.StateFx.Sounds(f, rec) end
     local only = f._adGlowLaneOnly
     local preview = only == "warn"
     local want = DW.Wanted(rec) and (only == nil or preview)
@@ -257,7 +259,9 @@ function DW.Arm()
 end
 
 function DW.Sync(f, rec)
-    if DW.Wanted(rec) then
+    -- followed for its glow, or for its sound alone
+    if DW.Wanted(rec) or (rec ~= nil and rec.kind ~= "aura"
+        and Store.Resolve(rec, "alerts", "warnSoundEnabled") == true) then
         DW.frames[f] = rec
     else
         DW.frames[f] = nil

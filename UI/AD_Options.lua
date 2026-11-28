@@ -1663,6 +1663,7 @@ function Options.DepOK(rec, family, section, d, tier)
     if d.unlessFree and not rec.groupId then return true end
     local v = Store.Resolve(rec, d.section or section, d.field)
     if d.nonempty then return v ~= nil and v ~= "" end
+    if d.empty then return v == nil or v == "" end
     if d.notValue ~= nil then return v ~= d.notValue end
     if d.min ~= nil then return type(v) == "number" and v >= d.min end
     if d.anyOf ~= nil then return v ~= nil and d.anyOf[v] == true end
@@ -4961,13 +4962,29 @@ end
 -- NS.L["This group doesn't load on this character (%s). Click its eye to show it while you edit."]
 -- NS.L["This icon doesn't load on this character (%s). Click its eye to show it while you edit."]
 -- NS.L["This bar doesn't load on this character (%s). Click its eye to show it while you edit."]
--- NS.L["This layout doesn't load on this character (%s). Click its eye to show it while you edit."])
+-- NS.L["This layout doesn't load on this character (%s). Click its eye to show it while you edit."]
+-- NS.L["This text doesn't load on this character (%s). Click its eye to show it while you edit."]
+-- NS.L["This texture doesn't load on this character (%s). Click its eye to show it while you edit."]
+-- NS.L["This wheel doesn't load on this character (%s). Click its eye to show it while you edit."]
+-- NS.L["This sound doesn't load on this character (%s). Click its eye to show it while you edit."])
 Options.NOT_LOADED_TIPS = {
     group = "This group doesn't load on this character (%s). Click its eye to show it while you edit.",
     icon = "This icon doesn't load on this character (%s). Click its eye to show it while you edit.",
     bar = "This bar doesn't load on this character (%s). Click its eye to show it while you edit.",
     layout = "This layout doesn't load on this character (%s). Click its eye to show it while you edit.",
+    text = "This text doesn't load on this character (%s). Click its eye to show it while you edit.",
+    texture = "This texture doesn't load on this character (%s). Click its eye to show it while you edit.",
+    wheel = "This wheel doesn't load on this character (%s). Click its eye to show it while you edit.",
+    sound = "This sound doesn't load on this character (%s). Click its eye to show it while you edit.",
 }
+-- Texts, textures, wheels and sounds are saved as bars but are not bars: the
+-- panel's words name them by their kind.
+Options.ITEM_KINDS = { text = true, texture = true, wheel = true, sound = true }
+function Options.WordType(rec)
+    if type(rec) ~= "table" then return nil end
+    if rec.type == "bar" and Options.ITEM_KINDS[rec.barKind] then return rec.barKind end
+    return rec.type
+end
 local function RailRow(i)
     local row = railRows[i]
     if row then return row end
@@ -5024,7 +5041,7 @@ local function RailRow(i)
         -- a layout row says it in its badge, when the badge had room
         if rec.type == "layout" and (item.kind ~= "layout" or row.badge:IsShown()) then return nil end
         local why = AT.Tr((Store.BadgeText(rec)))
-        local whole = Options.NOT_LOADED_TIPS[rec.type]
+        local whole = Options.NOT_LOADED_TIPS[Options.WordType(rec)]
         if whole then return AT.Tr(whole):format(why) end
         return AT.Tr("This %s fails its load conditions on this character (%s). You can still edit it. Click its eye to show it on screen.")
             :format(tostring(rec.type), why)
@@ -6435,7 +6452,7 @@ local function RefreshLayoutPane()
         row.thumbHit:SetScript("OnClick", function() Options.Select("bar", b.id) end)
         row.badge:SetText((Store.BadgeText(b)))
         row.edit:SetScript("OnClick", function() Options.Select("bar", b.id) end)
-        row.del:SetLabel("Delete Bar", 56)
+        row.del:SetLabel(Options.DeleteLabel(b), 56)
         row.del:SetScript("OnClick", function() Options.ConfirmDelete(b) end)
     end
     -- In a layout that loads here, members that do not load here follow the
@@ -7167,8 +7184,8 @@ end
 -- A bar's kind as one whole word, never the stored key with "bar" glued on.
 Options.BAR_KIND_WORDS = { cooldown = "cooldown bar", aura = "aura bar", swing = "swing bar",
     resource = "resource bar", health = "health bar", cast = "cast bar", enchant = "enchant bar",
-    range = "range bar", text = "text bar", texture = "texture bar", wheel = "wheel bar",
-    special = "special bar", sound = "sound bar", timer = "timer bar", stack = "stack bar",
+    range = "range bar", text = "text", texture = "texture", wheel = "wheel",
+    special = "special bar", sound = "sound", timer = "timer bar", stack = "stack bar",
     cdmbar = "Cooldown Manager bar", totembar = "totem bar" }
 function Options.BarKindWord(kind)
     return AT.Tr(Options.BAR_KIND_WORDS[kind] or ((kind or "") .. " bar"))
@@ -7203,9 +7220,10 @@ end
 -- A Delete button names what it deletes: a player pressed the group's
 -- Delete meaning the icon's.
 Options.DELETE_WORDS = { layout = "Delete Layout", group = "Delete Group", icon = "Delete Icon",
-    bar = "Delete Bar", reminder = "Delete Reminder" }
+    bar = "Delete Bar", reminder = "Delete Reminder", text = "Delete Text", texture = "Delete Texture",
+    wheel = "Delete Wheel", sound = "Delete Sound" }
 function Options.DeleteLabel(rec)
-    return Options.DELETE_WORDS[rec and rec.type or ""] or "Delete"
+    return Options.DELETE_WORDS[Options.WordType(rec) or ""] or "Delete"
 end
 
 function Options.ConfirmDelete(rec)
@@ -8094,7 +8112,9 @@ local PREV_DRAGS = {
 Options.GLOW_LANE_OF = { ["states.readyGlow"] = "ready", ["states.procGlow"] = "proc",
     ["states.usableGlow"] = "usable", ["states.cooldownGlow"] = "cooldown", ["states.rangeGlow"] = "range",
     ["states.rechargeGlow"] = "recharge", ["states.warnGlow"] = "warn", ["states.toggleGlow"] = "toggle",
-    ["states.assistGlow"] = "assist", ["states.idleGlow"] = "idle" }
+    ["states.assistGlow"] = "assist", ["states.idleGlow"] = "idle", ["states.unusableGlow"] = "unusable",
+    ["states.nomanaGlow"] = "nomana", ["states.outGlow"] = "out", ["states.stockGlow"] = "stock",
+    ["states.noWeaponGlow"] = "noWeapon" }
 local function PreviewGlowLane(rec)
     local ET = Options.EditorTabs
     local EF = Options.EffectsTab
@@ -8132,6 +8152,9 @@ local function PreviewGlowLane(rec)
     -- the toggle lane also shows a queued ability's checkmark
     if R("toggleGlow") == true or R("queueCheck") == true then return "toggle" end
     if R("assistGlow") == true then return "assist" end
+    for _, g in ipairs(Schema.STATE_GLOWS) do
+        if R(g.pre .. "Glow") == true then return g.pre end
+    end
     return "ready"
 end
 
@@ -10381,6 +10404,9 @@ local function BuildIconEditor(parent)
     SkinNote(borderDef, "The Cooldown Manager look draws the border and the shadow.", true)
     -- its colour while the aura is up, a skin's border included
     More(borderDef, "auraActive", { "activeBorderOn", "activeBorderColor" })
+    -- and while it is missing (an aura icon), or down under its button (a cooldown icon)
+    More(borderDef, "auraMissing", { "missingBorderOn", "missingBorderColor" })
+    More(borderDef, "auraActive", { "overlayBorderInactiveOn", "overlayBorderInactiveColor" })
     -- The Cooldown Manager's soft shadow frame.
     Sub(borderDef, "Shadow", "appearance", { "shadowEnabled", "shadowSize" })
     -- the Cooldown Manager's dark overlay on a spell out of range
@@ -10501,6 +10527,8 @@ local function BuildIconEditor(parent)
                 if Store.Resolve(r, "auraActive", field) == true then return "Show the icon" end
             end)
         end
+        -- the Warning trigger's own rules: what it warns of, and when
+        EF.LookRow("warn", "states", { "warnGlowWhen", "warnAmmoBelow", "warnPetHealth", "warnPetMood" })
         EF.LookRow("out", "outOfStock", { "hideWhenMissing" }, function(r)
             if Store.Resolve(r, "outOfStock", "hideWhenMissing") == true then return "Hidden", true end
         end)
@@ -10537,6 +10565,14 @@ local function BuildIconEditor(parent)
         local W = ET.GLOW_WHEN
         local function Card(title, section, prefix, suffix, switch, when, o, extra)
             local fields, words = ET.GlowCard(section, prefix, suffix, switch, extra)
+            -- rows that belong to the trigger itself, not to its glow
+            if o.skip then
+                local keep = {}
+                for _, f in ipairs(fields) do
+                    if not o.skip[f] then keep[#keep + 1] = f end
+                end
+                fields = keep
+            end
             o.labels = words
             o.card = { when = when, word = switch }
             o.fx = section .. "." .. prefix .. (suffix or "")
@@ -10622,20 +10658,37 @@ local function BuildIconEditor(parent)
             { kindOnly = { timer = true }, noLook = true, applies = function(r) return ET.CustomCd(r) end })
         -- ammo and pet warnings (Drivers\AD_DriverWarn.lua), for the classes
         -- with ammo or a pet
+        -- what it warns of sits on the trigger's Look (EF.LookRow below), shared by its glow and sound
         Card("Warning", "states", "warnGlow", nil, "Warning glow", W.warn, { noLook = true,
+            skip = { warnGlowWhen = true },
             applies = function(r)
                 return r.kind ~= "aura" and Schema.WARN_CLASSES[Store.ClassTag() or ""] == true
-            end }, {
-            { "warnAmmoBelow", "Ammo at or below" },
-            { "warnPetHealth", "Pet health under (%)" },
-            { "warnPetMood", "Glow while the pet is" },
-        })
+            end })
         -- Shoot or Auto Shot repeating, melee Attack swinging, a pet spell on
         -- autocast (Drivers\AD_DriverToggle.lua): on the spell icons that toggle
         Card("While toggled on", "states", "toggleGlow", nil, "Glow while toggled on", W.toggle, { noLook = true,
             applies = function(r)
                 return NS.DriverToggle ~= nil and NS.DriverToggle.IsToggle(r) and not Schema.QueueShows(r)
             end })
+        -- the states that had only a look (Core\AD_StateFx.lua draws these)
+        Card("While you can't use it", "states", "unusableGlow", nil, "Glow while you can't use it",
+            "you can't use it now", { kindOnly = { spell = true, item = true }, noLook = true })
+        Card("While you lack the resource", "states", "nomanaGlow", nil, "Glow while you lack the resource",
+            "you lack the resource for it", { kindOnly = { spell = true }, noLook = true })
+        Card("While out of stock", "states", "outGlow", nil, "Glow while out of stock", "none is left",
+            { kindOnly = { item = true, ammo = true }, noLook = true })
+        Card("While the slot is empty", "states", "outGlow", nil, "Glow while the slot is empty",
+            "nothing is equipped", { kindOnly = { trinket = true }, noLook = true })
+        Card("While in stock", "states", "stockGlow", nil, "Glow while in stock", "you have ammo",
+            { kindOnly = { ammo = true }, noLook = true })
+        Card("While the hand holds no weapon", "states", "noWeaponGlow", nil, "Glow while the hand holds no weapon",
+            "this hand holds no weapon", { kindOnly = { enchant = true }, noLook = true })
+        -- a totem or an enchant gone, you out of the stance: the cooldown bucket's glow
+        Card("While missing", "states", "cooldownGlow", nil, "Glow while missing",
+            function(r) return r.kind == "totem" and "no totem is out" or "the weapon has none" end,
+            { kindOnly = { totem = true, enchant = true }, noLook = true })
+        Card("While not in it", "states", "cooldownGlow", nil, "Glow while not in it", "you are not in it",
+            { kindOnly = { stance = true }, noLook = true })
         -- the game's Assisted Highlight suggests it next (retail)
         Card("While suggested", "states", "assistGlow", nil, "Glow while suggested", W.assist, { kindOnly = "spell",
             applies = function() return NS.DriverAssist ~= nil and NS.DriverAssist.Available() end })
@@ -10691,6 +10744,12 @@ local function BuildIconEditor(parent)
     -- and falling off (NS.DriverEnchant plays them on a real change only).
     if ET then
         local CD_SOUNDS = { spell = true, item = true, trinket = true }
+        -- a special icon that is a timer (Nature's Guardian), not a deck
+        local function SpecialTimerOf(r)
+            local SI = NS.SpecialIcon
+            local d = SI and SI.Def and SI.Def(r)
+            return d ~= nil and d.isTimer == true
+        end
         -- a charge spell's cooldown starts with its last charge spent
         local function NotCharge(r) return CD_SOUNDS[r.kind] == true and not (r.kind == "spell" and ET.IsCharge(r)) end
         local function Charge(r) return r.kind == "spell" and ET.IsCharge(r) end
@@ -10723,6 +10782,26 @@ local function BuildIconEditor(parent)
             { "When it goes on", "readySound", "enchant" },
             { "When it falls off", "cooldownSound", "enchant" },
             { "On proc", "procSound", "special" },
+            -- the states' moments Core\AD_StateFx.lua plays
+            { "When you can't use it", "unusableSound", { spell = true, item = true } },
+            { "When you lack the resource", "nomanaSound", "spell" },
+            { "When out of range", "rangeSound", "spell" },
+            { "When toggled on", "toggleSound", "spell" },
+            { "On proc", "procSound", "spell" },
+            { "When suggested", "assistSound", "spell" },
+            { "When out of stock", "outSound", { item = true, ammo = true } },
+            { "When the slot empties", "outSound", "trinket" },
+            { "When restocked", "stockSound", "ammo" },
+            { "When the hand holds no weapon", "noWeaponSound", "enchant" },
+            { "When the totem goes down", "readySound", "totem" },
+            { "When the totem is gone", "cooldownSound", "totem" },
+            { "When you enter it", "readySound", "stance" },
+            { "When you leave it", "cooldownSound", "stance" },
+            { "On a warning", "warnSound", { spell = true, item = true, trinket = true, timer = true, totem = true,
+                ammo = true, enchant = true, special = true, stance = true },
+                function(r) return Schema.WARN_CLASSES[Store.ClassTag() or ""] == true end },
+            { "When every proc is used", "cooldownSound", "special", function(r) return not SpecialTimerOf(r) end },
+            { "When its timer starts", "cooldownSound", "special", function(r) return SpecialTimerOf(r) end },
             { "When the next draw is guaranteed", "sureSound", "special" },
             { "When the aura appears", "auraGainSound", AURA_ICONS, AuraUp, true },
             { "When it gains a stack", "auraStackSound", AURA_CD, AuraOn, true },
@@ -10757,38 +10836,31 @@ local function BuildIconEditor(parent)
             or (r.kind ~= "aura" and NS.Schema.OverlayArtShows(r) and Store.Resolve(r, "auraActive", "overlayArt") == "spell")
     end })
     -- The aura's swipe and its border's colour while it is up, as effects of
-    -- the aura's trigger: the rows the Swipe and Border tabs already draw,
-    -- lit while not as they come.
-    local SWIPE_LIT = { "swipeShow", "swipeColor", "overlaySwipeColor", "swipeReverse", "overlaySwipeReverse",
-        "swipeEdge", "swipeBling" }
-    local function Differs(v, d)
-        if type(v) == "table" and type(d) == "table" then
-            for i = 1, 4 do
-                if math.abs((v[i] or 1) - (d[i] or 1)) > 0.001 then return true end
-            end
-            return false
-        end
-        return v ~= d
-    end
+    -- the aura's trigger: the rows the Swipe and Border tabs already draw. The
+    -- swipe is on while it shows (the aura draws it from the start): its Show
+    -- is the tab's switch, so Remove takes it away and + Add effect brings it.
     Block(CT, nil, "Aura swipe", "auraSwipe", {
         "swipeShow", "swipeColor", "overlaySwipeColor", "swipeReverse", "overlaySwipeReverse",
         "swipeEdge", "edgeColor", "swipeBling",
-    }, { fx = "auraSwipe.look", lineName = false, noLook = true,
+    }, { fx = "auraSwipe.look", card = {}, lineName = false, noLook = true,
         labels = { swipeShow = "Show", swipeColor = "Color", overlaySwipeColor = "Color", swipeReverse = "Reverse",
-            overlaySwipeReverse = "Reverse", swipeEdge = "Edge", edgeColor = "Edge color", swipeBling = "Finish flash" },
-        lit = function(r)
-            local sec = Schema.icon.auraSwipe
-            for _, f in ipairs(SWIPE_LIT) do
-                local def = sec.fields[f]
-                if def and Schema.Applies(def, sec, r.kind) and Differs(Store.Resolve(r, "auraSwipe", f), def.d) then
-                    return true
-                end
-            end
-            return false
-        end })
+            overlaySwipeReverse = "Reverse", swipeEdge = "Edge", edgeColor = "Edge color", swipeBling = "Finish flash" } })
     Block(CT, nil, "Border while active", "auraActive", { "activeBorderOn", "activeBorderColor" },
         { fx = "auraActive.activeBorderOn", card = {}, lineName = false, noLook = true,
             labels = { activeBorderOn = "Border", activeBorderColor = "Color" } })
+    -- the missing look's border, and a cooldown icon's border and art while its aura is down
+    Block(CT, nil, "Border while missing", "auraMissing", { "missingBorderOn", "missingBorderColor" },
+        { fx = "auraMissing.missingBorderOn", card = {}, lineName = false, noLook = true,
+            labels = { missingBorderOn = "Border", missingBorderColor = "Color" } })
+    Block(CT, nil, "Border while the aura is down", "auraActive", { "overlayBorderInactiveOn", "overlayBorderInactiveColor" },
+        { fx = "auraActive.overlayBorderInactiveOn", card = {}, lineName = false, noLook = true,
+            labels = { overlayBorderInactiveOn = "Border", overlayBorderInactiveColor = "Color" } })
+    Block(CT, nil, "Art while the aura is down", "auraActive", { "overlayIconInactiveFrom", "overlayIconInactive" },
+        { fx = "art.overlayMissing", lineName = false, noLook = true,
+            labels = { overlayIconInactiveFrom = "Icon from", overlayIconInactive = "ID" },
+            lit = function(r)
+                return (tonumber(Store.Resolve(r, "auraActive", "overlayIconInactive")) or 0) ~= 0
+            end })
     Block(CT, nil, "Art while missing", "auraMissing", { "missingIconFrom", "missingIcon" },
         { fx = "art.missing", lineName = false, labels = { missingIconFrom = "Icon from", missingIcon = "ID" },
             lit = function(r)
@@ -12271,6 +12343,7 @@ local function RefreshBarPane()
         sub = rec.barMode and ("  -  " .. AT.Tr(stack and "stack mode" or "duration mode")) or ""
     end
     barHeader.sub:SetText(sub)
+    barHeader._del:SetLabel(Options.DeleteLabel(rec), 56)
     Options.FitHeader(barHeader)
     local prevH = barPrev.Attach(barPane, -36)
     barEditorPage:ClearAllPoints()
@@ -12289,6 +12362,7 @@ local function BuildBarPane()
     del:SetPoint("TOPRIGHT", -4, -2)
     del:SetScript("OnClick", function() Options.ConfirmDelete(SelBar()) end)
     barHeader._btns = { del }
+    barHeader._del = del
 
     -- the live preview band (RefreshBarPane pins it under the header)
     barPrev.Build(barPane)
@@ -16042,8 +16116,13 @@ function IE.Join(parts)
 end
 
 -- a record kind's count ("2 icons"), for the kinds a string or a pick holds
+-- (keys: NS.L["%d text"] NS.L["%d texts"] NS.L["%d texture"] NS.L["%d wheel"] NS.L["%d wheels"]
+-- NS.L["%d sound"] NS.L["%d sounds"])
 IE.KIND_WORDS = { layout = { "%d layout", "%d layouts" }, group = { "%d group", "%d groups" },
-    icon = { "%d icon", "%d icons" }, bar = { "%d bar", "%d bars" }, reminder = { "%d reminder", "%d reminders" } }
+    icon = { "%d icon", "%d icons" }, bar = { "%d bar", "%d bars" }, reminder = { "%d reminder", "%d reminders" },
+    text = { "%d text", "%d texts" }, texture = { "%d texture", "%d textures" }, wheel = { "%d wheel", "%d wheels" },
+    sound = { "%d sound", "%d sounds" } }
+IE.ITEM_ORDER = { "group", "icon", "bar", "text", "texture", "wheel", "sound" }
 function IE.KindCount(k, n)
     local w = IE.KIND_WORDS[k]
     return IE.Count(n, w[1], w[2])
@@ -16095,7 +16174,8 @@ function IE.Brings(payload)
             elseif r.type == "reminder" then
                 if r.groupId == nil or here[r.groupId] ~= "group" then c.reminder = c.reminder + 1 end
             elseif not ((r.groupId ~= nil and here[r.groupId]) or (r.layoutId ~= nil and here[r.layoutId])) then
-                c[r.type] = c[r.type] + 1
+                local k = Options.WordType(r)
+                c[k] = (c[k] or 0) + 1
             end
         end
     end
@@ -16106,7 +16186,7 @@ end
 -- words, and their total
 function IE.KindsText(c)
     local parts, n = {}, 0
-    for _, k in ipairs({ "group", "icon", "bar" }) do
+    for _, k in ipairs(IE.ITEM_ORDER) do
         local v = c[k] or 0
         if v > 0 then
             parts[#parts + 1] = IE.KindCount(k, v)
@@ -16121,10 +16201,13 @@ end
 function IE.HoldsText(payload)
     local c = {}
     for _, r in ipairs(payload.records or {}) do
-        if type(r) == "table" and r.type then c[r.type] = (c[r.type] or 0) + 1 end
+        if type(r) == "table" and r.type then
+            local k = Options.WordType(r)
+            c[k] = (c[k] or 0) + 1
+        end
     end
     local parts = {}
-    for _, k in ipairs({ "layout", "group", "icon", "bar", "reminder" }) do
+    for _, k in ipairs({ "layout", "group", "icon", "bar", "text", "texture", "wheel", "sound", "reminder" }) do
         local v = c[k] or 0
         if v > 0 then parts[#parts + 1] = IE.KindCount(k, v) end
     end
@@ -16862,7 +16945,10 @@ function IE.Imported(res, err, tid, plan)
         end
         if ni > 0 and res.target then
             local c = {}
-            for _, it in ipairs(res.items) do c[it.type] = (c[it.type] or 0) + 1 end
+            for _, it in ipairs(res.items) do
+                local k = Options.WordType(it)
+                c[k] = (c[k] or 0) + 1
+            end
             -- a layout the import had to make says so
             local made = tid == 0
             for _, l in ipairs(res.layouts) do
@@ -18940,6 +19026,7 @@ function Options.Search.DepNote(row)
         return Shown(tostring((L and L[v]) or v))
     end
     if d.nonempty then return Tr("shows when %s is set"):format(name) end
+    if d.empty then return Tr("shows when %s is not set"):format(name) end
     if d.notValue ~= nil then return Tr("shows when %s is not %s"):format(name, word(d.notValue)) end
     if d.min ~= nil then return Tr("shows when %s is %s or more"):format(name, d.min) end
     if d.listMin ~= nil then return Tr("shows when %s holds %s numbers or more"):format(name, d.listMin) end

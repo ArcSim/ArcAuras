@@ -352,6 +352,10 @@ end
 function Factory.GetTexture(rec)
     local ovTex = rec.kind == "aura"
         and OverrideFor(rec, "auraMissing", "missingIcon") or nil
+    -- a cooldown icon's art while its aura is down, under the aura's button
+    if not ovTex and rec.kind ~= "aura" and Factory.AuraCovers(rec) then
+        ovTex = OverrideFor(rec, "auraActive", "overlayIconInactive")
+    end
     ovTex = ovTex or OverrideFor(rec, "appearance", "customIcon")
     if ovTex then return ovTex end
     return KindTexture(rec)
@@ -390,8 +394,9 @@ function Factory.RefreshArt(f, rec)
         f._adArtOv = Store.Resolve(rec, "appearance", "customIcon")
         f._adArtOvFrom = Store.Resolve(rec, "appearance", "customIconFrom")
         f._adArtActive = Store.Resolve(rec, "appearance", "activeArt") ~= false
+        f._adArtDown = Factory.AuraCovers(rec) and OverrideFor(rec, "auraActive", "overlayIconInactive") or nil
     end
-    PaintArt(f, OverrideTexture(f._adArtOv, f._adArtOvFrom)
+    PaintArt(f, f._adArtDown or OverrideTexture(f._adArtOv, f._adArtOvFrom)
         or SpellArt(rec.driver or {}, f._adArtActive))
 end
 
@@ -912,6 +917,7 @@ function Factory.Release(id)
         Factory.StopUsableGlow(f)
         Factory.StopRangeGlow(f)
         Factory.StopRechargeGlow(f)
+        if NS.StateFx then NS.StateFx.Drop(f) end
         f._adStateSig = nil   -- the lanes just stopped: the next feed repaints
         Factory.SetPhase(f, nil, false)
         if NS.DriverWarn then NS.DriverWarn.Drop(f) end
@@ -1641,11 +1647,33 @@ function Factory.ActiveBorderColor(rec)
     return Store.Resolve(rec, "auraActive", "activeBorderColor") or { 1, 0.82, 0, 1 }
 end
 
+-- The border's colour on the look drawn while the aura is missing, when the
+-- icon sets one, else nil: an aura icon's own look, or a cooldown icon's
+-- look its aura's button covers while up (Factory.AuraCovers).
+function Factory.MissBorderColor(rec)
+    if not rec then return nil end
+    if rec.kind == "aura" then
+        if Store.Resolve(rec, "auraMissing", "missingBorderOn") ~= true then return nil end
+        return Store.Resolve(rec, "auraMissing", "missingBorderColor") or { 1, 0.35, 0.35, 1 }
+    end
+    if Store.Resolve(rec, "auraActive", "overlayBorderInactiveOn") ~= true or not Factory.AuraCovers(rec) then return nil end
+    return Store.Resolve(rec, "auraActive", "overlayBorderInactiveColor") or { 1, 0.35, 0.35, 1 }
+end
+
+-- A holder's skin border colour: the Active one while it wears the Active
+-- look, else the missing one, else nil (the skin's own).
+function Factory.HolderBorderOverride(rec, live)
+    if live then return Factory.ActiveBorderColor(rec) end
+    return Factory.MissBorderColor(rec)
+end
+
 -- The border's colour: its own or the player's class colour (the alpha its
 -- own), turned grey while the art is (grey) when it follows the art. live:
--- a look drawn while the aura is up, which takes the Active border color.
+-- a look drawn while the aura is up, which takes the Active border color;
+-- any other takes the missing look's (Factory.MissBorderColor).
 function Factory.BorderColor(rec, grey, live)
     local c = live and Factory.ActiveBorderColor(rec) or nil
+    if not c and not live then c = Factory.MissBorderColor(rec) end
     if not c then
         c = Store.Resolve(rec, "appearance", "borderColor") or { 0, 0, 0, 1 }
         if Store.Resolve(rec, "appearance", "borderClassColor") == true and UnitClass then
@@ -1691,7 +1719,7 @@ function Factory.BorderLive(f, rec, live)
         for _, host in ipairs({ f.icon and f.icon:GetParent() or false, f._adSkinTop or false }) do
             local t = host and host._adSkinNormal
             if t and t:IsShown() then
-                SkinPaint(t, plan.normal, live and Factory.ActiveBorderColor(rec) or plan.colors.Normal, SKIN_NORMAL)
+                SkinPaint(t, plan.normal, Factory.HolderBorderOverride(rec, live) or plan.colors.Normal, SKIN_NORMAL)
             end
         end
     end
@@ -2693,7 +2721,7 @@ function Factory.ApplyStyle(f, rec)
     end
     local back = f.icon:GetParent()
     Factory.SkinLayers(plan, back, top or back, f, f.icon, fwS or 36, fhS or 36,
-        f._adArtAlpha or f._adShownAlpha or f._adStateAlpha or 1, forceHide, f._adBorderLive and Factory.ActiveBorderColor(rec) or nil)
+        f._adArtAlpha or f._adShownAlpha or f._adStateAlpha or 1, forceHide, Factory.HolderBorderOverride(rec, f._adBorderLive))
 
     local hasSwipe = NS.Schema.Applies(nil, NS.Schema.icon.swipe, rec.kind)
     if hasSwipe then
@@ -4095,6 +4123,8 @@ function Factory.StyleAuraButton(b, rec, px, opts)
     local row = opts.rowGlows == true
     local function Elsewhere(k)
         if row then return Factory.MissingGlowOn(rec, k) or (opts.rowLanes ~= nil and opts.rowLanes[k] == true) end
+        -- a combined trigger's glow rides a lane of its own (it waits on plain parts)
+        if Factory.GlowGated(rec, k) then return true end
         -- under the time gate the editor's stand-in draws an Always glow too
         if timed and opts.previewGlows == true then
             return R("auraActive", "activeGlowWhen" .. ((k > 1) and k or "")) == "missing"
@@ -5545,6 +5575,49 @@ function Factory.AlwaysGlowOn(rec, slot)
 end
 
 -- A glow the holder draws (Missing or Always), never the live button.
+-- A combined trigger's look while the aura is down (Grey out, Tint): drawn on
+-- the icon's own art, which the aura's button covers while the aura is up, so
+-- only where it does (Factory.AuraCovers). Returns grey, tint colour (or nil).
+function Factory.ComboLook(f, rec)
+    if not rec or rec.kind == "aura" then return false, nil end
+    local DA = NS.DriverAura
+    if not (DA and DA.GlowGateHolds and DA.GatePlainAny) then return false, nil end
+    local covers
+    local grey, tint = false, nil
+    for k = 2, (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1 do
+        if Factory.GlowGated(rec, k) then
+            local g = Store.Resolve(rec, "auraActive", "activeGlowGrey" .. k) == true
+            local t = Store.Resolve(rec, "auraActive", "activeGlowTint" .. k) == true
+            if g or t then
+                local when = Store.Resolve(rec, "auraActive", "activeGlowWhen" .. k)
+                local any = Store.Resolve(rec, "auraActive", "activeGlowAny" .. k) == true
+                local on = false
+                if when == "parts" then
+                    -- no aura part: its parts alone decide
+                    if any then on = DA.GatePlainAny(rec, k, f) == true else on = DA.GlowGateHolds(rec, k, f) end
+                elseif when == "missing" and not any then
+                    if covers == nil then covers = Factory.AuraCovers(rec) end
+                    on = covers and DA.GlowGateHolds(rec, k, f)
+                end
+                if on then
+                    if g then grey = true end
+                    if t and not tint then tint = Store.Resolve(rec, "auraActive", "activeGlowTintColor" .. k) end
+                end
+            end
+        end
+    end
+    return grey, tint
+end
+
+-- A cooldown icon's numbered aura glow that is a combined trigger's: it waits
+-- on the spell's states or on conditions (Drivers\AD_DriverAura.lua gates it).
+function Factory.GlowGated(rec, slot)
+    if not (rec and slot and slot > 1) or rec.kind == "aura" then return false end
+    local s = Store.Resolve(rec, "auraActive", "activeGlowState" .. slot)
+    local c = Store.Resolve(rec, "auraActive", "activeGlowAnd" .. slot)
+    return (type(s) == "string" and s ~= "") or (type(c) == "string" and c ~= "")
+end
+
 function Factory.HolderGlowOn(rec, slot)
     return Factory.MissingGlowOn(rec, slot) or Factory.AlwaysGlowOn(rec, slot)
 end
@@ -5727,6 +5800,18 @@ end
 
 -- After every state paint of a non-aura icon: the dynamic-group edge, the
 -- state's glows, the border's grey.
+-- A cooldown icon's state now, as its Effects tab names them: its bucket
+-- (ready, recharge, cooldown) and its usability while it can be cast
+-- (unusable, nomana, range) or nil; nothing before the driver fed it.
+function Factory.StateNow(f)
+    if not f or f._adOnCooldown == nil then return nil, nil end
+    local recharging = f._adRecharging == true
+    local onCooldown = f._adOnCooldown == true
+    local bucket = (recharging and "recharge") or (onCooldown and "cooldown") or "ready"
+    local castable = not onCooldown or recharging
+    return bucket, castable and f._adUsability or nil
+end
+
 local function StateTail(f, rec, onCooldown)
     -- Dynamic groups re-place from here, so every icon kind moves them. Fired
     -- when a drop-out input flips (busy, state alpha 0, hidden while missing),
@@ -5744,11 +5829,18 @@ local function StateTail(f, rec, onCooldown)
     end
     Factory.UpdateGlow(f, rec, not onCooldown)
     Factory.UpdateUsableGlow(f, rec)
+    -- the aura's Missing glows that wait on this state (combined triggers)
+    if f._adRecId and rec.kind ~= "aura" then
+        local DA = NS.DriverAura
+        if DA and DA.GateSync then DA.GateSync(f, rec) end
+    end
     Factory.UpdateCooldownGlow(f, rec)
     Factory.UpdateRangeGlow(f, rec)
     Factory.UpdateRechargeGlow(f, rec)
     Factory.UpdateIdleGlow(f, rec)
     if f._adProcLit ~= nil then Factory.SetProcGlow(f, rec, f._adProcLit) end
+    -- the glows and sounds of the states with no lane above (Core\AD_StateFx.lua)
+    if NS.StateFx then NS.StateFx.Sync(f, rec) end
     -- the border follows the art's final grey (our own texture: a plain read)
     Factory.BorderGrey(f, rec, f.icon.IsDesaturated ~= nil and f.icon:IsDesaturated() == true)
 end
@@ -6084,17 +6176,19 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     if OL then
         bucket = (recharging and "recharge") or (idle and "idle") or (onCooldown and "cooldown") or "ready"
         local bkey = OL.StateKey(rec.kind, bucket)
-        LB = OL.Active(rec, bkey)
+        LB = OL.Active(rec, bkey, f)
         local u = f._adUsability
-        if u == "unusable" or u == "nomana" or u == "range" then LU = OL.Active(rec, u) end
-        if f._adToggled then LT = OL.Active(rec, "toggle") end
+        if u == "unusable" or u == "nomana" or u == "range" then LU = OL.Active(rec, u, f) end
+        if f._adToggled then LT = OL.Active(rec, "toggle", f) end
         if f._adItemEmpty and (rec.kind == "item" or rec.kind == "ammo" or rec.kind == "trinket") then
             LO = OL.Active(rec, "out")
         end
         if f._adNoWeapon and rec.kind == "enchant" then LN = OL.Active(rec, "noweapon") end
         OL.PutGlows(f, rec, bkey, LB)
-        if u == "range" then OL.PutGlows(f, rec, "range", LU) end
+        if u == "range" or u == "unusable" or u == "nomana" then OL.PutGlows(f, rec, u, LU) end
         OL.PutGlows(f, rec, "toggle", LT)
+        if LO then OL.PutGlows(f, rec, "out", LO) end
+        if LN then OL.PutGlows(f, rec, "noweapon", LN) end
     end
     -- "always" / "ready" / "cooldown": which state a rule covers (recharging is on cooldown)
     local function StateWhen(v)
@@ -6292,6 +6386,10 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         and NS.DriverAura.OverlayOn and NS.DriverAura.OverlayOn(rec) then
         f.icon:SetDesaturated(true)
     end
+    -- a combined trigger with the aura missing: its look on the art the aura's
+    -- button covers while up, while its other parts hold
+    local comboGrey, comboTint = Factory.ComboLook(f, rec)
+    if comboGrey then f.icon:SetDesaturated(true) end
     -- Tint priority, as Blizzard's: range red, usability, state tints, white.
     -- The usability tints show while it can be cast (a charge left counts),
     -- or on a cooling spell too as the game's buttons do.
@@ -6332,6 +6430,7 @@ function Factory.SetState(f, rec, onCooldown, desatState)
     if R("auraActive", "overlayTintInactiveOn") == true and Factory.AuraCovers(rec) then
         tc = R("auraActive", "overlayTintInactiveColor") or { 1, 0.35, 0.35, 1 }
     end
+    if comboTint then tc = comboTint end
     -- Vertex alpha is the texture's alpha: a literal 1 would undo the state
     -- dim's SetAlpha on the art, so every tint carries the art's alpha.
     local va = f._adArtAlpha or f._adShownAlpha or f._adStateAlpha or 1
@@ -6366,6 +6465,18 @@ function Factory.SetState(f, rec, onCooldown, desatState)
         if tintO == true or (tintO == nil and R("outOfStock", "outTintEnabled") == true) then
             local oc = (tintO and LO.tintColor) or R("outOfStock", "outTintColor") or { 0.5, 0.5, 0.5, 1 }
             f.icon:SetVertexColor(oc[1], oc[2], oc[3], f._adArtAlpha or f._adShownAlpha or f._adStateAlpha or 1)
+        end
+    end
+    -- a weapon enchant's hand with no weapon: its own grey and tint
+    if rec.kind == "enchant" and f._adNoWeapon then
+        local lookN = LN and LN.grey
+        if desatOK and (lookN == true or (lookN == nil and R("states", "noWeaponDesaturate") == true)) then
+            f.icon:SetDesaturated(true)
+        end
+        local tintN = LN and LN.tint
+        if tintN == true or (tintN == nil and R("states", "noWeaponTintEnabled") == true) then
+            local nc = (tintN and LN.tintColor) or R("states", "noWeaponTintColor") or { 0.5, 0.5, 0.5, 1 }
+            f.icon:SetVertexColor(nc[1], nc[2], nc[3], f._adArtAlpha or f._adShownAlpha or f._adStateAlpha or 1)
         end
     end
     StateTail(f, rec, onCooldown)
@@ -7203,7 +7314,7 @@ function Factory.UpdateCooldownGlow(f, rec)
     -- No charges' glow: a recharging charge spell has a glow of its own, and
     -- so has a Custom Icon's Ready
     local want = f._adOnCooldown == true and f._adRecharging ~= true and f._adIdleReady ~= true
-        and rec.kind ~= "aura"
+        and rec.kind ~= "aura" and not (rec.kind == "enchant" and f._adNoWeapon)
         and Factory.LookGlow(f, "cooldownGlow", R("states", "cooldownGlow") == true)
         and R("appearance", "forceHideIcon") ~= true
         and LaneAllowed(f, "cooldown") and not Factory.GlowHidden(f)
@@ -7255,6 +7366,7 @@ function Factory.CombatGlows(f, rec)
     if R("states", "cooldownGlowCombatOnly") == true then Factory.UpdateCooldownGlow(f, rec) end
     if R("states", "rangeGlowCombatOnly") == true then Factory.UpdateRangeGlow(f, rec) end
     if R("states", "rechargeGlowCombatOnly") == true then Factory.UpdateRechargeGlow(f, rec) end
+    if NS.StateFx then NS.StateFx.Glows(f, rec) end
 end
 
 -- Duration text visibility, re-applied per feed. Hiding while charges remain

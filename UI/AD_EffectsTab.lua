@@ -496,17 +496,50 @@ end
 
 -- Cards
 
--- Every card the record can have, in order: each state, its own looks
--- under it, then the fade rules.
+-- A combined trigger as a state its card reads (UI\AD_CombinedTriggers.lua):
+-- its parts for a name, its numbered Missing glow for its one effect.
+local COMBO = {}
+local function ComboState(k)
+    local st = COMBO[k]
+    if not st then
+        st = { key = "combo" .. k, combo = k, label = "combo" .. k,
+            -- its look on the art the aura's button covers (CT.LookOK)
+            grey = { "auraActive", "activeGlowGrey" .. k },
+            tint = { "auraActive", "activeGlowTintColor" .. k, on = "activeGlowTint" .. k },
+            labelFn = function(rec)
+                local CT = NS.CombinedTriggers
+                return CT and CT.Name(rec, k) or ""
+            end,
+            whenFn = function(rec)
+                local CT = NS.CombinedTriggers
+                return CT and CT.WhenLine(CT.PartList(rec, k), CT.Any(rec, k)) or ""
+            end,
+            fx = { glow = { "auraActive.activeGlow" .. k } } }
+        COMBO[k] = st
+    end
+    return st
+end
+EF.ComboState = ComboState
+
+-- Every card the record can have, in order: each state, its own looks and
+-- combined triggers under it, then the fade rules.
 local function AllCards(r)
     local E = ET()
     local out = {}
+    local CT = NS.CombinedTriggers
+    local combos = (CT and CT.On(r)) and CT.Slots(r) or {}
     for _, st in ipairs(States(r)) do
         out[#out + 1] = { key = st.key, st = st, kind = st.overlay and "aura" or "state" }
         for i, e in ipairs(E.LooksOf(r, st)) do
             local _, look = E.LookAt(e)
             if look then
                 out[#out + 1] = { key = EF.LookKey(st.key, i), st = st, i = i, look = look, entry = e, kind = "while" }
+            end
+        end
+        for _, k in ipairs(combos) do
+            if (CT.Parts(r, k))[1] == st.key then
+                local cs = ComboState(k)
+                out[#out + 1] = { key = cs.key, st = cs, under = st.key, kind = "combo" }
             end
         end
     end
@@ -532,6 +565,13 @@ local function Allowed(r, c)
     if c.isWhile then return {} end
     if c.i then return { "look" } end
     local st, out = c.st, {}
+    if st.combo then
+        -- a combined trigger: its look where it can be drawn exactly, its glow
+        local CT = NS.CombinedTriggers
+        if CT and CT.LookOK(r, st.combo) then out[1] = "look" end
+        out[#out + 1] = "glow"
+        return out
+    end
     if RULES[st.key] then
         if RuleShows(r, st.key) then out[1] = "look" end
     elseif st.alpha or st.grey or st.tint or #LookRows(r, st) > 0 then
@@ -725,7 +765,7 @@ function EF.Cards(r)
     end
     for _, k in ipairs(seq) do
         for _, c in ipairs(out) do
-            if c.key == k or (c.i and c.st and c.st.key == k) then Take(c) end
+            if c.key == k or (c.i and c.st and c.st.key == k) or c.under == k then Take(c) end
         end
     end
     for _, c in ipairs(out) do Take(c) end
@@ -1069,7 +1109,8 @@ function EF.CardWords(r, c)
     end
     local name = Tr(E.StateWord(r, c.st))
     if c.i then
-        local rule = ", " .. E.LookWords(c.look)
+        -- "Ready and in combat": a look is its state joined with its parts
+        local rule = " " .. Tr("and") .. " " .. E.LookWords(c.look, r)
         local tag = E.LookTag(r, c.entry)
         if tag ~= "" then rule = rule .. "  " .. tag end
         return name, rule
@@ -1249,6 +1290,21 @@ end
 function EF.RemoveFx(r, c, fx)
     local E = ET()
     SetAdded(r, c.key, fx, nil)
+    -- a combined trigger: its glow or its look off; with nothing left on it,
+    -- its slot is free again
+    local CT = NS.CombinedTriggers
+    if c.st and c.st.combo and CT then
+        local k = c.st.combo
+        if fx == "glow" then
+            Store.SetOverride(r, "auraActive", "activeGlow" .. k, false)
+        elseif fx == "look" then
+            Store.SetOverride(r, "auraActive", "activeGlowGrey" .. k, nil)
+            Store.SetOverride(r, "auraActive", "activeGlowTint" .. k, nil)
+            Store.SetOverride(r, "auraActive", "activeGlowTintColor" .. k, nil)
+        end
+        if not CT.Lit(r, k) then CT.Clear(r, k) end
+        return
+    end
     if c.i then
         local idx = E.LookAt(c.entry)
         if idx then E.LookRemove(r, idx) end
@@ -1733,6 +1789,304 @@ local function DashEdge(f)
     return e
 end
 
+-- THE WHEN ROW, under a trigger's head (UI\AD_CombinedTriggers.lua): its
+-- state, then "and" and a chip per part with an x, then + And... and its
+-- pullout. On a state's card the aura starts a combined trigger and a
+-- condition an own look; on a combined trigger's card parts come and go.
+EF.WHEN_H = 30
+local CHIP_H = 20
+function EF.MakeWhenRow(row, owner, Rec, Relay)
+    local w = CreateFrame("Frame", nil, row)
+    w:Hide()
+    local fill = Tex(w, "BACKGROUND")
+    fill:SetAllPoints()
+    local edge = Edges(w)
+    local cap = Font(w, 10, COL.faint)
+    cap:SetText(Tr("WHEN"))
+    cap:SetPoint("LEFT", w, "LEFT", 10, 0)
+    local chips, ands = {}, {}
+    -- All of / Any of: every part must hold, or any one (its state one of them)
+    local MODES = { { value = "all", text = "All of" }, { value = "any", text = "Any of" } }
+    local function GetMode()
+        local r, card, CT = Rec(), w._card, NS.CombinedTriggers
+        if r and card and card.st and card.st.combo and CT and CT.Any(r, card.st.combo) then return "any" end
+        return "all"
+    end
+    local function SetMode(v)
+        local r, card, CT = Rec(), w._card, NS.CombinedTriggers
+        if not (r and card and card.st and CT) then return end
+        if card.st.combo then
+            CT.SetAny(r, card.st.combo, v == "any")
+        elseif card.i and v == "any" then
+            -- an own look always needs its state: Any of makes it a combined trigger
+            local idx, look = ET().LookAt(card.entry)
+            local k = idx and CT.FromLookAny(r, card.st.key, idx, look)
+            if k then EF.Pick(r, "combo" .. k) end
+        end
+    end
+    local mode = AT.MakeDropdown(owner, w, 76, function() return MODES end, GetMode, SetMode, function() Relay() end)
+    w.SetMode = function(v) SetMode(v) Relay() end
+    AT.Tooltip(mode, "All of or Any of", "All of: every part must hold. Any of: any one is enough, its state too.")
+    w.mode = mode
+    local function Chip(i)
+        local c = chips[i]
+        if c then return c end
+        c = CreateFrame("Frame", nil, w, "BackdropTemplate")
+        c:SetHeight(CHIP_H)
+        c.fs = Font(c, 12, COL.ink)
+        c.fs:SetPoint("LEFT", c, "LEFT", 8, 0)
+        c.x = RedX(c, 14)
+        c.x:SetPoint("RIGHT", c, "RIGHT", -3, 0)
+        c.x:SetScript("OnClick", function(self)
+            local r, card, CT = Rec(), w._card, NS.CombinedTriggers
+            if not (r and card and card.st and CT and self._part) then return end
+            AT.CloseDropdown()
+            if card.st.combo then
+                local k = card.st.combo
+                if CT.AURA_WHEN[self._part] then
+                    local open = CT.DropAura(r, k)
+                    if type(open) == "table" then
+                        EF.Pick(r, EF.LookKey(open.state, open.n))
+                    elseif open then
+                        EF.Pick(r, open)
+                    end
+                else
+                    CT.RemovePart(r, k, self._part)
+                end
+            elseif card.i then
+                -- an own look: its last part off, its look goes back to the state
+                local E, OL = ET(), NS.OwnLooks
+                local idx, look = E.LookAt(card.entry)
+                if not (idx and look and OL) then return end
+                local rest = {}
+                for _, p in ipairs(look.when or {}) do
+                    if p ~= self._part then rest[#rest + 1] = p end
+                end
+                if rest[1] then
+                    OL.Set(r, idx, "when", rest)
+                else
+                    CT.LookToState(r, card.st.key, look)
+                    OL.Remove(r, idx)
+                    EF.Pick(r, card.st.key)
+                end
+            end
+            Relay()
+        end)
+        AT.Tooltip(c.x, "Remove this part", "The trigger no longer waits for it.")
+        chips[i] = c
+        return c
+    end
+    local function And(i)
+        local a = ands[i]
+        if a then return a end
+        a = Font(w, 11, COL.dim)
+        a:SetText(Tr("and"))
+        ands[i] = a
+        return a
+    end
+    local add = CreateFrame("Button", nil, w)
+    add:SetHeight(CHIP_H)
+    add.fs = Font(add, 12, GREEN)
+    add.fs:SetText(Tr("+ And..."))
+    add.fs:SetPoint("CENTER", 0, 0)
+    add:SetWidth(Measure(add.fs) + 18)
+    local dash = DashEdge(add)
+    dash:Lay(add:GetWidth(), CHIP_H, GREEN_EDGE)
+    local menu = Menu(w, owner)
+    w.menu, w.add, w.chips = menu, add, chips
+    menu:HookScript("OnHide", function() dash:Color(GREEN_EDGE) end)
+    add:SetScript("OnEnter", function() dash:Color(GREEN) end)
+    add:SetScript("OnLeave", function() dash:Color(menu:IsShown() and GREEN or GREEN_EDGE) end)
+    AT.Tooltip(add, "And...", "Another part this trigger waits for. Every part must hold.")
+    -- a part picked: on a state's card the aura makes a combined trigger, a
+    -- condition an own look; on a combined trigger's, the part joins it
+    local function Pick(part)
+        local r, card, CT = Rec(), w._card, NS.CombinedTriggers
+        AT.CloseDropdown()
+        if not (r and card and CT) then return end
+        local E = ET()
+        if card.st and card.st.combo then
+            CT.AddPart(r, card.st.combo, part)
+        elseif card.i then
+            -- an own look: the aura makes it a combined trigger, else the part joins it
+            local idx, look = E.LookAt(card.entry)
+            if not (idx and look) then return end
+            if CT.AURA_WHEN[part] then
+                local k = CT.FromLook(r, card.st.key, idx, look, part)
+                if k then EF.Pick(r, "combo" .. k) end
+            else
+                local when = {}
+                for _, p in ipairs(look.when or {}) do when[#when + 1] = p end
+                when[#when + 1] = part
+                NS.OwnLooks.Set(r, idx, "when", when)
+            end
+        elseif CT.AURA_WHEN[part] then
+            local k = CT.Make(r, card.st.key, part)
+            if k then
+                -- the state stays listed only while something is left on it
+                SetShown(r, card.st.key, nil)
+                EF.Pick(r, "combo" .. k)
+            end
+        elseif E.LookAddFor then
+            -- the state's trigger becomes "<state> and <part>": its look and
+            -- glow move onto a look of the state that waits on the part
+            local n = E.LookAddFor(r, card.st, part)
+            if n then
+                for _, fx in ipairs({ "look", "glow" }) do
+                    if EF.Has(r, card, fx) then EF.RemoveFx(r, card, fx) end
+                end
+                SetShown(r, card.st.key, nil)
+                EF.Pick(r, EF.LookKey(card.st.key, n))
+            end
+        end
+        Relay()
+    end
+    local COL_W, ITEM_H, TITLE_H = 176, 22, 22
+    add:SetScript("OnClick", function()
+        if AT.openDropdown == menu then
+            AT.CloseDropdown()
+            return
+        end
+        AT.CloseDropdown()
+        local r, card, CT = Rec(), w._card, NS.CombinedTriggers
+        if not (r and card and CT) then return end
+        local k = card.st and card.st.combo
+        local _, look = nil, nil
+        if card.i then _, look = ET().LookAt(card.entry) end
+        local groups = CT.Offer(r, k, k and (CT.Parts(r, k))[1] or card.st.key, look)
+        -- two columns: the aura and the spell, then the conditions
+        local n, cols = 0, { {}, {} }
+        for gi, g in ipairs(groups) do
+            local col = (gi == #groups and #groups > 1) and cols[2] or cols[1]
+            col[#col + 1] = { title = g.title }
+            for _, it in ipairs(g.items) do col[#col + 1] = it end
+        end
+        local tall = 0
+        for ci, col in ipairs(cols) do
+            local y = -3
+            for _, it in ipairs(col) do
+                n = n + 1
+                local b = menu:Item(n, ITEM_H)
+                b:ClearAllPoints()
+                b:SetPoint("TOPLEFT", menu, "TOPLEFT", 1 + (ci - 1) * COL_W, y)
+                b:SetWidth(COL_W - 2)
+                b._fs:ClearAllPoints()
+                if it.title then
+                    b._fs:SetPoint("LEFT", 9, 0)
+                    b._fs:SetText(it.title)
+                    b._fs:SetTextColor(COL.faint[1], COL.faint[2], COL.faint[3])
+                    b:EnableMouse(false)
+                    b:SetHeight(TITLE_H)
+                    y = y - TITLE_H
+                else
+                    b._fs:SetPoint("LEFT", 16, 0)
+                    b._fs:SetText(it.text)
+                    local ink = it.on and MidInk() or COL.faint
+                    b._fs:SetTextColor(ink[1], ink[2], ink[3])
+                    b:EnableMouse(it.on == true)
+                    b:SetHeight(ITEM_H)
+                    b._part = it.key
+                    b:SetScript("OnClick", function(self) Pick(self._part) end)
+                    y = y - ITEM_H
+                end
+                b:Show()
+            end
+            tall = math.max(tall, -y)
+        end
+        for i = n + 1, #menu._items do menu._items[i]:Hide() end
+        local wide = (#cols[2] > 0) and 2 or 1
+        menu:SetSize(wide * COL_W, tall + 3)
+        menu:ClearAllPoints()
+        menu:SetPoint("TOPLEFT", add, "BOTTOMLEFT", 0, -4)
+        menu:Show()
+        AT.openDropdown = menu
+        dash:Color(GREEN)
+    end)
+    w:HookScript("OnHide", function() menu:Hide() end)
+
+    -- The row for a card at width pw, under its head; its height, or 0 when the
+    -- card takes no parts.
+    function w:Lay(r, c, pw)
+        local CT, OL = NS.CombinedTriggers, NS.OwnLooks
+        local one = r ~= nil and r.type == "icon" and not (r._adMulti or r._adDefaults or r._adLayoutTier)
+        local combo = c and c.st and c.st.combo
+        local state = c and c.st and not c.i and not combo and not c.isCount and not c.isWhile and c.st.key
+        local takes = state and CT and ((CT.On(r) and CT.GLOW_PRE[state] ~= nil)
+            or (OL and OL.Offered and OL.Offered(r, OL.StateKey(r.kind, state))))
+        if not (one and c and CT and ((combo and CT.On(r)) or (c.i and OL) or takes)) then
+            self:Hide()
+            return 0
+        end
+        self._card = c
+        self:SetWidth(pw)
+        self:SetHeight(EF.WHEN_H)
+        fill:SetVertexColor(COL.well[1], COL.well[2], COL.well[3], 1)
+        edge:Lay()
+        -- it hangs under the head: the head's bottom edge is its top
+        edge:Color(COL.line, { b = true, l = true, r = true })
+        -- the chips: the state, then each part (the aura first)
+        local parts = {}
+        if combo then
+            local states, conds = CT.Parts(r, combo)
+            parts[1] = { text = CT.StateWord(r, states[1]) }
+            local aura = CT.AuraPart(r, combo)
+            if aura then parts[2] = { text = CT.PartWord(r, aura), part = aura } end
+            for i = 2, #states do parts[#parts + 1] = { text = CT.StateWord(r, states[i]), part = states[i] } end
+            for _, k2 in ipairs(conds) do parts[#parts + 1] = { text = CT.CondWord(k2), part = k2 } end
+        elseif c.i then
+            local _, look = ET().LookAt(c.entry)
+            parts[1] = { text = CT.StateWord(r, c.st.key) }
+            for _, k2 in ipairs((look and look.when) or {}) do
+                parts[#parts + 1] = { text = CT.PartWord(r, k2), part = k2 }
+            end
+        else
+            parts[1] = { text = CT.StateWord(r, c.st.key) }
+        end
+        local x = 10 + Measure(cap) + 10
+        -- the pick while there is something to join (a combined trigger or a look)
+        local joinable = #parts > 1 and (combo ~= nil or c.i ~= nil)
+        mode:SetShown(joinable)
+        if joinable then
+            mode:ClearAllPoints()
+            mode:SetPoint("LEFT", self, "LEFT", x, 0)
+            if mode.Refresh then mode:Refresh() end
+            x = x + mode:GetWidth() + 8
+        end
+        local joiner = CT.Joiner(r, combo)
+        for i, p in ipairs(parts) do
+            if i > 1 then
+                local a = And(i)
+                a:SetText(joiner)
+                a:ClearAllPoints()
+                a:SetPoint("LEFT", self, "LEFT", x, 0)
+                a:Show()
+                x = x + Measure(a) + 7
+            end
+            local ch = Chip(i)
+            ch.fs:SetText(p.text)
+            local lead = i == 1
+            -- the state the trigger is: quiet; each part: picked, with its x
+            AT.Skin(ch, lead and COL.btn or COL.sel, lead and COL.line2 or COL.arc)
+            ch.x:SetShown(p.part ~= nil)
+            ch.x._part = p.part
+            ch:SetWidth(8 + Measure(ch.fs) + (p.part and (6 + 14 + 3) or 8))
+            ch:ClearAllPoints()
+            ch:SetPoint("LEFT", self, "LEFT", x, 0)
+            ch:Show()
+            x = x + ch:GetWidth() + 7
+        end
+        for i = #parts + 1, #chips do chips[i]:Hide() end
+        for i, a in pairs(ands) do
+            if i > #parts then a:Hide() end
+        end
+        add:ClearAllPoints()
+        add:SetPoint("LEFT", self, "LEFT", x + 1, 0)
+        self:Show()
+        return EF.WHEN_H
+    end
+    return w
+end
+
 -- Builds the tab on page pg: the title strip, the list of triggers down the
 -- left (+ Add a trigger at its foot) and the open trigger's panel to its
 -- right, or the tile picker. vis: the tab's own gate. under: the editor's
@@ -2078,6 +2432,9 @@ function EF.Build(pg, ctx, vis, owner, under)
     end)
     head._rm, head._edge = trm, headEdge
     EF.head = head
+    -- the WHEN row under it (combined triggers)
+    local whenRow = EF.MakeWhenRow(row, owner, Rec, Relay)
+    EF.whenRow = whenRow
     -- an own look's arrows, made the first time one opens
     local function Arrows()
         if head._up then return end
@@ -2123,6 +2480,12 @@ function EF.Build(pg, ctx, vis, owner, under)
         PaintMini(head._mini, r, EF.MiniLook(r, c))
         local name, rule = EF.CardWords(r, c)
         local when = (c.st and not c.i) and EF.WhenWords(c.st, r) or ""
+        local CT = NS.CombinedTriggers
+        if c.i and CT and c.look then
+            local parts = { c.st.key }
+            for _, p in ipairs(c.look.when or {}) do parts[#parts + 1] = p end
+            when = CT.WhenLine(parts)
+        end
         -- a count state: its name, its rule in the when ("While it has 5+ stacks")
         if c.isCount then rule, when = "", EF.CountWhen(r, c) end
         head._name:SetText(name .. (rule ~= "" and ("|cff" .. AT.Hex(COL.arc) .. rule .. "|r") or ""))
@@ -2193,7 +2556,12 @@ function EF.Build(pg, ctx, vis, owner, under)
         end
         head._nameW, head._nameLines, head._whenLines, head._right, head._stacked = nameW, nl, wl, right, stacked
         head:Show()
-        return h
+        local wh = whenRow:Lay(r, c, pw)
+        if wh > 0 then
+            whenRow:ClearAllPoints()
+            whenRow:SetPoint("TOPLEFT", head, "BOTTOMLEFT", 0, 0)
+        end
+        return h + wh
     end
 
     -- the open trigger's body
@@ -2881,6 +3249,7 @@ function EF.Build(pg, ctx, vis, owner, under)
             end
         else
             head:Hide()
+            whenRow:Hide()
             body:Hide()
             HideLines({})
             if not picking then
@@ -2974,7 +3343,7 @@ function EF.Build(pg, ctx, vis, owner, under)
             end
         end
         if c.i then
-            out[1] = { label = Tr(E.StateWord(r, c.st)) .. ", " .. E.LookWords(c.look), fx = "look" }
+            out[1] = { label = Tr(E.StateWord(r, c.st)) .. " " .. Tr("and") .. " " .. E.LookWords(c.look, r), fx = "look" }
             return out
         end
         for _, fx in ipairs(Allowed(r, c)) do

@@ -432,6 +432,28 @@ function Driver.TurnTo(a, cast)
     return true
 end
 
+-- The game's own answer to "is this spell's proc up now", nil when it cannot say.
+function Driver.Overlayed(sid)
+    local O = C_SpellActivationOverlay
+    if not (sid and O and O.IsSpellOverlayed) then return nil end
+    local v = O.IsSpellOverlayed(sid)
+    if issecretvalue and issecretvalue(v) then return nil end
+    return v == true
+end
+
+-- A spell that turns into its override with the proc (Heart Strike into
+-- Vampiric Strike) can be announced before the icon follows: once it has,
+-- the glow is asked of the game, as its Cooldown Manager does. On the first
+-- feed it only lights.
+function Driver.RecheckProc(a, first)
+    local d = a.rec.driver
+    if not d or Store.HasSpellAlts(d) or not a.frame then return end
+    local lit = Driver.Overlayed(a.effSid)
+    if lit ~= true and d.spellID ~= a.effSid and Driver.Overlayed(d.spellID) == true then lit = true end -- raw-id: the proc may sit on the base form the resolve moved off
+    if lit == nil or (first and not lit) then return end
+    if lit ~= (a.frame._adProcLit or false) then Factory.SetProcGlow(a.frame, a.rec, lit) end
+end
+
 -- the overlay events, kept per spell for an icon with several
 function Driver.NoteProc(a, spellID, on)
     local d = a.rec.driver
@@ -760,7 +782,9 @@ Feed = function(a)
     sid = Store.RecordSpellID(d) or sid
     -- a new rank / override takes over the range check at the end of this feed
     local rangeMoved = a.rangeSid ~= nil and a.rangeSid ~= sid
+    local prevSid = a.effSid
     a.effSid = sid
+    if prevSid ~= sid then Driver.RecheckProc(a, prevSid == nil) end
     -- charges are the current rank's or override's: re-read when it changes
     local info
     if a.chargeSid ~= sid then
@@ -1934,13 +1958,16 @@ local function EnsureEvents()
     end
     -- Proc overlays. The payload can be the override or another rank, so it
     -- goes through the one matcher with the last effective id.
+    -- A spell that turned with the proc is fed first, so the event meets
+    -- the spell it names.
     Events.On("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", "adcd", function(_, spellID)
         for _, a in pairs(attached) do
             local d = a.rec.driver
             if d and Store.HasSpellAlts(d) then
                 if Driver.NoteProc(a, spellID, true) then Factory.SetProcGlow(a.frame, a.rec, true) end
-            elseif d and Store.SpellMatch(d.spellID, spellID, a.effSid) then
-                Factory.SetProcGlow(a.frame, a.rec, true)
+            elseif d then
+                Driver.FollowTurn(a)
+                if Store.SpellMatch(d.spellID, spellID, a.effSid) then Factory.SetProcGlow(a.frame, a.rec, true) end
             end
         end
     end)
@@ -1949,11 +1976,29 @@ local function EnsureEvents()
             local d = a.rec.driver
             if d and Store.HasSpellAlts(d) then
                 if Driver.NoteProc(a, spellID, false) then Factory.SetProcGlow(a.frame, a.rec, false) end
-            elseif d and Store.SpellMatch(d.spellID, spellID, a.effSid) then
-                Factory.SetProcGlow(a.frame, a.rec, false)
+            elseif d then
+                Driver.FollowTurn(a)
+                if Store.SpellMatch(d.spellID, spellID, a.effSid) then Factory.SetProcGlow(a.frame, a.rec, false) end
             end
         end
     end)
+    -- An override comes and goes with no cooldown event (a proc's form):
+    -- the icons it turned follow the next frame, not at the next GCD.
+    if EventValid("SPELL_UPDATE_ICON") then
+        Events.On("SPELL_UPDATE_ICON", "adcd", function()
+            Events.Coalesce("adcd_turns", function()
+                for _, a in pairs(attached) do Driver.FollowTurn(a) end
+            end)
+        end)
+    end
+end
+
+-- Feeds an icon whose spell now resolves to another (its override came or went).
+function Driver.FollowTurn(a)
+    local d = a.rec.driver
+    if not d or a.effSid == nil or Store.HasSpellAlts(d) then return end
+    local live = Store.RecordSpellID(d) or d.spellID
+    if live ~= a.effSid then Feed(a) end -- raw-id: the resolve now against the feed's, both RecordSpellID's
 end
 
 local function MaybeReleaseEvents()
@@ -1989,6 +2034,7 @@ local function MaybeReleaseEvents()
     wipe(kbExtraEvents)
     Events.Off("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW", "adcd")
     Events.Off("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE", "adcd")
+    Events.Off("SPELL_UPDATE_ICON", "adcd")
 end
 
 function Driver.Attach(rec, f)

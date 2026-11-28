@@ -628,6 +628,114 @@ local function GlowSlots()
     return (NS.Schema and NS.Schema.AURA_GLOW_SLOTS) or 1
 end
 
+-- Combined triggers ("Ready and aura missing"): a numbered Missing glow on a
+-- cooldown icon that also waits for the spell's states and for conditions.
+-- The aura part is its layer's (the aura's button wipes it while up); the
+-- other parts are plain reads that show or hide our own layer.
+local GATE_LISTS = {}
+local function GateList(s)
+    if type(s) ~= "string" or s == "" then return nil end
+    local l = GATE_LISTS[s]
+    if not l then
+        l = {}
+        for k in s:gmatch("[^,]+") do l[#l + 1] = k end
+        GATE_LISTS[s] = l
+    end
+    return l
+end
+Driver.GateList = GateList
+
+-- The slots of a cooldown icon whose glow waits on parts ([k] = true), or nil:
+-- a Missing glow (its layer) or one while the aura is up (its lane).
+function Driver.GatedSlots(rec)
+    if not rec or rec.kind == "aura" then return nil end
+    local out
+    for k = 2, GlowSlots() do
+        local suf = tostring(k)
+        if GateList(Store.Resolve(rec, "auraActive", "activeGlowState" .. suf))
+            or GateList(Store.Resolve(rec, "auraActive", "activeGlowAnd" .. suf)) then
+            out = out or {}
+            out[k] = true
+        end
+    end
+    return out
+end
+
+-- Slot k's glow may show now: every state and condition it names holds. f:
+-- the icon's frame, whose state the cooldown driver keeps. With the options
+-- window open a glow that waits for combat shows, as Glow only in combat does.
+function Driver.GlowGateHolds(rec, k, f)
+    if not rec or not k or k < 2 then return true end
+    local suf = tostring(k)
+    local states = GateList(Store.Resolve(rec, "auraActive", "activeGlowState" .. suf))
+    local conds = GateList(Store.Resolve(rec, "auraActive", "activeGlowAnd" .. suf))
+    if not (states or conds) then return true end
+    if states then
+        local now, use = Factory.StateNow(f)
+        for i = 1, #states do
+            if states[i] ~= now and states[i] ~= use then return false end
+        end
+    end
+    if conds then
+        local C = NS.Conditions
+        if not (C and C.Read) then return false end
+        for i = 1, #conds do
+            local key = conds[i]
+            if not (key == "inCombat" and GlowsForCombat()) and C.Read(key) ~= true then return false end
+        end
+    end
+    return true
+end
+
+-- Any of (activeGlowAny<k>): any one of the plain parts holds now (the
+-- spell's states, the conditions); nil when it names none.
+function Driver.GatePlainAny(rec, k, f)
+    if not rec or not k or k < 2 then return nil end
+    local suf = tostring(k)
+    local states = GateList(Store.Resolve(rec, "auraActive", "activeGlowState" .. suf))
+    local conds = GateList(Store.Resolve(rec, "auraActive", "activeGlowAnd" .. suf))
+    if not (states or conds) then return nil end
+    if states then
+        local now, use = Factory.StateNow(f)
+        for i = 1, #states do
+            if states[i] == now or states[i] == use then return true end
+        end
+    end
+    if conds then
+        local C = NS.Conditions
+        for i = 1, #conds do
+            local key = conds[i]
+            if (key == "inCombat" and GlowsForCombat()) or (C and C.Read and C.Read(key) == true) then return true end
+        end
+    end
+    return false
+end
+
+local function SlotAny(rec, k)
+    return Store.Resolve(rec, "auraActive", "activeGlowAny" .. k) == true
+end
+
+-- The aura part's layer or lane may draw slot k now. All of: every part
+-- holds. Any of: none of the plain parts does (the holder draws it then, so
+-- the glow never shows twice) and the aura part decides.
+local function GateOK(entry, k)
+    if not (entry.gated and entry.gated[k]) then return true end
+    if SlotAny(entry.rec, k) then return Driver.GatePlainAny(entry.rec, k, entry.holder) ~= true end
+    return Driver.GlowGateHolds(entry.rec, k, entry.holder)
+end
+
+-- Slot k's glow on the holder itself (no aura part, or Any of while a plain
+-- part holds): our own frame, never wiped by the aura's button.
+function Driver.HolderGateOn(rec, k, f)
+    if not (rec and k and k > 1) or rec.kind == "aura" then return false end
+    local suf = tostring(k)
+    if Store.Resolve(rec, "auraActive", "activeGlow" .. suf) ~= true then return false end
+    local when = Store.Resolve(rec, "auraActive", "activeGlowWhen" .. suf)
+    if SlotAny(rec, k) then return Driver.GatePlainAny(rec, k, f) == true end
+    if when ~= "parts" then return false end
+    return Driver.GlowGateHolds(rec, k, f) == true
+end
+
 -- A glow with a strata of its own takes a lane: the icon's button is born in
 -- its stage (a Dynamic row's missing piece in one too), which draws everything
 -- in it at the stage's strata, so a glow set above its icon would stay with
@@ -644,21 +752,25 @@ end
 local function LaneIDs(rec, slot, row)
     slot = slot or 1
     local overlay = false
+    local suf = (slot > 1) and tostring(slot) or ""
+    local R = function(k) return Store.Resolve(rec, "auraActive", k .. suf) end
+    -- a combined trigger's glow while the aura is up ("Ready and aura active")
+    -- waits on plain parts, which the aura's button cannot: a lane of its own
+    local gated = not row and slot > 1 and rec ~= nil and rec.kind ~= "aura"
+        and (GateList(R("activeGlowState")) or GateList(R("activeGlowAnd"))) ~= nil
     if row then
         if not Driver.HolderGlowOK(rec) then return nil end
     elseif not Driver.GlowLaneOK(rec) then
-        if slot ~= 1 or not Driver.OverlayGlowLaneOK(rec) then return nil end
+        if (slot ~= 1 and not gated) or not Driver.OverlayGlowLaneOK(rec) then return nil end
         overlay = true
     end
-    local suf = (slot > 1) and tostring(slot) or ""
-    local R = function(k) return Store.Resolve(rec, "auraActive", k .. suf) end
     if R("activeGlow") ~= true then return nil end
     -- With "Show only when little time is left", glow 1 leaves the icon's
     -- button and an Always glow's live half rides a lane.
     local timed = not row and Driver.TimeGateFrac(rec) ~= nil
     -- a Missing or Always glow is the holder's, not a button's
     local when = R("activeGlowWhen")
-    if when == "missing" or (when == "both" and not timed) then return nil end
+    if when == "missing" or when == "parts" or (when == "both" and not timed) then return nil end
     local d = Driver.ShapeFor(rec) or {}
     local ids = TrackedIDs(d)
     local m, n = {}, 0
@@ -667,7 +779,7 @@ local function LaneIDs(rec, slot, row)
     local pick = (overlay and not listed) and 0 or (tonumber(R("activeGlowFor")) or 0)
     -- in list order each aura's own button draws its glow (RankOpts); a lane
     -- only for what a button cannot do: wait for combat, or its own strata
-    if listed and R("activeGlowCombatOnly") ~= true and not timed and not OwnGlowStrata(rec, suf) then
+    if listed and R("activeGlowCombatOnly") ~= true and not timed and not OwnGlowStrata(rec, suf) and not gated then
         return nil
     end
     if pick > 0 then
@@ -1887,6 +1999,7 @@ function MG.Paint(entry, ml, combat)
         and Factory.LookGlow(f, "missing", true)
         and Store.Resolve(rec, "appearance", "forceHideIcon") ~= true
         and (combat == true or Store.Resolve(rec, "auraActive", "activeGlowCombatOnly" .. suf) ~= true)
+        and GateOK(entry, k)
     ml.want = want == true
     if not f then return end
     local o = AuraButtonOpts(entry)
@@ -1978,6 +2091,55 @@ function Driver.MissLaneSync(f, rec, combat)
         MG.Buffer(e, ml)
     end
     if SyncEntryAlpha then SyncEntryAlpha(e) end
+end
+
+-- The holder's own glows of the gated slots (Driver.HolderGateOn): a host
+-- each, at the level an aura icon's Always glows take, over the aura's button.
+function Driver.ApplyGateGlows(e)
+    local f, rec = e and e.holder, e and e.rec
+    if not (f and rec) then return end
+    local hosts = f._adGateGlows
+    if not (e.gated or hosts) then return end
+    local live = not e.off and not e.parked
+    local o = AuraButtonOpts(e)
+    local lvl = f:GetFrameLevel()
+    if type(lvl) ~= "number" or (issecretvalue and issecretvalue(lvl)) then lvl = nil end
+    for k = 2, GlowSlots() do
+        local want = live and e.gated ~= nil and e.gated[k] == true and Driver.HolderGateOn(rec, k, f)
+        local host = hosts and hosts[k]
+        if want and not host then
+            hosts = hosts or {}
+            f._adGateGlows = hosts
+            host = CreateFrame("Frame", nil, f)
+            host:SetAllPoints(f)
+            host:EnableMouse(false)
+            hosts[k] = host
+        end
+        if host then
+            host._adLevel = lvl and (lvl + Factory.AURA_LADDER.button + (e.lift or 0) + 1 + Factory.Rise(rec))
+            Factory.SetAuraButtonGlow(host, rec, want == true, o.w, o.h, 1, k)
+        end
+    end
+end
+
+-- After the icon's state was written (Factory.SetState) or a condition its
+-- gates name moved: repaint its waiting Missing glows when their answer turned.
+function Driver.GateSync(f, rec)
+    local e = rec and entries[rec.id]
+    if not (e and e.gated and e.holder == f) then return end
+    local sig = 0
+    for k in pairs(e.gated) do
+        if GateOK(e, k) then sig = sig + 2 ^ k end
+        if Driver.HolderGateOn(rec, k, f) then sig = sig + 2 ^ (k + 8) end
+    end
+    if sig == e.gateSig then return end
+    e.gateSig = sig
+    if e.mlanes then
+        Driver.MissLaneSync(f, rec, GlowsForCombat())
+    elseif SyncEntryAlpha then
+        SyncEntryAlpha(e)
+    end
+    Driver.ApplyGateGlows(e)
 end
 
 -- Glow `k` of this holder is drawn by its own lane, so its stage leaves it out.
@@ -2072,6 +2234,8 @@ SyncEntryAlpha = function(entry)
         elseif not GlowsForCombat()
             and Store.Resolve(rec, "auraActive", "activeGlowCombatOnly" .. suf) == true then
             ga = 0
+        elseif not GateOK(entry, g.slot) then
+            ga = 0
         end
         g.container:SetAlpha(ga)
         SetQuiet(entry, g, ga <= 0 or not vis)
@@ -2137,6 +2301,8 @@ local function RestyleEntry(entry)
         -- a cooldown icon's: on their layers only
         Factory.ApplyMissingGlows(entry.holder, entry.rec, opts.w, opts.h, GlowsForCombat())
     end
+    -- a combined trigger's glow on the holder
+    Driver.ApplyGateGlows(entry)
     -- both sets, so a switch between them finds its buttons ready
     local other = entry.share and ((entry.subs == entry.share) and entry.own or entry.share) or nil
     -- a button left unstyled keeps what it carried
@@ -2289,6 +2455,9 @@ local function AttachEntry(rec, f, d)
     entry.lift = (rec.kind ~= "aura") and 1 or nil
     -- a spell's charges state cuts the whole look on this stage, the aura's with it
     entry.gate = (rec.kind ~= "aura") and Driver.ChargeGate(rec) or nil
+    -- the Missing glows that wait on the spell's states or conditions
+    entry.gated = Driver.GatedSlots(rec)
+    entry.gateSig = nil
     local unit = LaneOf(d)
     entry.laneUnit = unit
 
@@ -2541,6 +2710,7 @@ local function OnCombatEdge(state)
             Factory.ApplyMissingGlows(entry.holder, entry.rec, o.w, o.h, GlowsForCombat())
             Factory.ApplyAlwaysGlows(entry.holder, entry.rec, o.w, o.h, GlowsForCombat())
         end
+        Driver.ApplyGateGlows(entry)
     end
 end
 

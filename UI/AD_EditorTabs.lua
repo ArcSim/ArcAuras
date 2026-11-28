@@ -358,7 +358,11 @@ local function AuraGlowKeys(missing)
         for k = 1, Schema.AURA_GLOW_SLOTS do
             local sfx = (k > 1) and tostring(k) or ""
             local key = A .. ".activeGlow" .. sfx
-            if Store.Resolve(r, A, "activeGlow" .. sfx) == true then
+            local s = Store.Resolve(r, A, "activeGlowState" .. sfx)
+            -- a combined trigger's glow is its own card's (UI\AD_CombinedTriggers.lua)
+            if k > 1 and type(s) == "string" and s ~= "" then
+                -- not this card's, and never its spare
+            elseif Store.Resolve(r, A, "activeGlow" .. sfx) == true then
                 local when = Store.Resolve(r, A, "activeGlowWhen" .. sfx)
                 if when == "both" or (when == "missing") == missing then out[#out + 1] = key end
             elseif not spare then
@@ -384,7 +388,8 @@ local COOLDOWN = { key = "cooldown", label = "On cooldown", when = "while it is 
     fx = { glow = { "states.cooldownGlow" }, sound = { "alerts.cooldownSoundEnabled" } } }
 local UNUSABLE = { key = "unusable", label = "Can't use it", when = "while it can't be used", alpha = { S, "unusableAlpha" },
     grey = { S, "unusableDesaturate" }, tint = { S, "unusableTintColor", on = "unusableTintEnabled" },
-    alphaTip = "Never brighter than Ready's opacity." }
+    alphaTip = "Never brighter than Ready's opacity.",
+    fx = { glow = { "states.unusableGlow" }, sound = { "alerts.unusableSoundEnabled" } } }
 -- What shows over the cooldown ("On this icon": an aura, a totem, a set
 -- duration), on a spell, item or trinket icon: its two rows while it is on.
 -- In list order (DriverAura.ListRanks) a cooldown icon's aura has glow
@@ -461,7 +466,8 @@ local OVERLAY_MISSING = { key = "overlayMissing", label = "Aura missing", when =
         local DA = NS.DriverAura
         if not (DA and DA.MissingGlowOK and DA.MissingGlowOK(r)) then return {} end
         return MissGlowKeys(r)
-    end, sound = { "alerts.auraLostSoundEnabled" } } }
+    end, sound = { "alerts.auraLostSoundEnabled" }, art = { "art.overlayMissing" },
+        border = { "auraActive.overlayBorderInactiveOn" } } }
 -- A Custom Icon showing an aura (Tracking's "Aura on this icon"): the same
 -- look as a spell's, named Aura up, with the sound the game plays as it appears.
 local TIMER_AURA = {}
@@ -521,18 +527,19 @@ function ET.ActiveWords(r)
 end
 local OUT_OF_STOCK = { key = "out", label = "Out of stock", when = "while none is left", alpha = { O, "outAlpha", on = "outAlphaEnabled" },
     grey = { O, "outDesaturate" }, tint = { O, "outTintColor", on = "outTintEnabled" },
-    onTip = "On: this opacity while none is left. Off: it keeps its opacity." }
+    onTip = "On: this opacity while none is left. Off: it keeps its opacity.",
+    fx = { glow = { "states.outGlow" }, sound = { "alerts.outSoundEnabled" } } }
 -- a trinket's out state is its empty slot, with the same looks
 local EMPTY_SLOT = { key = "out", label = "Empty slot", when = "while nothing is equipped", alpha = OUT_OF_STOCK.alpha,
     grey = OUT_OF_STOCK.grey, tint = OUT_OF_STOCK.tint,
-    onTip = "On: this opacity while nothing is equipped. Off: it keeps its opacity." }
+    onTip = "On: this opacity while nothing is equipped. Off: it keeps its opacity.", fx = OUT_OF_STOCK.fx }
 -- ammo running low or the pet in trouble (Drivers\AD_DriverWarn.lua), for
 -- the classes with ammo or a pet: a glow, named for what it warns of
 local WARN_LABEL = { ammo = "Ammo low", petHealth = "Pet health low", petMood = "Pet not happy" }
 local WARNING = { key = "warn", label = "Warning", when = "while the warning is on",
     labelFn = function(r) return WARN_LABEL[Store.Resolve(r, S, "warnGlowWhen")] or "Warning" end,
     showIf = function(r) return FieldOn(r, S, "warnGlow") end,
-    fx = { glow = { "states.warnGlow" } } }
+    fx = { glow = { "states.warnGlow" }, sound = { "alerts.warnSoundEnabled" } } }
 local function GBNobody(r) return r ~= nil and Store.Resolve(r, "groupBuff", "remind") == "nobody" end
 -- A charge spell's cooldown state is every charge spent: No charges, listed
 -- after Recharging (Ready, Recharging, No charges).
@@ -582,11 +589,12 @@ ET.STATES = {
         { key = "nomana", label = "Not enough resource", when = "while you lack the resource for it",
           alpha = { S, "resourceAlpha" },
           grey = { S, "resourceDesaturate" }, tint = { S, "resourceTintColor", on = "resourceTintEnabled" },
-          alphaTip = "Never brighter than Ready's opacity." },
+          alphaTip = "Never brighter than Ready's opacity.",
+          fx = { glow = { "states.nomanaGlow" }, sound = { "alerts.nomanaSoundEnabled" } } },
         { key = "range", label = "Out of range", when = "while your target is out of range", alpha = { S, "rangeAlpha" },
           grey = { S, "rangeDesaturate" }, tint = { S, "rangeTintColor", on = "rangeTint" },
           alphaTip = "Never brighter than Ready's opacity.",
-          fx = { glow = { "states.rangeGlow" } } },
+          fx = { glow = { "states.rangeGlow" }, sound = { "alerts.rangeSoundEnabled" } } },
         -- Shoot, Auto Shot or Attack on, a pet spell on autocast (Drivers\AD_DriverToggle.lua)
         -- a next-swing ability's toggle is its queue: the row reads Queued
         -- and its icon effect is the action bar's checkmark
@@ -599,14 +607,15 @@ ET.STATES = {
               local DT = NS.DriverToggle
               return (DT ~= nil and DT.Kind(r) == "queue") and "Queued" or "Toggled on"
           end,
-          fx = { glow = { "states.toggleGlow" }, art = { "states.queueCheck", "states.queueShort" } } },
+          fx = { glow = { "states.toggleGlow" }, sound = { "alerts.toggleSoundEnabled" },
+              art = { "states.queueCheck", "states.queueShort" } } },
         -- the game lights it up: its glow here, its opacity rule under the table
         { key = "proc", label = "Proc lit", when = "while the game lights it up",
-          fx = { glow = { "states.procGlow" } } },
+          fx = { glow = { "states.procGlow" }, sound = { "alerts.procSoundEnabled" } } },
         -- the game's Assisted Highlight picks it next (retail, Drivers\AD_DriverAssist.lua)
         { key = "assist", label = "Suggested", when = "while the game suggests it next",
           showIf = function() return NS.DriverAssist ~= nil and NS.DriverAssist.Available() end,
-          fx = { glow = { "states.assistGlow" } } },
+          fx = { glow = { "states.assistGlow" }, sound = { "alerts.assistSoundEnabled" } } },
         WARNING,
         OVERLAY,
         OVERLAY_MISSING,
@@ -629,7 +638,8 @@ ET.STATES = {
               art = { "art.active" }, swipe = { "auraSwipe.look" }, border = { "auraActive.activeBorderOn" } } },
         { key = "missing", label = "Missing", when = "while the aura is missing", alpha = { M, "missingAlpha" },
           grey = { M, "missingDesaturate" }, tint = { M, "missingTintColor", on = "missingTintEnabled" },
-          fx = { glow = AuraGlowKeys(true), sound = { "alerts.auraLostSoundEnabled" }, art = { "art.missing" } } },
+          fx = { glow = AuraGlowKeys(true), sound = { "alerts.auraLostSoundEnabled" }, art = { "art.missing" },
+              border = { "auraMissing.missingBorderOn" } } },
     },
     item = { READY, COOLDOWN, UNUSABLE, OUT_OF_STOCK, WARNING, OVERLAY, OVERLAY_MISSING },
     trinket = { READY, COOLDOWN, EMPTY_SLOT, WARNING, OVERLAY, OVERLAY_MISSING },
@@ -660,9 +670,10 @@ ET.STATES = {
     totem = {
         { key = "active", label = "Active", when = "while the totem is out", alpha = READY.alpha,
           grey = READY.grey, tint = READY.tint,
-          fx = { glow = { "states.readyGlow" } } },
+          fx = { glow = { "states.readyGlow" }, sound = { "alerts.readySoundEnabled" } } },
         { key = "missing", label = "Missing", when = "while no totem is out", alpha = COOLDOWN.alpha,
-          grey = COOLDOWN.grey, tint = COOLDOWN.tint },
+          grey = COOLDOWN.grey, tint = COOLDOWN.tint,
+          fx = { glow = { "states.cooldownGlow" }, sound = { "alerts.cooldownSoundEnabled" } } },
         -- a totem by spell or a slot icon: out, but its buff not on you
         -- (Drivers\AD_TotemRange.lua); its look covers the art, so no opacity
         { key = "range", label = "Out of range", lookTitle = "Out of totem range", showIf = Schema.TotemRangeable,
@@ -677,14 +688,17 @@ ET.STATES = {
           fx = { glow = { "states.readyGlow" }, sound = { "alerts.readySoundEnabled" } } },
         { key = "missing", label = "Missing", when = "while the weapon has none", alpha = COOLDOWN.alpha,
           grey = COOLDOWN.grey, tint = COOLDOWN.tint,
-          fx = { sound = { "alerts.cooldownSoundEnabled" } } },
+          fx = { glow = { "states.cooldownGlow" }, sound = { "alerts.cooldownSoundEnabled" } } },
         -- a two-hander's off hand, a shield, bare hands
         { key = "noweapon", label = "No weapon", when = "while this hand holds no weapon",
-          alpha = { S, "noWeaponAlpha" }, alphaTip = "0 hides it while the hand has no weapon to enchant." },
+          alpha = { S, "noWeaponAlpha" }, alphaTip = "0 hides it while the hand has no weapon to enchant.",
+          grey = { S, "noWeaponDesaturate" }, tint = { S, "noWeaponTintColor", on = "noWeaponTintEnabled" },
+          fx = { glow = { "states.noWeaponGlow" }, sound = { "alerts.noWeaponSoundEnabled" } } },
         WARNING,
     },
     ammo = {
-        { key = "ready", label = "In stock", when = "while you have ammo", alpha = READY.alpha },
+        { key = "ready", label = "In stock", when = "while you have ammo", alpha = READY.alpha,
+          fx = { glow = { "states.stockGlow" }, sound = { "alerts.stockSoundEnabled" } } },
         OUT_OF_STOCK,
         WARNING,
     },
@@ -698,7 +712,7 @@ ET.STATES = {
         { key = "cooldown", label = "All procs used", when = "while every proc is used, or its timer runs",
           alpha = COOLDOWN.alpha, grey = COOLDOWN.grey, tint = COOLDOWN.tint,
           labelFn = function(r) return ET.SpecialTimer(r) and "On cooldown" or "All procs used" end,
-          fx = { glow = { "states.cooldownGlow" } } },
+          fx = { glow = { "states.cooldownGlow" }, sound = { "alerts.cooldownSoundEnabled" } } },
         WARNING,
     },
     -- a Group Buff: its count read between pulls (in combat it steps aside);
@@ -716,10 +730,11 @@ ET.STATES = {
         { key = "active", label = "In the stance", when = "while you are in it", alpha = READY.alpha,
           grey = READY.grey, tint = READY.tint, alphaTip = READY.alphaTip,
           labelFn = function(r) return ET.StanceOne(r) and "In this stance" or "In a stance" end,
-          fx = { glow = { "states.readyGlow" } } },
+          fx = { glow = { "states.readyGlow" }, sound = { "alerts.readySoundEnabled" } } },
         { key = "inactive", label = "Not in the stance", when = "while you are not in it", alpha = COOLDOWN.alpha,
           grey = COOLDOWN.grey, tint = COOLDOWN.tint,
-          labelFn = function(r) return ET.StanceOne(r) and "Not in it" or "No stance" end },
+          labelFn = function(r) return ET.StanceOne(r) and "Not in it" or "No stance" end,
+          fx = { glow = { "states.cooldownGlow" }, sound = { "alerts.cooldownSoundEnabled" } } },
         WARNING,
     },
 }
@@ -3157,6 +3172,14 @@ local function LookAdd(r, st, condKey)
         OL.Add(r, st.key, condKey, ET.LookCopy(r, st))
     end
 end
+-- The WHEN row's condition on a state's card: a new look under the state;
+-- its place there, or nil when none was added.
+function ET.LookAddFor(r, st, condKey)
+    local n = #LooksOf(r, st)
+    LookAdd(r, st, condKey)
+    local m = #LooksOf(r, st)
+    return (m > n) and m or nil
+end
 
 -- The columns a look of the state can set on the record: the cells the state
 -- row draws that the engine lets a look take over (OL.Spec: an aura's Active
@@ -3235,9 +3258,9 @@ function ET.LookCopy(r, st, shown)
 end
 
 -- A look's conditions in the engine's words ("no target"), translated there.
-function ET.LookWords(look)
+function ET.LookWords(look, r)
     local OL = NS.OwnLooks
-    return (OL and OL.Label and look and OL.Label(look)) or ""
+    return (OL and OL.Label and look and OL.Label(look, Owner(r))) or ""
 end
 
 -- "+ Add a Missing look while...", "an" before a vowel.
@@ -3381,7 +3404,7 @@ local function LookRow(T, slot, i)
         local r = ctx()
         local look = Look()
         if not (r and look) then return "" end
-        return Tr(ET.StateWord(r, st)) .. ", " .. ET.LookWords(look)
+        return Tr(ET.StateWord(r, st)) .. ", " .. ET.LookWords(look, r)
     end
     -- the name's parts set, and their width, for the table's first column
     row._adNameW = function()
@@ -3389,7 +3412,7 @@ local function LookRow(T, slot, i)
         local _, look = LookAt(e)
         if not (r and look) then return 0 end
         nameA:SetText(Tr(ET.StateWord(r, st)) .. ", ")
-        nameB:SetText(ET.LookWords(look))
+        nameB:SetText(ET.LookWords(look, r))
         local words = LookTag(r, e)
         tag:SetText(words)
         tag:SetShown(words ~= "")

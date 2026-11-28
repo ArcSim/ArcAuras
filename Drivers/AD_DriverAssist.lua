@@ -62,6 +62,8 @@ end
 
 -- The options preview (f._adGlowLaneOnly) shows the glow while it picks this lane.
 function AS.Apply(f, rec)
+    -- its sound on the suggestion's start (Core\AD_StateFx.lua)
+    if NS.StateFx then NS.StateFx.Sounds(f, rec) end
     local only = f._adGlowLaneOnly
     local preview = only == "assist"
     local want = AS.Wanted(rec) and (only == nil or preview)
@@ -139,7 +141,9 @@ function AS.Arm()
 end
 
 function AS.Sync(f, rec)
-    if AS.Wanted(rec) then
+    -- followed for its glow, or for its sound alone
+    if AS.Wanted(rec) or (AS.Available() and rec ~= nil and rec.kind == "spell"
+        and Store.Resolve(rec, "alerts", "assistSoundEnabled") == true) then
         AS.frames[f] = rec
     else
         AS.frames[f] = nil
